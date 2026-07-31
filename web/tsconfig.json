@@ -1,0 +1,43 @@
+{
+  // The application project. `pnpm typecheck` runs exactly this one.
+  //
+  // Note the include list covers the root *.config.ts files as well as src/.
+  // That is not tidiness — it is what keeps the project non-empty. WP-00 ships
+  // src/ containing only .gitkeep (WP-05 owns main.tsx), and tsc treats a
+  // project whose file list resolves to nothing as error TS18003. Including
+  // the config files gives it real inputs from the first commit, and they need
+  // typechecking anyway.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "jsx": "react-jsx",
+    "useDefineForClassFields": true,
+
+    "types": ["node", "vite/client"],
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+
+    // impl-plan §5.2, binding. `any` is additionally banned by ESLint.
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "verbatimModuleSyntax": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  // e2e/ is excluded on purpose — the Playwright specs are Node code with no
+  // vite/client types, and tsconfig.e2e.json is the project that owns them.
+  // eslint.config.js points the parser there so they are still type-aware
+  // linted, and `pnpm typecheck` runs that project as its second step.
+  "include": ["src", "*.config.ts"],
+  "exclude": ["dist", "node_modules", "e2e"]
+}

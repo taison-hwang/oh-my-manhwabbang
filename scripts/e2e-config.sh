@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+#
+# e2e-config.sh — render test/shelf.e2e.yaml.tmpl into a usable configuration.
+#
+# Separated from e2e.sh so the config can be produced and inspected on its own:
+#
+#   scripts/e2e-config.sh > /tmp/shelf.e2e.yaml         # the real curated subset
+#   scripts/e2e-config.sh --synthetic --root /tmp/fx    # the hermetic twin
+#
+# Environment (all optional):
+#   SHELF_E2E_ROOT       media root                 (default: the real collection)
+#   SHELF_E2E_PORT       listen port                (default: 8791)
+#   SHELF_E2E_STATE      data_dir/cache_dir parent  (default: a /tmp directory)
+#   SHELF_E2E_BASE_PATH  server.base_path           (default: "")
+#   SHELF_E2E_LOG_LEVEL  log.level                  (default: debug)
+
+set -euo pipefail
+
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# The ten series of impl-plan §6.3, exact names. Each covers something no other
+# entry does; see the table in that section for the mapping.
+CURATED=(
+  "[만화] Clover 클로버 (총4권)"                      # folder + 4 ZIPs, CP949 names
+  "[만화] 상처를 쫓는자 1-11 (완) 이케가미 료이치"     # folder of image sub-folders
+  "[만화] 자살도114-122"                              # loose images, mixed padding
+  "[만화] 바퀴.zip"                                   # single top-level ZIP
+  "[만화] 강철의 연금술사 1~27권 완결"                 # N archives + one cover image
+  "[만화] 군계 1~25"                                  # duplicates + 2 truncated
+  "[만화] 디엔엔젤 1-13권 연재중"                      # one 0-byte archive
+  "[만화] 미생 1~9 (완결 pdf)"                        # PDFs — AC-004
+  "[만화] 배틀로얄 1~15 [완결].zip"                   # 1 540 pages — AC-008
+  "[만화] 엔젤하트 전32권 완결.zip"                    # container of ZIPs — empty
+)
+
+# The synthetic tree carries the same ten names plus two shapes the real
+# collection has no sample of (D-49).
+SYNTHETIC_EXTRA=(
+  "[만화] 암호화 테스트.zip"
+  "[만화] ZIP64 테스트.zip"
+)
+
+synthetic=0
+root="${SHELF_E2E_ROOT:-/mnt/big-data/pds/taison-data/02. books/01. mangga}"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --synthetic) synthetic=1 ;;
+    --root) root="$2"; shift ;;
+    *) echo "e2e-config.sh: unknown argument $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+port="${SHELF_E2E_PORT:-8791}"
+state="${SHELF_E2E_STATE:-/tmp/shelf-e2e}"
+base_path="${SHELF_E2E_BASE_PATH:-}"
+log_level="${SHELF_E2E_LOG_LEVEL:-debug}"
+
+# `server.allow_root_editing` (amendment A-11, ruling E-26) — off unless this is
+# the synthetic round.
+#
+# It is derived from --synthetic rather than exposed as an environment override,
+# and that is the safety property: turning it on for the real-collection round
+# would point `POST /api/roots` at `test/shelf.e2e.yaml` *inside the repository*,
+# which scripts/e2e.sh step 9 fails on. The synthetic round writes to a config
+# under the run's /tmp state directory instead. See the key's comment in the
+# template for the full reasoning.
+allow_root_editing=false
+if [ "$synthetic" -eq 1 ]; then
+  allow_root_editing=true
+fi
+
+globs=("${CURATED[@]}")
+if [ "$synthetic" -eq 1 ]; then
+  globs+=("${SYNTHETIC_EXTRA[@]}")
+fi
+
+# `[` and `]` open and close a path.Match character class. `[[]` is a class
+# whose only member is `[`, so it matches a literal one; a bare `]` outside a
+# class is already literal but is escaped the same way for symmetry. This is
+# the escaping impl-plan §6.3 prescribes.
+escape_glob() {
+  printf '%s' "$1" | sed -e 's/\[/[[]/g' -e 's/\*/[*]/g' -e 's/?/[?]/g'
+}
+
+include_block=""
+for g in "${globs[@]}"; do
+  include_block+="    - \"$(escape_glob "$g")\"
+"
+done
+include_block="${include_block%$'\n'}"
+
+tmpl="$repo/test/shelf.e2e.yaml.tmpl"
+[ -f "$tmpl" ] || { echo "e2e-config.sh: missing $tmpl" >&2; exit 1; }
+
+# awk rather than sed for the multi-line block, and because every value here
+# can contain a slash.
+awk -v root="$root" -v port="$port" -v data="$state/data" -v cache="$state/cache" \
+    -v base="$base_path" -v level="$log_level" -v globs="$include_block" \
+    -v rootedit="$allow_root_editing" '
+  {
+    gsub(/@@ROOT@@/, root)
+    gsub(/@@PORT@@/, port)
+    gsub(/@@DATA_DIR@@/, data)
+    gsub(/@@CACHE_DIR@@/, cache)
+    gsub(/@@BASE_PATH@@/, base)
+    gsub(/@@LOG_LEVEL@@/, level)
+    gsub(/@@ALLOW_ROOT_EDITING@@/, rootedit)
+    if ($0 ~ /@@INCLUDE_GLOBS@@/) { print globs; next }
+    print
+  }
+' "$tmpl"

@@ -1,0 +1,32 @@
+{
+  "items": [
+    {
+      "id": "avpsrxjmakuh7wyw",
+      "root_name": "manga",
+      "name": "[만화] Clover 클로버 (총4권)",
+      "path": "[만화] Clover 클로버 (총4권)",
+      "kind": "folder",
+      "book_count": 1,
+      "page_count": 3,
+      "total_bytes": 2048,
+      "mtime": 1457920766,
+      "added_at": 1782637200,
+      "status": "ok",
+      "error": null,
+      "has_cover": true,
+      "cover_cv": "c10bec10bec10be0",
+      "progress": {
+        "books_total": 1,
+        "books_completed": 0,
+        "books_started": 0,
+        "percent": 0,
+        "last_read_at": null,
+        "last_book_id": null,
+        "last_page": null
+      }
+    }
+  ],
+  "total": 4,
+  "offset": 0,
+  "limit": 1
+}

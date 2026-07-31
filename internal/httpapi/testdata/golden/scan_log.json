@@ -1,0 +1,13 @@
+{
+  "items": [
+    {
+      "id": 1,
+      "ts": 1785229110,
+      "run_id": "run-0001",
+      "level": "warn",
+      "root_name": "manga",
+      "rel_path": "[만화] 손상.zip",
+      "message": "central directory is truncated; the book is listed with status=error"
+    }
+  ]
+}

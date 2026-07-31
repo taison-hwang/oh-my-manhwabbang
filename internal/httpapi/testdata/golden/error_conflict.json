@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "conflict",
+    "message": "a scan is already running"
+  }
+}

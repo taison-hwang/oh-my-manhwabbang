@@ -1,0 +1,1734 @@
+make: Entering directory '/mnt/data/codejobs/projects/betterax-proto/zip-viewer'
+
+[1m==> 1 · build[0m
+  PASS  shelf dev (none, built 2026-07-28T15:41:28Z, go1.25.0 linux/amd64)
+
+[1m==> 2 · configuration[0m
+  PASS  root: /mnt/big-data/pds/taison-data/02. books/01. mangga (read-only; nothing is copied — A-3 include_globs)
+  PASS  config: /mnt/data/codejobs/projects/betterax-proto/zip-viewer/test/shelf.e2e.yaml   state: /tmp/shelf-e2e-3286544
+
+[1m==> 3 · FR-CFG-005 marker[0m
+  PASS  marker laid down at 00:41:36
+
+[1m==> 4 · start the server[0m
+  PASS  listening on http://127.0.0.1:8791 (pid 3286846)
+
+[1m==> 5 · NFR-OPS-006 — the library answers before any scan[0m
+  PASS  no scan is running (scan.on_start: false)
+  PASS  GET /api/series answers 200 from the existing index
+
+[1m==> 6 · full scan[0m
+  PASS  run f6a067bd84cab711 started
+  PASS  the full scan finished in 1s
+        {
+            "state": "idle",
+            "run_id": "f6a067bd84cab711",
+            "full": true,
+            "started_at": 1785253297,
+            "finished_at": 1785253297,
+            "roots": [
+                "mangga"
+            ],
+            "current_root": null,
+            "current_item": null,
+            "total": 101,
+            "done": 101,
+            "errors": 3,
+            "covers_total": 144,
+            "covers_done": 144,
+            "elapsed_ms": 374,
+            "eta_ms": null,
+            "last_error": "zip: end of central directory not found (archive is 0 bytes)"
+        }
+
+[1m==> 7 · curl assertions (impl-plan §6.3 step 5)[0m
+
+-- curl assertions (real subset) ----------------------------------
+  PASS  the curated subset indexes exactly the include_globs entries
+  PASS  every curated series is present
+  note  series kinds: {'folder': 7, 'zip': 3}
+  PASS  row 1 · folder of ZIPs is kind=folder (Clover)
+  PASS  row 4 · a top-level ZIP is its own series (바퀴)
+  PASS  row 3 · loose images become one book (자살도)
+  PASS  Clover has four volumes
+  PASS  상처를 쫓는자 has eleven image folders
+  PASS  자살도 holds 181 loose pages
+  PASS  강철의 연금술사 has 27 volumes and no one-page book (D-5)
+  PASS  배틀로얄 is one 1 540-page volume (AC-008)
+  PASS  엔젤하트 (a container of sub-ZIPs) is a series with status=error (E-14)
+  PASS  the error series carries a reason the UI can show (design.md 화면 2)
+  PASS  엔젤하트's single book stays status=empty (D-10 is unchanged at book level)
+  PASS  엔젤하트 reports its bytes on disk, not its (zero) page bytes
+  PASS  디엔엔젤 has exactly one unopenable volume (0-byte archive)
+  PASS  the broken volume carries a reason the UI can show
+  PASS  the rest of 디엔엔젤 is readable — one failure does not fail the series
+  PASS  군계 lists every volume including the duplicates (E-5)
+  PASS  군계's two truncated archives are isolated (FR-IDX-010)
+  PASS  군계 shows both the folder and the ZIP for 01권 (D-6, ruling E-5)
+  PASS  군계 uses its named cover file (arch §4.10 step 1)
+  PASS  미생 is a series of PDF books (AC-004, prd §2.2 row 5)
+  PASS  미생 (PDF) reports a real 용량 rather than 0 KB
+  PASS  미생's 용량 is the sum of its volumes on disk
+  PASS  미생 has nine volumes
+  PASS  a PDF volume reports a plausible page count
+  PASS  AC-004 · a PDF page renders as image/jpeg through /pages/{n}
+  PASS  the rendered PDF page is a real image
+  PASS  AC-003 · folder-of-ZIPs exposes a readable volume
+  PASS  AC-003 · folder-of-ZIPs book detail is shape-identical
+  PASS  AC-003 · folder-of-ZIPs page 1 streams
+  PASS  AC-003 · folder-of-ZIPs page 1 is an image
+  PASS  FR-SRV-007 · folder-of-ZIPs page with a matching ?v= is immutable
+  PASS  AC-003 · single ZIP exposes a readable volume
+  PASS  AC-003 · single ZIP book detail is shape-identical
+  PASS  AC-003 · single ZIP page 1 streams
+  PASS  AC-003 · single ZIP page 1 is an image
+  PASS  FR-SRV-007 · single ZIP page with a matching ?v= is immutable
+  PASS  AC-003 · folder-of-images exposes a readable volume
+  PASS  AC-003 · folder-of-images book detail is shape-identical
+  PASS  AC-003 · folder-of-images page 1 streams
+  PASS  AC-003 · folder-of-images page 1 is an image
+  PASS  FR-SRV-007 · folder-of-images page with a matching ?v= is immutable
+  PASS  AC-002 · none of 500 sampled page names contains U+FFFD
+  PASS  AC-008 · every page is returned in one request, so a jump needs no round trip
+  PASS  AC-008 · the slowest of five arbitrary jumps took 44 ms (< 200 ms)
+  PASS  a page without ?v= is only cacheable for 60 s
+  PASS  a stale ?v= is 409 stale_version
+  PASS  409 carries the current cv so the client can recover
+  PASS  there is no page 0 anywhere in this product
+  PASS  a page past the end is 404
+  PASS  most of the subset has a cover
+  PASS  FR-THM-003 · the scan itself generated every cover (first request is 200, never 202)
+  PASS  FR-THM-003 · every cover generated during the scan is servable
+  PASS  the thumbnail cache is populated
+  PASS  GET /api/roots reports the configured root
+  PASS  GET /api/settings mirrors thumbnails.widths
+  PASS  an unknown /api/ path is a JSON 404, never the SPA
+  PASS  the 404 uses the §7.2 envelope
+  PASS  the SPA is served from the embedded bundle (NFR-OPS-001)
+  PASS  the SPA is HTML
+  PASS  security headers are present (arch §8.4)
+  PASS  a deep link falls back to index.html for the client router
+  PASS  FR-LIB-006 · 초성 search finds 군계
+
+-- all 64 curl assertions passed ------------------------------
+
+[1m==> 8 · NFR-PRF-004 — an immediate rescan is incremental[0m
+  PASS  the no-change rescan finished in 1s (< 30 s)
+
+[1m==> 9 · FR-CFG-005 / AC-001 — the media volume is untouched[0m
+  PASS  nothing under the media root was created or modified
+  PASS  nothing was written to the server's TMPDIR or the working directory
+  PASS  no shelf-named stray under /tmp
+
+[1m==> 10 · AC-005 / AC-006 — delete the index and the cache, restart[0m
+  PASS  recorded progress, a per-book preference and a setting on i4kixpa2b2oxpcg5
+  PASS  deleted index.db* and the whole cache directory
+  PASS  user.db is still on disk
+  PASS  restarted
+  PASS  the user setting survived the wipe
+  FAIL  expected 404 for a book with no index row, got 200
+  PASS  AC-005 · the library rebuilt to 10 series
+  PASS  FR-CFG-004 · the rebuilt index reproduced the same book id
+  PASS  AC-006 · reading progress survived (last_page=2)
+  PASS  the per-book reading direction survived
+  PASS  AC-005 · covers regenerated after the cache was deleted
+
+[1m==> 11 · Playwright[0m
+
+> shelf-web@0.0.0 e2e /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web
+> playwright test
+
+
+Running 48 tests using 1 worker
+
+  ✓  1 [desktop-1440] › e2e/01-library.spec.ts:30:1 › 6.1 · the grid renders ten series with real covers and no layout shift (2.9s)
+  ✓  2 [desktop-1440] › e2e/01-library.spec.ts:71:1 › 6.2 · list mode sorted by 용량 desc puts the largest series first (1.8s)
+  ✓  3 [desktop-1440] › e2e/01-library.spec.ts:97:1 › 6.3 · 초성 search finds 군계 and highlights the matched syllables (2.0s)
+  ✓  4 [desktop-1440] › e2e/02-palette.spec.ts:21:1 › 6.4 · Ctrl+K → ㅁㅅ → ↵ opens the 미생 series (4.3s)
+  ✘  5 [desktop-1440] › e2e/03-series-detail.spec.ts:31:1 › 6.5 · 군계 detail shows its path, and broken volumes are badged and dead (2.0m)
+ ELIFECYCLE  Command failed.
+Terminated
+  FAIL  playwright: see web/playwright-report/
+  PASS  8 screenshots in docs/e2e-shots/ (review against docs/ui-shots/)
+
+[1m==> summary[0m
+
+[31mE2E FAILED[0m — 2 failing step(s), real subset
+server log: /tmp/shelf-e2e-3286544/server.log
+make: *** [Makefile:214: e2e] Error 1
+make: Leaving directory '/mnt/data/codejobs/projects/betterax-proto/zip-viewer'
+  ✘  6 [desktop-1440] › e2e/03-series-detail.spec.ts:88:1 › 6.5 (E-14) · a series with nothing readable in it is shown as broken (2.1m)
+  ✘  7 [desktop-1440] › e2e/04-viewer.spec.ts:70:1 › 6.6 · keys, the thumbnail strip, 단면/양면, R→L and Esc (723ms)
+  -  8 [desktop-1440] › e2e/04-viewer.spec.ts:182:1 › 6.7 · reopening the volume resumes at the saved page
+  ✘  9 [desktop-1440] › e2e/05-pdf-and-large.spec.ts:50:1 › 6.8 · a PDF volume renders image/jpeg in the same viewer, and R→L flips the spread (762ms)
+  ✘  10 [desktop-1440] › e2e/05-pdf-and-large.spec.ts:128:1 › 6.9 · a jump into the 1 540-page archive loads, and the strip is virtualised (737ms)
+  ✘  11 [desktop-1440] › e2e/06-settings.spec.ts:41:1 › 6.10 · cache, theme, read-only roots and the scan log (713ms)
+  ✘  12 [desktop-1440] › e2e/07-responsive.spec.ts:54:1 › 6.11 · the sidebar tier, the drawer, and no horizontal scroll anywhere (731ms)
+  ✘  13 [laptop-1024] › e2e/01-library.spec.ts:30:1 › 6.1 · the grid renders ten series with real covers and no layout shift (693ms)
+  ✘  14 [laptop-1024] › e2e/01-library.spec.ts:71:1 › 6.2 · list mode sorted by 용량 desc puts the largest series first (674ms)
+  ✘  15 [laptop-1024] › e2e/01-library.spec.ts:97:1 › 6.3 · 초성 search finds 군계 and highlights the matched syllables (673ms)
+  ✘  16 [laptop-1024] › e2e/02-palette.spec.ts:21:1 › 6.4 · Ctrl+K → ㅁㅅ → ↵ opens the 미생 series (685ms)
+  ✘  17 [laptop-1024] › e2e/03-series-detail.spec.ts:31:1 › 6.5 · 군계 detail shows its path, and broken volumes are badged and dead (728ms)
+  ✘  18 [laptop-1024] › e2e/03-series-detail.spec.ts:88:1 › 6.5 (E-14) · a series with nothing readable in it is shown as broken (683ms)
+  ✘  19 [laptop-1024] › e2e/04-viewer.spec.ts:70:1 › 6.6 · keys, the thumbnail strip, 단면/양면, R→L and Esc (720ms)
+  -  20 [laptop-1024] › e2e/04-viewer.spec.ts:182:1 › 6.7 · reopening the volume resumes at the saved page
+  ✘  21 [laptop-1024] › e2e/05-pdf-and-large.spec.ts:50:1 › 6.8 · a PDF volume renders image/jpeg in the same viewer, and R→L flips the spread (746ms)
+  ✘  22 [laptop-1024] › e2e/05-pdf-and-large.spec.ts:128:1 › 6.9 · a jump into the 1 540-page archive loads, and the strip is virtualised (695ms)
+  ✘  23 [laptop-1024] › e2e/06-settings.spec.ts:41:1 › 6.10 · cache, theme, read-only roots and the scan log (697ms)
+  ✘  24 [laptop-1024] › e2e/07-responsive.spec.ts:54:1 › 6.11 · the sidebar tier, the drawer, and no horizontal scroll anywhere (701ms)
+  ✘  25 [tablet-768] › e2e/01-library.spec.ts:30:1 › 6.1 · the grid renders ten series with real covers and no layout shift (656ms)
+  ✘  26 [tablet-768] › e2e/01-library.spec.ts:71:1 › 6.2 · list mode sorted by 용량 desc puts the largest series first (700ms)
+  ✘  27 [tablet-768] › e2e/01-library.spec.ts:97:1 › 6.3 · 초성 search finds 군계 and highlights the matched syllables (623ms)
+  ✘  28 [tablet-768] › e2e/02-palette.spec.ts:21:1 › 6.4 · Ctrl+K → ㅁㅅ → ↵ opens the 미생 series (736ms)
+  ✘  29 [tablet-768] › e2e/03-series-detail.spec.ts:31:1 › 6.5 · 군계 detail shows its path, and broken volumes are badged and dead (664ms)
+  ✘  30 [tablet-768] › e2e/03-series-detail.spec.ts:88:1 › 6.5 (E-14) · a series with nothing readable in it is shown as broken (731ms)
+  ✘  31 [tablet-768] › e2e/04-viewer.spec.ts:70:1 › 6.6 · keys, the thumbnail strip, 단면/양면, R→L and Esc (703ms)
+  -  32 [tablet-768] › e2e/04-viewer.spec.ts:182:1 › 6.7 · reopening the volume resumes at the saved page
+  ✘  33 [tablet-768] › e2e/05-pdf-and-large.spec.ts:50:1 › 6.8 · a PDF volume renders image/jpeg in the same viewer, and R→L flips the spread (667ms)
+  ✘  34 [tablet-768] › e2e/05-pdf-and-large.spec.ts:128:1 › 6.9 · a jump into the 1 540-page archive loads, and the strip is virtualised (655ms)
+  ✘  35 [tablet-768] › e2e/06-settings.spec.ts:41:1 › 6.10 · cache, theme, read-only roots and the scan log (689ms)
+  ✘  36 [tablet-768] › e2e/07-responsive.spec.ts:54:1 › 6.11 · the sidebar tier, the drawer, and no horizontal scroll anywhere (700ms)
+  ✘  37 [mobile-400] › e2e/01-library.spec.ts:30:1 › 6.1 · the grid renders ten series with real covers and no layout shift (591ms)
+  ✘  38 [mobile-400] › e2e/01-library.spec.ts:71:1 › 6.2 · list mode sorted by 용량 desc puts the largest series first (597ms)
+  ✘  39 [mobile-400] › e2e/01-library.spec.ts:97:1 › 6.3 · 초성 search finds 군계 and highlights the matched syllables (571ms)
+  ✘  40 [mobile-400] › e2e/02-palette.spec.ts:21:1 › 6.4 · Ctrl+K → ㅁㅅ → ↵ opens the 미생 series (626ms)
+  ✘  41 [mobile-400] › e2e/03-series-detail.spec.ts:31:1 › 6.5 · 군계 detail shows its path, and broken volumes are badged and dead (585ms)
+  ✘  42 [mobile-400] › e2e/03-series-detail.spec.ts:88:1 › 6.5 (E-14) · a series with nothing readable in it is shown as broken (620ms)
+  ✘  43 [mobile-400] › e2e/04-viewer.spec.ts:70:1 › 6.6 · keys, the thumbnail strip, 단면/양면, R→L and Esc (616ms)
+  -  44 [mobile-400] › e2e/04-viewer.spec.ts:182:1 › 6.7 · reopening the volume resumes at the saved page
+  ✘  45 [mobile-400] › e2e/05-pdf-and-large.spec.ts:50:1 › 6.8 · a PDF volume renders image/jpeg in the same viewer, and R→L flips the spread (663ms)
+  ✘  46 [mobile-400] › e2e/05-pdf-and-large.spec.ts:128:1 › 6.9 · a jump into the 1 540-page archive loads, and the strip is virtualised (660ms)
+  ✘  47 [mobile-400] › e2e/06-settings.spec.ts:41:1 › 6.10 · cache, theme, read-only roots and the scan log (629ms)
+  ✘  48 [mobile-400] › e2e/07-responsive.spec.ts:54:1 › 6.11 · the sidebar tier, the drawer, and no horizontal scroll anywhere (642ms)
+
+
+  1) [desktop-1440] › e2e/03-series-detail.spec.ts:31:1 › 6.5 · 군계 detail shows its path, and broken volumes are badged and dead 
+
+    [31mTest timeout of 120000ms exceeded.[39m
+
+    Error: locator.click: Test timeout of 120000ms exceeded.
+    Call log:
+    [2m  - waiting for locator('[data-testid="library-scroller"] button[aria-label="[만화] 군계 1~25"]')[22m
+    [2m    - locator resolved to <button type="button" aria-label="[만화] 군계 1~25" class="absolute inset-0 block h-full w-full cursor-pointer">…</button>[22m
+    [2m  - attempting click action[22m
+    [2m    - waiting for element to be visible, enabled and stable[22m
+    [2m    - element is visible, enabled and stable[22m
+    [2m    - scrolling into view if needed[22m
+    [2m    - done scrolling[22m
+    [2m    - performing click action[22m
+    [2m    - <div class="pointer-events-none absolute inset-0 flex flex-col justify-end gap-1 bg-scrim-cover p-2 opacity-0 transition-opacity duration-[120ms] group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">…</div> intercepts pointer events[22m
+    [2m  - retrying click action[22m
+    [2m    - waiting for element to be visible, enabled and stable[22m
+    [2m    - element is visible, enabled and stable[22m
+    [2m    - scrolling into view if needed[22m
+    [2m    - done scrolling[22m
+    [2m    - <div class="pointer-events-none absolute inset-0 flex flex-col justify-end gap-1 bg-scrim-cover p-2 opacity-0 transition-opacity duration-[120ms] group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">…</div> intercepts pointer events[22m
+    [2m  - retrying click action[22m
+    [2m    - waiting 20ms[22m
+    [2m    2 × waiting for element to be visible, enabled and stable[22m
+    [2m      - element is visible, enabled and stable[22m
+    [2m      - scrolling into view if needed[22m
+    [2m      - done scrolling[22m
+    [2m      - <div class="pointer-events-none absolute inset-0 flex flex-col justify-end gap-1 bg-scrim-cover p-2 opacity-0 transition-opacity duration-[120ms] group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">…</div> intercepts pointer events[22m
+    [2m    - retrying click action[22m
+    [2m      - waiting 100ms[22m
+    [2m    234 × waiting for element to be visible, enabled and stable[22m
+    [2m        - element is visible, enabled and stable[22m
+    [2m        - scrolling into view if needed[22m
+    [2m        - done scrolling[22m
+    [2m        - <div class="pointer-events-none absolute inset-0 flex flex-col justify-end gap-1 bg-scrim-cover p-2 opacity-0 transition-opacity duration-[120ms] group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">…</div> intercepts pointer events[22m
+    [2m      - retrying click action[22m
+    [2m        - waiting 500ms[22m
+
+
+       at shelf.ts:284
+
+      282 |   const tile = seriesTile(page, name)
+      283 |   await tile.scrollIntoViewIfNeeded()
+    > 284 |   await tile.click()
+          |              ^
+      285 |   await expect(page.getByRole('heading', { level: 2, name })).toBeVisible()
+      286 | }
+      287 |
+        at openSeries (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:284:14)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/03-series-detail.spec.ts:44:3
+
+    [31mTest timeout of 120000ms exceeded.[39m
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/03-series-detail-6-5-·-군계--9dba5-volumes-are-badged-and-dead-desktop-1440/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  2) [desktop-1440] › e2e/03-series-detail.spec.ts:88:1 › 6.5 (E-14) · a series with nothing readable in it is shown as broken 
+
+    [31mTest timeout of 120000ms exceeded.[39m
+
+    Error: locator.click: Test timeout of 120000ms exceeded.
+    Call log:
+    [2m  - waiting for locator('[data-testid="library-scroller"] button[aria-label="[만화] 엔젤하트 전32권 완결.zip"]')[22m
+    [2m    - locator resolved to <button type="button" aria-label="[만화] 엔젤하트 전32권 완결.zip" class="absolute inset-0 block h-full w-full cursor-pointer">…</button>[22m
+    [2m  - attempting click action[22m
+    [2m    - waiting for element to be visible, enabled and stable[22m
+    [2m    - element is visible, enabled and stable[22m
+    [2m    - scrolling into view if needed[22m
+    [2m    - done scrolling[22m
+    [2m    - performing click action[22m
+    [2m    - <div class="pointer-events-none absolute inset-0 flex flex-col justify-end gap-1 bg-scrim-cover p-2 opacity-0 transition-opacity duration-[120ms] group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">…</div> intercepts pointer events[22m
+    [2m  - retrying click action[22m
+    [2m    - waiting for element to be visible, enabled and stable[22m
+    [2m    - element is visible, enabled and stable[22m
+    [2m    - scrolling into view if needed[22m
+    [2m    - done scrolling[22m
+    [2m    - <div class="pointer-events-none absolute inset-0 flex flex-col justify-end gap-1 bg-scrim-cover p-2 opacity-0 transition-opacity duration-[120ms] group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">…</div> intercepts pointer events[22m
+    [2m  - retrying click action[22m
+    [2m    - waiting 20ms[22m
+    [2m    2 × waiting for element to be visible, enabled and stable[22m
+    [2m      - element is visible, enabled and stable[22m
+    [2m      - scrolling into view if needed[22m
+    [2m      - done scrolling[22m
+    [2m      - <div class="pointer-events-none absolute inset-0 flex flex-col justify-end gap-1 bg-scrim-cover p-2 opacity-0 transition-opacity duration-[120ms] group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">…</div> intercepts pointer events[22m
+    [2m    - retrying click action[22m
+    [2m      - waiting 100ms[22m
+    [2m    243 × waiting for element to be visible, enabled and stable[22m
+    [2m        - element is visible, enabled and stable[22m
+    [2m        - scrolling into view if needed[22m
+    [2m        - done scrolling[22m
+    [2m        - <div class="pointer-events-none absolute inset-0 flex flex-col justify-end gap-1 bg-scrim-cover p-2 opacity-0 transition-opacity duration-[120ms] group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">…</div> intercepts pointer events[22m
+    [2m      - retrying click action[22m
+    [2m        - waiting 500ms[22m
+
+
+       at shelf.ts:284
+
+      282 |   const tile = seriesTile(page, name)
+      283 |   await tile.scrollIntoViewIfNeeded()
+    > 284 |   await tile.click()
+          |              ^
+      285 |   await expect(page.getByRole('heading', { level: 2, name })).toBeVisible()
+      286 | }
+      287 |
+        at openSeries (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:284:14)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/03-series-detail.spec.ts:97:3
+
+    [31mTest timeout of 120000ms exceeded.[39m
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/03-series-detail-6-5-E-14--e29d0-le-in-it-is-shown-as-broken-desktop-1440/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  3) [desktop-1440] › e2e/04-viewer.spec.ts:70:1 › 6.6 · keys, the thumbnail strip, 단면/양면, R→L and Esc 
+
+    Error: apiRequestContext.get: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → GET http://127.0.0.1:8791/api/series?limit=200&sort=name[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+
+
+       at shelf.ts:156
+
+      154 | /** `GET /api/series` as a name → summary map. */
+      155 | export async function seriesFacts(page: Page): Promise<Map<string, SeriesFact>> {
+    > 156 |   const response = await page.request.get('/api/series?limit=200&sort=name')
+          |                                       ^
+      157 |   expect(response.ok(), 'GET /api/series').toBe(true)
+      158 |   const body = (await response.json()) as { items: SeriesFact[] }
+      159 |   return new Map(body.items.map((item) => [item.name, item]))
+        at seriesFacts (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:156:39)
+        at seriesId (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:163:23)
+        at firstVolume (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/04-viewer.spec.ts:63:21)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/04-viewer.spec.ts:71:36
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/04-viewer-6-6-·-keys-the-thumbnail-strip-단면-양면-R→L-and-Esc-desktop-1440/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/04-viewer-6-6-·-keys-the-thumbnail-strip-단면-양면-R→L-and-Esc-desktop-1440/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/04-viewer-6-6-·-keys-the-thumbnail-strip-단면-양면-R→L-and-Esc-desktop-1440/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  4) [desktop-1440] › e2e/05-pdf-and-large.spec.ts:50:1 › 6.8 · a PDF volume renders image/jpeg in the same viewer, and R→L flips the spread 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/05-pdf-and-large.spec.ts:47:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/05-pdf-and-large-6-8-·-a-P-ad6ec-er-and-R→L-flips-the-spread-desktop-1440/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/05-pdf-and-large-6-8-·-a-P-ad6ec-er-and-R→L-flips-the-spread-desktop-1440/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/05-pdf-and-large-6-8-·-a-P-ad6ec-er-and-R→L-flips-the-spread-desktop-1440/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  5) [desktop-1440] › e2e/05-pdf-and-large.spec.ts:128:1 › 6.9 · a jump into the 1 540-page archive loads, and the strip is virtualised 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/05-pdf-and-large.spec.ts:47:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/05-pdf-and-large-6-9-·-a-j-35bd8-nd-the-strip-is-virtualised-desktop-1440/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/05-pdf-and-large-6-9-·-a-j-35bd8-nd-the-strip-is-virtualised-desktop-1440/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/05-pdf-and-large-6-9-·-a-j-35bd8-nd-the-strip-is-virtualised-desktop-1440/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  6) [desktop-1440] › e2e/06-settings.spec.ts:41:1 › 6.10 · cache, theme, read-only roots and the scan log 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/06-settings.spec.ts:38:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/06-settings-6-10-·-cache-t-b8179-only-roots-and-the-scan-log-desktop-1440/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/06-settings-6-10-·-cache-t-b8179-only-roots-and-the-scan-log-desktop-1440/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/06-settings-6-10-·-cache-t-b8179-only-roots-and-the-scan-log-desktop-1440/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  7) [desktop-1440] › e2e/07-responsive.spec.ts:54:1 › 6.11 · the sidebar tier, the drawer, and no horizontal scroll anywhere 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/07-responsive.spec.ts:51:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/07-responsive-6-11-·-the-s-d2829--horizontal-scroll-anywhere-desktop-1440/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/07-responsive-6-11-·-the-s-d2829--horizontal-scroll-anywhere-desktop-1440/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/07-responsive-6-11-·-the-s-d2829--horizontal-scroll-anywhere-desktop-1440/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  8) [laptop-1024] › e2e/01-library.spec.ts:30:1 › 6.1 · the grid renders ten series with real covers and no layout shift 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/01-library.spec.ts:27:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/01-library-6-1-·-the-grid--eaec4--covers-and-no-layout-shift-laptop-1024/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/01-library-6-1-·-the-grid--eaec4--covers-and-no-layout-shift-laptop-1024/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/01-library-6-1-·-the-grid--eaec4--covers-and-no-layout-shift-laptop-1024/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  9) [laptop-1024] › e2e/01-library.spec.ts:71:1 › 6.2 · list mode sorted by 용량 desc puts the largest series first 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/01-library.spec.ts:27:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/01-library-6-2-·-list-mode-97273-ts-the-largest-series-first-laptop-1024/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/01-library-6-2-·-list-mode-97273-ts-the-largest-series-first-laptop-1024/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/01-library-6-2-·-list-mode-97273-ts-the-largest-series-first-laptop-1024/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  10) [laptop-1024] › e2e/01-library.spec.ts:97:1 › 6.3 · 초성 search finds 군계 and highlights the matched syllables 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/01-library.spec.ts:27:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/01-library-6-3-·-초성-search-44f3c-ights-the-matched-syllables-laptop-1024/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/01-library-6-3-·-초성-search-44f3c-ights-the-matched-syllables-laptop-1024/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/01-library-6-3-·-초성-search-44f3c-ights-the-matched-syllables-laptop-1024/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  11) [laptop-1024] › e2e/02-palette.spec.ts:21:1 › 6.4 · Ctrl+K → ㅁㅅ → ↵ opens the 미생 series ──────
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/02-palette.spec.ts:18:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/02-palette-6-4-·-Ctrl-K-→-ㅁㅅ-→-↵-opens-the-미생-series-laptop-1024/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/02-palette-6-4-·-Ctrl-K-→-ㅁㅅ-→-↵-opens-the-미생-series-laptop-1024/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/02-palette-6-4-·-Ctrl-K-→-ㅁㅅ-→-↵-opens-the-미생-series-laptop-1024/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  12) [laptop-1024] › e2e/03-series-detail.spec.ts:31:1 › 6.5 · 군계 detail shows its path, and broken volumes are badged and dead 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/03-series-detail.spec.ts:28:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/03-series-detail-6-5-·-군계--9dba5-volumes-are-badged-and-dead-laptop-1024/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/03-series-detail-6-5-·-군계--9dba5-volumes-are-badged-and-dead-laptop-1024/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/03-series-detail-6-5-·-군계--9dba5-volumes-are-badged-and-dead-laptop-1024/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  13) [laptop-1024] › e2e/03-series-detail.spec.ts:88:1 › 6.5 (E-14) · a series with nothing readable in it is shown as broken 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/03-series-detail.spec.ts:28:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/03-series-detail-6-5-E-14--e29d0-le-in-it-is-shown-as-broken-laptop-1024/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/03-series-detail-6-5-E-14--e29d0-le-in-it-is-shown-as-broken-laptop-1024/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/03-series-detail-6-5-E-14--e29d0-le-in-it-is-shown-as-broken-laptop-1024/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  14) [laptop-1024] › e2e/04-viewer.spec.ts:70:1 › 6.6 · keys, the thumbnail strip, 단면/양면, R→L and Esc 
+
+    Error: apiRequestContext.get: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → GET http://127.0.0.1:8791/api/series?limit=200&sort=name[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+
+
+       at shelf.ts:156
+
+      154 | /** `GET /api/series` as a name → summary map. */
+      155 | export async function seriesFacts(page: Page): Promise<Map<string, SeriesFact>> {
+    > 156 |   const response = await page.request.get('/api/series?limit=200&sort=name')
+          |                                       ^
+      157 |   expect(response.ok(), 'GET /api/series').toBe(true)
+      158 |   const body = (await response.json()) as { items: SeriesFact[] }
+      159 |   return new Map(body.items.map((item) => [item.name, item]))
+        at seriesFacts (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:156:39)
+        at seriesId (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:163:23)
+        at firstVolume (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/04-viewer.spec.ts:63:21)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/04-viewer.spec.ts:71:36
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/04-viewer-6-6-·-keys-the-thumbnail-strip-단면-양면-R→L-and-Esc-laptop-1024/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/04-viewer-6-6-·-keys-the-thumbnail-strip-단면-양면-R→L-and-Esc-laptop-1024/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/04-viewer-6-6-·-keys-the-thumbnail-strip-단면-양면-R→L-and-Esc-laptop-1024/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  15) [laptop-1024] › e2e/05-pdf-and-large.spec.ts:50:1 › 6.8 · a PDF volume renders image/jpeg in the same viewer, and R→L flips the spread 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/05-pdf-and-large.spec.ts:47:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/05-pdf-and-large-6-8-·-a-P-ad6ec-er-and-R→L-flips-the-spread-laptop-1024/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/05-pdf-and-large-6-8-·-a-P-ad6ec-er-and-R→L-flips-the-spread-laptop-1024/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/05-pdf-and-large-6-8-·-a-P-ad6ec-er-and-R→L-flips-the-spread-laptop-1024/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  16) [laptop-1024] › e2e/05-pdf-and-large.spec.ts:128:1 › 6.9 · a jump into the 1 540-page archive loads, and the strip is virtualised 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/05-pdf-and-large.spec.ts:47:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/05-pdf-and-large-6-9-·-a-j-35bd8-nd-the-strip-is-virtualised-laptop-1024/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/05-pdf-and-large-6-9-·-a-j-35bd8-nd-the-strip-is-virtualised-laptop-1024/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/05-pdf-and-large-6-9-·-a-j-35bd8-nd-the-strip-is-virtualised-laptop-1024/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  17) [laptop-1024] › e2e/06-settings.spec.ts:41:1 › 6.10 · cache, theme, read-only roots and the scan log 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/06-settings.spec.ts:38:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/06-settings-6-10-·-cache-t-b8179-only-roots-and-the-scan-log-laptop-1024/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/06-settings-6-10-·-cache-t-b8179-only-roots-and-the-scan-log-laptop-1024/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/06-settings-6-10-·-cache-t-b8179-only-roots-and-the-scan-log-laptop-1024/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  18) [laptop-1024] › e2e/07-responsive.spec.ts:54:1 › 6.11 · the sidebar tier, the drawer, and no horizontal scroll anywhere 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/07-responsive.spec.ts:51:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/07-responsive-6-11-·-the-s-d2829--horizontal-scroll-anywhere-laptop-1024/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/07-responsive-6-11-·-the-s-d2829--horizontal-scroll-anywhere-laptop-1024/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/07-responsive-6-11-·-the-s-d2829--horizontal-scroll-anywhere-laptop-1024/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  19) [tablet-768] › e2e/01-library.spec.ts:30:1 › 6.1 · the grid renders ten series with real covers and no layout shift 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/01-library.spec.ts:27:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/01-library-6-1-·-the-grid--eaec4--covers-and-no-layout-shift-tablet-768/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/01-library-6-1-·-the-grid--eaec4--covers-and-no-layout-shift-tablet-768/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/01-library-6-1-·-the-grid--eaec4--covers-and-no-layout-shift-tablet-768/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  20) [tablet-768] › e2e/01-library.spec.ts:71:1 › 6.2 · list mode sorted by 용량 desc puts the largest series first 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/01-library.spec.ts:27:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/01-library-6-2-·-list-mode-97273-ts-the-largest-series-first-tablet-768/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/01-library-6-2-·-list-mode-97273-ts-the-largest-series-first-tablet-768/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/01-library-6-2-·-list-mode-97273-ts-the-largest-series-first-tablet-768/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  21) [tablet-768] › e2e/01-library.spec.ts:97:1 › 6.3 · 초성 search finds 군계 and highlights the matched syllables 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/01-library.spec.ts:27:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/01-library-6-3-·-초성-search-44f3c-ights-the-matched-syllables-tablet-768/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/01-library-6-3-·-초성-search-44f3c-ights-the-matched-syllables-tablet-768/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/01-library-6-3-·-초성-search-44f3c-ights-the-matched-syllables-tablet-768/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  22) [tablet-768] › e2e/02-palette.spec.ts:21:1 › 6.4 · Ctrl+K → ㅁㅅ → ↵ opens the 미생 series ───────
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/02-palette.spec.ts:18:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/02-palette-6-4-·-Ctrl-K-→-ㅁㅅ-→-↵-opens-the-미생-series-tablet-768/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/02-palette-6-4-·-Ctrl-K-→-ㅁㅅ-→-↵-opens-the-미생-series-tablet-768/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/02-palette-6-4-·-Ctrl-K-→-ㅁㅅ-→-↵-opens-the-미생-series-tablet-768/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  23) [tablet-768] › e2e/03-series-detail.spec.ts:31:1 › 6.5 · 군계 detail shows its path, and broken volumes are badged and dead 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/03-series-detail.spec.ts:28:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/03-series-detail-6-5-·-군계--9dba5-volumes-are-badged-and-dead-tablet-768/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/03-series-detail-6-5-·-군계--9dba5-volumes-are-badged-and-dead-tablet-768/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/03-series-detail-6-5-·-군계--9dba5-volumes-are-badged-and-dead-tablet-768/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  24) [tablet-768] › e2e/03-series-detail.spec.ts:88:1 › 6.5 (E-14) · a series with nothing readable in it is shown as broken 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/03-series-detail.spec.ts:28:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/03-series-detail-6-5-E-14--e29d0-le-in-it-is-shown-as-broken-tablet-768/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/03-series-detail-6-5-E-14--e29d0-le-in-it-is-shown-as-broken-tablet-768/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/03-series-detail-6-5-E-14--e29d0-le-in-it-is-shown-as-broken-tablet-768/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  25) [tablet-768] › e2e/04-viewer.spec.ts:70:1 › 6.6 · keys, the thumbnail strip, 단면/양면, R→L and Esc 
+
+    Error: apiRequestContext.get: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → GET http://127.0.0.1:8791/api/series?limit=200&sort=name[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+
+
+       at shelf.ts:156
+
+      154 | /** `GET /api/series` as a name → summary map. */
+      155 | export async function seriesFacts(page: Page): Promise<Map<string, SeriesFact>> {
+    > 156 |   const response = await page.request.get('/api/series?limit=200&sort=name')
+          |                                       ^
+      157 |   expect(response.ok(), 'GET /api/series').toBe(true)
+      158 |   const body = (await response.json()) as { items: SeriesFact[] }
+      159 |   return new Map(body.items.map((item) => [item.name, item]))
+        at seriesFacts (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:156:39)
+        at seriesId (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:163:23)
+        at firstVolume (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/04-viewer.spec.ts:63:21)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/04-viewer.spec.ts:71:36
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/04-viewer-6-6-·-keys-the-thumbnail-strip-단면-양면-R→L-and-Esc-tablet-768/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/04-viewer-6-6-·-keys-the-thumbnail-strip-단면-양면-R→L-and-Esc-tablet-768/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/04-viewer-6-6-·-keys-the-thumbnail-strip-단면-양면-R→L-and-Esc-tablet-768/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  26) [tablet-768] › e2e/05-pdf-and-large.spec.ts:50:1 › 6.8 · a PDF volume renders image/jpeg in the same viewer, and R→L flips the spread 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/05-pdf-and-large.spec.ts:47:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/05-pdf-and-large-6-8-·-a-P-ad6ec-er-and-R→L-flips-the-spread-tablet-768/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/05-pdf-and-large-6-8-·-a-P-ad6ec-er-and-R→L-flips-the-spread-tablet-768/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/05-pdf-and-large-6-8-·-a-P-ad6ec-er-and-R→L-flips-the-spread-tablet-768/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  27) [tablet-768] › e2e/05-pdf-and-large.spec.ts:128:1 › 6.9 · a jump into the 1 540-page archive loads, and the strip is virtualised 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/05-pdf-and-large.spec.ts:47:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/05-pdf-and-large-6-9-·-a-j-35bd8-nd-the-strip-is-virtualised-tablet-768/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/05-pdf-and-large-6-9-·-a-j-35bd8-nd-the-strip-is-virtualised-tablet-768/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/05-pdf-and-large-6-9-·-a-j-35bd8-nd-the-strip-is-virtualised-tablet-768/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  28) [tablet-768] › e2e/06-settings.spec.ts:41:1 › 6.10 · cache, theme, read-only roots and the scan log 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/06-settings.spec.ts:38:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/06-settings-6-10-·-cache-t-b8179-only-roots-and-the-scan-log-tablet-768/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/06-settings-6-10-·-cache-t-b8179-only-roots-and-the-scan-log-tablet-768/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/06-settings-6-10-·-cache-t-b8179-only-roots-and-the-scan-log-tablet-768/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  29) [tablet-768] › e2e/07-responsive.spec.ts:54:1 › 6.11 · the sidebar tier, the drawer, and no horizontal scroll anywhere 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/07-responsive.spec.ts:51:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/07-responsive-6-11-·-the-s-d2829--horizontal-scroll-anywhere-tablet-768/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/07-responsive-6-11-·-the-s-d2829--horizontal-scroll-anywhere-tablet-768/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/07-responsive-6-11-·-the-s-d2829--horizontal-scroll-anywhere-tablet-768/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  30) [mobile-400] › e2e/01-library.spec.ts:30:1 › 6.1 · the grid renders ten series with real covers and no layout shift 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/01-library.spec.ts:27:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/01-library-6-1-·-the-grid--eaec4--covers-and-no-layout-shift-mobile-400/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/01-library-6-1-·-the-grid--eaec4--covers-and-no-layout-shift-mobile-400/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/01-library-6-1-·-the-grid--eaec4--covers-and-no-layout-shift-mobile-400/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  31) [mobile-400] › e2e/01-library.spec.ts:71:1 › 6.2 · list mode sorted by 용량 desc puts the largest series first 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/01-library.spec.ts:27:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/01-library-6-2-·-list-mode-97273-ts-the-largest-series-first-mobile-400/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/01-library-6-2-·-list-mode-97273-ts-the-largest-series-first-mobile-400/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/01-library-6-2-·-list-mode-97273-ts-the-largest-series-first-mobile-400/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  32) [mobile-400] › e2e/01-library.spec.ts:97:1 › 6.3 · 초성 search finds 군계 and highlights the matched syllables 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/01-library.spec.ts:27:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/01-library-6-3-·-초성-search-44f3c-ights-the-matched-syllables-mobile-400/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/01-library-6-3-·-초성-search-44f3c-ights-the-matched-syllables-mobile-400/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/01-library-6-3-·-초성-search-44f3c-ights-the-matched-syllables-mobile-400/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  33) [mobile-400] › e2e/02-palette.spec.ts:21:1 › 6.4 · Ctrl+K → ㅁㅅ → ↵ opens the 미생 series ───────
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/02-palette.spec.ts:18:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/02-palette-6-4-·-Ctrl-K-→-ㅁㅅ-→-↵-opens-the-미생-series-mobile-400/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/02-palette-6-4-·-Ctrl-K-→-ㅁㅅ-→-↵-opens-the-미생-series-mobile-400/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/02-palette-6-4-·-Ctrl-K-→-ㅁㅅ-→-↵-opens-the-미생-series-mobile-400/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  34) [mobile-400] › e2e/03-series-detail.spec.ts:31:1 › 6.5 · 군계 detail shows its path, and broken volumes are badged and dead 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/03-series-detail.spec.ts:28:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/03-series-detail-6-5-·-군계--9dba5-volumes-are-badged-and-dead-mobile-400/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/03-series-detail-6-5-·-군계--9dba5-volumes-are-badged-and-dead-mobile-400/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/03-series-detail-6-5-·-군계--9dba5-volumes-are-badged-and-dead-mobile-400/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  35) [mobile-400] › e2e/03-series-detail.spec.ts:88:1 › 6.5 (E-14) · a series with nothing readable in it is shown as broken 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/03-series-detail.spec.ts:28:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/03-series-detail-6-5-E-14--e29d0-le-in-it-is-shown-as-broken-mobile-400/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/03-series-detail-6-5-E-14--e29d0-le-in-it-is-shown-as-broken-mobile-400/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/03-series-detail-6-5-E-14--e29d0-le-in-it-is-shown-as-broken-mobile-400/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  36) [mobile-400] › e2e/04-viewer.spec.ts:70:1 › 6.6 · keys, the thumbnail strip, 단면/양면, R→L and Esc 
+
+    Error: apiRequestContext.get: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → GET http://127.0.0.1:8791/api/series?limit=200&sort=name[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+
+
+       at shelf.ts:156
+
+      154 | /** `GET /api/series` as a name → summary map. */
+      155 | export async function seriesFacts(page: Page): Promise<Map<string, SeriesFact>> {
+    > 156 |   const response = await page.request.get('/api/series?limit=200&sort=name')
+          |                                       ^
+      157 |   expect(response.ok(), 'GET /api/series').toBe(true)
+      158 |   const body = (await response.json()) as { items: SeriesFact[] }
+      159 |   return new Map(body.items.map((item) => [item.name, item]))
+        at seriesFacts (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:156:39)
+        at seriesId (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:163:23)
+        at firstVolume (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/04-viewer.spec.ts:63:21)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/04-viewer.spec.ts:71:36
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/04-viewer-6-6-·-keys-the-thumbnail-strip-단면-양면-R→L-and-Esc-mobile-400/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/04-viewer-6-6-·-keys-the-thumbnail-strip-단면-양면-R→L-and-Esc-mobile-400/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/04-viewer-6-6-·-keys-the-thumbnail-strip-단면-양면-R→L-and-Esc-mobile-400/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  37) [mobile-400] › e2e/05-pdf-and-large.spec.ts:50:1 › 6.8 · a PDF volume renders image/jpeg in the same viewer, and R→L flips the spread 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/05-pdf-and-large.spec.ts:47:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/05-pdf-and-large-6-8-·-a-P-ad6ec-er-and-R→L-flips-the-spread-mobile-400/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/05-pdf-and-large-6-8-·-a-P-ad6ec-er-and-R→L-flips-the-spread-mobile-400/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/05-pdf-and-large-6-8-·-a-P-ad6ec-er-and-R→L-flips-the-spread-mobile-400/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  38) [mobile-400] › e2e/05-pdf-and-large.spec.ts:128:1 › 6.9 · a jump into the 1 540-page archive loads, and the strip is virtualised 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/05-pdf-and-large.spec.ts:47:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/05-pdf-and-large-6-9-·-a-j-35bd8-nd-the-strip-is-virtualised-mobile-400/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/05-pdf-and-large-6-9-·-a-j-35bd8-nd-the-strip-is-virtualised-mobile-400/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/05-pdf-and-large-6-9-·-a-j-35bd8-nd-the-strip-is-virtualised-mobile-400/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  39) [mobile-400] › e2e/06-settings.spec.ts:41:1 › 6.10 · cache, theme, read-only roots and the scan log 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/06-settings.spec.ts:38:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/06-settings-6-10-·-cache-t-b8179-only-roots-and-the-scan-log-mobile-400/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/06-settings-6-10-·-cache-t-b8179-only-roots-and-the-scan-log-mobile-400/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/06-settings-6-10-·-cache-t-b8179-only-roots-and-the-scan-log-mobile-400/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  40) [mobile-400] › e2e/07-responsive.spec.ts:54:1 › 6.11 · the sidebar tier, the drawer, and no horizontal scroll anywhere 
+
+    Error: apiRequestContext.put: connect ECONNREFUSED 127.0.0.1:8791
+    Call log:
+    [2m  - → PUT http://127.0.0.1:8791/api/settings[22m
+    [2m    - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.16 Safari/537.36[22m
+    [2m    - accept: */*[22m
+    [2m    - accept-encoding: gzip,deflate,br[22m
+    [2m    - content-type: application/json[22m
+    [2m    - content-length: 106[22m
+
+
+       at shelf.ts:193
+
+      191 |  */
+      192 | export async function resetLibraryState(page: Page): Promise<void> {
+    > 193 |   const response = await page.request.put('/api/settings', {
+          |                                       ^
+      194 |     data: {
+      195 |       library_view: 'grid',
+      196 |       library_sort: 'name',
+        at resetLibraryState (/mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/shelf.ts:193:39)
+        at /mnt/data/codejobs/projects/betterax-proto/zip-viewer/web/e2e/07-responsive.spec.ts:51:9
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/07-responsive-6-11-·-the-s-d2829--horizontal-scroll-anywhere-mobile-400/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/07-responsive-6-11-·-the-s-d2829--horizontal-scroll-anywhere-mobile-400/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/07-responsive-6-11-·-the-s-d2829--horizontal-scroll-anywhere-mobile-400/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  40 failed
+    [desktop-1440] › e2e/03-series-detail.spec.ts:31:1 › 6.5 · 군계 detail shows its path, and broken volumes are badged and dead 
+    [desktop-1440] › e2e/03-series-detail.spec.ts:88:1 › 6.5 (E-14) · a series with nothing readable in it is shown as broken 
+    [desktop-1440] › e2e/04-viewer.spec.ts:70:1 › 6.6 · keys, the thumbnail strip, 단면/양면, R→L and Esc 
+    [desktop-1440] › e2e/05-pdf-and-large.spec.ts:50:1 › 6.8 · a PDF volume renders image/jpeg in the same viewer, and R→L flips the spread 
+    [desktop-1440] › e2e/05-pdf-and-large.spec.ts:128:1 › 6.9 · a jump into the 1 540-page archive loads, and the strip is virtualised 
+    [desktop-1440] › e2e/06-settings.spec.ts:41:1 › 6.10 · cache, theme, read-only roots and the scan log 
+    [desktop-1440] › e2e/07-responsive.spec.ts:54:1 › 6.11 · the sidebar tier, the drawer, and no horizontal scroll anywhere 
+    [laptop-1024] › e2e/01-library.spec.ts:30:1 › 6.1 · the grid renders ten series with real covers and no layout shift 
+    [laptop-1024] › e2e/01-library.spec.ts:71:1 › 6.2 · list mode sorted by 용량 desc puts the largest series first 
+    [laptop-1024] › e2e/01-library.spec.ts:97:1 › 6.3 · 초성 search finds 군계 and highlights the matched syllables 
+    [laptop-1024] › e2e/02-palette.spec.ts:21:1 › 6.4 · Ctrl+K → ㅁㅅ → ↵ opens the 미생 series ────────
+    [laptop-1024] › e2e/03-series-detail.spec.ts:31:1 › 6.5 · 군계 detail shows its path, and broken volumes are badged and dead 
+    [laptop-1024] › e2e/03-series-detail.spec.ts:88:1 › 6.5 (E-14) · a series with nothing readable in it is shown as broken 
+    [laptop-1024] › e2e/04-viewer.spec.ts:70:1 › 6.6 · keys, the thumbnail strip, 단면/양면, R→L and Esc 
+    [laptop-1024] › e2e/05-pdf-and-large.spec.ts:50:1 › 6.8 · a PDF volume renders image/jpeg in the same viewer, and R→L flips the spread 
+    [laptop-1024] › e2e/05-pdf-and-large.spec.ts:128:1 › 6.9 · a jump into the 1 540-page archive loads, and the strip is virtualised 
+    [laptop-1024] › e2e/06-settings.spec.ts:41:1 › 6.10 · cache, theme, read-only roots and the scan log 
+    [laptop-1024] › e2e/07-responsive.spec.ts:54:1 › 6.11 · the sidebar tier, the drawer, and no horizontal scroll anywhere 
+    [tablet-768] › e2e/01-library.spec.ts:30:1 › 6.1 · the grid renders ten series with real covers and no layout shift 
+    [tablet-768] › e2e/01-library.spec.ts:71:1 › 6.2 · list mode sorted by 용량 desc puts the largest series first 
+    [tablet-768] › e2e/01-library.spec.ts:97:1 › 6.3 · 초성 search finds 군계 and highlights the matched syllables 
+    [tablet-768] › e2e/02-palette.spec.ts:21:1 › 6.4 · Ctrl+K → ㅁㅅ → ↵ opens the 미생 series ─────────
+    [tablet-768] › e2e/03-series-detail.spec.ts:31:1 › 6.5 · 군계 detail shows its path, and broken volumes are badged and dead 
+    [tablet-768] › e2e/03-series-detail.spec.ts:88:1 › 6.5 (E-14) · a series with nothing readable in it is shown as broken 
+    [tablet-768] › e2e/04-viewer.spec.ts:70:1 › 6.6 · keys, the thumbnail strip, 단면/양면, R→L and Esc 
+    [tablet-768] › e2e/05-pdf-and-large.spec.ts:50:1 › 6.8 · a PDF volume renders image/jpeg in the same viewer, and R→L flips the spread 
+    [tablet-768] › e2e/05-pdf-and-large.spec.ts:128:1 › 6.9 · a jump into the 1 540-page archive loads, and the strip is virtualised 
+    [tablet-768] › e2e/06-settings.spec.ts:41:1 › 6.10 · cache, theme, read-only roots and the scan log 
+    [tablet-768] › e2e/07-responsive.spec.ts:54:1 › 6.11 · the sidebar tier, the drawer, and no horizontal scroll anywhere 
+    [mobile-400] › e2e/01-library.spec.ts:30:1 › 6.1 · the grid renders ten series with real covers and no layout shift 
+    [mobile-400] › e2e/01-library.spec.ts:71:1 › 6.2 · list mode sorted by 용량 desc puts the largest series first 
+    [mobile-400] › e2e/01-library.spec.ts:97:1 › 6.3 · 초성 search finds 군계 and highlights the matched syllables 
+    [mobile-400] › e2e/02-palette.spec.ts:21:1 › 6.4 · Ctrl+K → ㅁㅅ → ↵ opens the 미생 series ─────────
+    [mobile-400] › e2e/03-series-detail.spec.ts:31:1 › 6.5 · 군계 detail shows its path, and broken volumes are badged and dead 
+    [mobile-400] › e2e/03-series-detail.spec.ts:88:1 › 6.5 (E-14) · a series with nothing readable in it is shown as broken 
+    [mobile-400] › e2e/04-viewer.spec.ts:70:1 › 6.6 · keys, the thumbnail strip, 단면/양면, R→L and Esc 
+    [mobile-400] › e2e/05-pdf-and-large.spec.ts:50:1 › 6.8 · a PDF volume renders image/jpeg in the same viewer, and R→L flips the spread 
+    [mobile-400] › e2e/05-pdf-and-large.spec.ts:128:1 › 6.9 · a jump into the 1 540-page archive loads, and the strip is virtualised 
+    [mobile-400] › e2e/06-settings.spec.ts:41:1 › 6.10 · cache, theme, read-only roots and the scan log 
+    [mobile-400] › e2e/07-responsive.spec.ts:54:1 › 6.11 · the sidebar tier, the drawer, and no horizontal scroll anywhere 
+  4 did not run
+  4 passed (9.5m)
+
+To open last HTML report run:
+
+  pnpm exec playwright show-report
+

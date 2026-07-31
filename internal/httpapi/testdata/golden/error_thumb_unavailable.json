@@ -1,0 +1,9 @@
+{
+  "error": {
+    "code": "thumb_unavailable",
+    "message": "the source image cannot be decoded",
+    "detail": {
+      "reason": "animated_webp"
+    }
+  }
+}

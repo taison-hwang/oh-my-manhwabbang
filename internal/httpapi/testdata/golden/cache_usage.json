@@ -1,0 +1,22 @@
+{
+  "computed_at": 1785229200,
+  "entries": [
+    {
+      "kind": "thumbs",
+      "files": 1,
+      "bytes": 4096
+    },
+    {
+      "kind": "pdf",
+      "files": 1,
+      "bytes": 65536
+    },
+    {
+      "kind": "wazero",
+      "files": 0,
+      "bytes": 0
+    }
+  ],
+  "total_bytes": 69632,
+  "cache_dir": "/tmp/shelf-golden/001/cache"
+}

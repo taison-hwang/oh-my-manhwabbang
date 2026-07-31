@@ -1,0 +1,32 @@
+{
+  "items": [
+    {
+      "id": "qjfr327d6skkwhn7",
+      "root_name": "manga",
+      "name": "[만화] 군계 1~25",
+      "path": "[만화] 군계 1~25",
+      "kind": "folder",
+      "book_count": 2,
+      "page_count": 5,
+      "total_bytes": 4096,
+      "mtime": 1457920766,
+      "added_at": 1784970000,
+      "status": "ok",
+      "error": null,
+      "has_cover": true,
+      "cover_cv": null,
+      "progress": {
+        "books_total": 2,
+        "books_completed": 0,
+        "books_started": 1,
+        "percent": 0,
+        "last_read_at": 1785229200,
+        "last_book_id": "gi4hoj3crekpcv2y",
+        "last_page": 2
+      }
+    }
+  ],
+  "total": 1,
+  "offset": 0,
+  "limit": 60
+}

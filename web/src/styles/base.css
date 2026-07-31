@@ -1,0 +1,658 @@
+/*
+ * SHELF base + component layer.
+ *
+ * ui-spec §2.3 gives the DS component contracts as exact CSS geometry and §2.4
+ * gives the app-shell CSS the prototype adds on top. Both are reproduced here
+ * as real classes rather than re-derived as Tailwind utility strings in TSX,
+ * for three reasons: the geometry is full of values that are not on any scale
+ * (7px, 14.4px, 66px, 1.5px), sibling selectors like `.seg-opt + .seg-opt`
+ * have no utility equivalent, and keeping the paint here is what makes
+ * "zero hardcoded hex in a component" checkable by grep.
+ *
+ * Not one colour literal appears below — every value comes from tokens.css.
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* The app shell owns all scrolling (ui-spec §2.4). */
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    height: 100%;
+  }
+
+  body {
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-family: var(--font-body);
+    /* 14px, not the DS's 15px: density beats comfort here (design.md #4). */
+    font-size: 14px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  #root {
+    height: 100%;
+  }
+
+  /* Interaction states are themed, never browser defaults (ui-spec §2.2). */
+  :focus {
+    outline: none;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--selection-bg);
+  }
+
+  :disabled,
+  [aria-disabled='true'] {
+    opacity: var(--disabled-opacity);
+    cursor: not-allowed;
+  }
+
+  /* Headings — the DS type scale. `h6` is the section-label style used all over
+     the app, which is why it carries the tracking and the uppercasing. */
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-heading);
+    font-weight: var(--font-heading-weight);
+    line-height: 1.12;
+    letter-spacing: -0.015em;
+    margin: 0;
+  }
+
+  h1 {
+    font-size: 42px;
+  }
+  h2 {
+    font-size: 32px;
+  }
+  h3 {
+    font-size: 25px;
+  }
+  h4 {
+    font-size: 20px;
+  }
+  h5 {
+    font-size: 16px;
+  }
+  h6 {
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  p {
+    margin: 0;
+  }
+
+  ::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  /* Square slider: 2px divider track, 12x16 accent thumb (ui-spec §2.4). */
+  input[type='range'] {
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+    width: 100%;
+    /* The fallback for any engine that ignores the pseudo-elements below: a
+       stock slider in the accent rather than the browser's own blue. */
+    accent-color: var(--color-accent);
+  }
+  input[type='range']::-webkit-slider-runnable-track {
+    height: 2px;
+    background: var(--color-divider);
+  }
+  input[type='range']::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 16px;
+    margin-top: -7px;
+    background: var(--color-accent);
+    border: 0;
+    border-radius: 0;
+  }
+  input[type='range']::-moz-range-track {
+    height: 2px;
+    background: var(--color-divider);
+  }
+  input[type='range']::-moz-range-thumb {
+    width: 12px;
+    height: 16px;
+    background: var(--color-accent);
+    border: 0;
+    border-radius: 0;
+  }
+
+  @keyframes shimmer {
+    0% {
+      opacity: 0.3;
+    }
+    50% {
+      opacity: 0.7;
+    }
+    100% {
+      opacity: 0.3;
+    }
+  }
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  /* ---------------------------------------------------------------- buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-family: var(--font-heading);
+    font-weight: 800;
+    font-size: 14px;
+    line-height: 1.2;
+    color: var(--color-text);
+    background: transparent;
+    border: 1px solid transparent;
+    /* var(--space-2) calc(var(--space-3) * 1.2) => 8px 14.4px */
+    padding: var(--space-2) calc(var(--space-3) * 1.2);
+    border-radius: 0;
+    cursor: pointer;
+    transition: background var(--hover-fade) ease;
+  }
+
+  .btn svg {
+    display: block;
+  }
+
+  .btn:disabled {
+    opacity: var(--disabled-opacity);
+    cursor: not-allowed;
+  }
+
+  .btn-primary {
+    background: var(--color-accent);
+    color: var(--color-bg);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+  .btn-primary:active:not(:disabled) {
+    background: var(--accent-press);
+  }
+
+  .btn-secondary {
+    border-color: var(--color-divider);
+  }
+  .btn-secondary:hover:not(:disabled) {
+    background: var(--hover-tint);
+  }
+  .btn-secondary:active:not(:disabled) {
+    background: var(--press-tint);
+  }
+
+  .btn-ghost {
+    color: var(--color-accent);
+    padding-inline: var(--space-1);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--ghost-hover);
+  }
+  .btn-ghost:active:not(:disabled) {
+    background: var(--ghost-press);
+  }
+
+  .btn-icon {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+  }
+
+  /* THE flush-left rule: button labels are never centred, including inside
+     full-width buttons (ui-spec §0.3). */
+  .btn-block {
+    width: 100%;
+    margin-top: var(--space-2);
+    justify-content: flex-start;
+    text-align: left;
+  }
+
+  /* ------------------------------------------------------------------- tags */
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    font-size: 11px;
+    letter-spacing: 0.02em;
+    padding: 3px 10px;
+    border-radius: 0;
+    border: 1px solid transparent;
+  }
+  .tag-accent {
+    background: var(--color-accent-100);
+    color: var(--color-accent-800);
+  }
+  .tag-accent-2 {
+    background: var(--color-accent-2-100);
+    color: var(--color-accent-2-800);
+  }
+  .tag-neutral {
+    background: var(--color-neutral-100);
+    color: var(--color-neutral-800);
+  }
+  .tag-outline {
+    border-color: var(--color-accent);
+    color: var(--color-accent);
+  }
+
+  /* ----------------------------------------------------------------- fields */
+  .field > label {
+    display: block;
+    font-size: 12px;
+    margin-bottom: 5px;
+    color: var(--ink-label);
+  }
+
+  .input {
+    width: 100%;
+    min-height: 36px;
+    padding: 6px 10px;
+    font-size: 14px;
+    font-family: inherit;
+    color: var(--color-text);
+    caret-color: var(--color-accent);
+    background: var(--color-surface);
+    border: 1px solid var(--color-divider);
+    border-radius: 0;
+  }
+  .input:hover {
+    border-color: var(--control-border-hover);
+  }
+  .input:focus-visible {
+    border-color: var(--color-accent);
+    outline-offset: 0;
+  }
+  .input::placeholder {
+    color: var(--ink-dim);
+  }
+
+  /* ------------------------------------------------------------------ radio */
+  /* The dot is one of only two circles in the product (ui-spec §0.1). */
+  .radio {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .radio .dot {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 16px;
+    border-radius: 50%;
+    border: 1.5px solid var(--color-divider);
+    box-sizing: border-box;
+  }
+  .radio[data-checked='true'] .dot {
+    border-color: var(--color-accent);
+    background: var(--color-accent);
+    box-shadow: inset 0 0 0 4px var(--color-bg);
+  }
+
+  /* -------------------------------------------------------------- segmented */
+  .seg {
+    display: inline-flex;
+    overflow: hidden;
+    border: 1px solid var(--color-divider);
+    border-radius: 0;
+  }
+
+  .seg-opt {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .seg-opt + .seg-opt {
+    border-left: 1px solid var(--color-divider);
+  }
+  .seg-opt[data-checked='true'] {
+    background: var(--color-accent);
+    color: var(--color-bg);
+  }
+  .seg-opt[data-checked='false']:hover {
+    background: var(--hover-tint);
+  }
+  .seg-opt:has(input:focus-visible) {
+    outline: 2px solid var(--color-accent);
+    outline-offset: -2px;
+  }
+
+  /* ------------------------------------------------------------------ cards */
+  .card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    background: var(--color-surface);
+    border-radius: 0;
+  }
+  .card-kicker {
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--color-accent);
+  }
+  .card-title {
+    font-family: var(--font-heading);
+    font-weight: 800;
+    font-size: 17px;
+    line-height: 1.2;
+  }
+  .card-body {
+    font-size: 13px;
+    opacity: 0.8;
+    flex: 1;
+  }
+  .card-meta {
+    display: flex;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--ink-meta);
+  }
+
+  /* ------------------------------------------------------------- elevation */
+  .elev-sm {
+    box-shadow: var(--shadow-sm);
+  }
+  .elev-md {
+    box-shadow: var(--shadow-md);
+  }
+  .elev-lg {
+    box-shadow: var(--shadow-lg);
+  }
+
+  /* -------------------------------------------------------------------- nav */
+  .nav {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 2px solid var(--color-divider);
+  }
+  .nav-brand {
+    font-family: var(--font-heading);
+    font-weight: 800;
+    font-size: 18px;
+    margin-right: auto;
+  }
+
+  /* ------------------------------------------------------------------ table */
+  .table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  .table th {
+    text-align: left;
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-th);
+    padding: var(--space-2);
+    border-bottom: 2px solid var(--color-divider);
+  }
+  .table td {
+    padding: var(--space-2);
+    border-bottom: 1px solid var(--color-divider);
+  }
+  .table tbody tr:hover {
+    background: var(--row-hover-table);
+  }
+
+  /* ---------------------------------------------------------------- dialogs */
+  .dialog-backdrop {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: var(--space-4);
+    background: var(--scrim-modal);
+    z-index: var(--z-overlay);
+  }
+  .dialog {
+    width: min(440px, 100%);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding: var(--space-4);
+    background: var(--color-surface);
+    box-shadow: var(--shadow-lg);
+    border-radius: 0;
+  }
+  .dialog-title {
+    font-family: var(--font-heading);
+    font-weight: 800;
+    font-size: 20px;
+    line-height: 1.12;
+  }
+  .dialog-body {
+    font-size: 14px;
+    opacity: 0.85;
+  }
+  .dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+  }
+
+  /* --------------------------------------------------------------- rules etc */
+  .hr {
+    height: 2px;
+    border: 0;
+    margin: var(--space-4) 0;
+    background: var(--color-divider);
+  }
+
+  /* Renamed from the DS's `.grayscale`: Tailwind ships a `grayscale` utility in
+     a later layer, so the DS name would lose whenever both were applied. */
+  .ds-grayscale {
+    filter: grayscale(1) contrast(1.08);
+  }
+
+  /* The viewer's loading spinner — the second and last circle (ui-spec §6.3). */
+  .spinner {
+    width: 11px;
+    height: 11px;
+    border: 2px solid var(--color-neutral-700);
+    border-top-color: var(--color-accent-400);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+
+  /* ------------------------------------------------------------ app shell */
+  .app {
+    height: 100vh;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-family: var(--font-body);
+    font-size: 14px;
+  }
+
+  .shell {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+  }
+
+  .sidebar {
+    width: var(--sidebar-w);
+    flex: 0 0 var(--sidebar-w);
+    border-right: 2px solid var(--rule-strong);
+    background: var(--color-surface);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  /* <768: the fixed rail is gone entirely and the sidebar lives in the
+     off-canvas drawer (ui-spec §7, D-42). */
+  @media (max-width: 767.98px) {
+    .sidebar {
+      display: none;
+    }
+  }
+
+  .sidebar-nav-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 16px;
+    cursor: pointer;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: 0;
+    border-left: 3px solid transparent;
+    color: var(--ink-dim);
+    font-size: 13px;
+    font-family: inherit;
+    min-height: var(--touch-min);
+  }
+  .sidebar-nav-row:hover:not(:disabled) {
+    background: var(--nav-hover);
+  }
+  /* A root the file has and this server has not opened (A-11 / R2). The row
+     must not read as clickable — a pointer cursor and a hover highlight are
+     what make a dead row look like a live one — while staying legible enough
+     to read the 재시작 후 적용 note that is the whole point of showing it. */
+  .sidebar-nav-row:disabled {
+    cursor: default;
+  }
+  .sidebar-nav-row[data-active='true'] {
+    border-left-color: var(--color-accent);
+    background: var(--nav-active);
+    color: var(--ink);
+  }
+
+  /* The 56px icon rail (768–1023): labels collapse, the 3px accent marker and
+     the hit area stay. The scope name moves into the section header. */
+  .sidebar-rail .sidebar-nav-row {
+    justify-content: center;
+    padding: 10px 0;
+    gap: 0;
+  }
+
+  .drawer-backdrop {
+    position: fixed;
+    inset: 0;
+    background: var(--scrim-modal);
+    z-index: var(--z-overlay);
+  }
+  .drawer-panel {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: var(--drawer-w);
+    max-width: 85vw;
+    background: var(--color-surface);
+    border-right: 2px solid var(--rule-strong);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    z-index: var(--z-overlay);
+  }
+  /* Inside the drawer the sidebar is always the full-width variant. */
+  .drawer-panel .sidebar {
+    display: flex;
+    width: 100%;
+    flex: 1;
+    border-right: 0;
+  }
+
+  /* The striped FR-LIB-008 fallback cover. Stripe pitch is 16px on cards and
+     heroes, 10px on list rows. */
+  .fallback-cover {
+    background-image: repeating-linear-gradient(
+      135deg,
+      var(--fill-subtle) 0 8px,
+      var(--fill-track) 8px 16px
+    );
+  }
+  .fallback-cover-row {
+    background-image: repeating-linear-gradient(
+      135deg,
+      var(--fill-subtle) 0 5px,
+      var(--fill-track) 5px 10px
+    );
+  }
+
+  /* Touch targets are >= 44x44 CSS px below 768 (ui-spec §7, NFR-CMP-002).
+     Both axes: a single-glyph button such as `?` is only ~38px wide on its
+     padding alone, so min-height without min-width still fails the rule. */
+  @media (max-width: 767.98px) {
+    .btn {
+      min-height: var(--touch-min);
+      min-width: var(--touch-min);
+    }
+    .btn-icon {
+      width: var(--touch-min);
+      height: var(--touch-min);
+    }
+    .seg-opt {
+      min-height: var(--touch-min);
+    }
+    .input {
+      min-height: var(--touch-min);
+    }
+    /* The sidebar footer's scan row is a real control — it opens the scan log
+       (ui-spec §4.1) — but it is a bare 7px dot plus one 12px line, so it needs
+       the rule stated explicitly. */
+    .scan-indicator {
+      min-height: var(--touch-min);
+    }
+  }
+}

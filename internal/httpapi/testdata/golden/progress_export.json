@@ -1,0 +1,19 @@
+{
+  "format": "shelf-progress/1",
+  "exported_at": 1785229200,
+  "id_version": "shelf-id/1",
+  "items": [
+    {
+      "book_id": "gi4hoj3crekpcv2y",
+      "series_id": "qjfr327d6skkwhn7",
+      "root_name": "manga",
+      "book_path": "[만화] 군계 1~25/군계(軍鷄) 01권.zip",
+      "last_page": 2,
+      "page_count": 3,
+      "completed": false,
+      "started_at": 1785229200,
+      "updated_at": 1785229200
+    }
+  ],
+  "prefs": []
+}

@@ -1,0 +1,20 @@
+{
+  "state": "indexing",
+  "run_id": "run-0002",
+  "full": true,
+  "started_at": 1785229110,
+  "finished_at": 1785229142,
+  "roots": [
+    "manga"
+  ],
+  "current_root": "manga",
+  "current_item": "[만화] 군계 1~25",
+  "total": 4,
+  "done": 3,
+  "errors": 1,
+  "covers_total": 3,
+  "covers_done": 2,
+  "elapsed_ms": 32000,
+  "eta_ms": 0,
+  "last_error": "central directory is truncated"
+}

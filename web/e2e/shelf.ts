@@ -1,0 +1,788 @@
+/**
+ * Shared fixtures and page helpers for the browser half of impl-plan §6.3.
+ *
+ * The specs in this directory are step 6 of that section — the twelve browser
+ * assertions — run by `scripts/e2e.sh` step 11 against the **already running**
+ * server it started in step 4, i.e. the real collection narrowed to ten series
+ * by `scan.include_globs` (amendment A-3). Nothing here starts or configures a
+ * server; `PLAYWRIGHT_BASE_URL` points at the one that is up.
+ *
+ * Three rules travel with this file.
+ *
+ *  1. **No hard-coded page or volume counts.** The identical suite has to pass
+ *     against `scripts/e2e.sh --synthetic`, whose fixture tree reproduces the
+ *     *shapes* of §6.3 but not their sizes (D-49). Every assertion is therefore
+ *     relative — "advanced five pages", "the largest series is first" — or reads
+ *     its expectation from the API first.
+ *
+ *     What the rule does **not** say, and what a wrong sentence here cost: the
+ *     synthetic tree does not carry the same ten *names*. D-49 adds an encrypted
+ *     ZIP and a ZIP64 archive the real collection has no sample of, so the
+ *     synthetic library holds **twelve** series — and this docblock claimed ten
+ *     until 2026-07-29, which is why `toBe(CURATED_SERIES_COUNT)` stood in
+ *     01-library.spec.ts for three sessions and `make e2e-synthetic` had never
+ *     been run to contradict it. The library *set* is not relative and must not
+ *     be made so; it is mode-parameterised instead, below.
+ *
+ *  2. **Every test leaves the server as it found it.** `library_view`,
+ *     `library_sort`, `theme` and the per-book `reading_direction` are all
+ *     *persisted server-side* (arch §7.8, §7.6), so a test that switches to
+ *     list mode changes what the next test — and the next viewport project —
+ *     loads into. Helpers therefore set the state they need explicitly rather
+ *     than assuming a default, and the viewer specs restore reading direction.
+ *     `playwright.config.ts` runs one worker for the same reason.
+ *
+ *  3. **A console error fails the test.** NFR-CMP-001 (§7.3) is "loads the SPA
+ *     without console errors", which is only a gate if something checks it.
+ */
+
+import { mkdir } from 'node:fs/promises'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import { expect, test as base, type Locator, type Page, type TestInfo } from '@playwright/test'
+
+const HERE = path.dirname(fileURLToPath(import.meta.url))
+
+/** impl-plan §6.3 step 6.12 / §7.4: the reviewed screenshot deliverable. */
+export const SHOTS_DIR = path.resolve(HERE, '..', '..', 'docs', 'e2e-shots')
+
+/**
+ * The ten curated series of impl-plan §6.3, by their exact directory names.
+ *
+ * These are a *copy*, not the source. The same ten strings are written out
+ * three more times — `scripts/e2e-config.sh:23-34` (`CURATED`, which becomes
+ * `scan.include_globs`), `scripts/e2e-assert.py:27-38` (`CURATED`, the curl
+ * tier's expectation) and 18 path literals in `scripts/mkfixture/main.go`,
+ * which builds the synthetic twin under the same names (D-49). Nothing links
+ * the four statically; they agree only because a disagreement fails the run —
+ * `e2e-assert.py` compares the indexed names against its own list, and every
+ * helper here that takes a name (`seriesId`, `openSeries`) fails *by name* on a
+ * series the server never heard of. Renaming one series is a four-file edit.
+ */
+export const SERIES = {
+  clover: '[만화] Clover 클로버 (총4권)',
+  scars: '[만화] 상처를 쫓는자 1-11 (완) 이케가미 료이치',
+  suicide: '[만화] 자살도114-122',
+  wheel: '[만화] 바퀴.zip',
+  steel: '[만화] 강철의 연금술사 1~27권 완결',
+  gungye: '[만화] 군계 1~25',
+  dnangel: '[만화] 디엔엔젤 1-13권 연재중',
+  misaeng: '[만화] 미생 1~9 (완결 pdf)',
+  battleRoyale: '[만화] 배틀로얄 1~15 [완결].zip',
+  angelHeart: '[만화] 엔젤하트 전32권 완결.zip',
+} as const
+
+/**
+ * The two shapes D-49 asks the synthetic tree to carry that the real collection
+ * has no sample of — an encrypted archive and a ZIP64 archive.
+ *
+ * A *copy* on the same terms as `SERIES` above: the same two strings are written
+ * out in `scripts/e2e-config.sh:38-41` (`SYNTHETIC_EXTRA`, appended to
+ * `scan.include_globs` in synthetic mode), `scripts/e2e-assert.py:39` (the curl
+ * tier's expectation) and `scripts/mkfixture/main.go`, which builds them. This
+ * is the first assertion either of them has ever had in the browser tier.
+ */
+export const SYNTHETIC_EXTRA = {
+  encrypted: '[만화] 암호화 테스트.zip',
+  zip64: '[만화] ZIP64 테스트.zip',
+} as const
+
+/**
+ * Which mode the server under test was configured for, from `scripts/e2e.sh`.
+ *
+ * The default is `real`, so a spec run by hand against a real server needs no
+ * environment at all. The coupling is not unchecked — that was the objection to
+ * an env signal, and `expectCuratedLibrary` below is what answers it: the
+ * expectation it builds is a *set of names*, so a mode that does not match the
+ * server fails immediately and by name (the two D-49 extras missing, or the two
+ * of them surplus) instead of silently asserting the wrong library.
+ */
+export const SYNTHETIC = process.env.SHELF_E2E_MODE === 'synthetic'
+
+/**
+ * Whether `Settings.server.root_editing_enabled` must be true on the server
+ * under test — amendment **A-11**, ruling **E-26**.
+ *
+ * It is derived from the mode for the same reason `EXPECTED_SERIES` is: the two
+ * rounds run different configurations (`scripts/e2e-config.sh` emits
+ * `server.allow_root_editing: true` for `--synthetic` only), and the difference
+ * decides whether the 루트 추가 / 제거 controls exist at all. So it is a
+ * *derived expectation*, never a switch that skips work:
+ * `06-settings.spec.ts` asserts the server agrees with it before it counts a
+ * single button, which is what stops `toHaveCount(0)` passing for the wrong
+ * reason — the controls were absent under ruling E-3 too, and the assertion
+ * could not tell "removed" from "gated off" until it read the capability.
+ *
+ * The real round keeps the gate SHUT, because shut is what ships (arch §3.2's
+ * default) and that is the configuration most users will ever run. The write
+ * path is exercised in the synthetic round, whose fixture tree and
+ * configuration file both live under /tmp — see `08-roots.spec.ts`.
+ */
+export const ROOT_EDITING_ENABLED = SYNTHETIC
+
+/**
+ * Exactly what `scan.include_globs` puts in the library for this mode: the
+ * curated ten, plus the two D-49 extras in synthetic mode.
+ *
+ * The same parameterisation `scripts/e2e-assert.py:253` already makes —
+ * `expected = CURATED + ([] if real else SYNTHETIC_EXTRA)` — green in both modes
+ * since it was written. impl-plan §6.3 step 6.1's literal "10 cards" is outranked
+ * by D-49 (decisions > impl-plan, §0 precedence), and §6.3's own hermetic-fallback
+ * paragraph concedes the two extras in the same sentence as "the identical
+ * assertion set": identical *assertions*, each against its own mode's expected set.
+ */
+export const EXPECTED_SERIES: readonly string[] = SYNTHETIC
+  ? [...Object.values(SERIES), ...Object.values(SYNTHETIC_EXTRA)]
+  : Object.values(SERIES)
+
+/**
+ * The library holds exactly the series this mode's `include_globs` names.
+ *
+ * Strictly stronger than the `toBe(10)` it replaces, which never said *which*
+ * ten: an `include_globs` leak that swapped one curated series for another, or a
+ * rescan that dropped one, passed a count and fails this by name. That matters
+ * most in the browser tier, because `scripts/e2e.sh` step 10 deletes `index.db`
+ * and rescans *after* the curl tier has run, and only four of the ten curated
+ * names are referenced anywhere else in this directory.
+ */
+export function expectCuratedLibrary(names: Iterable<string>, why: string): void {
+  expect([...names].sort(), why).toEqual([...EXPECTED_SERIES].sort())
+}
+
+// ---------------------------------------------------------------------------
+// The fixture
+// ---------------------------------------------------------------------------
+
+/**
+ * Accumulates layout-shift values so step 6.1 can assert one, and traps console
+ * errors for NFR-CMP-001.
+ *
+ * The observer has to be installed *before* the document exists, which is what
+ * `addInitScript` is for; `buffered: true` then replays the shifts that
+ * happened before the observer was constructed.
+ */
+const CLS_INIT = `
+  window.__shelfCls = 0
+  try {
+    new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        if (!entry.hadRecentInput) window.__shelfCls += entry.value
+      }
+    }).observe({ type: 'layout-shift', buffered: true })
+  } catch (_) {
+    /* Layout Instability is Chromium-only; the assertion self-skips. */
+  }
+`
+
+interface DeclaredConsoleError {
+  readonly pattern: RegExp
+  readonly why: string
+  seen: boolean
+}
+
+/** Per-page declarations, read by the `consoleGuard` fixture below. */
+const declaredConsoleErrors = new WeakMap<Page, DeclaredConsoleError[]>()
+
+/**
+ * Declares a console error this test is about to *cause on purpose*, and why.
+ *
+ * There is exactly one legitimate use, and it is narrow: a test that drives the
+ * product into a **documented server refusal**. Chromium logs every non-2xx
+ * response as `console.error: Failed to load resource: the server responded
+ * with a status of …`, so `08-roots.spec.ts` asserting that a rejected
+ * `POST /api/roots` reaches the user as the sentence `rootErrors.ts` writes for
+ * it would otherwise fail NFR-CMP-001 for doing the thing it exists to do.
+ *
+ * It is not a mute button, and two properties keep it from becoming one:
+ *
+ *  * the `pattern` has to match, so it is written narrowly enough to name the
+ *    one message — anything else the page logs still fails the test;
+ *  * a declaration that **never matched** fails the test too. A stale allowance
+ *    left behind by a spec that stopped triggering the refusal would otherwise
+ *    sit there silencing whatever came along later, which is docs/HANDOFF.md
+ *    §6.5 with the polarity reversed.
+ *
+ * `pageerror` — an uncaught exception in the page — is never declarable. That
+ * is a defect in every case.
+ */
+export function expectConsoleError(page: Page, pattern: RegExp, why: string): void {
+  const declared = declaredConsoleErrors.get(page) ?? []
+  declared.push({ pattern, why, seen: false })
+  declaredConsoleErrors.set(page, declared)
+}
+
+/**
+ * A fixture that exists only for its side effect, so it has no value to declare.
+ * `void` is Playwright's own idiom for that, and it is the only spelling from
+ * which the fixture callback's `{ page }` and `use` still infer — `unknown`
+ * makes both implicitly `any`. Hence the one disable in this directory.
+ */
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- Playwright's side-effect-fixture idiom; see above.
+export const test = base.extend<{ consoleGuard: void }>({
+  consoleGuard: [
+    async ({ page }, use) => {
+      const problems: string[] = []
+      page.on('console', (message) => {
+        if (message.type() !== 'error') return
+        const text = message.text()
+        const declared = (declaredConsoleErrors.get(page) ?? []).find((entry) =>
+          entry.pattern.test(text),
+        )
+        if (declared === undefined) {
+          problems.push(`console.error: ${text}`)
+          return
+        }
+        declared.seen = true
+      })
+      page.on('pageerror', (error) => {
+        problems.push(`pageerror: ${error.message}`)
+      })
+      await page.addInitScript(CLS_INIT)
+      await use()
+      expect(problems, 'NFR-CMP-001: the SPA must load with no console errors').toEqual([])
+      const undeclared = (declaredConsoleErrors.get(page) ?? [])
+        .filter((entry) => !entry.seen)
+        .map((entry) => entry.why)
+      expect(
+        undeclared,
+        'a console error was declared with expectConsoleError() and never happened: the ' +
+          'allowance is now silencing whatever else the page logs',
+      ).toEqual([])
+    },
+    { auto: true },
+  ],
+})
+
+export { expect } from '@playwright/test'
+
+// ---------------------------------------------------------------------------
+// Screenshots — step 6.12
+// ---------------------------------------------------------------------------
+
+/**
+ * Writes `docs/e2e-shots/<name>-<project>.png`.
+ *
+ * Suffixed with the project name rather than the pixel width so the four
+ * viewport runs of one step land side by side in a directory listing, which is
+ * how §7.4's "reviewed against `docs/ui-shots/`" is actually done.
+ */
+export async function shot(page: Page, info: TestInfo, name: string): Promise<void> {
+  await mkdir(SHOTS_DIR, { recursive: true })
+  await page.screenshot({ path: path.join(SHOTS_DIR, `${name}-${info.project.name}.png`) })
+}
+
+// ---------------------------------------------------------------------------
+// Server facts, read rather than assumed
+// ---------------------------------------------------------------------------
+
+export interface SeriesFact {
+  id: string
+  name: string
+  kind: string
+  status: string
+  book_count: number
+  total_bytes: number
+  has_cover: boolean
+}
+
+export interface BookFact {
+  id: string
+  name: string
+  kind: string
+  status: string
+  page_count: number
+}
+
+/** `GET /api/series` as a name → summary map. */
+export async function seriesFacts(page: Page): Promise<Map<string, SeriesFact>> {
+  const response = await page.request.get('/api/series?limit=200&sort=name')
+  expect(response.ok(), 'GET /api/series').toBe(true)
+  const body = (await response.json()) as { items: SeriesFact[] }
+  return new Map(body.items.map((item) => [item.name, item]))
+}
+
+export async function seriesId(page: Page, name: string): Promise<string> {
+  const facts = await seriesFacts(page)
+  const fact = facts.get(name)
+  expect(fact, `the curated subset must contain ${name}`).toBeDefined()
+  return fact === undefined ? '' : fact.id
+}
+
+/** The volumes of one series, in server order. */
+export async function booksOf(page: Page, sid: string): Promise<BookFact[]> {
+  const response = await page.request.get(`/api/series/${sid}`)
+  expect(response.ok(), `GET /api/series/${sid}`).toBe(true)
+  const body = (await response.json()) as { books: BookFact[] }
+  return body.books
+}
+
+// ---------------------------------------------------------------------------
+// Baselines — rule 2 of the header comment
+// ---------------------------------------------------------------------------
+
+/**
+ * Puts the *server's* sticky library state back to its defaults.
+ *
+ * `library_view`, `library_sort`, `library_order`, `library_scope` (A-5) and
+ * `theme` are persisted in `user.db` and hydrated into the store on every load,
+ * so without this each spec would inherit whatever the previous one — or the
+ * previous *viewport project*, or the `PUT {"theme":"dark"}` that `e2e.sh`
+ * step 10 makes — happened to leave behind. Setup, not an assertion: it is done
+ * over the API precisely so that the UI half of the test still has to do the
+ * switching itself.
+ */
+export async function resetLibraryState(page: Page): Promise<void> {
+  const response = await page.request.put('/api/settings', {
+    data: {
+      library_view: 'grid',
+      library_sort: 'name',
+      library_order: 'asc',
+      library_scope: 'all',
+      theme: 'system',
+    },
+  })
+  expect(response.ok(), 'PUT /api/settings').toBe(true)
+}
+
+/** The same for one book's per-book overrides (arch §7.6, FR-VWR-002). */
+export async function resetBookPrefs(page: Page, bookId: string): Promise<void> {
+  const response = await page.request.put(`/api/books/${bookId}/prefs`, {
+    data: { reading_direction: 'ltr', display_mode: 'single', fit_mode: 'height' },
+  })
+  expect(response.ok(), `PUT /api/books/${bookId}/prefs`).toBe(true)
+}
+
+// ---------------------------------------------------------------------------
+// Navigation
+// ---------------------------------------------------------------------------
+
+/**
+ * Loads `/` and waits for the library to be interactive.
+ *
+ * The wait on `GET /api/settings` is not incidental. `useLibrarySettingsSync`
+ * hydrates view/sort/order/scope from the server *after* the first paint, so a
+ * helper that clicked 리스트 before that response landed would have its choice
+ * overwritten a tick later — a flake that only appears when the machine is
+ * fast enough to click first.
+ */
+export async function gotoLibrary(page: Page): Promise<void> {
+  const settings = page.waitForResponse(
+    (response) => response.url().includes('/api/settings') && response.request().method() === 'GET',
+  )
+  await page.goto('/')
+  await settings
+  await expect(page.locator('[data-testid="library-scroller"]')).toBeVisible()
+}
+
+export type ViewMode = 'grid' | 'list'
+
+/**
+ * What a screen renders once it is in one view mode.
+ *
+ * `shown` must be visible and `gone`, when there is one, must be absent. The
+ * pair is what makes the mode *provable* rather than merely clicked at: on
+ * every screen the two modes' shapes are mutually exclusive, so satisfying one
+ * pair is only possible after the swap has actually happened.
+ */
+interface ViewShape {
+  readonly shown: string
+  readonly gone: string | null
+}
+
+/**
+ * The screens the 보기 방식 toggle serves, and how to tell which mode each is in.
+ *
+ * The toggle drives **one** preference — `store/ui.ts` `view`, persisted
+ * server-side as `library_view` — and both screens read it from that same store
+ * (`SeriesDetailPage.tsx`: "one control, two screens"). So the control is
+ * screen-agnostic, but what it swaps is not, and the difference is a spec
+ * requirement rather than an accident:
+ *
+ * - **Library** — `SeriesGrid` / `SeriesList`. Both render `library-scroller`;
+ *   only the list adds the header band, because ui-spec §5.2 list mode
+ *   specifies a header row of sortable 시리즈명/권/용량/수정일 cells. Presence
+ *   of that header is therefore a biconditional for list mode here.
+ * - **Series detail** — `VolumeGrid` / `VolumeList`, each with its own container
+ *   testid. ui-spec §5.4 is explicit that the volume list has **"No header row
+ *   (volumes are naturally ordered; sorting is not offered)"**, so the library's
+ *   header must never appear on this screen and must never be waited for. The
+ *   volume list's own container is what proves the mode instead.
+ *
+ * `probe` says which screen is on top; the two are never mounted together.
+ */
+const VIEW_SCREENS = {
+  series: {
+    probe: '[data-testid="volume-grid"], [data-testid="volume-list"]',
+    grid: { shown: '[data-testid="volume-grid"]', gone: '[data-testid="volume-list"]' },
+    list: { shown: '[data-testid="volume-list"]', gone: '[data-testid="volume-grid"]' },
+  },
+  library: {
+    probe: '[data-testid="library-scroller"]',
+    grid: { shown: '[data-testid="library-scroller"]', gone: '[data-testid="library-list-header"]' },
+    list: { shown: '[data-testid="library-list-header"]', gone: null },
+  },
+} as const satisfies Record<string, { probe: string } & Record<ViewMode, ViewShape>>
+
+type ViewScreen = keyof typeof VIEW_SCREENS
+
+/**
+ * Which of the two screens the toggle is about to act on.
+ *
+ * The wait matters: it turns "setView was called somewhere the toggle means
+ * nothing" into an immediate, named failure instead of a long block on a marker
+ * that screen will never render.
+ */
+async function viewScreen(page: Page): Promise<ViewScreen> {
+  await expect(
+    page.locator(`${VIEW_SCREENS.series.probe}, ${VIEW_SCREENS.library.probe}`).first(),
+    'setView needs the library or a series detail screen on top',
+  ).toBeVisible()
+  return (await page.locator(VIEW_SCREENS.series.probe).count()) > 0 ? 'series' : 'library'
+}
+
+/**
+ * The top-bar 그리드/리스트 `.seg` (FR-LIB-002), on whichever screen owns it.
+ *
+ * Idempotent, but never *silently* so: the post-condition runs whether or not a
+ * click was needed, so the helper always returns having proved the mode it
+ * claims — a no-op path that asserted nothing is how a stale view mode reaches
+ * the caller's assertions disguised as a fresh one.
+ */
+export async function setView(page: Page, view: ViewMode): Promise<void> {
+  const screen = await viewScreen(page)
+  const shape: ViewShape = VIEW_SCREENS[screen][view]
+  const shown = page.locator(shape.shown)
+  const gone = shape.gone === null ? null : page.locator(shape.gone)
+
+  const already = (await shown.count()) > 0 && (gone === null || (await gone.count()) === 0)
+  if (!already) {
+    await page.locator(`[aria-label="보기 방식"] label[data-value="${view}"]`).click()
+  }
+
+  const why = `보기 방식 → ${view} on the ${screen} screen`
+  await expect(shown, why).toBeVisible()
+  if (gone !== null) await expect(gone, why).toHaveCount(0)
+}
+
+/**
+ * The top-bar 정렬 select (C-3 wire keys).
+ *
+ * Used in preference to the list's own column headers because ui-spec §7 drops
+ * 용량 below 1024 and every sortable header but 시리즈명 below 768 — the select
+ * is the one sort affordance that exists at all four viewport widths.
+ */
+export async function setSort(page: Page, key: string): Promise<void> {
+  await page.locator('select[name="sort"]').selectOption(key)
+}
+
+/**
+ * Every series card or row currently in the DOM, by its accessible name.
+ *
+ * `SeriesCard` and `SeriesRow` both put the series name on `aria-label` of the
+ * one button that opens it, which is the only handle that is identical in both
+ * view modes and at all four widths.
+ */
+export function seriesTiles(page: Page): Locator {
+  return page.locator('[data-testid="library-scroller"] button[aria-label]')
+}
+
+export function seriesTile(page: Page, name: string): Locator {
+  return page.locator(`[data-testid="library-scroller"] button[aria-label="${name}"]`)
+}
+
+/**
+ * Walks the whole library the way a reader does — a viewport at a time from the
+ * top — and returns every series name that was mounted along the way.
+ *
+ * `seriesTiles()` answers "what is in the DOM *now*", which under FR-LIB-007 is
+ * not the same question as "what does the library hold". `SeriesGrid` windows
+ * rows with `overscan: 2`, and ui-spec §7 gives the narrow tiers big cards
+ * (`--grid-min: 224px` at 768–1023, two columns at both 768 and 400), so the
+ * ten curated series are all mounted at once at 1440 and 1024 and never are at
+ * 768 or 400 — 8 of 10 measured at both. A caller that wants the whole library
+ * therefore has to page through it, and one that asserts a count against the
+ * live locator instead is asserting its own viewport, not the product.
+ *
+ * `atEachStop` runs against the names mounted at one scroll position, **before**
+ * the next step can unmount them, which is the only window in which a per-card
+ * assertion (does this cover paint?) is not a race. Nothing scrolls while it
+ * runs, so every name it is handed is still in the DOM for the whole call.
+ *
+ * Related but not the same as `revealSeriesTile()` below: that one stops at the
+ * first series it was asked for, this one always reaches the end. Both work in
+ * either view mode, since `seriesTiles` does.
+ *
+ * The scroller is left back at the top, so a caller may screenshot afterwards.
+ */
+export async function walkLibrary(
+  page: Page,
+  atEachStop: (names: string[]) => Promise<void> = () => Promise.resolve(),
+): Promise<Set<string>> {
+  const scroller = page.locator('[data-testid="library-scroller"]')
+  await expect(scroller).toBeVisible()
+  await scroller.evaluate((el) => {
+    el.scrollTop = 0
+  })
+
+  const seen = new Set<string>()
+  // Bounded rather than `while (true)`: a scroller that grows faster than it is
+  // walked has to fail as a named error, not as the suite's 120 s timeout. 50 is
+  // slack and says so; the measurement it is slack around is five. Counted on
+  // 2026-07-29 by driving this exact loop against the synthetic fixture's twelve
+  // series at all four projects' viewports: 그리드 takes 2 stops at desktop-1440,
+  // 3 at laptop-1024 and 5 at both tablet-768 and mobile-400, and 리스트 never
+  // exceeds 2. What stood here — "the narrowest tier needs five stops for the
+  // curated ten" — had the wrong library size and no measurement behind either
+  // number, which is the defect class of HANDOFF §6.5 in a comment.
+  for (let stop = 0; stop < 50; stop += 1) {
+    const why = 'the library must render at least one series'
+    await expect(seriesTiles(page).first(), why).toBeVisible()
+    const names = await seriesTiles(page).evaluateAll((tiles) =>
+      tiles.map((tile) => tile.getAttribute('aria-label') ?? ''),
+    )
+    for (const name of names) seen.add(name)
+    await atEachStop(names)
+
+    // One viewport per step, so consecutive windows overlap by the overscan and
+    // no row can fall between two stops. A step that cannot move is the bottom.
+    const moved = await scroller.evaluate((el) => {
+      const before = el.scrollTop
+      el.scrollTop += el.clientHeight
+      return el.scrollTop !== before
+    })
+    if (!moved) {
+      await scroller.evaluate((el) => {
+        el.scrollTop = 0
+      })
+      return seen
+    }
+    // Two frames: one for the virtualiser's scroll handler to set state, one for
+    // React to commit the rows it chose. Without it the read above can be a
+    // frame stale — harmless for the union, but it would let `atEachStop` assert
+    // against the previous window twice and never see the last one.
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              resolve()
+            })
+          })
+        }),
+    )
+  }
+  throw new Error('walkLibrary: the library scroller never reached its end in 50 steps')
+}
+
+/**
+ * Scrolls the library until one series' tile is actually mounted, and returns it.
+ *
+ * FR-LIB-007 virtualises **both** view modes, so a series below the fold is not
+ * merely off screen — it is not in the DOM at all, and `scrollIntoViewIfNeeded`
+ * has nothing to scroll *to*. That is width-dependent, which is why it surfaces
+ * as a two-project failure: the tail of the library is mounted from the start at
+ * 1440 and never mounted at 768 or 400 until something scrolls.
+ *
+ * Scrolling the scroller is also what a reader does, and what drives the
+ * `onEndReached` pagination, so this reaches a series the way the product
+ * intends one to be reached rather than by reaching around the virtualiser.
+ */
+async function revealSeriesTile(page: Page, name: string): Promise<Locator> {
+  const tile = seriesTile(page, name)
+  const scroller = page.locator('[data-testid="library-scroller"]')
+  await expect(scroller).toBeVisible()
+
+  await expect
+    .poll(
+      async () => {
+        if ((await tile.count()) > 0) return true
+        // A step that cannot move is the bottom of the list: stop paging and let
+        // the assertion below name the series that is genuinely not there.
+        return scroller.evaluate((el) => {
+          const before = el.scrollTop
+          el.scrollTop += el.clientHeight
+          return el.scrollTop === before ? 'bottom' : false
+        })
+      },
+      { message: `${name} must be reachable by scrolling the library` },
+    )
+    .not.toBe(false)
+
+  await expect(tile, `${name} must be in the library`).toHaveCount(1)
+  await tile.scrollIntoViewIfNeeded()
+  return tile
+}
+
+/** Opens a series from the library the way a reader does — by clicking it. */
+export async function openSeries(page: Page, name: string): Promise<void> {
+  const tile = await revealSeriesTile(page, name)
+  await tile.click()
+  await expect(page.getByRole('heading', { level: 2, name })).toBeVisible()
+}
+
+/**
+ * Opens 설정 the way each viewport tier offers it (ui-spec §7).
+ *
+ * Below 768 there is no sidebar in the DOM at all — only the off-canvas drawer —
+ * so the route to the dialog is genuinely different rather than merely narrower.
+ * Shared by 06-settings and 08-roots: two copies of this would be two chances to
+ * fix a drawer change in one of them.
+ */
+export async function openSettings(page: Page): Promise<void> {
+  const width = page.viewportSize()?.width ?? 0
+  if (width < 768) {
+    await page.getByRole('button', { name: '라이브러리 탐색 열기' }).click()
+    await expect(page.getByRole('dialog', { name: '라이브러리 탐색' })).toBeVisible()
+    await page.getByRole('dialog', { name: '라이브러리 탐색' }).getByLabel('설정').click()
+  } else {
+    await page.locator('aside[aria-label="라이브러리 탐색"]').getByLabel('설정').click()
+  }
+  await expect(page.getByRole('dialog', { name: '설정' })).toBeVisible()
+}
+
+/** The 루트 관리 section of the open 설정 dialog (ui-spec §8.6 §1). */
+export function rootsSection(page: Page): Locator {
+  return page
+    .getByRole('dialog', { name: '설정' })
+    .locator('section')
+    .filter({ has: page.getByRole('heading', { name: '루트 관리' }) })
+}
+
+// ---------------------------------------------------------------------------
+// The viewer
+// ---------------------------------------------------------------------------
+
+export function viewer(page: Page): Locator {
+  return page.locator('[data-role="viewer"]')
+}
+
+export function viewerTopBar(page: Page): Locator {
+  return page.locator('[data-role="viewer-top-bar"]')
+}
+
+/** `formatViewerCounter` renders `1,400 / 1,540`; the commas come back out. */
+export async function currentPage(page: Page): Promise<number> {
+  const text = await page.locator('[data-role="page-counter"]').innerText()
+  const match = /(\d[\d,]*)\s*\/\s*(\d[\d,]*)/.exec(text)
+  expect(match, `page counter should read "n / total", got ${text}`).not.toBeNull()
+  return match === null ? 0 : Number(match[1]?.replace(/,/g, '') ?? '0')
+}
+
+export async function pageCount(page: Page): Promise<number> {
+  const text = await page.locator('[data-role="page-counter"]').innerText()
+  const match = /(\d[\d,]*)\s*\/\s*(\d[\d,]*)/.exec(text)
+  return match === null ? 0 : Number(match[2]?.replace(/,/g, '') ?? '0')
+}
+
+/**
+ * Brings the overlay chrome back and waits until it is actually clickable.
+ *
+ * The bars fade out `CHROME_AUTOHIDE_MS` after the last wake and go
+ * `pointer-events: none` with it, so any helper that clicks a viewer control
+ * has to wake it first — and has to wait for `data-visible`, because Playwright
+ * would otherwise spend the whole actionability timeout on an invisible button.
+ *
+ * **Ruling E-27 changed what "wake" means.** Moving the mouse over the page no
+ * longer summons anything; the chrome answers to the top and bottom 44px screen
+ * edges, the centre tap and `H`. So this aims at the top strip — and the centre
+ * of the stage, which is what it used to aim at, is now the *toggle*, i.e. the
+ * one move that would put the chrome away again on the second call.
+ *
+ * It then parks the pointer **on the bar**, because hovering the chrome holds
+ * the auto-hide off (E-27). That makes every caller below deterministic rather
+ * than a race against a 2.6 s timer.
+ */
+export async function wakeChrome(page: Page): Promise<void> {
+  const box = await viewer(page).boundingBox()
+  const x = box === null ? 10 : box.x + box.width / 2
+  const top = box === null ? 10 : box.y
+  // Two moves: the first lands inside the strip, the second is what guarantees
+  // a `mouseenter` even if the pointer was already at the first coordinate.
+  await page.mouse.move(x, top + 30)
+  await page.mouse.move(x, top + 12)
+  await expect(viewerTopBar(page)).toHaveAttribute('data-visible', 'true')
+
+  const bar = await viewerTopBar(page).boundingBox()
+  if (bar !== null) {
+    await page.mouse.move(bar.x + bar.width / 2, bar.y + bar.height / 2)
+  }
+}
+
+/**
+ * Sets one of the viewer's segmented controls (표시 모드 / 읽기 방향 / 맞춤).
+ *
+ * Below 1024 the 맞춤 group and below 768 all three move into the `⋯` bottom
+ * sheet (ui-spec §7), so the helper opens the sheet when the group is not
+ * inline. That is the same route a reader has on a phone, which is the point of
+ * running these specs at 400px at all.
+ */
+export async function setViewerSeg(page: Page, group: string, value: string): Promise<void> {
+  await wakeChrome(page)
+  const bar = viewerTopBar(page)
+  const option = bar.locator(`[aria-label="${group}"] label[data-value="${value}"]`)
+  if ((await option.count()) === 0) {
+    await bar.getByRole('button', { name: '뷰어 컨트롤' }).click()
+    await expect(page.locator('[data-role="viewer-control-sheet"]')).toBeVisible()
+  }
+  await option.click()
+  await expect(option).toHaveAttribute('data-checked', 'true')
+}
+
+/** Closes the `⋯` bottom sheet if it is open, so it stops covering the stage. */
+export async function closeViewerSheet(page: Page): Promise<void> {
+  const sheet = page.locator('[data-role="viewer-control-sheet"]')
+  if ((await sheet.count()) === 0) return
+  await wakeChrome(page)
+  await viewerTopBar(page).getByRole('button', { name: '뷰어 컨트롤' }).click()
+  await expect(sheet).toHaveCount(0)
+}
+
+/**
+ * Toggles the thumbnail strip through the bottom bar's own `썸네일 · T` button.
+ *
+ * Not the `T` key, for callers that have just used the mouse: `useViewerKeys`
+ * drops every key whose `event.target` is `isTypingTarget`, and that includes an
+ * `<input>` of any kind — so after dragging the page slider (an
+ * `input[type=range]`, which keeps focus) the whole of ui-spec §8.2 is inert
+ * until focus moves. The key path is asserted separately in 04-viewer.spec.ts,
+ * from a page whose focus is still the body.
+ */
+export async function toggleStrip(page: Page): Promise<void> {
+  await wakeChrome(page)
+  await page.getByRole('button', { name: '썸네일 · T' }).click()
+}
+
+/** Waits until at least one page image has decoded on the stage. */
+export async function waitForPage(page: Page): Promise<void> {
+  await expect(page.locator('[data-role="page-frame"][data-status="ready"]').first()).toBeVisible({
+    timeout: 30_000,
+  })
+}
+
+/**
+ * Waits for the debounced `PUT /api/books/{bid}/progress` to land.
+ *
+ * `useSaveProgress` buffers the page and sends it 1 s later, and it flushes that
+ * buffer on unmount as well as on `visibilitychange` and `pagehide`
+ * (`api/queries.ts`, and `useProgressSync`'s own docblock names the same three).
+ * So leaving a book does not *lose* the write — but it does not make it instant
+ * either, and a spec that navigated away and read the row straight back would be
+ * racing its own client: FR-VWR-009 would fail for a reason that has nothing to
+ * do with FR-VWR-009. This helper waits for the response instead.
+ *
+ * No caller today — 04-viewer 6.6 polls `GET /api/books/{bid}` for the row
+ * instead, which also survives a write that landed before a listener could be
+ * attached. An unused export is exactly how `clearSearch()` kept a
+ * viewport-dependent count assertion alive here unnoticed, so this one is on
+ * notice: either a spec uses it or it goes.
+ */
+export async function waitForProgressWrite(page: Page, bookId: string): Promise<void> {
+  await page.waitForResponse(
+    (response) =>
+      response.url().includes(`/api/books/${bookId}/progress`) &&
+      response.request().method() === 'PUT' &&
+      response.ok(),
+    { timeout: 15_000 },
+  )
+}

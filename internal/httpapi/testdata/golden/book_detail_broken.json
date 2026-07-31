@@ -1,0 +1,28 @@
+{
+  "id": "cojqyqhq3z5wznoo",
+  "series_id": "eztflj6nvueqmi5t",
+  "name": "[만화] 손상.zip",
+  "path": "[만화] 손상.zip",
+  "kind": "zip",
+  "ord": 0,
+  "page_count": 0,
+  "total_bytes": 0,
+  "file_size": 12,
+  "mtime": 1457920766,
+  "cv": "deadbeefdeadbeef",
+  "status": "error",
+  "error": "central directory is truncated",
+  "progress": null,
+  "series_name": "[만화] 손상.zip",
+  "root_name": "manga",
+  "pages": [],
+  "dims_state": "none",
+  "prev_book_id": null,
+  "next_book_id": null,
+  "prefs": {
+    "reading_direction": "ltr",
+    "display_mode": "single",
+    "fit_mode": "height",
+    "is_override": false
+  }
+}

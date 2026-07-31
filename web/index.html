@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <!--
+      Base-path placeholder (NFR-SEC-003).
+
+      The server rewrites this href to "{base_path}/" as it serves index.html,
+      so the same built asset works whether SHELF is mounted at "/" or under a
+      reverse proxy at "/reader/". Nothing in src/ may hard-code a leading "/":
+      src/lib/basePath.ts reads this element, and the router takes its basename
+      from it. Keep the trailing slash — a base href without one drops the last
+      segment when resolving relative URLs.
+    -->
+    <base href="/" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="description" content="아카이브 기반 만화·도서 웹 뷰어" />
+    <title>Oh My Manhwa-bbang</title>
+    <!--
+      No <link> to an external font service. NFR-OPS-001/002 forbid a runtime
+      external dependency, so Archivo is vendored through @fontsource and
+      Hangul falls back to the system stack (decisions.md E-7).
+    -->
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

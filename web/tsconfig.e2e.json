@@ -1,0 +1,30 @@
+{
+  // The Playwright project — `playwright.config.ts` plus everything under the
+  // `testDir` it declares (`./e2e`).
+  //
+  // This project is not optional bookkeeping. tsconfig.json is the *app*
+  // project and excludes `e2e`, and eslint.config.js runs every type-aware rule
+  // through the TypeScript project service; a file that belongs to no project
+  // fails to parse, so without this file the first Playwright spec anyone
+  // commits makes `pnpm lint` exit 1 with
+  //   "was not found by the project service".
+  // `pnpm typecheck` runs this project too, so a spec that does not compile
+  // fails a gate instead of failing only when someone runs `pnpm e2e`.
+  //
+  // `include` deliberately names playwright.config.ts as well as `e2e`: WP-00
+  // ships no specs, and tsc treats a project whose file list resolves to
+  // nothing as error TS18003. The config file keeps it non-empty from the first
+  // commit — the same trick tsconfig.json uses while src/ is still a .gitkeep.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // Specs run in Node under the Playwright runner, but `page.evaluate`
+    // callbacks execute in the browser and are typechecked in this project, so
+    // the DOM lib has to stay.
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    // No "vite/client": nothing here imports an asset or reads import.meta.env.
+    "types": ["node"],
+    "jsx": "preserve"
+  },
+  "include": ["e2e", "playwright.config.ts"],
+  "exclude": ["dist", "node_modules", "src"]
+}

@@ -1,0 +1,9 @@
+{
+  "error": {
+    "code": "bad_request",
+    "message": "unknown field \"them\"",
+    "detail": {
+      "field": "them"
+    }
+  }
+}

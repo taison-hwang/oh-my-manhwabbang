@@ -1,0 +1,19 @@
+{
+  "items": [
+    {
+      "name": "manga",
+      "label": "만화",
+      "path": "/tmp/shelf-golden/002",
+      "enabled": true,
+      "series_count": 4,
+      "book_count": 5,
+      "page_count": 17,
+      "total_bytes": 7168,
+      "available": true,
+      "last_scan_start": 1785229110,
+      "last_scan_end": 1785229142,
+      "last_scan_error": null,
+      "pending": false
+    }
+  ]
+}

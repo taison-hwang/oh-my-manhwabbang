@@ -1,0 +1,277 @@
+# ============================================================================
+#  shelf.yaml — SHELF configuration
+# ============================================================================
+#  Copy this file to one of the locations below, edit `roots`, and start the
+#  server.  Every key except roots[].name and roots[].path is optional; the
+#  value shown is the built-in default, so deleting a line changes nothing.
+#
+#  Lookup order (the first file that exists wins — nothing is merged):
+#     1.  --config <path>          explicit; if given and missing, fatal
+#     2.  $SHELF_CONFIG
+#     3.  ./shelf.yaml
+#     4.  $XDG_CONFIG_HOME/shelf/shelf.yaml   (default ~/.config/shelf/shelf.yaml)
+#     5.  /etc/shelf/shelf.yaml               (unix only)
+#
+#     shelf --init-config          writes this file to location 4 and exits
+#     shelf --config ./shelf.yaml  starts the server (prd AC-007)
+#
+#  SHELF never writes to a media volume.  It opens, stats and reads; it does
+#  not create, rename, delete or re-timestamp anything under roots[].path
+#  (FR-CFG-005 / NFR-DAT-002).  Mounting your collection read-only is safe and
+#  is the recommended configuration.
+# ============================================================================
+
+
+# ---------------------------------------------------------------------------
+#  server
+# ---------------------------------------------------------------------------
+server:
+  listen: "0.0.0.0"             # bind address
+  port: 8080                    # 1..65535
+
+  # Mount the whole application under a sub-path when it sits behind a reverse
+  # proxy, e.g. "/reader" (NFR-SEC-003).  A leading slash is added and a
+  # trailing one stripped; "" serves at the root.  ".." is rejected.
+  base_path: ""
+
+  read_header_timeout: "10s"    # there is deliberately NO write timeout:
+                                #   page streams must not be cut off mid-image
+  shutdown_grace: "10s"
+
+  # Honour X-Forwarded-Proto / X-Forwarded-For.  Leave this false unless a
+  # proxy you control is the only thing that can reach the port — otherwise a
+  # client can forge its own address and defeat the login rate limiter.
+  trusted_proxy_headers: false
+
+  # Let the settings screen add and remove entries in the `roots:` list BELOW,
+  # in this file, through POST /api/roots and DELETE /api/roots/{name}
+  # (AMENDMENT A-11, ruling E-26).  With this false — the default — both verbs
+  # answer 403 and the screen renders no 추가/제거 controls at all.
+  #
+  # Leave it false unless you know who can reach the port: `listen` defaults to
+  # every interface and the `auth:` block is omitted by default, so an ungated
+  # write API would let anyone on the LAN make this server open any directory
+  # it can read — and the library and page endpoints would then serve the
+  # contents.  Turning it on grants no authority that the person editing this
+  # file does not already have.
+  #
+  # Removing a root deletes that root's rows from index.db, which is derived
+  # and disposable; it never touches user.db, so reading progress survives and
+  # reattaches if the same directory is added again.  Adding a root writes the
+  # line below but does not open it: a change here needs a restart, like every
+  # other key in this file.
+  allow_root_editing: false
+
+
+# ---------------------------------------------------------------------------
+#  roots — the directories to scan (FR-CFG-001).  At least one is required.
+# ---------------------------------------------------------------------------
+#
+#  ############################################################################
+#  #  WARNING — `name` is an identity, not a label.                           #
+#  #                                                                          #
+#  #  Every series_id and book_id is SHA-256 over (root name + the path of    #
+#  #  the item relative to that root).  Reading progress, per-book reading    #
+#  #  direction and thumbnail cache entries are all keyed by those ids.       #
+#  #                                                                          #
+#  #  Renaming a root therefore ORPHANS all of its reading progress — the     #
+#  #  data is not deleted, but nothing points at it any more.  Moving the     #
+#  #  root to a different `path` is completely safe and is exactly what the   #
+#  #  scheme is designed for (FR-CFG-004, AC-006).                            #
+#  #                                                                          #
+#  #  Use `label` for the display name.  Change `name` only if you are        #
+#  #  willing to lose progress for that root.                                 #
+#  ############################################################################
+#
+roots:
+  - name: "manga"               # REQUIRED.  [a-zA-Z0-9._-]{1,64}, unique.
+    path: "/mnt/media/manga"    # REQUIRED.  Absolute path to an existing dir.
+    enabled: true               # FR-CFG-002.  A disabled root stays in the
+                                #   index and is merely hidden from listings,
+                                #   so disabling never destroys progress.
+    label: "만화"                # optional display name; falls back to `name`
+
+  # - name: "books"
+  #   path: "/mnt/media/books"
+  #   label: "도서"
+
+
+# ---------------------------------------------------------------------------
+#  storage — where SHELF keeps its own files.  Never inside a media volume.
+# ---------------------------------------------------------------------------
+storage:
+  # index.db + user.db + session.key.
+  #   default  $XDG_DATA_HOME/shelf  ->  ~/.local/share/shelf        (linux)
+  #            ~/Library/Application Support/shelf                   (macOS)
+  #            %LOCALAPPDATA%\shelf                                  (windows)
+  #
+  # index.db is derived and disposable: delete it, restart, and it rebuilds.
+  # user.db holds the only data you authored — progress, per-book preferences
+  # and settings — and is never touched by --rebuild-index (NFR-DAT-004).
+  # Back up user.db; ignore index.db.
+  data_dir: ""
+
+  # thumbs/ + pdf/ + wazero/ (FR-CFG-003).
+  #   default  $XDG_CACHE_HOME/shelf  ->  ~/.cache/shelf             (linux)
+  #            ~/Library/Caches/shelf                                (macOS)
+  #            %LOCALAPPDATA%\shelf\cache                            (windows)
+  #
+  # Deleting the whole cache directory while the server is running is safe and
+  # costs latency only (FR-THM-007).
+  cache_dir: ""
+
+
+# ---------------------------------------------------------------------------
+#  scan — how the collection is indexed (FR-IDX-*)
+# ---------------------------------------------------------------------------
+scan:
+  on_start: true                # run an incremental scan at boot (FR-IDX-001).
+                                #   The library is served from the existing
+                                #   index while it runs (NFR-OPS-006).
+  workers: 0                    # archive readers.  0 => min(8, max(2, NumCPU/2)).
+                                #   I/O bound; ~346 archives/s measured at 16.
+  max_depth: 3                  # how deep below a series to look for books.
+                                #   The reference collection needs 3.
+                                #   0 means unlimited, which is unwise.
+  follow_symlinks: false        # keep this false: a symlink that escapes its
+                                #   root is refused anyway (NFR-SEC-001).
+  cover_max_loose_images: 3     # a directory holding this many or fewer loose
+                                #   images ALONGSIDE real books treats them as
+                                #   cover candidates rather than as a one-page
+                                #   book.  In the reference collection the
+                                #   "mixed" shape is always "N archives + 1
+                                #   cover jpg", 47 times over.
+
+  # Extra exclusions, matched against the root-relative slash path.
+  # The built-in rules (__MACOSX/, ._*, dot-files, .DS_Store, Thumbs.db,
+  # desktop.ini, directory entries, 0-byte entries, non-image extensions) are
+  # always applied and are not configurable — FR-IDX-006 is 필수.
+  exclude_globs: []
+  #   - "**/*.part"
+  #   - "**/@eaDir/**"
+
+  # Restrict scanning to specific direct children of a root.  Empty (the
+  # default) means "everything".  Each pattern is matched with path.Match
+  # against the BASE NAME of a root's direct child, before classification.
+  #
+  # Its intended use is a curated subset — a test root, or a staged rollout —
+  # without copying or symlinking terabytes.  Note that `[` and `]` are
+  # path.Match character-class metacharacters, so a literal name like
+  # "[만화] 군계 1~25" must escape the opening bracket as "[[]만화] 군계 1~25".
+  include_globs: []
+  #   - "[[]만화] Clover 클로버 (총4권)"
+  #   - "[[]만화] 바퀴.zip"
+
+
+# ---------------------------------------------------------------------------
+#  thumbnails (FR-THM-*)
+# ---------------------------------------------------------------------------
+thumbnails:
+  # Sorted ascending, deduplicated, each 32..2048.  A request snaps UP to the
+  # nearest configured width, so this set should match what the UI actually
+  # asks for — these four are derived from the real rendered sizes at 2x DPR.
+  widths: [120, 240, 400, 640]
+
+  quality: 82                   # JPEG quality, 1..100
+  format: "jpeg"                # jpeg only in v1 (CON-003).  Any other value
+                                #   is a configuration error.  The format
+                                #   string is part of the cache hash, so
+                                #   changing it later is a pure cache
+                                #   invalidation with no migration.
+  workers: 0                    # 0 => min(4, NumCPU).  CPU and RAM bound:
+                                #   roughly 25 MiB peak per in-flight decode.
+  cover_first: true             # generate series covers ahead of page thumbs
+                                #   so the library fills in during a scan.
+  avif_enabled: true            # decode .avif for thumbnails.  The first one
+                                #   costs ~1.1 s and ~170 MiB while a wasm
+                                #   runtime starts, and decodes are serialised
+                                #   to one at a time.  Set false (or build with
+                                #   -tags noavif) if you have no AVIF files.
+  max_source_bytes: 67108864    # refuse to decode a single page larger than
+                                #   64 MiB.  The original still streams.
+
+
+# ---------------------------------------------------------------------------
+#  pdf (FR-SRV-006) — pages are rasterised on the server and cached
+# ---------------------------------------------------------------------------
+pdf:
+  enabled: true                 # false behaves exactly like the `nopdf` build
+                                #   tag: PDF books index as status "unsupported"
+                                #   and page requests answer 501, never a 404.
+  workers: 1                    # concurrent pdfium instances, ~60–300 MiB each.
+                                #   The pool is created on the first PDF request
+                                #   and torn down when idle, so installations
+                                #   with no PDFs never pay for it.
+  default_width: 1400           # px, when the client sends no ?w=
+  max_width: 3000               # clamp; requested widths snap to 100 px steps
+  cache_renders: true           # persist rasterised pages under <cache_dir>/pdf/
+
+
+# ---------------------------------------------------------------------------
+#  library — what the listing shows (FR-LIB-*)
+# ---------------------------------------------------------------------------
+library:
+  # The window behind the 사이드바 "최근 추가" smart list.  A series counts as
+  # recently added while
+  #     now - first_seen_at <= recently_added_days * 86400
+  #
+  # first_seen_at is written ONCE, the first time a scan ever sees the series,
+  # and it lives in user.db — not in the index.  So it is NOT reset by
+  # --rebuild-index, by deleting the cache, or by a drive that was unplugged
+  # for a week and came back: none of those made the material new.  Renaming or
+  # moving a series *is* a new series (its id is derived from its path), and it
+  # legitimately appears here again.
+  #
+  # 1..3650.  There is deliberately no "disabled" value — the sidebar entry is
+  # always shown, and an empty list with no explanation is worse than a window
+  # you disagree with.  Raise it if you file things away in batches.
+  recently_added_days: 14
+
+
+# ---------------------------------------------------------------------------
+#  reader — server-side DEFAULTS.  A reader can override each of these per
+#  book at runtime, and that choice is stored in user.db (FR-VWR-002).
+# ---------------------------------------------------------------------------
+reader:
+  prefetch: 4                   # pages loaded ahead of the current one, 0..20
+  reading_direction: "ltr"      # "ltr" | "rtl"   (rtl = Japanese manga order)
+  display_mode: "single"        # "single" | "spread" | "vertical"
+  fit_mode: "height"            # "width" | "height" | "original" | "contain"
+  theme: "system"               # "light" | "dark" | "system".
+                                #   The reader itself is always dark.
+
+
+# ---------------------------------------------------------------------------
+#  auth (NFR-SEC-002) — OPTIONAL, and OFF by default.
+# ---------------------------------------------------------------------------
+#  With no `auth:` block, SHELF requires no password.  That is the intended
+#  configuration for the single-user LAN setup this product is built for.
+#
+#  Uncomment the block below to require a password.  Authentication is
+#  all-or-nothing: when enabled, every route except /api/health and /api/auth/*
+#  requires the session cookie, static assets included.
+#
+#  Generate the hash with:      shelf hash-password
+#  Setting both `password` and `password_hash` is a configuration error.
+#
+#  There is no built-in TLS.  If the server is reachable from outside your
+#  network, put it behind a reverse proxy that terminates HTTPS and set
+#  server.base_path accordingly — a password over plain HTTP protects nothing.
+#
+# auth:
+#   password: ""                # plaintext; hashed with bcrypt at startup and
+#                               #   never stored.  Prefer password_hash.
+#   password_hash: ""           # bcrypt hash from `shelf hash-password`
+#   session_ttl: "720h"         # 30 days
+#   session_key_file: ""        # default <data_dir>/session.key,
+#                               #   32 random bytes, created 0600 on first boot
+
+
+# ---------------------------------------------------------------------------
+#  log (NFR-OPS-005)
+# ---------------------------------------------------------------------------
+log:
+  level: "info"                 # debug | info | warn | error
+                                #   --log-level overrides this on the command line
+  format: "text"                # text | json
+  http_requests: true           # one structured line per request

@@ -1,0 +1,70 @@
+# ============================================================================
+#  shelf.e2e.yaml — generated. Do not edit.
+# ============================================================================
+#  Emitted by scripts/e2e-config.sh from test/shelf.e2e.yaml.tmpl.
+#  This is impl-plan §6.3's curated-subset configuration.
+#
+#  The root points AT THE REAL COLLECTION and is narrowed by
+#  `scan.include_globs` (amendment A-3, ruling E-6). Nothing is copied: the
+#  test reads the genuine 2012–2018 mtimes, the genuine CP949 entry names and
+#  the genuine truncated archives. Symlinks cannot do this — os.Root refuses
+#  any symlink that escapes its root — and copying would destroy the mtimes
+#  that content_version, the incremental scan and FR-THM-006 all key off
+#  (D-48).
+#
+#  `[` and `]` are path.Match character-class metacharacters, so each pattern
+#  writes the literal bracket as the one-member class `[[]`. The raw form
+#  compiles but matches nothing, which would index an empty library.
+# ============================================================================
+
+server:
+  listen: "127.0.0.1"
+  port: @@PORT@@
+  base_path: "@@BASE_PATH@@"
+  shutdown_grace: "5s"
+  # Amendment A-11 / ruling E-26 — the gate on `POST /api/roots` and
+  # `DELETE /api/roots/{name}`. It is emitted by scripts/e2e-config.sh and it
+  # differs by round, on purpose:
+  #
+  #   real       false — the SHIPPED DEFAULT, and the configuration the settings
+  #              screen is read-only in. The browser tier asserts the add/remove
+  #              controls are absent *and* that `GET /api/settings` reports
+  #              `root_editing_enabled: false`, so "absent" is pinned to its
+  #              reason rather than to whatever this file happens to say.
+  #   synthetic  true  — the write path is exercised for real. Both the fixture
+  #              tree and THIS FILE live under the run's /tmp state directory in
+  #              that round (scripts/e2e.sh, `CONFIG`), so `POST` writes a real
+  #              configuration file, takes a real `.bak`, and threatens nothing.
+  #              A real-collection round must never turn this on: this file would
+  #              then be the one inside the repository, and step 9 would — quite
+  #              correctly — fail the run for writing there.
+  allow_root_editing: @@ALLOW_ROOT_EDITING@@
+
+roots:
+  - name: "mangga"
+    label: "만화 (E2E subset)"
+    path: "@@ROOT@@"
+
+storage:
+  data_dir: "@@DATA_DIR@@"
+  cache_dir: "@@CACHE_DIR@@"
+
+scan:
+  # The script triggers the scan explicitly so it can time it and so that
+  # NFR-OPS-006 — serving before scanning — is observable.
+  on_start: false
+  workers: 8
+  include_globs:
+@@INCLUDE_GLOBS@@
+
+thumbnails:
+  widths: [120, 240, 400, 640]
+  workers: 4
+
+pdf:
+  enabled: true
+  workers: 1
+
+log:
+  level: "@@LOG_LEVEL@@"
+  format: "text"

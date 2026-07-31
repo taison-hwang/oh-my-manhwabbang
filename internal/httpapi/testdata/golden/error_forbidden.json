@@ -1,0 +1,9 @@
+{
+  "error": {
+    "code": "forbidden",
+    "message": "editing the roots list is disabled; set server.allow_root_editing in the configuration file",
+    "detail": {
+      "reason": "disabled"
+    }
+  }
+}

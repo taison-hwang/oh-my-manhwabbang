@@ -1,0 +1,9 @@
+{
+  "error": {
+    "code": "rate_limited",
+    "message": "too many login attempts",
+    "detail": {
+      "retry_after": 12
+    }
+  }
+}

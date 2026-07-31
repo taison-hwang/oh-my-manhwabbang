@@ -1,0 +1,10 @@
+{
+  "error": {
+    "code": "bad_request",
+    "message": "sort must be one of name, mtime, recent, size, books, added",
+    "detail": {
+      "param": "sort",
+      "value": "recentt"
+    }
+  }
+}

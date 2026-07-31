@@ -1,0 +1,111 @@
+# ============================================================================
+#  shelf.yaml — SHELF configuration (starter file)
+# ============================================================================
+#  Written by `shelf --init-config`.  Edit `roots` below, then start the server:
+#
+#      shelf --config /path/to/this/file
+#
+#  Every key except roots[].name and roots[].path is optional, and the value
+#  shown is the built-in default, so deleting a line changes nothing.  The
+#  fully commented reference — every key the loader accepts, with its bounds —
+#  is `shelf.example.yaml` in the source tree.
+#
+#  Lookup order (first file that exists wins; nothing is merged):
+#     1. --config <path>       explicit; if given and missing, fatal
+#     2. $SHELF_CONFIG
+#     3. ./shelf.yaml
+#     4. $XDG_CONFIG_HOME/shelf/shelf.yaml   (default ~/.config/shelf/shelf.yaml)
+#     5. /etc/shelf/shelf.yaml               (unix only)
+#
+#  SHELF never writes to a media volume.  It opens, stats and reads; it does
+#  not create, rename, delete or re-timestamp anything under roots[].path.
+#  Mounting your collection read-only is safe and is recommended.
+# ============================================================================
+
+server:
+  listen: "0.0.0.0"
+  port: 8080
+
+  # Set this when SHELF sits behind a reverse proxy on a sub-path, e.g.
+  # "/reader".  "" serves at the root.
+  base_path: ""
+
+  # Let the settings screen add and remove entries in the `roots:` list below,
+  # in this file.  With this false — the default — the screen shows no
+  # 추가/제거 controls at all and both verbs are refused.
+  #
+  # Leave it false unless you know who can reach the port: `listen` above is
+  # every interface and there is no `auth:` block by default, so turning this
+  # on would let anyone on the LAN make this server open any directory it can
+  # read.  It grants no authority that editing this file does not already give.
+  # A root added or removed here needs a restart, like every other key.
+  allow_root_editing: false
+
+# ---------------------------------------------------------------------------
+#  roots — the directories to scan.  At least one is required.
+# ---------------------------------------------------------------------------
+#
+#  WARNING — `name` is an identity, not a label.  Every series and book id is
+#  a hash of (root name + the item's path relative to that root), and reading
+#  progress is keyed by those ids.  RENAMING A ROOT ORPHANS ITS PROGRESS.
+#  Changing `path` is completely safe: move the collection freely, keep `name`.
+#  `label` is the display name and can be changed at any time.
+#
+roots:
+  - name: "books"                     # stable identity — choose once
+    label: "만화"                      # display name — change freely
+    path: "/edit/me/path/to/your/collection"   # absolute path
+    enabled: true
+
+storage:
+  # Left empty, these resolve per-OS:
+  #   Linux   $XDG_DATA_HOME/shelf and $XDG_CACHE_HOME/shelf
+  #   macOS   ~/Library/Application Support/shelf and ~/Library/Caches/shelf
+  #   Windows %LOCALAPPDATA%\shelf\data and %LOCALAPPDATA%\shelf\cache
+  #
+  # data_dir holds index.db (derived, disposable) and user.db (your reading
+  # progress — back this one up).  cache_dir holds thumbnails and rendered PDF
+  # pages and is safe to delete at any time, including while the server runs.
+  data_dir: ""
+  cache_dir: ""
+
+scan:
+  on_start: true          # rescan in the background at start-up
+  workers: 0              # 0 = min(8, max(2, NumCPU/2))
+  max_depth: 3
+
+  # Restrict a root to the direct children whose base name matches one of these
+  # patterns (path.Match syntax).  Empty means "everything".
+  include_globs: []
+  exclude_globs: []
+
+thumbnails:
+  widths: [120, 240, 400, 640]
+  quality: 82
+  workers: 0              # 0 = min(4, NumCPU)
+
+pdf:
+  enabled: true
+  workers: 1
+
+reader:
+  prefetch: 4
+  reading_direction: "ltr"   # "rtl" for right-to-left manga
+  display_mode: "single"     # single | spread | vertical
+  fit_mode: "height"         # width | height | original | contain
+  theme: "system"
+
+log:
+  level: "info"           # debug | info | warn | error
+  format: "text"          # text | json
+
+# ---------------------------------------------------------------------------
+#  auth — optional.  With no `auth:` block there is no password, which is the
+#  default for a single-user LAN tool.  To require one:
+#
+#      shelf hash-password        # prints a bcrypt hash; paste it below
+#
+#  auth:
+#    password_hash: "$2a$12$..."
+#    session_ttl: "720h"
+# ---------------------------------------------------------------------------

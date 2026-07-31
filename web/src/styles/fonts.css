@@ -1,0 +1,26 @@
+/*
+ * Archivo, vendored (C-14 / decisions.md E-7 / NFR-OPS-001, NFR-OPS-002).
+ *
+ * The Modernist stylesheet shipped an `@import` of the Google Fonts CSS API.
+ * That is a runtime external dependency and is deleted; these are the same
+ * three weights served from node_modules, fingerprinted by Vite into
+ * dist/assets/ and swallowed by `//go:embed all:dist`. A build assertion greps
+ * dist/ for a font-CDN URL — if this file ever regrows a remote @import, it
+ * fails.
+ *
+ * Only the weights the DS uses (400 body, 600, 800 headings) and only the latin
+ * + latin-ext subsets. Archivo has **no Hangul coverage**: every Korean glyph
+ * in the product is rendered by the system fallback stack declared in
+ * tokens.css. No Korean face is vendored in this build — a subsetted
+ * Pretendard/Noto Sans KR is 1.5–4 MB against an ~18 MB binary, and the
+ * resulting cross-platform typography variance is a documented known issue.
+ *
+ * Each @fontsource file declares `font-display: swap` already.
+ */
+
+@import '@fontsource/archivo/latin-400.css';
+@import '@fontsource/archivo/latin-600.css';
+@import '@fontsource/archivo/latin-800.css';
+@import '@fontsource/archivo/latin-ext-400.css';
+@import '@fontsource/archivo/latin-ext-600.css';
+@import '@fontsource/archivo/latin-ext-800.css';

@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "unsupported",
+    "message": "this build cannot render PDF pages"
+  }
+}

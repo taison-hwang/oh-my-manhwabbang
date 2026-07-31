@@ -1,0 +1,226 @@
+/*
+ * SHELF design tokens — ui-spec §1.2 (light) + §1.4 (dark).
+ *
+ * Imported once from main.tsx, before Tailwind's layers. Nothing else in the
+ * app may contain a colour literal; every hex in the product is in this file.
+ *
+ * ---------------------------------------------------------------------------
+ * Why the dark ramp is `[data-theme='dark']` and not `:root[data-theme='dark']`
+ * ---------------------------------------------------------------------------
+ * ui-spec §1.4 prints the selector as `:root[data-theme="dark"]` but then
+ * requires, three paragraphs later, that `<div data-theme="dark">` re-scope the
+ * same tokens so the viewer is dark in *both* app themes (NFR-CMP-003).
+ * `:root[…]` only ever matches <html>, so the printed selector cannot do what
+ * the paragraph asks. The attribute selector is written bare here so it matches
+ * any element, and the two theme blocks are ordered light-then-dark so that at
+ * equal specificity (0,1,0) on <html data-theme="dark"> the dark block wins.
+ * The same applies in reverse: `<div data-theme="light">` inside the dark
+ * viewer re-scopes back to the light palette, which is exactly what the
+ * next-volume card of ui-spec §6.5 needs.
+ */
+
+:root,
+[data-theme='light'] {
+  color-scheme: light;
+
+  /* ---- roles ---------------------------------------------------------- */
+  --color-bg: #f3f2f2;
+  --color-surface: #eae9e9;
+  --color-text: #201e1d;
+  --color-accent: #ec3013;
+  --color-accent-2: #e15b47;
+  --color-divider: rgb(32 30 29 / 0.4);
+
+  /* ---- semantic, theme-flipping (ui-spec §1.4) ------------------------ */
+  --ink: var(--color-text);
+  --ink-muted: rgb(32 30 29 / 0.55);
+  --ink-dim: #7d7979; /* neutral-600 */
+  --ink-faint: #9b9797; /* neutral-500 */
+  --ink-label: rgb(32 30 29 / 0.7); /* .field > label */
+  --ink-meta: rgb(32 30 29 / 0.5); /* .card-meta */
+  --ink-th: rgb(32 30 29 / 0.6); /* .table th */
+  --rule: var(--color-divider); /* 1px hairlines */
+  --rule-strong: var(--color-divider); /* 2px section rules */
+  --control-border: var(--color-divider);
+  --control-border-hover: rgb(32 30 29 / 0.45);
+  --fill-subtle: #eae7e7; /* neutral-200 */
+  --fill-track: #d7d3d3; /* neutral-300 — progress troughs */
+  --fill-track-2: #bab6b6; /* neutral-400 — troughs over imagery */
+  --hover-tint: rgb(32 30 29 / 0.07);
+  --press-tint: rgb(32 30 29 / 0.14);
+  --row-hover: rgb(32 30 29 / 0.05);
+  --row-hover-table: rgb(32 30 29 / 0.04);
+  --nav-hover: rgb(32 30 29 / 0.06);
+  --nav-active: rgb(236 48 19 / 0.08);
+  --scrim-cover: rgb(32 30 29 / 0.72);
+  --scrim-modal: rgb(45 43 43 / 0.5);
+  --accent-hover: #dd2b0f; /* accent-600 — one step past base on light */
+  --accent-press: #ae1800; /* accent-700 */
+  --accent-text: #ae1800; /* accent-700 — accent at paragraph size */
+  --scrollbar-thumb: rgb(32 30 29 / 0.3);
+
+  /* ---- ramps — constant across themes (an absolute lightness scale) --- */
+  --color-neutral-100: #f8f4f4;
+  --color-neutral-200: #eae7e7;
+  --color-neutral-300: #d7d3d3;
+  --color-neutral-400: #bab6b6;
+  --color-neutral-500: #9b9797;
+  --color-neutral-600: #7d7979;
+  --color-neutral-700: #605d5d;
+  --color-neutral-800: #444141;
+  --color-neutral-900: #2d2b2b;
+  --color-accent-100: #fff2ef;
+  --color-accent-200: #ffe0d9;
+  --color-accent-300: #ffc4b8;
+  --color-accent-400: #ff9783;
+  --color-accent-500: #ff563c;
+  --color-accent-600: #dd2b0f;
+  --color-accent-700: #ae1800;
+  --color-accent-800: #7c1405;
+  --color-accent-900: #4d170e;
+  --color-accent-2-100: #fff2ef;
+  --color-accent-2-200: #ffe0da;
+  --color-accent-2-300: #ffc4b9;
+  --color-accent-2-400: #ff9784;
+  --color-accent-2-500: #ef6853;
+  --color-accent-2-600: #c94b39;
+  --color-accent-2-700: #9e3526;
+  --color-accent-2-800: #71261b;
+  --color-accent-2-900: #471d16;
+
+  /* ---- scrims that are absolute, not theme-relative -------------------- */
+  /* The viewer ground is #201e1d in both app themes, so the scrims painted on
+     top of it are constants rather than `text @ N%`. */
+  --scrim-volume-end: rgb(32 30 29 / 0.92);
+  --scrim-broken: rgb(77 23 14 / 0.82); /* accent-900 @ 82% */
+  --ghost-hover: rgb(236 48 19 / 0.1);
+  --ghost-press: rgb(236 48 19 / 0.18);
+  --selection-bg: rgb(236 48 19 / 0.3);
+
+  /* ---- type ------------------------------------------------------------ */
+  /* Archivo is vendored latin-only (C-14 / decisions E-7); it has no Hangul
+     coverage, so the Korean fallback stack is explicit and ordered. */
+  --font-heading:
+    'Archivo', 'Pretendard Variable', Pretendard, 'Apple SD Gothic Neo', 'Malgun Gothic',
+    'Noto Sans KR', system-ui, sans-serif;
+  --font-heading-weight: 800;
+  --font-body: var(--font-heading);
+
+  /* ---- space + radius -------------------------------------------------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+
+  /* ---- elevation — soft ink-tinted shadows on a light ground ----------- */
+  --shadow-sm: 0 1px 2px rgb(45 43 43 / 0.14);
+  --shadow-md: 0 3px 10px rgb(45 43 43 / 0.16);
+  --shadow-lg: 0 12px 32px rgb(45 43 43 / 0.22);
+
+  /* ---- z-index ladder (ui-spec §3) ------------------------------------- */
+  --z-content: 0;
+  --z-sticky: 2;
+  --z-viewer: 60;
+  --z-overlay: 80;
+
+  /* ---- misc ------------------------------------------------------------ */
+  --disabled-opacity: 0.45;
+  --chrome-fade: 0.18s;
+  --hover-fade: 0.12s;
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --color-bg: #201e1d; /* was --color-text  */
+  --color-surface: #2d2b2b; /* neutral-900       */
+  --color-text: #f3f2f2; /* was --color-bg    */
+  --color-accent: #ec3013; /* brand constant    */
+  --color-accent-2: #e15b47;
+  --color-divider: #444141; /* neutral-800, SOLID — the viewer chrome rule */
+
+  --ink: #f3f2f2;
+  --ink-muted: rgb(243 242 242 / 0.62);
+  --ink-dim: #9b9797; /* neutral-500 reads as "dim" on dark */
+  --ink-faint: #7d7979; /* neutral-600 */
+  --ink-label: rgb(243 242 242 / 0.7);
+  --ink-meta: rgb(243 242 242 / 0.5);
+  --ink-th: rgb(243 242 242 / 0.6);
+  --rule: #444141; /* neutral-800 */
+  --rule-strong: #444141;
+  --control-border: #605d5d; /* neutral-700 — the viewer's button/seg borders */
+  --control-border-hover: #7d7979;
+  --fill-subtle: #2d2b2b; /* neutral-900 */
+  --fill-track: #444141; /* neutral-800 */
+  --fill-track-2: #605d5d; /* neutral-700 */
+  --hover-tint: rgb(243 242 242 / 0.08);
+  --press-tint: rgb(243 242 242 / 0.16);
+  --row-hover: rgb(243 242 242 / 0.06);
+  --row-hover-table: rgb(243 242 242 / 0.05);
+  --nav-hover: rgb(243 242 242 / 0.07);
+  --nav-active: rgb(236 48 19 / 0.14); /* 8% is invisible on dark */
+  --scrim-cover: rgb(0 0 0 / 0.72);
+  --scrim-modal: rgb(0 0 0 / 0.6);
+  --accent-hover: #ff563c; /* accent-500 */
+  --accent-press: #ff9783; /* accent-400 — one step past base on dark */
+  --accent-text: #ff9783; /* accent-400 */
+  --scrollbar-thumb: rgb(243 242 242 / 0.3);
+
+  /* Elevation on a dark ground = hairline edge + ambient darkness. */
+  --shadow-sm:
+    0 0 0 1px #444141,
+    0 1px 2px rgb(0 0 0 / 0.5);
+  --shadow-md:
+    0 0 0 1px #444141,
+    0 3px 10px rgb(0 0 0 / 0.55);
+  --shadow-lg:
+    0 0 0 1px #444141,
+    0 12px 32px rgb(0 0 0 / 0.6);
+}
+
+/*
+ * Responsive knobs — ONE block, ascending (ui-spec §7, D-42).
+ *
+ * `--grid-min` drives `repeat(auto-fill, minmax(var(--grid-min), 1fr))` in the
+ * library grid, so the column count changes here and nowhere else. Sprinkling
+ * Tailwind breakpoint variants across the grid class is explicitly ruled out.
+ *
+ *   <768       --grid-min:150px  gap 12px  2 cols   sidebar = off-canvas drawer
+ *   768–1023   --grid-min:224px  gap 16px  3 cols   sidebar = 56px icon rail
+ *   1024–1439  --grid-min:150px  gap 16px  4–5 cols sidebar = 240px fixed
+ *   >=1440     --grid-min:152px  gap 16px  6–8 cols sidebar = 240px fixed
+ */
+:root {
+  --grid-min: 150px;
+  --grid-gap: 12px;
+  --sidebar-w: 0px;
+  --drawer-w: 280px;
+  --touch-min: 44px;
+}
+
+@media (min-width: 768px) {
+  :root {
+    --grid-min: 224px;
+    --grid-gap: 16px;
+    --sidebar-w: 56px;
+    --touch-min: 0px;
+  }
+}
+
+@media (min-width: 1024px) {
+  :root {
+    --grid-min: 150px;
+    --sidebar-w: 240px;
+  }
+}
+
+@media (min-width: 1440px) {
+  :root {
+    --grid-min: 152px;
+  }
+}

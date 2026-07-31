@@ -1,0 +1,18 @@
+{
+  // The build-tooling project: vite.config.ts, vitest.config.ts,
+  // playwright.config.ts and (once WP-05 lands) tailwind.config.ts.
+  //
+  // These run in Node, not in the browser, so they get the Node lib and no DOM.
+  // `pnpm typecheck` does not invoke this project — tsconfig.json already
+  // covers the same files with the stricter app settings — it exists so editors
+  // and any tool that resolves a config file's own tsconfig get the right
+  // environment rather than guessing.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "jsx": "preserve"
+  },
+  "include": ["*.config.ts"],
+  "exclude": ["dist", "node_modules", "src"]
+}

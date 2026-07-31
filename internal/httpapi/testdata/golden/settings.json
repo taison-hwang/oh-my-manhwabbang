@@ -1,0 +1,30 @@
+{
+  "reading_direction": "ltr",
+  "display_mode": "single",
+  "fit_mode": "height",
+  "prefetch": 4,
+  "theme": "system",
+  "library_view": "grid",
+  "library_sort": "name",
+  "library_order": "asc",
+  "library_scope": "all",
+  "server": {
+    "thumbnail_widths": [
+      120,
+      240,
+      400,
+      640
+    ],
+    "scan_workers": 8,
+    "thumb_workers": 4,
+    "pdf_enabled": false,
+    "avif_enabled": false,
+    "auth_enabled": false,
+    "base_path": "",
+    "version": "dev",
+    "recently_added_days": 14,
+    "config_path": "/tmp/shelf-golden/001/shelf.yaml",
+    "root_editing_enabled": false,
+    "config_changed_on_disk": false
+  }
+}
