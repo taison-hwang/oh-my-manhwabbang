@@ -158,6 +158,8 @@ export default {
       zIndex: {
         content: '0',
         sticky: '2',
+        /** Inside the viewer: the two chrome bars, above the end-of-volume scrim. */
+        chrome: '3',
         viewer: '60',
         overlay: '80',
       },

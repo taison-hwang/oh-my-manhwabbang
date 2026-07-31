@@ -269,6 +269,15 @@ describe('touch targets below 768 (ui-spec §7, WP-05 acceptance 9)', () => {
     expect(btn).toMatch(/min-width:\s*var\(--touch-min\)/)
   })
 
+  it('grows the page slider from its 24px desktop box to a finger', () => {
+    // A range input with no height collapses onto its 2px track. The viewer's
+    // slider used to carry 44px inline at *every* width, which held this
+    // minimum but made the bottom bar 12px taller than the design on a desktop.
+    expect(findRule(allRules(BASE), "input[type='range']")?.body).toMatch(/height:\s*24px/)
+    expect(mobileRule("input[type='range']")).toMatch(/height:\s*var\(--touch-min\)/)
+    expect(mobileRule("input[type='range']::-webkit-slider-thumb")).toMatch(/height:\s*28px/)
+  })
+
   it('covers every control the shell puts on a phone', () => {
     // The scan row is a real control (it opens the scan log, ui-spec §4.1) but
     // it is a 7px dot plus one 12px line, so it needs the rule stated.

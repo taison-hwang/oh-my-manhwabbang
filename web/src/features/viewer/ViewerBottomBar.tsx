@@ -55,9 +55,10 @@ export function ViewerBottomBar({
       data-role="viewer-bottom-bar"
       data-visible={visible ? 'true' : 'false'}
       className={cn(
-        // No `z-index` here either — see the note on the top bar. Painting
-        // order is DOM order, and the `⋯` sheet is `fixed` above both.
-        'border-t-2 border-neutral-800 bg-bg transition-opacity',
+        // `z-chrome` puts both bars above the end-of-volume scrim, which is
+        // later in the DOM and would otherwise paint over them — see the note
+        // on `NextVolumeCard` in `ViewerPage`.
+        'z-chrome border-t-2 border-neutral-800 bg-bg transition-opacity',
         // See the note on the top bar: awake it is in the column, asleep it is
         // an overlay (E-27).
         visible
@@ -78,7 +79,10 @@ export function ViewerBottomBar({
         />
       )}
 
-      <div className="flex items-center gap-4 px-4 pb-3 pt-2">
+      {/* `flex-wrap`, like the top bar: below ~520px the counter, the slider and
+          썸네일 · T stop fitting on one line, and without it the slider is
+          crushed to a few pixels of travel rather than moving to its own row. */}
+      <div className="flex flex-wrap items-center gap-4 px-4 pb-3 pt-2">
         <span
           data-role="page-counter"
           className="min-w-[84px] text-base tabular-nums tracking-[.04em] text-ink"

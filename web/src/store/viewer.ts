@@ -182,25 +182,46 @@ export const useViewerStore = create<ViewerState>()((set, get) => ({
    * no UI — and the old behaviour contradicted it at the one moment it matters
    * most: the first frame of a book was three rows of controls over the page.
    * `hintVisible` is the compensation, not an afterthought.
+   *
+   * ## …but only when the viewer is *entered*, not on every volume
+   *
+   * 다음 권 읽기 routes to another book with this same screen mounted, so it
+   * arrives here as a second `open()`. Treating that as an entry replayed the
+   * whole opening ceremony on every volume: chrome the reader had deliberately
+   * raised was taken back down, the thumbnail strip closed, and the "where did
+   * the controls go" line — which exists to be read *once* — came back for
+   * another 3.4 s. The prototype's `goNextVol` changes the volume and the page
+   * and nothing else, which is the behaviour a continuation should have.
+   *
+   * A continuation is an `open()` that lands on a *different* book while one is
+   * already open. `close()` nulls `bookId`, so leaving the viewer and coming
+   * back is an entry again.
    */
   open: (bookId, options) => {
+    const previous = get().bookId
+    const continuing = previous !== null && previous !== bookId
     clearAutoHide()
-    clearHint()
+    if (!continuing) clearHint()
     chromeHeld = false
-    set({
+    set((s) => ({
       bookId,
       pageCount: options.pageCount,
       page: clampPage(options.page ?? 1, options.pageCount),
       mode: options.mode ?? DEFAULT_MODE,
       dir: options.dir ?? DEFAULT_DIRECTION,
       fit: openingFit(options.fit),
-      chromeVisible: false,
-      hintVisible: true,
-      stripOpen: false,
+      chromeVisible: continuing ? s.chromeVisible : false,
+      hintVisible: continuing ? s.hintVisible : true,
+      stripOpen: continuing ? s.stripOpen : false,
       dragging: false,
       dragPage: null,
       loading: false,
-    })
+    }))
+    if (continuing) {
+      // The chrome carried over; it still has to go away on its own again.
+      if (get().chromeVisible) armAutoHide()
+      return
+    }
     hintTimer = setTimeout(() => {
       hintTimer = null
       useViewerStore.setState({ hintVisible: false })

@@ -21,7 +21,6 @@ import type { Page } from '@playwright/test'
 
 import {
   booksOf,
-  closeViewerSheet,
   currentPage,
   expect,
   gotoLibrary,
@@ -44,25 +43,37 @@ import {
 /** §6.3 step 6.9's target page, clamped for the synthetic twin. */
 const JUMP_TARGET = 1400
 /**
- * The range thumb's width, from ui-spec §2.4:
- * `input[type=range]::-webkit-slider-thumb { width:12px; height:16px; … }`,
- * which `web/src/styles/base.css` implements verbatim.
+ * The range thumb's width, from ui-spec §2.4 as `web/src/styles/base.css`
+ * implements it: `width:12px` normally, `width:16px` below 768 where the whole
+ * control grows to a 44px touch box.
  *
  * It is load-bearing for *aiming* at the slider, not only for painting it. A
  * native `<input type="range">` — which is exactly what ui-spec §6.7 item 2
  * prescribes — has to keep the thumb inside its own box, so the value under a
- * pointer is read off the **thumb centre's travel**: `width − 12px`, inset 6px
- * at each end. Aiming with the border box instead asks the control for a
- * position it cannot occupy, and the miss is
+ * pointer is read off the **thumb centre's travel**: `width − thumb`, inset
+ * half a thumb at each end. Aiming with the border box instead asks the control
+ * for a position it cannot occupy, and the miss is
  *
- *     (total − 1) × 12 × (f − ½) / (width − 12)
+ *     (total − 1) × thumb × (f − ½) / (width − thumb)
  *
  * — zero at the mid-point, worst at the ends, and worse the narrower the
  * slider. At f = 1399/1539 this test measured 6 · 10 · 14 · 47 pages at 1440 ·
  * 1024 · 768 · 400, against a control that was landing on the right page every
  * time. That was the test's arithmetic, not the slider's.
+ *
+ * Which is also why this is read off the viewport rather than fixed: a ruler
+ * that says 12 while the stylesheet paints 16 is the same arithmetic error by
+ * another route, and it only shows up on the one narrow project.
  */
 const SLIDER_THUMB_PX = 12
+const SLIDER_THUMB_TOUCH_PX = 16
+/** The <768 breakpoint `base.css` grows the slider at. */
+const SLIDER_TOUCH_MAX_WIDTH = 767.98
+
+function sliderThumbPx(page: Page): number {
+  const width = page.viewportSize()?.width ?? 1_440
+  return width <= SLIDER_TOUCH_MAX_WIDTH ? SLIDER_THUMB_TOUCH_PX : SLIDER_THUMB_PX
+}
 /**
  * §6.3 step 6.9's virtualisation budget. Counted in **cells**, which is the
  * number the requirement is about: un-virtualised, the strip of the 1 540-page
@@ -123,10 +134,11 @@ async function dragSliderTo(
   const slider = page.locator('[data-role="page-slider"] input[type="range"]')
   const box = await slider.boundingBox()
   expect(box, 'the page slider must be laid out before it can be dragged').not.toBeNull()
-  const trackPx = (box?.width ?? 0) - SLIDER_THUMB_PX
+  const thumbPx = sliderThumbPx(page)
+  const trackPx = (box?.width ?? 0) - thumbPx
   expect(trackPx, 'a slider narrower than its own thumb cannot be aimed at').toBeGreaterThan(0)
 
-  const x = (box?.x ?? 0) + SLIDER_THUMB_PX / 2 + (trackPx * (target - 1)) / (total - 1)
+  const x = (box?.x ?? 0) + thumbPx / 2 + (trackPx * (target - 1)) / (total - 1)
   const y = (box?.y ?? 0) + (box?.height ?? 0) / 2
   await page.mouse.move(x, y)
   await page.mouse.down()
@@ -276,7 +288,6 @@ test('6.8 · a PDF volume renders image/jpeg in the same viewer, and R→L flips
   await shot(page, info, 'step-06-8b-viewer-pdf-rtl-spread')
   await setViewerSeg(page, '읽기 방향', 'ltr')
   await setViewerSeg(page, '표시 모드', 'single')
-  await closeViewerSheet(page)
 
   await page.keyboard.press('Escape')
   await expect(viewer(page)).toHaveCount(0)

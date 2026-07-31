@@ -33,7 +33,6 @@
 
 import {
   booksOf,
-  closeViewerSheet,
   currentPage,
   expect,
   gotoLibrary,
@@ -299,7 +298,6 @@ test.describe('6.6/6.7 · one volume, read then resumed', () => {
     // project — and 6.7 — opens.
     await setViewerSeg(page, '읽기 방향', 'ltr')
     await setViewerSeg(page, '표시 모드', 'single')
-    await closeViewerSheet(page)
 
     // ---- the progress the resume test will read back -----------------------
     await expect
@@ -486,7 +484,6 @@ test('6.6b · 양면 on a portrait raster book: R→L puts page n right, DOM asc
   // 6.6 restores them.
   await setViewerSeg(page, '읽기 방향', 'ltr')
   await setViewerSeg(page, '표시 모드', 'single')
-  await closeViewerSheet(page)
 
   await page.keyboard.press('Escape')
   await expect(viewer(page)).toHaveCount(0)

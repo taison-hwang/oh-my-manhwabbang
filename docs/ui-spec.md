@@ -893,6 +893,11 @@ title Archivo 800 20px / 1.15 (next volume name) · meta `12px; tabular; color:v
 actions `display:flex; gap:8px` → `.btn.btn-primary` `flex:1; justify-content:flex-start` `다음 권 읽기`
 + `.btn.btn-secondary` `시리즈로`.
 
+> **Amended by E-28.** The scrim covers the stage but **not the chrome**: both bars carry `z-chrome` (3) and
+> the scrim none, so 뒤로, the slider, the display controls and the strip stay live at the end of a volume.
+> And 다음 권 읽기 is a *continuation* — it changes the book and the page and leaves the chrome, the strip and
+> the already-answered opening hint exactly as the reader left them.
+
 ### 6.6 Top overlay
 
 Reference: [`viewer-overlay-visible-1440.png`](./ui-shots/viewer-overlay-visible-1440.png)
@@ -928,7 +933,8 @@ background:var(--color-text); border-top:2px solid var(--color-neutral-800)`.
 
 **Thumbnail strip** (when open) sits *above* the control row inside the same bar:
 `display:flex; gap:4px; overflow-x:auto; padding:12px 16px; border-bottom:1px solid var(--color-neutral-800)`.
-Each thumb: `flex:0 0 auto; width:48px; height:72px; border:2px solid X;
+Each thumb: `flex:0 0 auto; width:48px; height:72px` — **56×84 below 768** (E-28), and the strip's slot
+pitch and track height follow it (60/52 and 84/72) or the cells overlap and clip — `border:2px solid X;
 display:flex; align-items:flex-end; justify-content:flex-start; padding:3px; font-size:10px; tabular;
 cursor:pointer`. Current page → `X = var(--color-accent)`, number `color:var(--color-bg)`;
 otherwise `X = var(--color-neutral-800)`, number `color:var(--color-neutral-600)`.
@@ -941,12 +947,15 @@ Reference: [`viewer-thumbnail-strip-1440.png`](./ui-shots/viewer-thumbnail-strip
 
 ![Viewer thumbnail strip](./ui-shots/viewer-thumbnail-strip-1440.png)
 
-**Control row** — `padding:8px 16px 12px; display:flex; align-items:center; gap:16px`:
+**Control row** — `padding:8px 16px 12px; display:flex; flex-wrap:wrap; align-items:center; gap:16px`
+(`flex-wrap` per **E-28**: below ~520px the slider takes its own row rather than being crushed):
 
 1. Counter `font-size:13px; tabular; min-width:84px; letter-spacing:.04em` → `12 / 214`
 2. Slider wrapper `flex:1; position:relative`
-   - `<input type="range" min=1 max={totalPages} value={page}>`, styled per §2.4
-     (2px `--color-divider` track, 12×16px accent thumb, **square**)
+   - `<input type="range" min=1 max={totalPages} value={page}>`, styled per §2.4.
+     **E-28**: the element is `height:24px` (44px below 768), the thumb 12×18 (16×28 below 768), and in the
+     viewer it carries `.on-dark` — the track lifts to `--color-neutral-600`, because `--color-divider` on
+     the reading ground is all but the background colour
    - **Drag preview** (while dragging): `position:absolute; bottom:24px; left:{pct}%;
      transform:translateX(-50%); width:68px; height:102px; border:2px solid var(--color-accent);
      display:flex; align-items:flex-end; padding:4px; font-size:11px; tabular; color:var(--color-bg)`,
@@ -973,8 +982,8 @@ and their labels break to vertical). Build the layer below.
 |---|---|---|---|---|---|
 | **≥1440** | Fixed, 240px | `--grid-min: 152px` → **6 cols @1440, 8 @1760** | All 7 columns | 300px cards, horizontal scroll | Full chrome, all 3 `.seg` groups inline |
 | **1024–1439** | Fixed, 240px | `--grid-min: 150px` → **4–5 cols** | All 7 columns | 300px cards | Full chrome ([`viewer-overlay-1024.png`](./ui-shots/viewer-overlay-1024.png)) |
-| **768–1023** | **Collapsed** to a 56px icon rail; the scope name moves into the section header. Full sidebar opens as an overlay drawer from a hamburger in the top bar | `--grid-min: 224px` → **3 cols** | **Drop 수정일 + 용량** → `32px minmax(0,1fr) 66px 64px 120px`. Format tag stays (it is primary metadata) | 260px cards | Move the fit `.seg` into an overflow menu; keep display-mode + direction ([`viewer-overlay-768.png`](./ui-shots/viewer-overlay-768.png)) |
-| **<768** | **Off-canvas drawer** (`position:fixed; inset:0 auto 0 0; width:280px`) over a `--scrim-modal` backdrop. Closed by default | `--grid-min: 150px; gap: 12px` → **2 cols** | **Two-line row**: line 1 = title; line 2 = tag · 권 · 용량 · progress at 11px. Grid becomes `32px minmax(0,1fr)` | Full-width cards, one per screen, snap scroll | Touch-first (§8.3). Top overlay keeps only 뒤로 + title; all controls move to a bottom sheet opened by a `⋯` button |
+| **768–1023** | **Collapsed** to a 56px icon rail; the scope name moves into the section header. Full sidebar opens as an overlay drawer from a hamburger in the top bar | `--grid-min: 224px` → **3 cols** | **Drop 수정일 + 용량** → `32px minmax(0,1fr) 66px 64px 120px`. Format tag stays (it is primary metadata) | 260px cards | **All 3 `.seg` groups stay inline**; the bar wraps to a second row instead (**E-28**). ~103px at 900 ([`viewer-overlay-768.png`](./ui-shots/viewer-overlay-768.png) predates the ruling and shows the old overflow menu) |
+| **<768** | **Off-canvas drawer** (`position:fixed; inset:0 auto 0 0; width:280px`) over a `--scrim-modal` backdrop. Closed by default | `--grid-min: 150px; gap: 12px` → **2 cols** | **Two-line row**: line 1 = title; line 2 = tag · 권 · 용량 · progress at 11px. Grid becomes `32px minmax(0,1fr)` | Full-width cards, one per screen, snap scroll | Touch-first (§8.3). **All 3 `.seg` groups stay inline and the top bar wraps to three rows** — ~151px at 500 (**E-28**, which deleted the `⋯` bottom sheet this row used to require). The bottom bar's control row wraps too, and the page slider grows to a 44px box |
 
 Implementation: drive `--grid-min` from a single media-query block in `tokens.css` rather than sprinkling
 Tailwind breakpoint variants across the grid class. `gap` stays `16px` down to 768 and drops to `12px` below.
@@ -1024,11 +1033,11 @@ Bound to the viewer's `mousemove`.
 
 | Zone / gesture | Action |
 |---|---|
-| Mouse move anywhere in the viewer | `wake()` |
-| **Left 30%** of the stage — tap/click | Previous page in reading order (i.e. *next* page when RTL) |
-| **Right 30%** of the stage — tap/click | Next page in reading order |
-| **Centre 40%** — tap/click | Toggle chrome. *This is the only pointer behaviour the prototype implements; the two side zones must be added* (FR-VWR-011, design.md 화면 3 모바일) |
-| Horizontal swipe | Page turn, direction-aware; disabled in 세로 mode |
+| Mouse move anywhere in the viewer | Nothing — **E-27** took the chrome off the mouse; only the cursor comes back |
+| **Left 32%** of the stage — tap/click | Previous page in reading order (i.e. *next* page when RTL). `cursor:pointer` while the pointer is awake (E-28) |
+| **Right 32%** of the stage — tap/click | Next page in reading order |
+| **Centre 36%** — tap/click | Toggle chrome (FR-VWR-011, design.md 화면 3 모바일). **E-28** narrowed the centre from 40%: the two zones a reader aims at a hundred times a volume are the page turns |
+| Horizontal swipe | Page turn, direction-aware; disabled in 세로 mode. **E-28**: ≥44px, `|dy| ≤ |dx|`, and thrown within 600ms |
 | Vertical drag in 세로 mode | Native scroll |
 | Slider `mousedown`/`touchstart` | `dragging = true` → show the drag preview |
 | Slider `mouseup`/`touchend` | `dragging = false`, commit the page |

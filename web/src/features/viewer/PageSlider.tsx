@@ -15,17 +15,17 @@ import { sliderPercent } from './fit'
  * Keyboard use of the range input has no pointer-down, so a bare `change`
  * commits immediately: arrow keys on a focused slider must still work.
  *
- * The input carries an explicit **44 px** box. `styles/base.css` gives the range
- * a 2 px `::-webkit-slider-runnable-track` and no element height, so the border
- * box collapses onto the track and the thumb overflows a hit area two pixels
- * tall — unusable with a finger and below the 44×44 minimum ui-spec §7 holds at
- * every width. The height is on the input rather than on a wrapper because it is
- * the input that has to receive the touch; the track still paints as 2 px,
- * vertically centred in the taller box.
+ * **The hit box is a stylesheet rule, not an inline height.** `styles/base.css`
+ * sizes every range input — 24 px normally, `--touch-min` (44 px) below 768 —
+ * because a range with no height collapses onto its 2 px track and the thumb
+ * overflows a hit area two pixels tall. This slider used to set 44 px inline at
+ * every width, which held ui-spec §7's touch minimum but made the bottom bar
+ * 12 px taller than the design on every desktop.
+ *
+ * `on-dark` is the second half of the same rule: on the reading ground
+ * `--color-divider` is all but the background colour, so the viewer's track is
+ * lifted to `--color-neutral-600` and the thumb has something to travel along.
  */
-
-/** ui-spec §7's minimum touch target — and the slider is the control a finger drags. */
-export const SLIDER_HIT_HEIGHT_PX = 44
 
 export interface PageSliderProps {
   bookId: string
@@ -81,8 +81,7 @@ export function PageSlider({
         value={value}
         aria-label="페이지"
         aria-valuetext={`${String(value)} / ${String(pageCount)}`}
-        className="w-full cursor-pointer bg-transparent"
-        style={{ height: `${String(SLIDER_HIT_HEIGHT_PX)}px` }}
+        className="on-dark w-full cursor-pointer bg-transparent"
         onChange={handleChange}
         onMouseDown={() => {
           onDragStart(page)

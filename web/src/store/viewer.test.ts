@@ -154,6 +154,58 @@ describe('opening chromeless (ruling E-27)', () => {
   })
 })
 
+describe('changing volume is a continuation, not an entry', () => {
+  /** Raise the chrome and open the strip, i.e. the state a reader has set up. */
+  const settle = (): void => {
+    useViewerStore.getState().toggleChrome()
+    useViewerStore.getState().setStripOpen(true)
+  }
+
+  it('keeps the chrome, the strip and the answered hint across 다음 권', () => {
+    open(10, 10)
+    settle()
+    expect(useViewerStore.getState().hintVisible).toBe(false)
+
+    useViewerStore.getState().open('bk-2', { pageCount: 8, page: 1 })
+
+    expect(useViewerStore.getState().bookId).toBe('bk-2')
+    expect(useViewerStore.getState().page).toBe(1)
+    expect(useViewerStore.getState().chromeVisible).toBe(true)
+    expect(useViewerStore.getState().stripOpen).toBe(true)
+    // The line exists to be read once. Replaying it every volume is noise.
+    expect(useViewerStore.getState().hintVisible).toBe(false)
+    vi.advanceTimersByTime(CHROME_HINT_MS)
+    expect(useViewerStore.getState().hintVisible).toBe(false)
+  })
+
+  it('leaves a chromeless reader chromeless, and still does not arm a hide', () => {
+    open(10, 10)
+    useViewerStore.getState().open('bk-2', { pageCount: 8, page: 1 })
+    expect(useViewerStore.getState().chromeVisible).toBe(false)
+    vi.advanceTimersByTime(CHROME_AUTOHIDE_MS * 3)
+    expect(useViewerStore.getState().chromeVisible).toBe(false)
+  })
+
+  it('re-arms the auto-hide for chrome that carried over', () => {
+    open(10, 10)
+    settle()
+    useViewerStore.getState().open('bk-2', { pageCount: 8, page: 1 })
+    vi.advanceTimersByTime(CHROME_AUTOHIDE_MS)
+    // Carried over, not pinned: it still goes away on its own.
+    expect(useViewerStore.getState().chromeVisible).toBe(false)
+  })
+
+  it('is an entry again after the viewer has been left', () => {
+    open(10, 10)
+    settle()
+    useViewerStore.getState().close()
+    open(8)
+    expect(useViewerStore.getState().chromeVisible).toBe(false)
+    expect(useViewerStore.getState().hintVisible).toBe(true)
+    expect(useViewerStore.getState().stripOpen).toBe(false)
+  })
+})
+
 describe('chrome auto-hide (ui-spec §8.2, widened to 2 600 ms by E-27)', () => {
   it('hides exactly CHROME_AUTOHIDE_MS after the last wake', () => {
     open(10)

@@ -11,6 +11,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useBook, useSeries, useSetPrefs, useSettings } from '../../api/queries'
 import type { BookSummary } from '../../api/types'
 import { EmptyState } from '../../components/ds/EmptyState'
+import { cn } from '../../lib/cn'
 import { formatViewerCounter } from '../../lib/format'
 import { toggleFullscreen } from '../../lib/fullscreen'
 import { DARK_MEDIA_QUERY, resolveTheme } from '../../lib/theme'
@@ -31,7 +32,7 @@ import { makeDimsLookup, nextPage, prevPage, stagePages, type PageDims } from '.
 import { useDelayedFlag } from './useDelayedFlag'
 import { DEFAULT_PREFETCH, usePrefetch } from './usePrefetch'
 import { useProgressSync } from './useProgressSync'
-import { useTouchZones } from './useTouchZones'
+import { useTouchZones, zoneAt, type StageZone } from './useTouchZones'
 import { useViewerKeys } from './useViewerKeys'
 
 /**
@@ -96,7 +97,7 @@ export const POINTER_IDLE_MS = 1600
 const EDGE_STRIP_PX = 44
 
 /** The one sentence that explains a viewer which opens with nothing on it. */
-const CHROME_HINT = '좌·우 클릭으로 페이지 넘김 · 가운데 클릭이나 화면 위·아래 가장자리로 컨트롤'
+const CHROME_HINT = '좌·우 클릭으로 페이지 · 중앙 클릭 또는 상하 가장자리로 컨트롤'
 
 export function ViewerPage() {
   const { sid, bid } = useParams()
@@ -106,6 +107,7 @@ export function ViewerPage() {
   const [searchParams] = useSearchParams()
 
   const rootRef = useRef<HTMLDivElement | null>(null)
+  const stageZonesRef = useRef<HTMLDivElement | null>(null)
 
   const book = useBook(bookId, { enabled: bookId !== '' })
   const settings = useSettings()
@@ -300,13 +302,34 @@ export function ViewerPage() {
   const [pointerAwake, setPointerAwake] = useState(true)
   const pointerTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const nudgePointer = useCallback(() => {
+  /**
+   * Which tap zone the pointer is over, for the cursor alone.
+   *
+   * The two side zones turn the page, so they say so — the design gives them
+   * `cursor: pointer` and leaves the centre on the viewer's own cursor. The
+   * zones are not elements here (an overlay across the stage would eat the
+   * wheel in 세로 and 너비, where the stage is the scroller), so the zone is
+   * resolved from the same geometry `useTouchZones` uses and only while the
+   * pointer is actually over the stage — over a bar, or an edge strip, the
+   * cursor stays the plain arrow.
+   */
+  const [hoverZone, setHoverZone] = useState<StageZone>('centre')
+
+  const nudgePointer = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
     setPointerAwake(true)
     if (pointerTimer.current !== null) clearTimeout(pointerTimer.current)
     pointerTimer.current = setTimeout(() => {
       pointerTimer.current = null
       setPointerAwake(false)
     }, POINTER_IDLE_MS)
+
+    const stage = stageZonesRef.current
+    if (stage?.contains(event.target as Node) !== true) {
+      setHoverZone('centre')
+      return
+    }
+    const rect = stage.getBoundingClientRect()
+    setHoverZone(zoneAt(event.clientX - rect.left, rect.width))
   }, [])
 
   useEffect(
@@ -365,7 +388,9 @@ export function ViewerPage() {
       data-role="viewer"
       data-chrome={chromeVisible ? 'visible' : 'hidden'}
       className="fixed inset-0 z-viewer flex flex-col overflow-hidden bg-bg text-ink"
-      style={{ cursor: pointerAwake ? 'default' : 'none' }}
+      style={{
+        cursor: pointerAwake ? (hoverZone === 'centre' ? 'default' : 'pointer') : 'none',
+      }}
       onMouseMove={nudgePointer}
     >
       {/* The screen edges (E-27). Rendered only while the chrome is away: once
@@ -411,6 +436,7 @@ export function ViewerPage() {
         </div>
       ) : (
         <div
+          ref={stageZonesRef}
           data-role="stage-zones"
           className="flex min-h-0 flex-1 flex-col"
           onMouseDown={touch.onMouseDown}
@@ -482,12 +508,25 @@ export function ViewerPage() {
           **Not gated on the chrome** — it used to be, and E-27 would have
           quietly deleted the warning: the viewer now opens chromeless and the
           chrome never appears on its own, so a notice that rides along with it
-          is a notice nobody is shown. It is `pointer-events-none` and sits
-          under the top bar's height either way. */}
+          is a notice nobody is shown.
+
+          It follows the *bars'* rule rather than a fixed offset, and it has to.
+          A `top-14` overlay cleared a 53px single-row bar by three pixels and
+          nothing else: once E-28 let the bar wrap — 103px at 900, 122px at 760 —
+          the notice was inside the bar's box, and the bar's `z-chrome` paints
+          over it. So while the chrome is up this is a row *in the column*,
+          directly under the bar at whatever height it has wrapped to (same
+          `order-first`, later in the DOM). Chromeless it goes back to being an
+          overlay, which is the state it most needs to be readable in. */}
       {stale && (
         <div
           data-role="stale-progress"
-          className="pointer-events-none absolute inset-x-0 top-14 flex justify-center"
+          className={cn(
+            'pointer-events-none flex justify-center',
+            chromeVisible
+              ? 'relative order-first w-full flex-none'
+              : 'absolute inset-x-0 top-14',
+          )}
         >
           <span className="bg-accent px-[7px] py-[3px] text-3xs uppercase tracking-[.1em] text-ink">
             파일이 변경되었습니다
@@ -518,6 +557,13 @@ export function ViewerPage() {
         onJump={goTo}
       />
 
+      {/* Last in the DOM, and deliberately **without** a z-index: the scrim
+          covers the stage but the two chrome bars carry `z-chrome` and stay
+          above it, which is the prototype's own layering (bars z-3, scrim
+          auto). Reaching the last page used to drop an opaque sheet over the
+          whole viewer — 뒤로, the slider, 표시 모드 and the thumbnail strip all
+          went under it, so the only way back from the end of a volume was the
+          card's own two buttons. */}
       {atVolumeEnd && (
         <NextVolumeCard
           nextBook={nextBook}

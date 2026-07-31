@@ -24,8 +24,8 @@ import { resetBasePath } from '../../api/urls'
 import { useUiStore } from '../../store/ui'
 import { CHROME_AUTOHIDE_MS, cancelChromeAutoHide, useViewerStore } from '../../store/viewer'
 import { POINTER_IDLE_MS, ViewerPage } from './ViewerPage'
+import { THUMB_SLOT_PX, THUMB_SLOT_TOUCH_PX } from './ThumbnailStrip'
 import { LOADING_INDICATOR_DELAY_MS } from './useDelayedFlag'
-import { SLIDER_HIT_HEIGHT_PX } from './PageSlider'
 
 /**
  * Screen 3 end to end against MSW — the composition WP-11 is actually judged on
@@ -159,18 +159,39 @@ const server = setupServer(
   http.put(`${ORIGIN}/api/books/:bid/prefs`, () => HttpResponse.json(bookDetail.prefs)),
 )
 
-/** jsdom has no `matchMedia`; without one the viewer chrome reports `mobile`. */
+/**
+ * jsdom has no `matchMedia`; without one the viewer chrome reports `mobile`.
+ *
+ * The listeners are real, not no-ops, so a test can *move* the viewport:
+ * `useMediaQuery` is a `useSyncExternalStore`, and with a stub that never
+ * notifies, every breakpoint is frozen at whatever it was on mount — which is
+ * exactly the case the strip's re-measure exists for.
+ */
+let viewportWidth = 1_440
+let viewportListeners: (() => void)[] = []
+
 function stubViewport(width: number): void {
+  viewportWidth = width
+  viewportListeners = []
   const impl = (query: string) => {
     const m = /min-width:\s*(\d+)px/.exec(query)
+    const min = m?.[1] === undefined ? null : Number(m[1])
     return {
-      matches: m?.[1] === undefined ? false : width >= Number(m[1]),
+      matches: min !== null && viewportWidth >= min,
       media: query,
-      addEventListener: () => undefined,
-      removeEventListener: () => undefined,
+      addEventListener: (_: string, cb: () => void) => viewportListeners.push(cb),
+      removeEventListener: (_: string, cb: () => void) => {
+        viewportListeners = viewportListeners.filter((x) => x !== cb)
+      },
     }
   }
   Object.defineProperty(window, 'matchMedia', { writable: true, configurable: true, value: impl })
+}
+
+/** Move the stubbed viewport and tell every `useMediaQuery` about it. */
+function resizeViewport(width: number): void {
+  viewportWidth = width
+  for (const cb of [...viewportListeners]) cb()
 }
 
 /**
@@ -397,13 +418,12 @@ describe('the chromeless ground (acceptance 1, 2; ui-spec §6.1, ruling E-27)', 
     expect(quiet()).toBeNull()
   })
 
-  it('never lets a bar establish a stacking context — the ⋯ sheet lives inside one', async () => {
-    // Not a style rule for its own sake. `viewer-control-sheet` is a child of
-    // the top bar and escapes on `z-overlay`; the moment the bar carries a
-    // z-index of its own that escape is resolved *inside* the bar, and the
-    // bottom bar (later in the DOM) paints over the sheet. Found by e2e at
-    // 400px, where the thumbnail strip swallowed every click aimed at 표시 모드.
-    // jsdom cannot hit-test, but the class list is real.
+  it('stacks both bars above the end-of-volume scrim', async () => {
+    // The scrim is last in the DOM and positioned, so painting order alone puts
+    // it over both bars — which made the end of a volume a dead end: 뒤로, the
+    // slider, 표시 모드 and the strip all went under an opaque sheet whose only
+    // exits were its own two buttons. `z-chrome` (3) is the prototype's own
+    // layering. jsdom cannot hit-test, but the class list is real.
     await setup()
     act(() => {
       useViewerStore.getState().wake()
@@ -411,8 +431,26 @@ describe('the chromeless ground (acceptance 1, 2; ui-spec §6.1, ruling E-27)', 
     for (const role of ['viewer-top-bar', 'viewer-bottom-bar']) {
       const bar = document.querySelector(`[data-role="${role}"]`)
       if (bar === null) throw new Error(`no ${role}`)
-      const zIndexed = [...bar.classList].filter((c) => /^-?z-/.test(c))
-      expect(zIndexed, `${role} must not stack above its own sheet`).toEqual([])
+      expect([...bar.classList], `${role} must paint above the scrim`).toContain('z-chrome')
+    }
+  })
+
+  it('keeps every viewer control inline at every width — no ⋯ overflow sheet', async () => {
+    // The bar wraps instead (`flex-wrap` here, `flex-none whitespace-nowrap` on
+    // each group), which is what lets it carry a z-index at all: the sheet it
+    // replaced had to escape the bar on `z-overlay`, so the bar was forbidden
+    // one, so the scrim above could not be stopped.
+    await setup()
+    act(() => {
+      useViewerStore.getState().wake()
+    })
+    const bar = document.querySelector('[data-role="viewer-top-bar"]')
+    if (bar === null) throw new Error('no top bar')
+    expect([...bar.classList]).toContain('flex-wrap')
+    expect(document.querySelector('[data-role="viewer-control-sheet"]')).toBeNull()
+    expect(screen.queryByRole('button', { name: '뷰어 컨트롤' })).toBeNull()
+    for (const group of ['표시 모드', '읽기 방향', '맞춤']) {
+      expect(bar.querySelector(`[aria-label="${group}"]`), group).not.toBeNull()
     }
   })
 
@@ -422,6 +460,33 @@ describe('the chromeless ground (acceptance 1, 2; ui-spec §6.1, ruling E-27)', 
     // It used to ride along with the chrome. After E-27 that would have deleted
     // it: the chrome no longer comes up on its own.
     expect(screen.getByText('파일이 변경되었습니다')).toBeInTheDocument()
+    // Chromeless it is an overlay, so the reading ground keeps its full height.
+    const notice = document.querySelector('[data-role="stale-progress"]')
+    expect([...(notice?.classList ?? [])]).toContain('absolute')
+  })
+
+  it('puts the warning under a top bar that has wrapped, not behind it', async () => {
+    // A fixed `top-14` cleared the 53px single-row bar by three pixels and
+    // nothing else. Once E-28 let the bar wrap — measured 103px at 900 and
+    // 122px at 760 — the notice sat inside the bar's box, and the bar's
+    // `z-chrome` painted over it. In the column it is under the bar at any
+    // height. jsdom has no layout, so the invariant asserted is the mechanism:
+    // in flow, sharing the bar's `order-first`, and later in the DOM than it.
+    await setup({ detail: { progress: progressOf({ stale: true }) }, width: 760 })
+    act(() => {
+      useViewerStore.getState().wake()
+    })
+    const notice = document.querySelector('[data-role="stale-progress"]')
+    const bar = document.querySelector('[data-role="viewer-top-bar"]')
+    if (notice === null || bar === null) throw new Error('no notice or no top bar')
+
+    const classes = [...notice.classList]
+    expect(classes).toContain('order-first')
+    expect(classes).not.toContain('absolute')
+    expect(
+      bar.compareDocumentPosition(notice) & Node.DOCUMENT_POSITION_FOLLOWING,
+      'the notice must break the order-first tie *after* the bar',
+    ).toBeTruthy()
   })
 })
 
@@ -634,7 +699,7 @@ describe('tap zones (acceptance 8; FR-VWR-011)', () => {
     expect(counter()).toBe('12 / 214')
   })
 
-  it('toggles the chrome from the centre 40 %', async () => {
+  it('toggles the chrome from the centre 36 %', async () => {
     await setup()
     // E-27: the viewer opens chromeless, so the centre tap is what *summons*
     // the chrome now, and a second one sends it away.
@@ -868,6 +933,30 @@ describe('end of volume (acceptance 11; ui-spec §6.5)', () => {
     expect(counter()).toBe('1 / 214')
   })
 
+  it('changes the volume without replaying the opening ceremony', async () => {
+    await setup({ search: '?page=214' })
+    await screen.findByText('권의 마지막 페이지')
+
+    // The reader has the chrome up and has long since read the hint.
+    act(() => {
+      useViewerStore.getState().toggleChrome()
+    })
+    expect(useViewerStore.getState().chromeVisible).toBe(true)
+    expect(useViewerStore.getState().hintVisible).toBe(false)
+
+    await userEvent.click(screen.getByRole('button', { name: '다음 권 읽기' }))
+    await waitFor(() => {
+      expect(useViewerStore.getState().page).toBe(1)
+    })
+
+    // 다음 권 읽기 is a second `open()` on a still-mounted screen. Treating it
+    // as an entry took the chrome back down and put the "where did the controls
+    // go" line back up on every single volume.
+    expect(useViewerStore.getState().chromeVisible).toBe(true)
+    expect(useViewerStore.getState().hintVisible).toBe(false)
+    expect(document.querySelector('[data-role="viewer-chrome-hint"]')).toBeNull()
+  })
+
   it('never raises it in 세로, where scrolling past the end is the end', async () => {
     await setup({ prefs: { display_mode: 'vertical' }, search: '?page=214' })
     expect(screen.queryByText('권의 마지막 페이지')).not.toBeInTheDocument()
@@ -875,13 +964,42 @@ describe('end of volume (acceptance 11; ui-spec §6.5)', () => {
 })
 
 describe('the bottom bar (acceptance 12, 14; ui-spec §6.7)', () => {
-  it('gives the slider a finger-sized hit box at every width', async () => {
+  it('leaves the slider box to the stylesheet, on the viewer’s lighter track', async () => {
     await setup({ width: 500 })
     const slider = screen.getByRole('slider', { name: '페이지' })
-    // jsdom measures every box as 0; the declared height is the thing under
-    // test, and the rendered 44px is verified in a browser.
-    expect(slider.style.height).toBe(`${String(SLIDER_HIT_HEIGHT_PX)}px`)
-    expect(SLIDER_HIT_HEIGHT_PX).toBeGreaterThanOrEqual(44)
+    // 24px normally, 44px below 768 — one rule in `base.css` (asserted in
+    // `tokens.test.ts`) rather than a 44px inline height at every width, which
+    // is what made the bottom bar 12px taller than the design on a desktop.
+    expect(slider.style.height).toBe('')
+    expect([...slider.classList]).toContain('on-dark')
+  })
+
+  it('re-lays out the thumbnail strip when the slot size crosses 768', async () => {
+    // `virtual-core` memoises its measurements on
+    // `[count, paddingStart, scrollMargin, getItemKey, enabled]` + the size
+    // cache — **not** on `estimateSize`. Handing it a bigger slot therefore
+    // changes nothing on its own. Measured in Chrome at 900 → 700 with the
+    // strip open: the cells grew to 56px while the pitch stayed 52px (four
+    // pixels of overlap per thumb) and the track stayed 5 044px where the
+    // pages then needed 5 820, so the tail was unreachable.
+    //
+    // The track width is pure `estimateSize` arithmetic, so jsdom's lack of
+    // layout does not weaken this.
+    await setup({ width: 900 })
+    act(() => {
+      useViewerStore.getState().setStripOpen(true)
+    })
+    const track = (): HTMLElement => {
+      const el = document.querySelector('[data-role="thumbnail-strip"] > div')
+      if (el === null) throw new Error('the strip is not mounted')
+      return el as HTMLElement
+    }
+    expect(track().style.width).toBe(`${String(PAGE_COUNT * THUMB_SLOT_PX)}px`)
+
+    act(() => {
+      resizeViewport(700)
+    })
+    expect(track().style.width).toBe(`${String(PAGE_COUNT * THUMB_SLOT_TOUCH_PX)}px`)
   })
 
   it('commits a slider drag on release only', async () => {

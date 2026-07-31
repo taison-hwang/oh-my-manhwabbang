@@ -712,30 +712,15 @@ export async function wakeChrome(page: Page): Promise<void> {
 /**
  * Sets one of the viewer's segmented controls (표시 모드 / 읽기 방향 / 맞춤).
  *
- * Below 1024 the 맞춤 group and below 768 all three move into the `⋯` bottom
- * sheet (ui-spec §7), so the helper opens the sheet when the group is not
- * inline. That is the same route a reader has on a phone, which is the point of
- * running these specs at 400px at all.
+ * All three groups are inline at every width — the top bar wraps to two or
+ * three rows rather than hiding controls behind a `⋯` sheet — so this is one
+ * click at 400px and at 1440px alike.
  */
 export async function setViewerSeg(page: Page, group: string, value: string): Promise<void> {
   await wakeChrome(page)
-  const bar = viewerTopBar(page)
-  const option = bar.locator(`[aria-label="${group}"] label[data-value="${value}"]`)
-  if ((await option.count()) === 0) {
-    await bar.getByRole('button', { name: '뷰어 컨트롤' }).click()
-    await expect(page.locator('[data-role="viewer-control-sheet"]')).toBeVisible()
-  }
+  const option = viewerTopBar(page).locator(`[aria-label="${group}"] label[data-value="${value}"]`)
   await option.click()
   await expect(option).toHaveAttribute('data-checked', 'true')
-}
-
-/** Closes the `⋯` bottom sheet if it is open, so it stops covering the stage. */
-export async function closeViewerSheet(page: Page): Promise<void> {
-  const sheet = page.locator('[data-role="viewer-control-sheet"]')
-  if ((await sheet.count()) === 0) return
-  await wakeChrome(page)
-  await viewerTopBar(page).getByRole('button', { name: '뷰어 컨트롤' }).click()
-  await expect(sheet).toHaveCount(0)
 }
 
 /**

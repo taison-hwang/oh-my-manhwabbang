@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
 import { MAX_PREFETCH, prefetchPages } from './usePrefetch'
-import { SIDE_ZONE_RATIO, SWIPE_THRESHOLD_PX, swipeAction, zoneAction, zoneAt } from './useTouchZones'
+import {
+  SIDE_ZONE_RATIO,
+  SWIPE_MAX_MS,
+  SWIPE_THRESHOLD_PX,
+  swipeAction,
+  zoneAction,
+  zoneAt,
+} from './useTouchZones'
 
 /**
  * Tap zones, swipe and prefetch (FR-VWR-006, FR-VWR-011, ui-spec §8.3).
@@ -13,14 +20,14 @@ import { SIDE_ZONE_RATIO, SWIPE_THRESHOLD_PX, swipeAction, zoneAction, zoneAt } 
  */
 
 describe('zoneAt', () => {
-  it('splits the stage 30 / 40 / 30 (ui-spec §8.3)', () => {
-    expect(SIDE_ZONE_RATIO).toBe(0.3)
+  it('splits the stage 32 / 36 / 32 — the two page-turn zones are the big ones', () => {
+    expect(SIDE_ZONE_RATIO).toBe(0.32)
     expect(zoneAt(10, 1_000)).toBe('left')
-    expect(zoneAt(299, 1_000)).toBe('left')
-    expect(zoneAt(300, 1_000)).toBe('centre')
+    expect(zoneAt(319, 1_000)).toBe('left')
+    expect(zoneAt(320, 1_000)).toBe('centre')
     expect(zoneAt(500, 1_000)).toBe('centre')
-    expect(zoneAt(700, 1_000)).toBe('centre')
-    expect(zoneAt(701, 1_000)).toBe('right')
+    expect(zoneAt(679, 1_000)).toBe('centre')
+    expect(zoneAt(680, 1_000)).toBe('right')
     expect(zoneAt(990, 1_000)).toBe('right')
   })
 
@@ -58,6 +65,19 @@ describe('swipeAction', () => {
 
   it('ignores a mostly-vertical drag — that is a scroll attempt', () => {
     expect(swipeAction(-120, 200, 'ltr')).toBeNull()
+    // The rule is `|dy| > |dx|`, so a 45° throw still turns the page; anything
+    // steeper is someone scrolling a 너비-fitted page.
+    expect(swipeAction(-120, 120, 'ltr')).toBe('next')
+    expect(swipeAction(-120, 121, 'ltr')).toBeNull()
+  })
+
+  it('ignores a finger that rested on the page and drifted', () => {
+    expect(swipeAction(-120, 0, 'ltr', SWIPE_MAX_MS)).toBe('next')
+    expect(swipeAction(-120, 0, 'ltr', SWIPE_MAX_MS + 1)).toBeNull()
+  })
+
+  it('judges an unmeasured drag on distance and angle alone', () => {
+    expect(swipeAction(-120, 0, 'ltr', undefined)).toBe('next')
   })
 })
 

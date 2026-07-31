@@ -111,12 +111,21 @@
     background: transparent;
   }
 
-  /* Square slider: 2px divider track, 12x16 accent thumb (ui-spec §2.4). */
+  /* Square slider: 2px divider track, 12x18 accent thumb (ui-spec §2.4).
+
+     The **element** carries the height, not a wrapper. A range input with no
+     height collapses onto its 2px track, so the thumb overflows a hit area two
+     pixels tall — unusable with a finger and unreachable with a careless mouse.
+     24px is the desktop box; the media query below takes it to 44px on a phone,
+     which is ui-spec §7's minimum touch target. Putting the phone height on
+     every width (what the viewer's slider used to do inline) made the bottom
+     bar 12px taller than the design at every desktop size. */
   input[type='range'] {
     -webkit-appearance: none;
     appearance: none;
     background: transparent;
     width: 100%;
+    height: 24px;
     /* The fallback for any engine that ignores the pseudo-elements below: a
        stock slider in the accent rather than the browser's own blue. */
     accent-color: var(--color-accent);
@@ -129,8 +138,8 @@
     -webkit-appearance: none;
     appearance: none;
     width: 12px;
-    height: 16px;
-    margin-top: -7px;
+    height: 18px;
+    margin-top: -8px;
     background: var(--color-accent);
     border: 0;
     border-radius: 0;
@@ -141,10 +150,37 @@
   }
   input[type='range']::-moz-range-thumb {
     width: 12px;
-    height: 16px;
+    height: 18px;
     background: var(--color-accent);
     border: 0;
     border-radius: 0;
+  }
+
+  /* On the viewer's reading ground `--color-divider` is nearly the background:
+     the track disappeared and the thumb read as a floating mark with nothing to
+     travel along. `.on-dark` is the one place a slider needs a lighter rail. */
+  input[type='range'].on-dark::-webkit-slider-runnable-track {
+    background: var(--color-neutral-600);
+  }
+  input[type='range'].on-dark::-moz-range-track {
+    background: var(--color-neutral-600);
+  }
+
+  /* 767.98px, not 767px: the same edge every other <768 rule in this sheet
+     uses, so a 767.5px viewport cannot land between two of them. */
+  @media (max-width: 767.98px) {
+    input[type='range'] {
+      height: var(--touch-min);
+    }
+    input[type='range']::-webkit-slider-thumb {
+      width: 16px;
+      height: 28px;
+      margin-top: -13px;
+    }
+    input[type='range']::-moz-range-thumb {
+      width: 16px;
+      height: 28px;
+    }
   }
 
   @keyframes shimmer {
