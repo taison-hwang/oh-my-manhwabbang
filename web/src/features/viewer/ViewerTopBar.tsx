@@ -10,12 +10,7 @@ import {
 import { Button } from '../../components/ds/Button'
 import { Seg, type SegOption } from '../../components/ds/Seg'
 import { cn } from '../../lib/cn'
-import {
-  useViewerStore,
-  type DisplayMode,
-  type FitMode,
-  type ReadingDirection,
-} from '../../store/viewer'
+import type { DisplayMode, FitMode, ReadingDirection } from '../../store/viewer'
 
 /**
  * The top overlay (ui-spec §6.6).
@@ -23,6 +18,16 @@ import {
  * Fades on **opacity**, never `display:none`: the bar stays mounted so the wake
  * is a 180 ms fade rather than a reflow of three segmented controls on every
  * mouse move. `pointer-events` is what actually turns it off.
+ *
+ * **No hover-hold handlers here.** E-27's "a pointer resting in the chrome pins
+ * it open" used to be `onMouseEnter`/`onMouseLeave` on this element, and that
+ * only ever worked when the reader *crossed* into the bar: React synthesises
+ * those two from `mouseover`/`mouseout` and drops the pair when a bar lights up
+ * underneath a pointer that has not moved, which is exactly what waking from a
+ * screen-edge strip does. The rule now lives once, on the viewer root, as a
+ * `pointerover`/`pointerout` question about what is under the pointer — see the
+ * long note on `trackChromeHover` in `ViewerPage`. This bar's only part in it is
+ * its `data-role`, which is how the rule recognises it.
  *
  * ## Narrow viewports: the bar **wraps**
  *
@@ -109,9 +114,6 @@ export function ViewerTopBar({
   onDirChange,
   onFitChange,
 }: ViewerTopBarProps) {
-  const holdChrome = useViewerStore((s) => s.holdChrome)
-  const releaseChrome = useViewerStore((s) => s.releaseChrome)
-
   const modeSeg = (
     <Seg
       aria-label="표시 모드"
@@ -156,8 +158,6 @@ export function ViewerTopBar({
           : 'pointer-events-none absolute inset-x-0 top-0 opacity-0',
       )}
       style={{ transitionDuration: 'var(--chrome-fade)' }}
-      onMouseEnter={holdChrome}
-      onMouseLeave={releaseChrome}
     >
       <Button
         variant="secondary"

@@ -393,6 +393,34 @@ function isSortKey(value: string): value is SortKey {
  * back exactly once. `lastSent` bounds the write to one request per distinct
  * local state, so a server that echoes a value it did not persist costs one
  * wasted `PUT` rather than an infinite loop.
+ *
+ * **`hydrated` is `useState`, not `useRef`, and that is the whole point.** Both
+ * effects below list `data`, so the commit where the payload first arrives runs
+ * *both* of them. A ref is mutated during that commit, so the write-back would
+ * read `hydrated.current === true` while `view/sort/order/scope` still hold the
+ * **pre-hydration** closure values — the store defaults, or whatever the user's
+ * own `localStorage` copy said — and `PUT` them straight back over the payload
+ * the server just sent. It converges (the next render matches, so no third
+ * request), which is exactly why it stayed invisible: every fixture's settings
+ * equal the store defaults, and the screen shows the server's value while the
+ * server has been handed the client's. With two tabs open it is a lost update.
+ *
+ * State fixes it because a state flag cannot change mid-commit: the write-back
+ * sees `hydrated === false` on the hydrating commit and returns. What follows is
+ * **two** commits, not one — `hydrateFromSettings` settles the zustand selectors
+ * in the first, and `hydrated` only becomes `true` in the one after that. So by
+ * the time the guard opens, `view/sort/order/scope` are the server's values and
+ * never the pre-hydration closure. (That two-commit split is also why `hydrated`
+ * has to be in the write-back's dependency array — see the comment on that
+ * effect.) It is also the safer shape under StrictMode's double invocation — the
+ * second run of the hydrate effect still sees `false`, so it re-hydrates
+ * idempotently instead of unlocking a stale write-back.
+ *
+ * So: **do not "simplify" this back into a ref.** The invalid-`library_sort`
+ * repair below (`isSortKey` fails → the store keeps its own valid sort → the
+ * write-back fixes the server) is the one genuine `PUT` on the hydration path,
+ * and `library.test.tsx` asserts on the recorded request list — not on the
+ * store — to tell the two apart.
  */
 export function useLibrarySettingsSync(): void {
   const settings = useSettings()
@@ -404,12 +432,11 @@ export function useLibrarySettingsSync(): void {
   const scope = useUiStore((s) => s.scope)
 
   const data = settings.data
-  const hydrated = useRef(false)
+  const [hydrated, setHydrated] = useState(false)
   const lastSent = useRef<string | null>(null)
 
   useEffect(() => {
-    if (hydrated.current || data === undefined) return
-    hydrated.current = true
+    if (hydrated || data === undefined) return
     const next: Partial<PersistedUi> = {
       view: data.library_view,
       order: data.library_order,
@@ -417,10 +444,27 @@ export function useLibrarySettingsSync(): void {
     }
     if (isSortKey(data.library_sort)) next.sort = data.library_sort
     hydrateFromSettings(next)
-  }, [data, hydrateFromSettings])
+    setHydrated(true)
+  }, [hydrated, data, hydrateFromSettings])
 
+  // `hydrated` is a dependency, not just a guard — unconditionally, whatever the
+  // payload happens to contain. `hydrateFromSettings` and `setHydrated(true)` sit
+  // in the same effect body but land in **two separate commits**: the zustand
+  // selectors settle first, and `hydrated` flips in the commit after. So on the
+  // commit where this guard finally opens, *nothing else in this dependency array
+  // has changed* — there is no re-run left to piggyback on. Drop `hydrated` and
+  // the effect simply never runs again after the guard opens, and the
+  // invalid-`library_sort` repair below never fires.
+  //
+  // Do not talk yourself out of it with "but the payload disagrees with the store
+  // here, so a selector will re-trigger it anyway". That is the false step: those
+  // selectors change one commit too early, while the guard is still shut. The
+  // repair test's payload disagrees on three of the four values and dropping the
+  // dep still breaks it. `react-hooks/exhaustive-deps` is `warn`, not `error`
+  // (`eslint.config.js` takes the plugin's recommended set as-is), so `pnpm lint`
+  // exits 0 without the dep — `library.test.tsx` is the only guard there is.
   useEffect(() => {
-    if (!hydrated.current || data === undefined) return
+    if (!hydrated || data === undefined) return
     if (
       data.library_view === view &&
       data.library_sort === sort &&
@@ -438,7 +482,7 @@ export function useLibrarySettingsSync(): void {
       library_order: order,
       library_scope: scope,
     })
-  }, [data, view, sort, order, scope, mutate])
+  }, [hydrated, data, view, sort, order, scope, mutate])
 }
 
 // ---------------------------------------------------------------------------

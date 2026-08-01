@@ -661,6 +661,70 @@ export function viewerTopBar(page: Page): Locator {
   return page.locator('[data-role="viewer-top-bar"]')
 }
 
+export function viewerBottomBar(page: Page): Locator {
+  return page.locator('[data-role="viewer-bottom-bar"]')
+}
+
+/**
+ * One of the two screen-edge strips ruling **E-27** put the chrome behind.
+ *
+ * Rendered **only while the chrome is away** — once the bars are up they are
+ * what the pointer reaches for, and a strip over them would eat the first click
+ * on 뒤로. So a count of 1 and a count of 0 are both assertions about the
+ * chrome, and neither means anything without `data-chrome` asserted beside it.
+ */
+export function viewerEdge(page: Page, which: 'top' | 'bottom'): Locator {
+  return page.locator(`[data-role="viewer-edge-${which}"]`)
+}
+
+/** The page number a chromeless viewer keeps on screen (E-27). */
+export function quietPageCounter(page: Page): Locator {
+  return page.locator('[data-role="quiet-page-counter"]')
+}
+
+/**
+ * How deep the screen-edge strips reach — `ViewerPage.tsx`'s `EDGE_STRIP_PX`.
+ *
+ * A copy, on the same terms as `SERIES` above, and used only as a **floor**:
+ * helpers here keep the pointer further than this from an edge, and the one
+ * assertion that holds a strip against it is in `09-viewer-chrome.spec.ts`,
+ * where a drift is meant to be read as a change to E-27 rather than a flake.
+ */
+export const EDGE_STRIP_PX = 44
+
+/** Whether a point falls inside a bounding box; `null` contains nothing. */
+export function boxContains(
+  box: { x: number; y: number; width: number; height: number } | null,
+  x: number,
+  y: number,
+): boolean {
+  if (box === null) return false
+  return x >= box.x && x <= box.x + box.width && y >= box.y && y <= box.y + box.height
+}
+
+/**
+ * `formatViewerCounter`'s rendering — what the reader actually reads.
+ *
+ * A copy of `web/src/lib/format.ts`'s `formatCount`, which is deliberately
+ * locale-independent (`toLocaleString` would make this depend on the `ko-KR`
+ * locale `playwright.config.ts` sets). Copied rather than parsed back out
+ * because the two counters — the bar's and E-27's quiet one — have to render
+ * the *same* string, and a regex that accepts both would not notice if they
+ * stopped agreeing.
+ */
+export function viewerCounterText(page: number, total: number): string {
+  const group = (n: number): string => {
+    const digits = Math.abs(Math.trunc(n)).toString()
+    let out = ''
+    for (let i = 0; i < digits.length; i++) {
+      if (i > 0 && (digits.length - i) % 3 === 0) out += ','
+      out += digits[i] ?? ''
+    }
+    return out
+  }
+  return `${group(page)} / ${group(total)}`
+}
+
 /** `formatViewerCounter` renders `1,400 / 1,540`; the commas come back out. */
 export async function currentPage(page: Page): Promise<number> {
   const text = await page.locator('[data-role="page-counter"]').innerText()
@@ -710,6 +774,119 @@ export async function wakeChrome(page: Page): Promise<void> {
 }
 
 /**
+ * Moves the pointer off the chrome and onto the middle of the stage — the other
+ * half of `wakeChrome`, and the only way a spec can watch the chrome go away.
+ *
+ * `wakeChrome` parks the pointer **on the bar** on purpose, because hovering the
+ * chrome holds the auto-hide off (E-27) and that is what makes every caller of
+ * it deterministic. The cost is that no spec built on it can ever observe the
+ * auto-hide: the timer it re-arms is cleared again the moment the pointer
+ * arrives. This helper releases that hold, which re-arms the timer
+ * (`releaseChrome` in `store/viewer.ts`), and leaves the pointer somewhere the
+ * chrome cannot be summoned from.
+ *
+ * Everything it needs of the destination is asserted rather than assumed. A
+ * pointer that lands back inside a bar holds the auto-hide off and the caller's
+ * wait then times out for a reason that has nothing to do with the timer; a
+ * pointer that lands in a screen-edge strip *summons* the chrome instead, and
+ * the caller would be watching the opposite of what it asked for.
+ */
+export async function standBackFromChrome(page: Page): Promise<void> {
+  const stage = await page.locator('[data-role="stage-zones"]').boundingBox()
+  expect(stage, 'standBackFromChrome needs a laid-out stage to park the pointer on').not.toBeNull()
+  const x = (stage?.x ?? 0) + (stage?.width ?? 0) / 2
+  const y = (stage?.y ?? 0) + (stage?.height ?? 0) / 2
+
+  // Both bars are *never unmounted* — they fade on opacity — so both always have
+  // a box, and "is the parking spot inside one" is a question with an answer at
+  // every moment rather than only while the chrome is up.
+  const top = await viewerTopBar(page).boundingBox()
+  const bottom = await viewerBottomBar(page).boundingBox()
+  expect(top, 'the top bar is never unmounted, so it always has a box').not.toBeNull()
+  expect(bottom, 'the bottom bar is never unmounted, so it always has a box').not.toBeNull()
+  expect(
+    boxContains(top, x, y),
+    'the pointer must come to rest clear of the top bar, or it holds the auto-hide off',
+  ).toBe(false)
+  expect(
+    boxContains(bottom, x, y),
+    'the pointer must come to rest clear of the bottom bar, or it holds the auto-hide off',
+  ).toBe(false)
+
+  const box = await viewer(page).boundingBox()
+  expect(box, 'the viewer must be laid out before the pointer can be placed on it').not.toBeNull()
+  expect(
+    y - (box?.y ?? 0),
+    `the pointer must come to rest clear of the top ${String(EDGE_STRIP_PX)}px edge strip, which summons the chrome`,
+  ).toBeGreaterThan(EDGE_STRIP_PX)
+  expect(
+    (box?.y ?? 0) + (box?.height ?? 0) - y,
+    `the pointer must come to rest clear of the bottom ${String(EDGE_STRIP_PX)}px edge strip, which summons the chrome`,
+  ).toBeGreaterThan(EDGE_STRIP_PX)
+
+  await page.mouse.move(x, y)
+}
+
+/**
+ * Opens a book straight at its route, at a page of the caller's choosing.
+ *
+ * `?page=` is the product's own parameter — the series screen sets it, and
+ * `NextVolumeCard` navigates with it on 다음 권 읽기 — and it outranks the saved
+ * progress row (`ViewerPage`), so a caller gets the page it asked for whatever
+ * the previous viewport project left in `user.db`.
+ *
+ * The reader's route into the viewer is a *different* assertion and it already
+ * has three: 04-viewer 6.6 and 6.6b and 07-responsive 6.11 all open a volume by
+ * clicking its tile (AC-003). Specs about what the viewer does once it is open
+ * take the direct route instead, so that a change to the library or the series
+ * screen cannot redden them.
+ */
+export async function openViewerDirect(
+  page: Page,
+  seriesIdent: string,
+  bookId: string,
+  atPage: number,
+): Promise<void> {
+  await page.goto(`/series/${seriesIdent}/books/${bookId}?page=${String(atPage)}`)
+  await expect(viewer(page)).toBeVisible()
+}
+
+/**
+ * Deletes a book's progress row and waits until the server agrees it is gone.
+ *
+ * shelf.ts rule 2: a spec that opens a book it invented state for has to take
+ * that state away again. A leftover row draws a progress bar on the series card,
+ * adds the series to the 이어보기 shelf and to the palette's recents, and every
+ * one of those is in a §7.4 screenshot that 01-library and 02-palette take
+ * *before* this file runs in the next viewport project — a diff with no product
+ * behind it.
+ *
+ * Polled rather than fired once, for the reason 04-viewer 6.6b spells out at
+ * length: `useSaveProgress` debounces its page write by a second and flushes it
+ * on unmount, so a single DELETE can lose the race and put the row straight
+ * back. The loop is the assertion — a DELETE that stops answering 204 fails on
+ * the spot instead of being retried away.
+ */
+export async function clearProgress(page: Page, bookId: string): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const deleted = await page.request.delete(`/api/books/${bookId}/progress`)
+        expect(deleted.status(), 'FR-VWR-012 안읽음: DELETE …/progress answers 204').toBe(204)
+        const body = (await (await page.request.get(`/api/books/${bookId}`)).json()) as {
+          progress: { last_page: number } | null
+        }
+        return body.progress
+      },
+      {
+        timeout: 15_000,
+        message: `shelf.ts rule 2: book ${bookId} must be left without the progress row this spec invented`,
+      },
+    )
+    .toBeNull()
+}
+
+/**
  * Sets one of the viewer's segmented controls (표시 모드 / 읽기 방향 / 맞춤).
  *
  * All three groups are inline at every width — the top bar wraps to two or
@@ -756,11 +933,15 @@ export async function waitForPage(page: Page): Promise<void> {
  * racing its own client: FR-VWR-009 would fail for a reason that has nothing to
  * do with FR-VWR-009. This helper waits for the response instead.
  *
- * No caller today — 04-viewer 6.6 polls `GET /api/books/{bid}` for the row
- * instead, which also survives a write that landed before a listener could be
- * attached. An unused export is exactly how `clearSearch()` kept a
- * viewport-dependent count assertion alive here unnoticed, so this one is on
- * notice: either a spec uses it or it goes.
+ * It had no caller for three sessions and was on notice for it — an unused
+ * export is exactly how `clearSearch()` kept a viewport-dependent count
+ * assertion alive here unnoticed. `09-viewer-chrome.spec.ts` is the caller that
+ * closes that: E-27 took the *chrome* off the reading path and nothing else, so
+ * that spec asserts a page turned with the bars asleep still reaches the server,
+ * and it attaches this listener **before** the turn that causes the write for
+ * the reason above. 04-viewer 6.6 keeps polling `GET /api/books/{bid}` instead,
+ * which is the right shape there: it wants the row's final value, not the fact
+ * that one request happened.
  */
 export async function waitForProgressWrite(page: Page, bookId: string): Promise<void> {
   await page.waitForResponse(

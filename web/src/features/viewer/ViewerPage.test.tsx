@@ -273,6 +273,97 @@ function counter(): string {
   return document.querySelector('[data-role="page-counter"]')?.textContent ?? ''
 }
 
+function need(role: string): HTMLElement {
+  const el = document.querySelector(`[data-role="${role}"]`)
+  if (el === null) throw new Error(`there is no ${role}`)
+  return el as HTMLElement
+}
+
+const viewerRoot = (): HTMLElement => need('viewer')
+const topBar = (): HTMLElement => need('viewer-top-bar')
+const zones = (): HTMLElement => need('stage-zones')
+
+/**
+ * The boundary event a **browser** dispatches, which jsdom has no constructor
+ * for (`window.PointerEvent` is undefined in jsdom 26).
+ *
+ * E-27's hover-hold is answered from `pointerover`/`pointerout` rather than from
+ * React's `onMouseEnter`/`onMouseLeave`, because those two are *synthesised* out
+ * of `mouseover`/`mouseout` and the synthesis drops the pair whenever the
+ * `relatedTarget` is a node React manages — which is every crossing that happens
+ * because the layout moved rather than because the pointer did. A `MouseEvent`
+ * carrying the pointer event's name and `pointerType` is exactly what React's
+ * delegated listener at the root receives from Chrome.
+ */
+function crossPointer(
+  type: 'pointerover' | 'pointerout',
+  target: Element,
+  relatedTarget: Element | null,
+  pointerType = 'mouse',
+): void {
+  const event = new MouseEvent(type, { bubbles: true, cancelable: true, relatedTarget })
+  Object.defineProperty(event, 'pointerType', { value: pointerType })
+  fireEvent(target, event)
+}
+
+/**
+ * Summons the chrome from the top screen-edge strip, leaves the pointer in the
+ * bar that replaced it, and **proves the hold is really in force** by letting
+ * the auto-hide deadline go by.
+ *
+ * The proof is the point. A release test whose setup never held anything passes
+ * against a chrome that was going to hide on its own — green, and about nothing
+ * (HANDOFF §6.5). Call under fake timers.
+ */
+function holdFromTheEdge(): void {
+  const edge = document.querySelector('[data-role="viewer-edge-top"]')
+  if (edge === null) throw new Error('no top edge strip')
+  fireEvent.mouseEnter(edge)
+  crossPointer('pointerover', topBar(), viewerRoot())
+  act(() => {
+    vi.advanceTimersByTime(CHROME_AUTOHIDE_MS * 2)
+  })
+  expect(
+    useViewerStore.getState().chromeVisible,
+    'the release cannot be observed unless something was holding it',
+  ).toBe(true)
+}
+
+/**
+ * The chromeless page number (E-27) — `null` once a bar is up to carry one.
+ *
+ * Distinct from `counter()`: that one lives in the bottom bar, which is mounted
+ * the whole time and only fades, so it is readable whether the chrome is up or
+ * not and cannot tell the two states apart.
+ */
+function quietCounter(): string | null {
+  return document.querySelector('[data-role="quiet-page-counter"]')?.textContent ?? null
+}
+
+/**
+ * A tap at `clientX` on the stage zones, over a stubbed 1 000 × 800 stage.
+ *
+ * Module-scoped because two blocks need it: the zone rules themselves, and
+ * E-27's "turning a page does not summon the chrome".
+ */
+function tapAt(clientX: number): void {
+  const zones = document.querySelector('[data-role="stage-zones"]')
+  if (zones === null) throw new Error('no tap zones')
+  vi.spyOn(zones, 'getBoundingClientRect').mockReturnValue({
+    x: 0,
+    y: 0,
+    left: 0,
+    top: 0,
+    right: 1_000,
+    bottom: 800,
+    width: 1_000,
+    height: 800,
+    toJSON: () => ({}),
+  } as DOMRect)
+  fireEvent.mouseDown(zones, { clientX, clientY: 400 })
+  fireEvent.mouseUp(zones, { clientX, clientY: 400 })
+}
+
 /** Marks the pages currently on the stage as decoded, as a browser would. */
 function decodeShownPages(): void {
   for (const img of document.querySelectorAll('img[data-role="page"]')) {
@@ -381,22 +472,169 @@ describe('the chromeless ground (acceptance 1, 2; ui-spec §6.1, ruling E-27)', 
 
   it('holds the chrome open while the pointer rests on a bar', async () => {
     await setup()
-    const bar = document.querySelector('[data-role="viewer-top-bar"]')
-    if (bar === null) throw new Error('no top bar')
+    const bar = topBar()
 
     vi.useFakeTimers()
     try {
       act(() => {
         useViewerStore.getState().wake()
       })
-      fireEvent.mouseEnter(bar)
+      // The reader's own path to a control: pointer on the page, then into the
+      // bar. `stage-zones` is what it leaves.
+      crossPointer('pointerover', bar, zones())
       act(() => {
         vi.advanceTimersByTime(CHROME_AUTOHIDE_MS * 3)
       })
       // The reader is looking at the control they are reaching for.
       expect(useViewerStore.getState().chromeVisible).toBe(true)
 
-      fireEvent.mouseLeave(bar)
+      crossPointer('pointerout', bar, zones())
+      act(() => {
+        vi.advanceTimersByTime(CHROME_AUTOHIDE_MS)
+      })
+      expect(useViewerStore.getState().chromeVisible).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  /**
+   * The path E-27's hold did **not** cover, and the one the ruling itself added.
+   *
+   * The strips are rendered only while the chrome is away, so waking from one
+   * unmounts the strip and lights the bar in the same commit — *under a pointer
+   * that has not moved*. The old wiring hung the hold on the bar's
+   * `onMouseEnter`, and React synthesises that from `mouseover`: measured in
+   * Chrome at all four widths, the browser does re-hit-test and does dispatch
+   * `pointerover`/`mouseover` on the bar ~10 ms later, but React drops the pair
+   * because the event's `relatedTarget` is a node it manages. No hold was taken,
+   * and 2 600 ms later the chrome dissolved under a pointer sitting inside it —
+   * or, with the pointer at rest in the 44 px the strip re-occupies, the strip
+   * re-mounted beneath it and the bars blinked every 2.6 s indefinitely.
+   *
+   * **What this test is entitled to assert.** The browser sending that
+   * `pointerover` is a browser fact and belongs to `09-viewer-chrome.spec.ts`,
+   * which parks a real pointer in a real strip and watches the real deadline
+   * pass. What is asserted here is the half that is this screen's: given that
+   * the pointer is over a bar, the chrome is held — no matter that no crossing
+   * ever happened, because the rule reads what is under the pointer rather than
+   * remembering a boundary it was told about.
+   */
+  it.each([
+    { edge: 'viewer-edge-top', bar: 'viewer-top-bar', gesture: 'hover' },
+    { edge: 'viewer-edge-bottom', bar: 'viewer-bottom-bar', gesture: 'click' },
+  ])(
+    'holds the chrome a screen edge just summoned ($edge, $gesture), under a pointer that never moved',
+    async ({ edge, bar, gesture }) => {
+      await setup()
+      const strip = document.querySelector(`[data-role="${edge}"]`)
+      if (strip === null) throw new Error(`no ${edge}`)
+
+      vi.useFakeTimers()
+      try {
+        // Both halves of a strip: hovering one wakes the chrome, and so does
+        // pressing one — the second is what a reader who was already pointing at
+        // the edge does, and the only one a finger can perform.
+        if (gesture === 'hover') fireEvent.mouseEnter(strip)
+        else fireEvent.click(strip)
+        expect(useViewerStore.getState().chromeVisible).toBe(true)
+        expect(
+          document.querySelector(`[data-role="${edge}"]`),
+          'the strip is gone and the bar is where the pointer is: that is the whole defect',
+        ).toBeNull()
+
+        // Chrome's post-layout hit test, verbatim: `pointerover` on the bar with
+        // the viewer root as `relatedTarget`.
+        crossPointer('pointerover', need(bar), viewerRoot())
+        act(() => {
+          vi.advanceTimersByTime(CHROME_AUTOHIDE_MS * 3)
+        })
+        expect(
+          useViewerStore.getState().chromeVisible,
+          'E-27: the reader is looking at the control they are about to press',
+        ).toBe(true)
+      } finally {
+        vi.useRealTimers()
+      }
+    },
+  )
+
+  /**
+   * …and it lets go again, by three routes that do not share a failure.
+   *
+   * A hold that is never released disarms the auto-hide for the rest of the
+   * session — `chromeHeld` is module-scoped and nothing on screen renders from
+   * it, so there is no state a reader could see or correct. The hold above was
+   * taken without a crossing, so the release must not depend on the matching
+   * crossing arriving either.
+   */
+  it('lets the held chrome go when the pointer moves off the bar', async () => {
+    await setup()
+    vi.useFakeTimers()
+    try {
+      holdFromTheEdge()
+      crossPointer('pointerout', topBar(), zones())
+      act(() => {
+        vi.advanceTimersByTime(CHROME_AUTOHIDE_MS)
+      })
+      expect(useViewerStore.getState().chromeVisible).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('lets it go when the pointer leaves the window altogether', async () => {
+    await setup()
+    vi.useFakeTimers()
+    try {
+      holdFromTheEdge()
+      // The pointer left the browser window: `relatedTarget` is null, which is
+      // the browser saying "nothing" rather than naming a destination.
+      crossPointer('pointerout', topBar(), null)
+      act(() => {
+        vi.advanceTimersByTime(CHROME_AUTOHIDE_MS)
+      })
+      expect(useViewerStore.getState().chromeVisible).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('lets it go on a plain move over the stage — a boundary event need not arrive', async () => {
+    await setup()
+    vi.useFakeTimers()
+    try {
+      holdFromTheEdge()
+      // A different event family from the two above, and the one that keeps
+      // arriving rather than firing once at a boundary that may be missed.
+      fireEvent.mouseMove(zones(), { clientX: 500, clientY: 400 })
+      act(() => {
+        vi.advanceTimersByTime(CHROME_AUTOHIDE_MS)
+      })
+      expect(useViewerStore.getState().chromeVisible).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  /**
+   * **A finger is not a resting pointer.**
+   *
+   * Chrome sends compatibility mouse events after a tap and they do not say they
+   * came from a touch, so a tap inside a bar took the hold and no `mouseleave`
+   * ever came to give it back — measured on the shipped build at mobile-400,
+   * where one tap on the page counter pinned the chrome open for good. E-27's
+   * justification is a pointer *resting* on a control, and there is no such
+   * thing on a touch screen: `pointerType` is what tells them apart.
+   */
+  it('never holds the chrome for a touch, which has nothing to rest', async () => {
+    await setup()
+    vi.useFakeTimers()
+    try {
+      act(() => {
+        useViewerStore.getState().wake()
+      })
+      crossPointer('pointerover', topBar(), viewerRoot(), 'touch')
       act(() => {
         vi.advanceTimersByTime(CHROME_AUTOHIDE_MS)
       })
@@ -408,14 +646,86 @@ describe('the chromeless ground (acceptance 1, 2; ui-spec §6.1, ruling E-27)', 
 
   it('shows the page number quietly while there is no bar to hold it', async () => {
     await setup()
-    const quiet = (): Element | null => document.querySelector('[data-role="quiet-page-counter"]')
-    expect(quiet()).toHaveTextContent('12 / 214')
+    expect(quietCounter()).toBe('12 / 214')
 
     act(() => {
       useViewerStore.getState().wake()
     })
     // The bar has its own counter; two on screen at once is the bug.
-    expect(quiet()).toBeNull()
+    expect(quietCounter()).toBeNull()
+  })
+
+  /**
+   * The one row of E-27's table the shipped build did not honour.
+   *
+   * `useViewerStore.step()` implemented "a page turn does not wake the chrome"
+   * and `viewer.test.ts` pinned it — but the screen never called it. Its stride
+   * has to be however many pages are on the stage (FR-VWR-004), which the store
+   * cannot know, so `goNext`/`goPrev` went through `goTo`, and `goTo` wakes
+   * unconditionally. Every arrow key, `Space` and side-zone tap raised three rows
+   * of controls, and because each turn re-armed the 2 600 ms timer, the quiet
+   * counter below — which exists so a turn *can* give feedback without the bars —
+   * was unreachable after the reader's first page turn.
+   *
+   * So this is asserted **here**, at the level the reader actually operates, and
+   * on the counter's *text advancing*: a viewer that never turned a page would
+   * satisfy "the chrome stayed hidden" perfectly.
+   */
+  it('turns the page without summoning the chrome, by key and by tap (E-27)', async () => {
+    await setup()
+    decodeShownPages()
+
+    // Preconditions, asserted rather than assumed.
+    expect(useViewerStore.getState().chromeVisible).toBe(false)
+    expect(quietCounter()).toBe('12 / 214')
+
+    fireEvent.keyDown(window, { key: 'ArrowRight' })
+    decodeShownPages()
+    expect(useViewerStore.getState().chromeVisible).toBe(false)
+    expect(document.querySelector('[data-role="viewer"]')).toHaveAttribute('data-chrome', 'hidden')
+    expect(quietCounter()).toBe('13 / 214')
+
+    // The other way into the same turn: the right-hand tap zone under L→R.
+    tapAt(900)
+    decodeShownPages()
+    expect(useViewerStore.getState().chromeVisible).toBe(false)
+    expect(document.querySelector('[data-role="viewer"]')).toHaveAttribute('data-chrome', 'hidden')
+    expect(quietCounter()).toBe('14 / 214')
+
+    // Control: a chrome that could no longer be summoned at all would pass
+    // everything above. The screen edge still works, on the page just turned to.
+    const edge = document.querySelector('[data-role="viewer-edge-top"]')
+    if (edge === null) throw new Error('no top edge strip')
+    fireEvent.mouseEnter(edge)
+    expect(useViewerStore.getState().chromeVisible).toBe(true)
+    expect(counter()).toBe('14 / 214')
+  })
+
+  /**
+   * The counterpart, and the reason the fix adds a store action rather than
+   * taking the wake out of `goTo`: the slider and the thumbnail strip live *in*
+   * the bar, so the bar must not fade out from under the press.
+   *
+   * **What this does and does not pin.** It pins the rule — a slider commit
+   * leaves the chrome up — and it would go red if the fix had reached one step
+   * too far and made the controls silent too. It is **not** evidence about
+   * `goTo` specifically: the commit path is `setDragging(false)` then `goTo`,
+   * and `setDragging` wakes as well, so either one alone would satisfy this.
+   * `goTo`'s own wake is pinned in `store/viewer.test.ts`. The strip is the one
+   * control that reaches `goTo` unaccompanied (`onJump`), and it cannot be
+   * clicked here: `@tanstack/react-virtual` measures the strip through
+   * `offsetWidth`, which jsdom reports as 0, so it renders no cells at all.
+   */
+  it('still wakes the chrome for the controls, which the page turn must not break', async () => {
+    await setup()
+    expect(useViewerStore.getState().chromeVisible).toBe(false)
+
+    // A keyboard change on the slider has no pointer-down, so it commits at once.
+    fireEvent.change(screen.getByRole('slider', { name: '페이지' }), { target: { value: '50' } })
+    expect(counter()).toBe('50 / 214')
+    expect(useViewerStore.getState().chromeVisible).toBe(true)
+    // …and with a bar up to carry the number, the quiet one steps aside.
+    expect(quietCounter()).toBeNull()
   })
 
   it('stacks both bars above the end-of-volume scrim', async () => {
@@ -672,24 +982,6 @@ describe('keyboard (acceptance 7; ui-spec §8.2)', () => {
 // ---------------------------------------------------------------------------
 
 describe('tap zones (acceptance 8; FR-VWR-011)', () => {
-  function tapAt(clientX: number): void {
-    const zones = document.querySelector('[data-role="stage-zones"]')
-    if (zones === null) throw new Error('no tap zones')
-    vi.spyOn(zones, 'getBoundingClientRect').mockReturnValue({
-      x: 0,
-      y: 0,
-      left: 0,
-      top: 0,
-      right: 1_000,
-      bottom: 800,
-      width: 1_000,
-      height: 800,
-      toJSON: () => ({}),
-    } as DOMRect)
-    fireEvent.mouseDown(zones, { clientX, clientY: 400 })
-    fireEvent.mouseUp(zones, { clientX, clientY: 400 })
-  }
-
   it('resolves the side zones in reading order, not screen order', async () => {
     await setup({ prefs: { reading_direction: 'rtl' } })
     // R→L: the left third is *forward*.

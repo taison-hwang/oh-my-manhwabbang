@@ -127,6 +127,14 @@ describe('nextPage / prevPage', () => {
     expect(prevPage(13, 214, 'single', dims)).toBe(12)
   })
 
+  it('steps +1 in 세로 as well — only 양면 doubles', () => {
+    // 세로 has a page turn even though the reader mostly scrolls; the store used
+    // to own this case and no longer does, so it is asserted where the stride
+    // now lives.
+    expect(nextPage(12, 214, 'vertical', dims)).toBe(13)
+    expect(prevPage(13, 214, 'vertical', dims)).toBe(12)
+  })
+
   it('steps +1 across a landscape scan so the pairing stays in phase', () => {
     expect(nextPage(6, 214, 'spread', dims)).toBe(7)
     expect(nextPage(7, 214, 'spread', dims)).toBe(8)

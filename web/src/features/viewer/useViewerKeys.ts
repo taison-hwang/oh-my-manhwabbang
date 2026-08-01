@@ -1,13 +1,18 @@
 /**
  * The viewer's keyboard map (FR-VWR-007, ui-spec §8.2).
  *
- *   `→`  step(dir === 'rtl' ? −1 : +1)      `←`  the inverse
- *   `Space`  step(+1), preventDefault       `T`  thumbnail panel
+ *   `→`  onNext, or onPrev under R→L        `←`  the inverse
+ *   `Space`  onNext, preventDefault         `T`  thumbnail panel
  *   `F`  real browser fullscreen            `Esc`  leave the viewer
  *   `H`  show / hide the chrome             `1` / `2` / `3`  단면 / 양면 / 세로
  *
+ * The turn itself is the screen's: this hook never touches the store's page,
+ * because the stride is however many pages are on the stage (FR-VWR-004).
+ * `ViewerPage` hands in `goNext`/`goPrev`, which commit through the store's
+ * `turnTo` — `goTo` minus the wake.
+ *
  * `H` arrived with ruling **E-27**, which took the chrome off the mouse: page
- * turns no longer wake it and the viewer opens without it, so a keyboard reader
+ * turns do not wake it and the viewer opens without it, so a keyboard reader
  * who never touches the screen edges needs a key that summons it.
  *
  * These are **viewer-only** keys and are deliberately not in

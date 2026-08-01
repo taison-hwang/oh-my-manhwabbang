@@ -39,46 +39,42 @@ describe('defaults', () => {
   })
 })
 
-describe('step (ui-spec §8.2)', () => {
-  it('advances one page in single mode', () => {
-    open(214, 12)
-    useViewerStore.getState().step(1)
-    expect(useViewerStore.getState().page).toBe(13)
-    useViewerStore.getState().step(-1)
-    expect(useViewerStore.getState().page).toBe(12)
-  })
-
-  it('advances **two** pages in spread mode', () => {
+/**
+ * `turnTo` — the reading path (ui-spec §8.2).
+ *
+ * The stride is **not** tested here and must not move back here. It belongs to
+ * `fit.ts` (`nextPage`/`prevPage`, asserted in `fit.test.ts`) because only the
+ * screen knows how many pages are on the stage — FR-VWR-004 lets a landscape
+ * scan hold a spread slot alone. The predecessor of this store action worked its
+ * own stride out from `mode`, which made it uncallable by the screen, which is
+ * how E-27's page-turn row went four sessions unimplemented behind a green test.
+ */
+describe('turnTo (ui-spec §8.2)', () => {
+  it('commits the page it is given, with no stride of its own', () => {
     open(214, 12)
     useViewerStore.getState().setMode('spread')
-    useViewerStore.getState().step(1)
-    expect(useViewerStore.getState().page).toBe(14)
-    useViewerStore.getState().step(-1)
-    expect(useViewerStore.getState().page).toBe(12)
-  })
-
-  it('advances one page in vertical mode', () => {
-    open(214, 12)
-    useViewerStore.getState().setMode('vertical')
-    useViewerStore.getState().step(1)
+    // The discriminator against the `step(delta)` shape this replaced: a "+1"
+    // in 양면 used to mean 14. `turnTo` is told where to land, and lands there.
+    useViewerStore.getState().turnTo(13)
     expect(useViewerStore.getState().page).toBe(13)
+    useViewerStore.getState().turnTo(12)
+    expect(useViewerStore.getState().page).toBe(12)
   })
 
   it('clamps to [1, pageCount] instead of wrapping', () => {
     open(214, 1)
-    useViewerStore.getState().step(-1)
+    useViewerStore.getState().turnTo(0)
     expect(useViewerStore.getState().page).toBe(1)
 
-    useViewerStore.getState().goTo(214)
-    useViewerStore.getState().step(1)
+    useViewerStore.getState().turnTo(9_999)
     expect(useViewerStore.getState().page).toBe(214)
   })
 
-  it('lands exactly on the last page from an odd position in spread mode', () => {
-    // 213 + 2 would be 215; the clamp is what raises the next-volume card.
+  it('lands on the last page, which is what raises the next-volume card', () => {
     open(214, 213)
     useViewerStore.getState().setMode('spread')
-    useViewerStore.getState().step(1)
+    // `nextPage(213, …)` in 양면 is 214, not 215; the clamp holds either way.
+    useViewerStore.getState().turnTo(215)
     expect(useViewerStore.getState().page).toBe(214)
     expect(selectAtVolumeEnd(useViewerStore.getState())).toBe(true)
   })
@@ -86,8 +82,18 @@ describe('step (ui-spec §8.2)', () => {
   it('marks the page as loading so the spinner timer can start', () => {
     open(214, 12)
     useViewerStore.getState().setLoading(false)
-    useViewerStore.getState().step(1)
+    useViewerStore.getState().turnTo(13)
     expect(useViewerStore.getState().loading).toBe(true)
+  })
+
+  it('does nothing at all for a turn that does not move — no spurious loading', () => {
+    open(214, 12)
+    useViewerStore.getState().setLoading(false)
+    // Both ends of the book answer this way: `nextPage` clamps, so the last
+    // page turned forward asks to go where it already is.
+    useViewerStore.getState().turnTo(12)
+    expect(useViewerStore.getState().page).toBe(12)
+    expect(useViewerStore.getState().loading).toBe(false)
   })
 })
 
@@ -266,12 +272,94 @@ describe('chrome auto-hide (ui-spec §8.2, widened to 2 600 ms by E-27)', () => 
     expect(useViewerStore.getState().chromeVisible).toBe(true)
   })
 
+  /**
+   * Both halves are idempotent, and `ViewerPage` depends on it.
+   *
+   * The hold is no longer inferred from one crossing into a bar — it is derived
+   * from what the browser says is under the pointer, re-answered on every
+   * boundary crossing anywhere in the viewer and on every move over the stage.
+   * That rule fires many times for one journey, so a `releaseChrome` that
+   * re-armed unconditionally would push the 2 600 ms deadline back on each
+   * twitch of a mouse resting over the page — a chrome that never goes away,
+   * which is E-27 read backwards.
+   */
+  it('releasing a chrome nobody is holding does not push the deadline back', () => {
+    open(10)
+    useViewerStore.getState().wake()
+    vi.advanceTimersByTime(CHROME_AUTOHIDE_MS - 200)
+    // What a mouse moving over the page does, over and over.
+    for (let i = 0; i < 5; i++) useViewerStore.getState().releaseChrome()
+    vi.advanceTimersByTime(200)
+    expect(useViewerStore.getState().chromeVisible).toBe(false)
+  })
+
+  it('holding twice is holding once — the second is not a second timer', () => {
+    open(10)
+    useViewerStore.getState().wake()
+    useViewerStore.getState().holdChrome()
+    useViewerStore.getState().holdChrome()
+    useViewerStore.getState().releaseChrome()
+    vi.advanceTimersByTime(CHROME_AUTOHIDE_MS)
+    expect(useViewerStore.getState().chromeVisible).toBe(false)
+  })
+
+  /**
+   * **A hold may not outlive the viewer that took it.**
+   *
+   * `chromeHeld` is module-scoped, so it survives every unmount — and a hold
+   * left standing disarms the auto-hide for the rest of the session, with
+   * nothing on screen able to re-arm it. `close()` is the guarantee: the viewer
+   * unmounts through it (`ViewerPage`'s cleanup effect) and 뒤로/`Esc` call it
+   * directly. Without the reset, the assertion below reads `true` forever.
+   */
+  it('a hold does not survive leaving the viewer', () => {
+    open(10)
+    useViewerStore.getState().wake()
+    useViewerStore.getState().holdChrome()
+    useViewerStore.getState().close()
+
+    // **No second `open()` here, deliberately.** `open()` resets the flag as
+    // well (pinned by the test below), so re-entering the viewer at this point
+    // would be green whether `close()` reset it or not — the two guarantees
+    // would mask each other and neither would be pinned by anything. Measured:
+    // deleting `close()`'s reset left that version of this test passing.
+    useViewerStore.getState().wake()
+    vi.advanceTimersByTime(CHROME_AUTOHIDE_MS)
+    expect(useViewerStore.getState().chromeVisible).toBe(false)
+  })
+
+  /**
+   * The same guarantee for the other way a viewer changes underneath a pointer:
+   * 다음 권 읽기, which arrives here as a second `open()` on a different book
+   * with the screen still mounted. The bar the pointer was resting on belongs to
+   * the volume that just went away.
+   */
+  it('a hold does not survive a change of volume', () => {
+    open(10)
+    useViewerStore.getState().wake()
+    useViewerStore.getState().holdChrome()
+
+    useViewerStore.getState().open('bk-2', { pageCount: 10, page: 1 })
+    expect(
+      useViewerStore.getState().chromeVisible,
+      'E-28 §3: a continuation keeps the chrome the reader had raised',
+    ).toBe(true)
+    vi.advanceTimersByTime(CHROME_AUTOHIDE_MS)
+    expect(useViewerStore.getState().chromeVisible).toBe(false)
+  })
+
+  // Necessary, and on its own **not sufficient** — that is the whole history of
+  // this rule. Its predecessor asserted the same thing about a store action no
+  // screen could call, so the shipped build woke the chrome on every arrow key
+  // while this stayed green (HANDOFF §6.5). The assertion that the *screen* only
+  // ever turns pages through here lives in `ViewerPage.test.tsx`; neither test
+  // replaces the other.
   it('reading never summons the chrome — neither a page turn nor a scroll (E-27)', () => {
     open(214, 12)
     useViewerStore.getState().wake()
     useViewerStore.getState().hideChrome()
 
-    useViewerStore.getState().step(1)
+    useViewerStore.getState().turnTo(13)
     expect(useViewerStore.getState().page).toBe(13)
     expect(useViewerStore.getState().chromeVisible).toBe(false)
 

@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
 } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 
@@ -63,9 +64,12 @@ import { useViewerKeys } from './useViewerKeys'
  *    on the book id, not a dependency list — `useSetPrefs` writes the fresh
  *    prefs into the book cache, and a re-run would throw the reader back to
  *    where they resumed on every 양면/화면 press.
- *  * **Which page turn.** `nextPage`/`prevPage`, never the store's `step`: the
- *    stride has to be however many pages are *actually* on screen, so a
- *    landscape scan (FR-VWR-004) does not put the book one page out of phase.
+ *  * **Which page turn.** `nextPage`/`prevPage` committed through the store's
+ *    `turnTo` — never `goTo`. The stride has to be however many pages are
+ *    *actually* on screen, so a landscape scan (FR-VWR-004) does not put the
+ *    book one page out of phase; and `goTo` wakes the chrome, which a page turn
+ *    must not do (E-27). `goTo` is what the slider and the thumbnail strip call,
+ *    where the bar must not vanish under the press.
  *  * **What "loading" means.** A page is pending until its `<img>` has fired
  *    `load` or `error`. That, delayed by 240 ms, is the only thing that shows
  *    the indicator — the stage itself is never blanked (ui-spec §6.3).
@@ -99,6 +103,14 @@ const EDGE_STRIP_PX = 44
 /** The one sentence that explains a viewer which opens with nothing on it. */
 const CHROME_HINT = '좌·우 클릭으로 페이지 · 중앙 클릭 또는 상하 가장자리로 컨트롤'
 
+/** The two surfaces a resting pointer is allowed to hold the chrome open from. */
+const CHROME_BARS = '[data-role="viewer-top-bar"],[data-role="viewer-bottom-bar"]'
+
+/** Whether the thing the pointer is over belongs to one of the two bars. */
+function inChrome(node: EventTarget | null): boolean {
+  return node instanceof Element && node.closest(CHROME_BARS) !== null
+}
+
 export function ViewerPage() {
   const { sid, bid } = useParams()
   const seriesId = sid ?? ''
@@ -131,6 +143,7 @@ export function ViewerPage() {
   const dragPage = useViewerStore((s) => s.dragPage)
   const open = useViewerStore((s) => s.open)
   const goTo = useViewerStore((s) => s.goTo)
+  const turnTo = useViewerStore((s) => s.turnTo)
   const setMode = useViewerStore((s) => s.setMode)
   const setDirection = useViewerStore((s) => s.setDirection)
   const setFit = useViewerStore((s) => s.setFit)
@@ -139,6 +152,8 @@ export function ViewerPage() {
   const toggleChrome = useViewerStore((s) => s.toggleChrome)
   const toggleStrip = useViewerStore((s) => s.toggleStrip)
   const wake = useViewerStore((s) => s.wake)
+  const holdChrome = useViewerStore((s) => s.holdChrome)
+  const releaseChrome = useViewerStore((s) => s.releaseChrome)
   const syncPage = useViewerStore((s) => s.syncPage)
   const hintVisible = useViewerStore((s) => s.hintVisible)
 
@@ -262,13 +277,18 @@ export function ViewerPage() {
   // Page turns, keys, taps, prefetch
   // -------------------------------------------------------------------------
 
+  // `turnTo`, not `goTo`: these two are the *reading* path — the arrow keys,
+  // `Space`, the side tap zones and a swipe all land here — and E-27 says
+  // reading never summons the chrome. Routing them through `goTo` woke it on
+  // every turn, which also took the quiet page counter below off the screen for
+  // the rest of the volume.
   const goNext = useCallback(() => {
-    goTo(nextPage(page, pageCount, mode, dims))
-  }, [dims, goTo, mode, page, pageCount])
+    turnTo(nextPage(page, pageCount, mode, dims))
+  }, [dims, turnTo, mode, page, pageCount])
 
   const goPrev = useCallback(() => {
-    goTo(prevPage(page, pageCount, mode, dims))
-  }, [dims, goTo, mode, page, pageCount])
+    turnTo(prevPage(page, pageCount, mode, dims))
+  }, [dims, turnTo, mode, page, pageCount])
 
   const onToggleFullscreen = useCallback(() => {
     void toggleFullscreen(rootRef.current ?? undefined)
@@ -315,22 +335,32 @@ export function ViewerPage() {
    */
   const [hoverZone, setHoverZone] = useState<StageZone>('centre')
 
-  const nudgePointer = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
-    setPointerAwake(true)
-    if (pointerTimer.current !== null) clearTimeout(pointerTimer.current)
-    pointerTimer.current = setTimeout(() => {
-      pointerTimer.current = null
-      setPointerAwake(false)
-    }, POINTER_IDLE_MS)
+  const nudgePointer = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      setPointerAwake(true)
+      if (pointerTimer.current !== null) clearTimeout(pointerTimer.current)
+      pointerTimer.current = setTimeout(() => {
+        pointerTimer.current = null
+        setPointerAwake(false)
+      }, POINTER_IDLE_MS)
 
-    const stage = stageZonesRef.current
-    if (stage?.contains(event.target as Node) !== true) {
-      setHoverZone('centre')
-      return
-    }
-    const rect = stage.getBoundingClientRect()
-    setHoverZone(zoneAt(event.clientX - rect.left, rect.width))
-  }, [])
+      const stage = stageZonesRef.current
+      if (stage?.contains(event.target as Node) !== true) {
+        setHoverZone('centre')
+        return
+      }
+      // Release guarantee #3 (see `trackChromeHover`). A move over the *stage*
+      // is the pointer saying, in a different event family entirely, that it is
+      // on the page and not on a bar — and unlike a boundary crossing it keeps
+      // arriving for as long as the reader's hand is on the mouse. Idempotent
+      // in the store, so a reader who never touched the chrome pays nothing and
+      // the 2 600 ms deadline is not pushed back by moving the mouse (E-27).
+      releaseChrome()
+      const rect = stage.getBoundingClientRect()
+      setHoverZone(zoneAt(event.clientX - rect.left, rect.width))
+    },
+    [releaseChrome],
+  )
 
   useEffect(
     () => () => {
@@ -347,6 +377,82 @@ export function ViewerPage() {
       wake()
     },
     [wake],
+  )
+
+  // -------------------------------------------------------------------------
+  // The hover-hold (E-27), and why it lives here rather than on the bars
+  // -------------------------------------------------------------------------
+  //
+  // E-27 pins the chrome open while the pointer rests inside it: "the reader is
+  // looking at the control they are about to press." That was wired as
+  // `onMouseEnter`/`onMouseLeave` on each bar, and it did not engage on the one
+  // path the ruling added at the same time — **waking from a screen-edge
+  // strip**. The strip is rendered only while the chrome is away, so a wake
+  // unmounts the strip and lights the bar *in the same commit, under a pointer
+  // that has not moved*.
+  //
+  // The browser handles that perfectly well: measured at all four viewport
+  // widths, Chrome re-hit-tests after the layout change and dispatches
+  // `pointerover`/`mouseover` on the bar ~10 ms later. What drops it is React:
+  // `onMouseEnter`/`onPointerEnter` are **synthesised** from `mouseover`/
+  // `pointerover`, and the synthesis returns early when the event's
+  // `relatedTarget` is a node React manages — on the assumption that the
+  // matching pair was already dispatched during the corresponding `…out`. Here
+  // it was not: the `…out` went to the strip, which was being removed. So the
+  // bar's `onMouseEnter` never ran, no hold was taken, and 2 600 ms later the
+  // chrome dissolved under a pointer sitting in it — or, where the pointer had
+  // come to rest inside the 44px the strip re-occupies, the strip re-mounted
+  // beneath it, summoned the chrome again, and the bars blinked every 2.6 s for
+  // as long as the reader left the mouse alone.
+  //
+  // ## So the hold is *derived*, not latched
+  //
+  // `pointerover`/`pointerout` bubble, and they are the browser's own answer to
+  // "what is under the pointer now" — they are not synthesised and they are not
+  // dropped. One rule on the viewer root therefore covers every way the chrome
+  // can arrive: crossing into a bar, a strip hover, a strip click, `H`, a
+  // centre tap. The bars carry no hold handlers of their own any more; there is
+  // one statement of the rule, in one place.
+  //
+  // ## Nothing may strand the chrome held open
+  //
+  // A hold that is never released disarms the auto-hide for the rest of the
+  // session, so the release may not rest on one event that might not arrive:
+  //
+  //  1. `pointerout` — the same authority, saying the pointer went somewhere
+  //     that is not a bar. A `relatedTarget` of `null` (the pointer left the
+  //     window) is exactly that, and releases;
+  //  2. `onPointerLeave` on the root — the pointer left the viewer altogether;
+  //  3. a `mousemove` over the stage (`nudgePointer`) — a different event
+  //     family, arriving continuously rather than only on a boundary;
+  //  4. `open()` and `close()` in the store, which reset the module-scoped flag
+  //     — so a viewer that is left, or a volume swapped underneath one, cannot
+  //     bequeath a hold to whatever comes next.
+  //
+  // And a **touch never holds at all**. There is no such thing as a pointer
+  // resting on a control on a touch screen: the finger is gone the instant the
+  // tap ends, and E-27's justification goes with it. Chrome's compatibility
+  // mouse events do not say they came from a finger, which is how the shipped
+  // build ended up pinning the chrome open forever after a single tap inside a
+  // bar at mobile widths (measured). `pointerType` says.
+  const trackChromeHover = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (event.pointerType === 'touch') return
+      // Where the pointer is *now*: `pointerover` names it as the target,
+      // `pointerout` as the thing it is leaving for.
+      const under = event.type === 'pointerout' ? event.relatedTarget : event.target
+      if (inChrome(under)) holdChrome()
+      else releaseChrome()
+    },
+    [holdChrome, releaseChrome],
+  )
+
+  const releaseChromeHold = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (event.pointerType === 'touch') return
+      releaseChrome()
+    },
+    [releaseChrome],
   )
 
   const touch = useTouchZones({
@@ -392,6 +498,9 @@ export function ViewerPage() {
         cursor: pointerAwake ? (hoverZone === 'centre' ? 'default' : 'pointer') : 'none',
       }}
       onMouseMove={nudgePointer}
+      onPointerOver={trackChromeHover}
+      onPointerOut={trackChromeHover}
+      onPointerLeave={releaseChromeHold}
     >
       {/* The screen edges (E-27). Rendered only while the chrome is away: once
           it is up, the bars themselves are what the pointer rests on, and a

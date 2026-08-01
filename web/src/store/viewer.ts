@@ -79,17 +79,33 @@ export interface ViewerState {
   open: (bookId: string, options: ViewerOpenOptions) => void
   close: () => void
   setPageCount: (n: number) => void
+  /**
+   * The **control** path: the slider, the thumbnail strip, a direct jump.
+   *
+   * The only one of the three page setters that wakes the chrome, and it has to
+   * — the controls live in the bars, so the bar must not fade out from under the
+   * press.
+   */
   goTo: (page: number) => void
   /**
    * The stage reporting which page the reader has scrolled to (세로 mode).
    *
-   * Separate from `goTo` for exactly one reason: it must not wake the chrome.
-   * Scrolling a webtoon is reading, not operating a control, and routing it
-   * through `goTo` made the bars flash on every wheel tick.
+   * Reading, so it does not wake the chrome — routing it through `goTo` made the
+   * bars flash on every wheel tick. It differs from `turnTo` in the other field:
+   * it sets no `loading`, because a scroll moves through pages that are already
+   * painted rather than replacing what is on the stage.
    */
   syncPage: (page: number) => void
-  /** Page turn. The increment is **2 in spread mode**, 1 otherwise. */
-  step: (delta: number) => void
+  /**
+   * A page turn on the **reading** path — the arrow keys, `Space`, the side tap
+   * zones and a swipe.
+   *
+   * Absolute, not a delta: the stride is however many pages are *actually* on
+   * the stage, and only the screen can know that (FR-VWR-004 lets a landscape
+   * scan hold a spread slot on its own). `fit.ts`'s `nextPage`/`prevPage` work
+   * the destination out; this only commits it.
+   */
+  turnTo: (page: number) => void
   setMode: (mode: DisplayMode) => void
   setDirection: (dir: ReadingDirection) => void
   setFit: (fit: FitMode) => void
@@ -100,6 +116,15 @@ export interface ViewerState {
    *
    * Without this the bars dissolve under a pointer that is resting on them —
    * the reader is looking at the control they are about to press.
+   *
+   * **Both are idempotent, and that is a contract, not an optimisation.** The
+   * screen no longer infers the hold from a boundary crossing — it *derives* it
+   * from where the browser says the pointer is, on every crossing anywhere in
+   * the viewer (`ViewerPage`'s `trackChromeHover`). That rule fires many times
+   * for one journey across a bar, and a `releaseChrome` that re-armed on each
+   * of them would hand the reader a chrome that never goes away as long as the
+   * mouse keeps twitching over the page. So a call that does not change the
+   * answer does nothing at all.
    */
   holdChrome: () => void
   releaseChrome: () => void
@@ -133,6 +158,13 @@ let hintTimer: ReturnType<typeof setTimeout> | null = null
  * Module-scoped for the same reason as the timer: it is not state — nothing
  * renders from it, and it only ever decides whether an already-running wake
  * arms a timer.
+ *
+ * **Module-scoped state outlives the component that set it**, which is why
+ * `open()` and `close()` below both put it back to `false`. A hold is a claim
+ * about a pointer resting on a bar of *this* viewer; a viewer that has been
+ * left, or a book that has been swapped underneath it, has no such pointer and
+ * must not inherit the claim — the auto-hide would be disarmed for the rest of
+ * the session with nothing on screen able to re-arm it.
  */
 let chromeHeld = false
 
@@ -268,13 +300,28 @@ export const useViewerStore = create<ViewerState>()((set, get) => ({
   /**
    * **No wake (E-27).** Turning a page is the act of reading, and the model the
    * design settled on is that reading never summons the interface — only the
-   * screen edges, the centre tap and `H` do.
+   * screen edges, the centre tap and `H` do. That one missing line is the whole
+   * difference from `goTo`, which is the *control* path — the slider and the
+   * thumbnail strip, where the bar must not vanish under the press.
+   *
+   * It does set `loading`, and that is the difference from `syncPage`: a turn
+   * replaces what is on the stage, so the indicator is owed. A webtoon scroll
+   * moves through pages that are already painted.
+   *
+   * **Absolute, and it has to stay absolute.** This was `step(delta)` and
+   * computed its own stride (`mode === 'spread' ? 2 : 1`), which meant no screen
+   * could call it: FR-VWR-004 lets a landscape scan take a spread slot alone, so
+   * the stride belongs to `fit.ts`, not here. `ViewerPage` therefore routed its
+   * turns through `goTo` instead and every arrow key woke the chrome — while a
+   * store test on the uncallable `step` reported E-27 as honoured. Give this a
+   * signature the screen cannot use and the defect comes straight back
+   * (HANDOFF §6.5).
    */
-  step: (delta) => {
-    const { mode, page, pageCount } = get()
-    const stride = mode === 'spread' ? 2 : 1
-    const next = clampPage(page + delta * stride, pageCount)
-    if (next !== page) set({ page: next, loading: true })
+  turnTo: (page) => {
+    set((s) => {
+      const next = clampPage(page, s.pageCount)
+      return next === s.page ? {} : { page: next, loading: true }
+    })
   },
 
   setMode: (mode) => {
@@ -296,11 +343,16 @@ export const useViewerStore = create<ViewerState>()((set, get) => ({
   },
 
   holdChrome: () => {
+    if (chromeHeld) return
     chromeHeld = true
     clearAutoHide()
   },
 
   releaseChrome: () => {
+    // Not held is not a state to leave: re-arming here would push the deadline
+    // back on every mouse move over the page, which is a chrome that outstays
+    // its 2 600 ms for as long as the reader's hand is on the mouse.
+    if (!chromeHeld) return
     chromeHeld = false
     armAutoHide()
   },

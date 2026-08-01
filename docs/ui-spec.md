@@ -445,6 +445,12 @@ input[type=range]::-webkit-slider-thumb {
 @keyframes spin { to { transform: rotate(360deg) } }
 ```
 
+> The block above is the **prototype's** CSS, kept verbatim. Two rules of it are superseded downstream and
+> the difference is not a regression: the range input carries a real hit box (`height:24px`, `--touch-min`
+> below 768) with a `12×18` / `16×28` thumb per **E-28** — a range with no height collapses onto its 2px
+> track — and the thumbnail strip suppresses the 12px scrollbar on itself, because on a 72px track it ate a
+> sixth of the height. Both are specified in §6.7.
+
 Root shell: `height:100vh; display:flex; flex-direction:column; overflow:hidden;
 background:var(--color-bg); color:var(--color-text); font-family:var(--font-body); font-size:14px`.
 Note the **14px** app base size — smaller than the DS's 15px `body`, because density beats comfort here
@@ -489,6 +495,9 @@ text, and only reach for Lucide where a real icon is clearer than a glyph.
 ```
 
 Z-index ladder: content `0` → sticky section header `2` → viewer `60` → dialogs/palette `80`.
+One step is **internal to the viewer** and does not belong on this ladder: the two chrome bars take
+`3` (**E-28**, §6.6), which orders them against the end-of-volume scrim *inside* the viewer's own
+stacking context and never against anything on the list above.
 
 Routing (the prototype uses a `route` enum; use React Router with the same shape):
 
@@ -604,7 +613,7 @@ border:1px solid var(--rule); cursor:pointer`.
 | Cover image | `position:absolute; inset:0; width:100%; height:100%; object-fit:cover` — fades in over the fallback; **no layout shift, ever** (UI-5.3) |
 | Format badge | `position:absolute; top:0; left:0; font-size:9px; letter-spacing:.08em; padding:2px 6px; background:var(--color-text); color:var(--color-bg)` → `ZIP` / `FOLDER` / `PDF` |
 | Done badge | `position:absolute; top:0; right:0`, same metrics, `background:var(--color-accent); color:var(--color-bg)` → `완독`. Only when `progress >= 1` |
-| Hover overlay | `position:absolute; inset:0; opacity:0; transition:opacity .12s; display:flex; flex-direction:column; justify-content:flex-end; gap:4px; padding:8px; background:var(--scrim-cover)`. On hover **and on keyboard focus-within** → `opacity:1`. Contains `.btn.btn-primary.btn-block` (`margin:0; font-size:12px`) labelled `이어 읽기` when in progress else `읽기 시작`, and a second `.btn.btn-block` with `background:var(--color-bg); color:var(--color-text); margin:0; font-size:12px` labelled `상세` |
+| Hover overlay | `position:absolute; inset:0; opacity:0; transition:opacity .12s; display:flex; flex-direction:column; justify-content:flex-end; gap:4px; padding:8px; background:var(--scrim-cover)`. On hover **and on keyboard focus-within** → `opacity:1`. Contains `.btn.btn-primary.btn-block` (`margin:0; font-size:12px`) labelled `이어 읽기` when in progress else `읽기 시작`, and a second `.btn.btn-block` with `background:var(--color-bg); color:var(--color-text); margin:0; font-size:12px` labelled `상세`. **The scrim itself is `pointer-events:none` permanently** — it spans `inset-0` above the cover button with no `z-index`, so a scrim that took pointer events would make the cover unclickable by mouse forever (a mouse must hover before it can click). Only the two buttons flip to `pointer-events:auto`, and only under the same gate that makes them visible |
 | Progress bar | Only when `0 < progress < 1`. `position:absolute; left:0; right:0; bottom:0; height:4px; background:var(--fill-track-2)`, fill `width:{pct}%; background:var(--color-accent)` |
 
 **Below the cover** — title `font-size:12px; line-height:1.3; -webkit-line-clamp:2`; meta row
@@ -613,6 +622,27 @@ border:1px solid var(--rule); cursor:pointer`.
 Hover state: [`library-grid-card-hover-1440.png`](./ui-shots/library-grid-card-hover-1440.png)
 
 ![Grid card hover overlay](./ui-shots/library-grid-card-hover-1440.png)
+
+> **Amended by E-29 — what a touch device gets is *nothing here*, and that is the specification.**
+> A pointer that cannot hover never opens this overlay, so on such a device both buttons are inert. This
+> section used to say only "revealed on hover" and leave the other side blank; the blank is now filled, and
+> it is filled with **no fallback**. What is lost there is a shortcut and no destination: `상세` and the
+> cover are the *same* action, and for a series with nothing started `이어 읽기` is that action too (there is
+> no book id to resume to). The one thing genuinely lost — reopening a *started* series' last-read volume at
+> its saved page — is what the series screen's own always-visible `이어 읽기` does (§5.1), one tap behind the
+> cover this card already answers, and what the 이어보기 row does with no hover gate at all (§4.3,
+> FR-LIB-010).
+>
+> **Do not copy `VolumeTile`'s `[@media(hover:none)]` fallback (§5.3) here.** That tile carries one because
+> its screen has no second route and its overlay is a 66×29px corner button; this overlay is
+> `--scrim-cover` (ink @ 72 %) across `inset-0`, so the same classes would paint out **every cover in the
+> grid on every touch device**.
+>
+> **If this is ever reversed**, the scrim keeps `pointer-events:none` *unconditionally* and only the two
+> buttons may flip — otherwise the cover stops being clickable at all, which is the defect E-29 names and
+> the reason the row above states the invariant. A fallback also needs the overlay's own tests rewritten in
+> the same change: headless Chrome reports `(hover: none)` as **true**, so the coverage would pass with the
+> gate deleted.
 
 #### List mode
 
@@ -789,8 +819,20 @@ No header row (volumes are naturally ordered; sorting is not offered).
 
 ## 6. Screen 3 — Viewer (the core screen)
 
+> **§6.1–§6.7 were reconciled against the shipped viewer on 2026-08-01.** They now describe the display
+> model as rulings **E-27**, **E-28** and **E-30** left it. Where this section and those rulings disagreed, the
+> rulings won — `docs/decisions.md` sits above this file in HANDOFF §3's priority list — and every number
+> below was then taken from the **code**, not from either ruling's prose. Three claims in particular are
+> gone because they were pre-E-27 and would now read as a regression: a 2200 ms auto-hide, "mouse movement
+> wakes the chrome", and a fourth 맞춤 mode. The amendment notes E-28 left in §6.5/§6.7 are kept.
+>
+> The `viewer-*.png` captures under `ui-shots/` are the **pre-E-27 prototype**. They remain the reference
+> for everything except the display model: a bar visible in a capture is not evidence that a bar belongs
+> on screen when the book opens.
+
 `position:fixed; inset:0; z-index:60; background:var(--color-text); color:var(--color-bg);
-display:flex; flex-direction:column; overflow:hidden; cursor: {chrome ? 'default' : 'none'}`
+display:flex; flex-direction:column; overflow:hidden`, plus a cursor driven by the **pointer's own**
+idleness rather than by the chrome (§6.1).
 
 Render it inside `<div data-theme="dark">` (§1.4) so every token inside resolves to the dark ramp
 automatically, in both app themes.
@@ -802,7 +844,97 @@ Reference: [`viewer-chromeless-base-1440.png`](./ui-shots/viewer-chromeless-base
 ![Viewer, chromeless base state](./ui-shots/viewer-chromeless-base-1440.png)
 
 design.md principle 2: **while reading, there is no UI.** Nothing but the page on a near-black ground.
-The cursor is hidden (`cursor:none`). Chrome auto-hides **2200 ms** after the last wake.
+
+**The book opens in this state** (**E-27**): `open()` sets `chromeVisible: false`, and the chrome never
+appears on its own afterwards. Before the ruling the first frame of a book was three rows of controls over
+the page — the principle broken at the one moment it matters most. The viewer root carries
+`data-chrome="visible" | "hidden"` for anything that needs to assert which state it is in.
+
+| | Shipped | Taken from |
+|---|---|---|
+| Auto-hide | **2600 ms** after the last wake | `CHROME_AUTOHIDE_MS`, `web/src/store/viewer.ts:21` |
+| …**held** while the pointer rests inside either bar | **Derived from where the pointer is, not latched by the bars** (**E-30**). One rule on the viewer root answers `pointerover`/`pointerout` with "is the node under the pointer inside `[data-role=viewer-top-bar]` or `[data-role=viewer-bottom-bar]`?" → `holdChrome()` / `releaseChrome()`. A wake during a hold does not arm a timer behind it. Without the hold the bars dissolve under a pointer resting on the control it is about to press. **A touch never holds** (`pointerType === 'touch'`): a tap inside a bar leaves the 2600 ms running like anywhere else, because a finger does not *rest* on a control | `trackChromeHover`, `web/src/features/viewer/ViewerPage.tsx:438`; the root's three handlers at `:501`–`:503`; `holdChrome`/`releaseChrome`, `web/src/store/viewer.ts:345`–`:358` |
+| …and never fires mid-drag | the timer runs but declines to hide while `dragging` — the slider's preview lives in the bar it would have taken away | `web/src/store/viewer.ts:192` |
+| Cursor | hidden **1600 ms** after the pointer stops moving, **independently of the chrome**; `pointer` over the two page-turn zones while awake, `default` over the centre and over the bars | `POINTER_IDLE_MS`, `web/src/features/viewer/ViewerPage.tsx:92`; the cursor itself at `:498` |
+| Summons the chrome | a **44px screen-edge strip** at the top or the bottom (`mouseenter` *or* click) wakes it; the **centre 36 %** tap zone and the **`H`** key *toggle* it, so a second tap or press sends it away | `EDGE_STRIP_PX`, `ViewerPage.tsx:101`; the strips at `:511`–`:522`; §8.2, §8.3 |
+| Does **not** wake it | moving the mouse — only the cursor comes back — and scrolling a webtoon, which reports its page through `syncPage` precisely so it cannot | `nudgePointer`, `ViewerPage.tsx:338`; `web/src/store/viewer.ts:293` |
+
+The edge strips are rendered **only while the chrome is away**. Once the bars are up they are what the
+pointer reaches for, and a strip over them would eat the first click on 뒤로. A click on a strip also stops
+propagating, or the same click would turn a page in the zone underneath.
+
+**The hold is one rule on the viewer root, and the bars are presentational** (**E-30**). It used to be
+`onMouseEnter`/`onMouseLeave` on each bar, and that only ever engaged when the reader *crossed* into a bar:
+because the strips exist only while the chrome is away, a wake from a strip unmounts the strip and mounts
+the bar **in the same commit, under a pointer that has not moved**. The browser handles that — measured at
+all four widths, Chrome re-hit-tests and dispatches `pointerover`/`mouseover` on the bar ~10 ms later
+(22/24/24/26 ms at 1440/1024/768/400). React drops it: `onMouseEnter`/`onPointerEnter` are *synthesised*
+from `mouseover`/`pointerover` and the synthesis returns early when `relatedTarget` is a React-managed
+node, on the assumption that the pair already went out with the matching `…out` — which had gone to the
+strip being removed. So no hold was taken, and at 768/400 the chrome dissolved 2600 ms later under a
+resting pointer while at 1440/1024 it hid, was re-summoned ~13 ms later by the strip re-mounting under that
+same pointer, and the bars blinked every 2.6 s indefinitely. `pointerover`/`pointerout` bubble, are not
+synthesised, and are the browser's own answer to "what is under the pointer now", so one rule covers every
+wake path: crossing in from the stage, strip hover, strip click, `H`, centre tap. Neither bar carries hold
+handlers or a store subscription for it any more — the rule recognises them by `data-role`.
+
+**Four independent releases, deliberately** (**E-30**). A hold that is never released disarms the auto-hide
+for the rest of the session: `chromeHeld` is module-scoped and nothing renders from it, so there is no
+state a reader could see or correct. The hold is taken without a crossing, so the release may not depend on
+the matching crossing arriving either. (1) a `pointerout` whose destination is not a bar — including
+`relatedTarget: null`, the pointer leaving the window; (2) `onPointerLeave` on the root; (3) a plain
+`mousemove` over the stage, folded into `nudgePointer` (`ViewerPage.tsx:358`) — a different event family
+that keeps arriving rather than firing once at a boundary; (4) `open()` and `close()` reset the flag
+(`store/viewer.ts:237`, `:266`), so a viewer that was left, or a volume swapped underneath one, cannot
+bequeath a hold. Mutation showed (1) and (2) are genuinely independent: breaking the `pointerout` release
+left the window-exit case still releasing through the root's `pointerleave`.
+
+**`holdChrome` and `releaseChrome` are idempotent, and that is a contract.** The derived rule fires many
+times for one journey across a bar, so an unconditional `releaseChrome` would push the 2600 ms deadline
+back on every mouse move over the page — a chrome that outstays its deadline for as long as the reader's
+hand is on the mouse, which is what E-27 removed. A call that does not change the answer does nothing.
+
+> **Known residual, measured, unruled (2026-08-01, 8세션차).** Pressing **`H`** to dismiss the chrome
+> *while the pointer is resting inside one of the 44px edge strips* does not put it away: the strip
+> re-mounts under the stationary pointer and wakes it again. Before E-30 that produced the endless 2.6 s
+> blink described above; it now settles **visible and held** on the first cycle. Arguably correct — the
+> pointer really is inside the bar, so the hold is doing its job — but it means `H` appears not to work
+> from that one position. Not fixed, not ruled; recorded so it is not rediscovered as a new defect.
+
+> **Found unreconciled, then fixed in code (2026-08-01, 8세션차).** For three sessions the "does not wake
+> it" row was E-27's, binding, and **not honoured by the shipped build.** `useViewerStore.step()`
+> implemented it exactly and `store/viewer.test.ts` pinned it — but the viewer screen never called `step`.
+> Page turns went through `goNext`/`goPrev` → `goTo`, and `goTo` wakes unconditionally, because it is also
+> the *control* path where the bar must not vanish under the press. So an arrow key or a side-zone tap
+> raised the chrome, and the quiet page counter below — which renders only while the chrome is away — was
+> unreachable after the reader's first turn.
+>
+> The reading path now commits through **`turnTo(page)`**: absolute, sets `loading`, never wakes. `goTo`
+> is unchanged and still wakes for controls. The dead `step(delta)` is gone — dead code implementing a
+> binding rule is what caused this.
+>
+> **Keep the guard at the screen, not only at the store.** Reverting the fix leaves the store's E-27 test
+> green and reddens only `ViewerPage.test.tsx` — the blind spot reproduced exactly. That test asserts the
+> quiet counter's text *advances* across the turn, so it cannot pass against a viewer that turns nothing.
+> This is HANDOFF §6.5's pattern: the check watched the function the screen does not use.
+
+**The opening hint.** While the chrome is away and the hint is unanswered, one line sits 22px off the
+bottom, horizontally centred: `border:1px solid var(--color-neutral-800); background:var(--color-bg);
+padding:7px 12px; font-size:11px; letter-spacing:.04em; text-align:center;
+color:var(--color-neutral-400)`, `role="status"`, `pointer-events:none`. Its text is
+
+`좌·우 클릭으로 페이지 · 중앙 클릭 또는 상하 가장자리로 컨트롤`
+
+and it is **timed, not dismissible** — **3400 ms** (`CHROME_HINT_MS`, `store/viewer.ts:31`) — because a
+hint that has to be closed is a second thing to learn. It is armed **once per entry**: a deliberate chrome
+toggle answers it early (`toggleChrome` → `dismissHint`), and 다음 권 읽기 is a *continuation*, not an
+entry, so it does not come back on the next volume (**E-28** §3).
+
+**The quiet page counter.** With no bar to hold the number, `12 / 214` sits at `bottom:10px; right:14px`,
+`font-size:11px; tabular-nums; letter-spacing:.06em; color:var(--ink-dim); pointer-events:none`. It is
+suppressed wherever it would lie or crowd: while the chrome is up (the bar has its own counter), while the
+loading indicator (§6.3) is showing, in 세로 — several pages are on screen at once — and at 맞춤 너비, where
+the page is taller than the viewport. `ViewerPage.tsx:584`.
 
 ### 6.2 Stage
 
@@ -810,7 +942,7 @@ The cursor is hidden (`cursor:none`). Chrome auto-hides **2200 ms** after the la
 
 | Property | single / double | vertical (webtoon) |
 |---|---|---|
-| `overflow` | `hidden` | `auto` |
+| `overflow` | `hidden` on the flow axis — that is the axis 양면 needs clipped. **`overflow-y:auto` at 맞춤 너비 and 원본**, where the fitted page is taller than the stage and clipping would cut the top and bottom off every page, and `overflow-x:auto` at 원본. When the stage scrolls it also anchors to `align-items:flex-start`, or the start of the overflow is out of reach (`stageScrollsY`, `web/src/features/viewer/fit.ts:158`) | `auto` |
 | `padding` | `20px` (`0` when fit = 원본) | `0` |
 | flow `flex-direction` | `row` (LTR) / **`row-reverse` (RTL)** | `column` |
 | flow `gap` | `2px` | `12px` |
@@ -819,10 +951,10 @@ Page frame: `position:relative; flex:0 0 auto` plus the fit rule:
 
 | Fit mode | Label | Sizing |
 |---|---|---|
-| `width` | 너비 | `width:100%; height:auto` |
-| `height` | 높이 | `height:100%; width:auto` — **default** |
-| `original` | 원본 | intrinsic size, stage padding drops to 0, stage scrolls |
-| `screen` | 화면 | `max-width:100%; max-height:100%` (contain) |
+| `width` | 너비 | `width:100%; height:auto` — the stage scrolls vertically |
+| `height` | 높이 | `height:100%; width:auto` — **default** (`DEFAULT_FIT`, `store/viewer.ts:34`) |
+| `original` | 원본 | intrinsic size, stage padding drops to 0, stage scrolls on both axes |
+| `contain` | ~~화면~~ | `max-width:100%; max-height:100%`. **No control since E-27** — 맞춤 is *three* options (§6.6) and prd FR-VWR-005 was amended to match. The geometry stays in `fit.ts` and stays tested; what disappeared is the route to it. The wire enum is **unchanged** (`arch-backend.md` §7 still lists `width｜height｜original｜contain`, and `PUT /api/books/{id}/prefs` still accepts `contain`), so a `user.db` written before the amendment keeps loading — and such a book **opens at 높이** (`openingFit`, `store/viewer.ts:45`). Read the deletion and the coercion as one thing: dropping the option alone would park a reader on a fit whose button does not exist, unable to see which one they are on or get off it |
 
 **RTL is the single easiest thing to get wrong.** In double-page mode with `R→L`, the flow container is
 `row-reverse`, so page *n* renders on the **right** and page *n+1* on the **left**. Verify against
@@ -877,9 +1009,10 @@ Reference: [`viewer-next-volume-card-1440.png`](./ui-shots/viewer-next-volume-ca
 
 ![Next-volume card](./ui-shots/viewer-next-volume-card-1440.png)
 
-Shown when `page >= totalPages` **and** mode ≠ vertical.
-Scrim `position:absolute; inset:0; background: rgb(32 30 29 / .92); display:flex; align-items:center;
-justify-content:center; padding:16px`.
+Shown when `page >= totalPages` **and** mode ≠ vertical — in 세로, scrolling past the end *is* the end of
+the volume. Derived as a selector off the store, never stored, so it cannot drift out of sync with the page.
+Scrim `position:absolute; inset:0; background: var(--scrim-volume-end); display:flex; align-items:center;
+justify-content:center; padding:16px` — the token resolves to `rgb(32 30 29 / .92)` (`tokens.css`).
 Card `width:380px; max-width:100%; background:var(--color-bg); color:var(--color-text); padding:16px;
 display:flex; flex-direction:column; gap:12px; box-shadow:var(--shadow-lg)`.
 
@@ -891,7 +1024,15 @@ Contents: kicker `10px; ls .12em; uppercase; color:var(--color-accent)` → `권
 title Archivo 800 20px / 1.15 (next volume name) · meta `12px; tabular; color:var(--ink-muted)` →
 `214p · FOLDER` · `<hr class="hr" style="margin:0">` ·
 actions `display:flex; gap:8px` → `.btn.btn-primary` `flex:1; justify-content:flex-start` `다음 권 읽기`
-+ `.btn.btn-secondary` `시리즈로`.
++ `.btn.btn-secondary` `시리즈로` + `.btn.btn-secondary` `읽음 표시` / `읽음 해제`.
+
+The third button is FR-VWR-012's manual half (the automatic half is the server's `page === page_count` rule
+on `PUT …/progress`). Ruling **E-12** shapes it: the label names the **action** in both directions, and it
+is a bordered secondary rather than a bare accent ghost, so the card carries exactly one accent field — the
+primary — as §2.5 requires.
+
+On the **last** volume of a series `next_book_id` is `null`: the title, the meta line and 다음 권 읽기 are
+all omitted, and the card is the kicker, the rule and the two remaining buttons.
 
 > **Amended by E-28.** The scrim covers the stage but **not the chrome**: both bars carry `z-chrome` (3) and
 > the scrim none, so 뒤로, the slider, the display controls and the strip stay live at the end of a volume.
@@ -904,44 +1045,117 @@ Reference: [`viewer-overlay-visible-1440.png`](./ui-shots/viewer-overlay-visible
 
 ![Viewer with overlays visible](./ui-shots/viewer-overlay-visible-1440.png)
 
-`position:absolute; top:0; left:0; right:0; opacity:{chrome ? 1 : 0}; pointer-events:{chrome ? auto : none};
-transition: opacity .18s; background:var(--color-text); border-bottom:2px solid var(--color-neutral-800);
-padding:8px 16px; display:flex; align-items:center; gap:12px`
+The bar is **never unmounted.** It fades on `opacity` over `--chrome-fade` (`0.18s`, `tokens.css`) and
+`pointer-events` is what actually turns it off. What changes with the chrome is the *box*:
 
-Left → right:
+| | Chrome up | Chrome away |
+|---|---|---|
+| Position | `position:relative; order:-9999; flex:none` — **a row of the viewer's own flex column** (**E-27**), so the stage shrinks beside the bar instead of being covered by it, including when the bar has wrapped to three rows | `position:absolute; inset-inline:0; top:0` — an overlay again, so a chromeless viewer is the full height of the screen and the layout never depends on an invisible box |
+| Opacity | `1` | `0`, plus `pointer-events:none` |
+
+`z-index: 3` in both states — the `chrome` step, a *viewer-internal* layer that has nothing to do with the
+viewer's own `60` on §3's ladder (**E-28**). The end-of-volume scrim (§6.5) is later in the DOM and
+carries no `z-index`, so without this it painted over the entire bar and the only way out of a finished
+volume was the card's own two buttons.
+
+`background:var(--color-text); border-bottom:2px solid var(--color-neutral-800); padding:8px 16px;
+display:flex; flex-wrap:wrap; align-items:center; gap:12px`. Left → right:
 
 1. `.btn.btn-secondary` `← 뒤로` — `color:var(--color-bg); border-color:var(--color-neutral-700); font-size:12px`
 2. Title block `min-width:0; display:flex; flex-direction:column`:
    series title Archivo 800 13px, ellipsis nowrap; volume name 11px `color:var(--color-neutral-500)`, ellipsis nowrap
 3. Spacer `flex:1`
 4. Three `.seg` groups, each `color:var(--color-bg); border-color:var(--color-neutral-700)`, with each
-   `.seg-opt + .seg-opt` overriding `border-left-color: var(--color-neutral-700)`:
+   `.seg-opt + .seg-opt` overriding `border-left-color: var(--color-neutral-700)`, and each carrying
+   `flex:none; white-space:nowrap`:
 
 | Group | Options |
 |---|---|
 | Display mode | `단면` / `양면` / `세로` |
 | Reading direction | `L→R` / `R→L` |
-| Fit | `너비` / `높이` / `원본` / `화면` |
+| Fit | `너비` / `높이` / `원본` — **three, not four** (**E-27**, which amended prd FR-VWR-005; 화면 has no control any more — §6.2) |
 
-**Opacity, not `display:none`.** The bars stay mounted and fade — this is what makes the 180 ms wake feel
-instant and avoids reflow on every mouse move.
+**The bar wraps; it does not collapse into a sheet** (**E-28**). All three groups stay inline at every
+width and the bar is allowed to become two or three rows tall — measured against the design prototype at
+**55px @1440, 103px @900, 151px @500**. Two rules do it: `flex-wrap` on the bar, and
+`flex:none; white-space:nowrap` on each `.seg`, so a group moves to the next row **whole** or not at all.
+That is exactly the breakage
+[`viewer-overlay-400-broken.png`](./ui-shots/viewer-overlay-400-broken.png) captured — groups overflowing
+and their labels breaking vertically.
+
+The `⋯` `뷰어 컨트롤` bottom sheet this section and §7 used to specify below 1024 is **deleted**, and with
+it the three mechanisms it needed to stay upright: pinning the chrome while the sheet was open, closing the
+sheet when the chrome went anyway, and the ban on either bar carrying a `z-index`. That last one is why the
+deletion had to come first — a stacking context on the bar trapped the sheet's escape inside it, and the
+bottom bar then covered it (measured at 400px). Dropping the sheet is what let both bars take `z-chrome`.
+
+**Opacity, not `display:none`.** The bars stay mounted and fade, which is what makes the 180 ms wake feel
+instant and what stops the thumbnail strip (§6.7) from re-mounting — and re-requesting every visible
+thumbnail — each time the chrome comes back. *(The pre-E-27 text justified this as avoiding "reflow on
+every mouse move". Moving the mouse no longer does anything to the chrome — §6.1.)*
+
+**The bar takes no part in the hover-hold beyond its `data-role`** (**E-30**). E-27's "a pointer resting in
+the chrome pins it open" is *not* this component's hover behaviour and this component does not subscribe to
+the store for it: the rule is stated once on the viewer root, as a `pointerover`/`pointerout` question
+about what is under the pointer, and it finds this bar by `[data-role=viewer-top-bar]` — see §6.1. The
+`onMouseEnter`/`onMouseLeave` pair that used to live here never engaged when the bar lit up *underneath* a
+pointer that had not moved, which is exactly what waking from a screen-edge strip does.
+
+**`파일이 변경되었습니다` (FR-VWR-009) follows the bar, not a fixed offset.** With the chrome up it is a
+row **in the same column**, sharing `order:-9999` and sitting *after* the bar in the DOM, so it lands
+directly under a bar of whatever height it has wrapped to; chromeless it goes back to being an overlay at
+`top:56px`. It is deliberately **not** gated on the chrome (**E-27**): the chrome no longer appears on its
+own, so a notice that rides along with it is a notice nobody is ever shown. The old fixed `top:56px`
+cleared a one-row 53px bar by three pixels and nothing else — once the bar wrapped (103px at 900, 122px at
+760) the notice was inside the bar's box and `z-chrome` painted over it. The offset had always been a
+coincidence.
 
 ### 6.7 Bottom overlay
 
-Same fade/`pointer-events` contract. `position:absolute; bottom:0; left:0; right:0;
-background:var(--color-text); border-top:2px solid var(--color-neutral-800)`.
+Same never-unmounted `opacity`/`pointer-events` fade contract as the top bar, the same two boxes
+(`position:relative; order:9999; flex:none` up, `position:absolute; inset-inline:0; bottom:0` away), the
+same `z-chrome` (3), and the same standing in the auto-hide's hold — which is **not** either bar's own
+hover behaviour but the viewer root's `pointerover`/`pointerout` rule recognising this surface, thumbnail
+strip included, by `[data-role=viewer-bottom-bar]` (**E-30**, §6.1).
+`background:var(--color-text); border-top:2px solid var(--color-neutral-800)`.
 
-**Thumbnail strip** (when open) sits *above* the control row inside the same bar:
-`display:flex; gap:4px; overflow-x:auto; padding:12px 16px; border-bottom:1px solid var(--color-neutral-800)`.
-Each thumb: `flex:0 0 auto; width:48px; height:72px` — **56×84 below 768** (E-28), and the strip's slot
-pitch and track height follow it (60/52 and 84/72) or the cells overlap and clip — `border:2px solid X;
-display:flex; align-items:flex-end; justify-content:flex-start; padding:3px; font-size:10px; tabular;
-cursor:pointer`. Current page → `X = var(--color-accent)`, number `color:var(--color-bg)`;
-otherwise `X = var(--color-neutral-800)`, number `color:var(--color-neutral-600)`.
-Auto-scroll the current thumb into view on page change.
+**Thumbnail strip** (when open) sits *above* the control row **inside the same bar**, so opening it grows
+one surface rather than introducing a second floating panel:
+`overflow-x:auto; overflow-y:hidden; padding:12px 16px; border-bottom:1px solid var(--color-neutral-800)`,
+**with the scrollbar suppressed on this one element** (`scrollbar-width:none` +
+`::-webkit-scrollbar{display:none}`). §2.4 gives every scroller a permanent 12px bar; on a 72px track that
+ate a sixth of the height and cut a grey band across the overlay (measured in Chrome on Linux). Wheel,
+drag and programmatic scrolling all still work.
 
-> The prototype renders at most 60 thumbs. **Virtualise the strip** — books run to 500+ pages (AC-008)
-> and thumbnails are lazily generated server-side (FR-THM-004).
+Each thumb `56×84`, **`48×72` from `md` (768) up** (**E-28** — below that the strip is a touch target, and
+48px is under the 44px minimum once the 2px border and the gap come off). The virtualiser lays cells out by
+absolute offset, so the **slot pitch** and the **track height** have to track the cell: **60/52** and
+**84/72**. They used to be fixed at 52 and 72, so below 768 a 56px cell was drawn into a 52px slot inside a
+72px box — overlapping every neighbour by 4px and clipped at the bottom, all three wrong at once.
+
+> **Changing `estimateSize` alone does nothing** (E-28). `virtual-core` memoises its measurements on
+> `[count, paddingStart, scrollMargin, getItemKey, enabled]` plus the item-size cache, and `estimateSize`
+> is **not in that key** — so a slot change must also call `virtualizer.measure()`, which swaps the size
+> cache for a fresh `Map` and *is* in the key. Measured at 900 → 700 with the strip open: cells grew to
+> 56px while the pitch stayed 52px, and the track stayed 5,044px against the 5,820px 97 pages then needed,
+> leaving the last 776px unreachable.
+
+Cell chrome: `border:2px solid X; display:flex; align-items:flex-end; justify-content:flex-start;
+padding:3px; font-size:10px; tabular; cursor:pointer`. Current page → `X = var(--color-accent)`, number in
+`--ink`, plus `aria-current="true"`; otherwise `X = var(--color-neutral-800)` and the number in
+`var(--color-neutral-600)`. The number sits **inside** the tile over the thumbnail and carries a
+`--scrim-cover` chip: the reference capture puts it over the striped placeholder, where neutral-600 is
+legible, but over a real manga page — white paper more often than not — the same grey vanished.
+`202 queued` and `422 thumb_unavailable` are **normal** (FR-THM-004) and must not break the row; both
+render the empty bordered box with its number, and the state is exposed on `data-thumb-status`.
+
+Auto-scroll the current thumb into view (`align: 'center'`) on every page change, including changes that
+came from a key or a tap zone rather than from the strip — and again whenever the slot size changes, since
+the re-measure moved every offset out from under the reader.
+
+> **Virtualised**, not the prototype's 60-thumb cap (`overscan: 8`). The real collection has a 1,540-page
+> volume, and mounting 1,540 cells means 1,540 lazily generated server-side thumbnails requested at once —
+> precisely the stall AC-008 forbids (books run to 500+ pages).
 
 Reference: [`viewer-thumbnail-strip-1440.png`](./ui-shots/viewer-thumbnail-strip-1440.png)
 
@@ -952,18 +1166,30 @@ Reference: [`viewer-thumbnail-strip-1440.png`](./ui-shots/viewer-thumbnail-strip
 
 1. Counter `font-size:13px; tabular; min-width:84px; letter-spacing:.04em` → `12 / 214`
 2. Slider wrapper `flex:1; position:relative`
-   - `<input type="range" min=1 max={totalPages} value={page}>`, styled per §2.4.
-     **E-28**: the element is `height:24px` (44px below 768), the thumb 12×18 (16×28 below 768), and in the
-     viewer it carries `.on-dark` — the track lifts to `--color-neutral-600`, because `--color-divider` on
-     the reading ground is all but the background colour
+   - `<input type="range" min=1 max={max(1, totalPages)} step=1 value={dragging ? dragPage : page}>`,
+     styled per §2.4, with `aria-label="페이지"` and an `aria-valuetext` of `{value} / {totalPages}`
+   - **The hit box is a stylesheet rule, not an inline height** (**E-28**). §2.4 sizes *every* range input
+     — `24px`, and `--touch-min` (44px) below 768 — with a 12×18 thumb (16×28 below 768) on a 2px track. A
+     range with no height collapses onto that track and leaves a hit area two pixels tall. This slider used
+     to set 44px inline at every width, which held §7's touch minimum but made the bottom bar **12px taller
+     than the design on every desktop**
+   - In the viewer the input also carries `.on-dark`, which lifts the track to `--color-neutral-600`:
+     `--color-divider` on the reading ground is all but the background colour, so the thumb had nothing to
+     travel along
+   - **Committed on release only.** `mousedown`/`touchstart` sets `dragging`; the store holds `dragPage`
+     and the stage does not move until `mouseup`/`touchend`/`blur`. Dragging across a 1,540-page book would
+     otherwise fire a page load *and* a progress write for every intermediate value. A `change` with no
+     drag in progress commits immediately, so arrow keys on a focused slider still work
    - **Drag preview** (while dragging): `position:absolute; bottom:24px; left:{pct}%;
      transform:translateX(-50%); width:68px; height:102px; border:2px solid var(--color-accent);
-     display:flex; align-items:flex-end; padding:4px; font-size:11px; tabular; color:var(--color-bg)`,
-     showing the thumbnail for the hovered page.
+     display:flex; align-items:flex-end; padding:4px; font-size:11px; tabular; pointer-events:none`,
+     showing that page's thumbnail with the number over it.
      See [`viewer-slider-drag-preview-1440.png`](./ui-shots/viewer-slider-drag-preview-1440.png)
-   - `left` = `(page - 1) / max(totalPages - 1, 1) * 100`
-3. `.btn.btn-secondary` `썸네일 · T` — `border-color:var(--color-neutral-700); font-size:12px`;
-   `color: var(--color-accent-400)` when the panel is open, else `var(--color-bg)`
+   - `left` = `(page - 1) / (totalPages - 1) * 100`, and `0` for a book of one page
+   - The auto-hide (§6.1) declines to fire while `dragging` — the preview lives in the bar it would take away
+3. `.btn.btn-secondary` `썸네일 · T` — `border-color:var(--color-neutral-700); font-size:12px`,
+   `aria-pressed` = whether the strip is open; `color: var(--color-accent-400)` when it is, else
+   `var(--color-bg)`
 
 ---
 
@@ -1015,25 +1241,39 @@ Other rules that hold at every width:
 
 | Key | Action |
 |---|---|
-| `→` | `step(dir === 'rtl' ? −1 : +1)` |
-| `←` | `step(dir === 'rtl' ? +1 : −1)` |
-| `Space` | `step(+1)`, `preventDefault()` |
+| `→` | Forward one screen when `L→R`, back one when `R→L`. `preventDefault()` |
+| `←` | The inverse of `→` |
+| `Space` | Forward one screen **whatever the reading direction** — it is "continue", not a direction key. `preventDefault()` |
 | `T` | Toggle the thumbnail panel |
-| `F` | Toggle browser fullscreen (`requestFullscreen` / `exitFullscreen`) — **the prototype stubs this to a chrome wake; implement it for real** |
+| `F` | Toggle real browser fullscreen (`requestFullscreen` / `exitFullscreen`) on the viewer root. *(The prototype stubbed this to a chrome wake; the shipped viewer does it for real.)* |
+| `H` | Show / hide the chrome (**E-27**). With the chrome off the mouse and the viewer opening without it, a reader who never goes near the screen edges needs a key that summons it. *Known residual: pressing it to **dismiss** the chrome while the pointer sits inside a 44px edge strip does not put it away — the strip re-mounts under the pointer and wakes it again. §6.1* |
 | `Esc` | Exit the viewer |
 | `1` / `2` / `3` | Display mode 단면 / 양면 / 세로 |
 
-`step(d)`: increment is **2 in 양면 mode**, 1 otherwise. Clamp to `[1, totalPages]`; landing on `totalPages`
-raises the next-volume card (§6.5). Every step sets `loading` and calls `wake()`.
+These are **viewer-only** keys and are not in the global map: a bare `2` must not switch display mode while
+the library has focus. `Ctrl`/`Cmd`/`Alt` chords are left to the browser and to §8.1. Every key here is
+inert while a dialog is on top (palette, shortcuts, settings), so `Esc` closes the dialog rather than the
+book and typing `2` into the palette does not switch to 양면.
 
-`wake()`: show chrome, then hide it again after **2200 ms** of no pointer movement and no key press.
-Bound to the viewer's `mousemove`.
+**The page step is not a fixed number.** `→`/`←`/`Space` and the tap zones all resolve through
+`nextPage`/`prevPage`, whose stride is however many pages are *actually* on the stage — so a landscape scan
+rendered single inside 양면 (FR-VWR-004) does not put the book one page out of phase. Clamped to
+`[1, totalPages]`; landing on `totalPages` raises the next-volume card (§6.5). Every turn sets `loading`.
+They commit through the store's **`turnTo(page)`** — absolute, and deliberately so: the stride belongs to
+`fit.ts`, not to the store. See §6.1 for why that signature is load-bearing.
+
+`wake()`: show the chrome, then hide it again **2600 ms** later (**E-27**), held while the pointer is
+inside a bar — a property of *where the pointer is*, answered on the viewer root rather than by a hover
+handler on the bar, and never taken for a touch (**E-30**, §6.1) — and suspended while the slider is being
+dragged. It is **not** bound to `mousemove` — nothing
+in the reading path calls it. What calls it is listed in §6.1 and §8.3: the two screen edges, the centre
+tap zone, `H`, and operating a control.
 
 ### 8.3 Pointer and touch
 
 | Zone / gesture | Action |
 |---|---|
-| Mouse move anywhere in the viewer | Nothing — **E-27** took the chrome off the mouse; only the cursor comes back |
+| Mouse move anywhere in the viewer | Nothing to the chrome — **E-27** took the chrome off the mouse; only the cursor comes back. A move over the *stage* does **release** a hold if one is in force (**E-30**'s third release route), but it never summons the chrome and — because the release is idempotent — never pushes the auto-hide back |
 | **Left 32%** of the stage — tap/click | Previous page in reading order (i.e. *next* page when RTL). `cursor:pointer` while the pointer is awake (E-28) |
 | **Right 32%** of the stage — tap/click | Next page in reading order |
 | **Centre 36%** — tap/click | Toggle chrome (FR-VWR-011, design.md 화면 3 모바일). **E-28** narrowed the centre from 40%: the two zones a reader aims at a hundred times a volume are the page turns |
@@ -1041,7 +1281,10 @@ Bound to the viewer's `mousemove`.
 | Vertical drag in 세로 mode | Native scroll |
 | Slider `mousedown`/`touchstart` | `dragging = true` → show the drag preview |
 | Slider `mouseup`/`touchend` | `dragging = false`, commit the page |
-| Grid card hover | Reveal the action overlay. Mirror it on `:focus-within` so keyboard users get the same actions |
+| Top / bottom **44px screen edge** — `mouseenter` or click | Wake the chrome (**E-27**). Rendered only while the chrome is away, and the click does not propagate to the tap zone underneath |
+| Pointer **resting** inside either bar | Holds the auto-hide off while it is there, and lets go the moment it is not (**E-27**, mechanism per **E-30**). Answered from `pointerover`/`pointerout` on the viewer root, so it engages even when the bar lights up *underneath* a pointer that never moved — which is what a wake from a screen edge does. Released four independent ways; §6.1 |
+| **Tap** inside either bar | Does **not** hold (**E-30**): the chrome auto-hides 2600 ms after the last wake exactly as it does elsewhere. `pointerType === 'touch'` is what tells a finger from a mouse — Chrome's compatibility mouse events do not, which is how the shipped build ended up pinning the chrome open for good after one tap in the bottom bar at 400px. There is no pointer *resting* on a control on a touch screen, and E-27's justification for the hold goes with it |
+| Grid card hover | Reveal the action overlay. Mirror it on `:focus-within` so keyboard users get the same actions. A pointer that **cannot** hover gets nothing here, deliberately — ruling **E-29**, §4.5 |
 
 ### 8.4 Command palette
 
@@ -1102,7 +1345,16 @@ with a key chip `min-width:52px; text-align:center; font-size:12px; padding:2px 
 background:var(--color-text); color:var(--color-bg)` and a `font-size:13px; color:var(--ink)` label.
 
 Entries, in order: `← →` 이전 / 다음 페이지 · `Space` 다음 페이지 · `T` 썸네일 · `F` 전체화면 ·
-`Esc` 뷰어 나가기 · `⌘K` 커맨드 팔레트 · `1 2 3` 단면 / 양면 / 세로 · `?` 키보드 단축키.
+`Esc` 뷰어 나가기 · `⌘K` 커맨드 팔레트 · `1 2 3` 단면 / 양면 / 세로 ·
+**`H` 컨트롤 표시 / 숨기기** · **`좌 / 우 클릭` 이전 / 다음 페이지** · **`가운데 클릭` 컨트롤 토글** ·
+`?` 키보드 단축키.
+
+> The three bold rows are **E-27**'s, and are the ruling's own condition on itself: once the chrome stops
+> appearing by itself, the ways to summon it have to be written down somewhere, and this sheet is the
+> somewhere. Two consequences for the implementation. Key the rows on the **chord**, not the label — the
+> mouse row says the same words as the arrow row, and two siblings with one React key is a bug waiting.
+> And the palette chip is the one entry that is not literal: print `Ctrl K` off a Mac rather than a key
+> the reader's keyboard does not have.
 
 ### 8.6 Settings dialog
 
@@ -1211,8 +1463,9 @@ The prototype ships a full ko/en string table. Keep the Korean copy verbatim.
 | `clear` | 검색 지우기 | `volumes` | 권 목록 |
 | `readFirst` | 처음부터 읽기 | `resume / start` | 이어 읽기 / 읽기 시작 |
 | `rescan / rescanShort / remove` | 이 시리즈 재스캔 / 재스캔 / 제거 | `dir / back` | 읽기 방향 / 뒤로 |
-| `single / double / vertical` | 단면 / 양면 / 세로 | `fitW / fitH / fitO / fitS` | 너비 / 높이 / 원본 / 화면 |
+| `single / double / vertical` | 단면 / 양면 / 세로 | `fitW / fitH / fitO` | 너비 / 높이 / 원본 (**E-27** deleted `fitS` 화면 — §6.2, §6.6) |
 | `thumbs` | 썸네일 | `loading` | 페이지 로딩 |
+| `chromeHint` (**E-27**) | 좌·우 클릭으로 페이지 · 중앙 클릭 또는 상하 가장자리로 컨트롤 | `chromeToggle / tapPage / tapChrome` (**E-27**, §8.5) | 컨트롤 표시 / 숨기기 · 이전 / 다음 페이지 · 컨트롤 토글 |
 | `loadFail / retry` | 이미지 로드 실패 / 다시 시도 | `volEnd` | 권의 마지막 페이지 |
 | `nextVol / backToSeries` | 다음 권 읽기 / 시리즈로 | `palettePh` | 시리즈로 이동… |
 | `openHint / closeHint / chosungHint` | 열기 / 닫기 / 초성 검색 ㅎㅌㅂㅅㅋ | `shortcuts / viewer` | 키보드 단축키 / 뷰어 |

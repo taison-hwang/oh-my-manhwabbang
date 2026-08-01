@@ -3,7 +3,6 @@ import { PanelTop } from 'lucide-react'
 import { Button } from '../../components/ds/Button'
 import { cn } from '../../lib/cn'
 import { formatViewerCounter } from '../../lib/format'
-import { useViewerStore } from '../../store/viewer'
 import { PageSlider } from './PageSlider'
 import { ThumbnailStrip } from './ThumbnailStrip'
 
@@ -15,6 +14,10 @@ import { ThumbnailStrip } from './ThumbnailStrip'
  * opacity/`pointer-events` fade contract as the top bar — the bars are never
  * unmounted, which is what keeps the wake instant and stops the strip from
  * re-mounting (and re-requesting every visible thumbnail) on each mouse move.
+ *
+ * Like the top bar, it carries **no hover-hold handlers**: E-27's hold is one
+ * rule on the viewer root now, and it recognises this surface — thumbnail strip
+ * included — by `data-role`. See `trackChromeHover` in `ViewerPage`.
  */
 export interface ViewerBottomBarProps {
   visible: boolean
@@ -47,9 +50,6 @@ export function ViewerBottomBar({
   onCommit,
   onJump,
 }: ViewerBottomBarProps) {
-  const holdChrome = useViewerStore((s) => s.holdChrome)
-  const releaseChrome = useViewerStore((s) => s.releaseChrome)
-
   return (
     <div
       data-role="viewer-bottom-bar"
@@ -66,8 +66,6 @@ export function ViewerBottomBar({
           : 'pointer-events-none absolute inset-x-0 bottom-0 opacity-0',
       )}
       style={{ transitionDuration: 'var(--chrome-fade)' }}
-      onMouseEnter={holdChrome}
-      onMouseLeave={releaseChrome}
     >
       {stripOpen && (
         <ThumbnailStrip

@@ -824,6 +824,146 @@ describe('view toggle (FR-LIB-002)', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Amendment A-5 — the settings write-back
+// ---------------------------------------------------------------------------
+
+/**
+ * `useLibrarySettingsSync` against **the requests it sends**, not the store.
+ *
+ * `store/ui.ts` says the server is authoritative once it answers, and
+ * `hydrateFromSettings` is the one-way door. The defect this block exists for
+ * inverted that: the hydrate effect and the write-back effect both list `data`,
+ * so the commit where the payload lands runs both, and a `useRef` flag flipped
+ * by the first one let the second run with the **pre-hydration** closure and
+ * `PUT` the client's defaults over the payload the server had just sent. It
+ * converges, so the screen looks right; the server does not, and two tabs make
+ * it a lost update.
+ *
+ * Two traps shape how this is written (§6.5):
+ *
+ *  1. **Asserting on the store cannot see it.** Hydration puts the server's
+ *     values there whether or not a `PUT` went out. The only observable
+ *     difference is the request, so `settingsUpdates` — the same recorder
+ *     pattern as `seriesRequests` — is the subject.
+ *  2. **`onUnhandledRequest: 'error'` is not an assertion.** `msw/node` fails
+ *     the *request*, not the test, and the handler here answers `PUT` anyway.
+ *
+ * And an empty recorder proves nothing on its own, so the negative case carries
+ * its own positive control, through the same recorder and the same flush.
+ */
+describe('settings write-back (A-5)', () => {
+  /**
+   * A server payload whose four library values all differ from the store
+   * defaults of `store/ui.ts` (`grid` / `name` / `asc` / `all`).
+   *
+   * That is the whole reason the defect survived: `api/fixtures.ts` ships
+   * settings identical to those defaults, so the stale write was byte-identical
+   * to the payload and every existing test stayed green.
+   */
+  const REMOTE = {
+    library_view: 'list',
+    library_sort: 'mtime',
+    library_order: 'desc',
+    library_scope: 'reading',
+  } as const
+
+  /**
+   * Yields long enough for a `PUT` started by an effect to reach MSW and be
+   * recorded.
+   *
+   * How long that is cannot be asserted, only bounded from below, which is why
+   * the test below runs the *same* helper over a change that must write: a
+   * helper that returned without yielding at all would fail that positive
+   * control rather than let the negative `toEqual([])` pass vacuously.
+   *
+   * That is the whole of what the control shows, and it is worth being exact
+   * about it, because "3" looks like a measured number and is not. Swept by
+   * hand, the control fails at 0 turns and passes at 1, 2, 3 and 4: it
+   * discriminates "yielded" from "did not", not 3 from 1. **Three is headroom,
+   * not a demonstrated floor** — do not cite it as one.
+   */
+  async function flushSettingsWrites(): Promise<void> {
+    for (let turn = 0; turn < 3; turn++) {
+      await act(async () => {
+        await new Promise((resolve) => {
+          setTimeout(resolve, 0)
+        })
+      })
+    }
+  }
+
+  it('sends no PUT at all when the server payload is the one that wins', async () => {
+    scenario.settings = { ...settingsFixture, ...REMOTE }
+    renderLibrary()
+    await waitForLibrary()
+
+    // Preconditions, asserted rather than assumed: hydration happened, and it
+    // moved all four values. Without this the `toEqual([])` below would also be
+    // satisfied by a payload that never arrived.
+    await waitFor(() => {
+      expect(useUiStore.getState().sort).toBe('mtime')
+    })
+    const hydratedStore = useUiStore.getState()
+    expect([
+      hydratedStore.view,
+      hydratedStore.sort,
+      hydratedStore.order,
+      hydratedStore.scope,
+    ]).toEqual(['list', 'mtime', 'desc', 'reading'])
+
+    await flushSettingsWrites()
+    expect(settingsUpdates).toEqual([])
+
+    // Positive control, same recorder and same flush. A genuine local change
+    // after hydration must still write back exactly once — otherwise the
+    // assertion above would pass just as happily against a client that never
+    // writes, or a recorder that never records.
+    act(() => {
+      useUiStore.getState().setView('grid')
+    })
+    await flushSettingsWrites()
+    expect(settingsUpdates).toEqual([
+      {
+        library_view: 'grid',
+        library_sort: 'mtime',
+        library_order: 'desc',
+        library_scope: 'reading',
+      },
+    ])
+  })
+
+  it('repairs a library_sort the client cannot read, and sends only that repair', async () => {
+    // The one genuine PUT on the hydration path: `isSortKey` rejects the wire
+    // value, so `hydrateFromSettings` leaves `sort` alone and the store's own
+    // valid key has to travel back. This is what stops the fix from being
+    // "never write after hydration" — and the *body* is the discriminator, since
+    // the stale write would have carried `grid` / `asc` / `all` with it.
+    scenario.settings = {
+      ...settingsFixture,
+      ...REMOTE,
+      library_sort: 'nonsense' as unknown as Settings['library_sort'],
+    }
+    renderLibrary()
+    await waitForLibrary()
+
+    await waitFor(() => {
+      expect(useUiStore.getState().view).toBe('list')
+    })
+    expect(useUiStore.getState().sort).toBe('name')
+
+    await flushSettingsWrites()
+    expect(settingsUpdates).toEqual([
+      {
+        library_view: 'list',
+        library_sort: 'name',
+        library_order: 'desc',
+        library_scope: 'reading',
+      },
+    ])
+  })
+})
+
+// ---------------------------------------------------------------------------
 // FR-LIB-004 — sorting
 // ---------------------------------------------------------------------------
 
