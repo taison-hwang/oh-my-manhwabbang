@@ -17,8 +17,10 @@ import { formatViewerCounter } from '../../lib/format'
 import { toggleFullscreen } from '../../lib/fullscreen'
 import { DARK_MEDIA_QUERY, resolveTheme } from '../../lib/theme'
 import { useMediaQuery } from '../../lib/useMediaQuery'
+import { openingDirection, useSeriesDirStore } from '../../store/seriesDir'
 import { useUiStore } from '../../store/ui'
 import {
+  openingFit,
   useViewerStore,
   type DisplayMode,
   type FitMode,
@@ -97,8 +99,42 @@ export const POINTER_IDLE_MS = 1600
  * 44px is the tap target the responsive layer uses everywhere else, and it is
  * also roughly the height of the bar each strip summons — so the gesture is
  * "reach for where the bar will be", not "find an invisible line".
+ *
+ * Exported because it is also *where the pointer has to not already be* for a
+ * strip to count as entered (E-31, `edgeBandAt` below), which is a rule the unit
+ * tier has to be able to state in the same numbers the screen uses.
  */
-const EDGE_STRIP_PX = 44
+export const EDGE_STRIP_PX = 44
+
+/** Which end of the screen a strip is at — and which band belongs to it. */
+type EdgeBand = 'top' | 'bottom'
+
+/**
+ * Which of the two screen-edge bands a pointer at `clientY` is in, if either.
+ *
+ * The viewer root is `fixed inset-0`, so the viewport *is* its box — hence
+ * `innerHeight` rather than a rect off `rootRef`, which is also the only one of
+ * the two a layout-less DOM can answer.
+ *
+ * **Which band, not merely whether.** There are two strips and they are two
+ * different places; a pointer resting in one of them is no reason to refuse the
+ * *other*, which a boolean cannot express. Crossing the screen from the top band
+ * into the bottom strip is the plainest entry there is, and the browser hands
+ * that crossing to the gate before the `mousemove` that would report the new
+ * position — boundary events are dispatched first — so a one-bit memory answers
+ * it with the band the pointer just left, and the strip stays silent.
+ *
+ * This is deliberately **geometry**, not a hit test. E-31 forbids deriving the
+ * wake from the same signal as E-30's hold: the hold asks the browser what node
+ * is under the pointer *now*, and the strip does not exist while the chrome is
+ * up, so that question can never distinguish "the pointer walked in" from "the
+ * strip appeared underneath it".
+ */
+function edgeBandAt(clientY: number): EdgeBand | null {
+  if (clientY < EDGE_STRIP_PX) return 'top'
+  if (clientY > window.innerHeight - EDGE_STRIP_PX) return 'bottom'
+  return null
+}
 
 /** The one sentence that explains a viewer which opens with nothing on it. */
 const CHROME_HINT = '좌·우 클릭으로 페이지 · 중앙 클릭 또는 상하 가장자리로 컨트롤'
@@ -131,6 +167,22 @@ export function ViewerPage() {
   const themeSetting = useUiStore((s) => s.theme)
   const systemDark = useMediaQuery(DARK_MEDIA_QUERY)
   const appTheme = resolveTheme(themeSetting, systemDark)
+  const setRevealSeries = useUiStore((s) => s.setRevealSeries)
+
+  /**
+   * The series-detail 읽기 방향 seed for *this* series (**E-33 §2**).
+   *
+   * Read here rather than passed through the route, and that is the design
+   * decision the ruling left open. The seed is per **series** (`bySeries`,
+   * `localStorage`), the viewer is the one screen that turns server prefs into
+   * the opening store state, and it already knows the series id from `:sid` —
+   * so this is the single place where "the seed replaces the global default"
+   * can be stated at all. Threading it through `?dir=` instead would have put a
+   * reading preference in the URL, made it forgeable and shareable, and left
+   * every *other* door into the viewer (이어보기, a card's 이어 읽기, a pasted
+   * link) opening the same series the other way round.
+   */
+  const seedDir = useSeriesDirStore((s) => s.bySeries[seriesId])
 
   const page = useViewerStore((s) => s.page)
   const pageCount = useViewerStore((s) => s.pageCount)
@@ -220,10 +272,13 @@ export function ViewerPage() {
       pageCount: detail.page_count,
       page: resume,
       mode: detail.prefs.display_mode,
-      dir: detail.prefs.reading_direction,
+      // Not `detail.prefs.reading_direction` — that was the shipped defect
+      // E-33 §2 names. A book with no override of its own opens on the series
+      // screen's seed; a book that has one keeps it. See `openingDirection`.
+      dir: openingDirection(detail.prefs, seedDir),
       fit: detail.prefs.fit_mode,
     })
-  }, [bookId, detail, open, requestedPage])
+  }, [bookId, detail, open, requestedPage, seedDir])
 
   // Leaving the screen must not leave a viewer open in the store — the global
   // `Esc` ladder and the shell both key off `bookId !== null`.
@@ -238,6 +293,27 @@ export function ViewerPage() {
     useViewerStore.getState().close()
     void navigate(seriesId === '' ? '/' : `/series/${seriesId}`)
   }, [navigate, seriesId])
+
+  /**
+   * 라이브러리 — the whole shelf, not this book's volume list (**E-34**).
+   *
+   * **It does not clear `scope` or `q`, and that is the ruling.** The prototype's
+   * `goLibrary` sets `scope: 'all'` and `q: ''` alongside the navigation, which
+   * costs it nothing: there they are volatile `setState`. Here `library_scope`
+   * is an A-5 write-back — `useLibrarySettingsSync` PUTs it to `/api/settings`
+   * and it is in `localStorage` besides — so the same two lines would read, to
+   * the reader, as "leaving the viewer permanently unset my sidebar filter", on
+   * every machine and every session after.
+   *
+   * What it does instead is arm the reveal: the library scrolls the series this
+   * book belongs to into view and focuses its card, which is the orientation the
+   * prototype was reaching for when it reset the filters.
+   */
+  const goLibrary = useCallback(() => {
+    useViewerStore.getState().close()
+    if (seriesId !== '') setRevealSeries(seriesId)
+    void navigate('/')
+  }, [navigate, seriesId, setRevealSeries])
 
   // -------------------------------------------------------------------------
   // Progress (FR-VWR-009 / FR-VWR-012)
@@ -272,6 +348,46 @@ export function ViewerPage() {
     },
     [detail, savePrefs, setFit],
   )
+
+  /**
+   * Clearing the per-book override (**E-33 §3**).
+   *
+   * Three `null`s is the whole request: `enumPatch` in `internal/httpapi/books.go`
+   * decodes the body into `json.RawMessage` precisely so that `{"fit_mode": null}`
+   * and `{}` are different things, and `null` is the one that means "go back to
+   * the global default". The response is the re-merged `BookPrefs`, i.e. the
+   * defaults themselves, with `is_override: false`.
+   *
+   * **And the store has to be told, by name.** `useSetPrefs.onSuccess` writes the
+   * query cache and nothing else; `open()` is guarded by `openedRef` and runs
+   * once per book — correctly, because re-running it throws the reader back to
+   * where they resumed on every press. So a reset that only invalidated would
+   * leave the bar's three segments, and the page on screen, still showing the
+   * override the reader just deleted. The three setters below are not
+   * belt-and-braces; without them the feature does not work.
+   *
+   * The direction goes back through `openingDirection`, the same rule the open
+   * path uses: with the override gone, "what this volume shows when nobody chose
+   * anything for it" is the series seed if there is one (E-33 §2) and the global
+   * default otherwise. Anything else would make 이 권 전용 설정 clear the
+   * override and then disagree with the very next open of the same book.
+   * `openingFit` for the matching E-27 reason: a global default of `contain` has
+   * no button, and landing the reader on a segment with nothing selected is the
+   * state that ruling exists to remove.
+   */
+  const resetPrefs = useCallback(() => {
+    if (detail === undefined) return
+    savePrefs(
+      { reading_direction: null, display_mode: null, fit_mode: null },
+      {
+        onSuccess: (prefs) => {
+          setMode(prefs.display_mode)
+          setDirection(openingDirection(prefs, seedDir))
+          setFit(openingFit(prefs.fit_mode))
+        },
+      },
+    )
+  }, [detail, savePrefs, seedDir, setDirection, setFit, setMode])
 
   // -------------------------------------------------------------------------
   // Page turns, keys, taps, prefetch
@@ -335,8 +451,33 @@ export function ViewerPage() {
    */
   const [hoverZone, setHoverZone] = useState<StageZone>('centre')
 
+  /**
+   * Which screen-edge band the pointer's last **movement** left it in, if either
+   * (**E-31**).
+   *
+   * This is the whole of the wake rule, and it is a ref rather than state
+   * because nothing renders from it — it only ever answers one question, asked
+   * inside an event handler.
+   *
+   * `null` until the pointer moves at all, which is the honest answer: a viewer
+   * that has seen no movement has no grounds to claim the pointer is parked in
+   * an edge, and refusing the first wake on a guess would break the strips for a
+   * reader who has simply not moved the mouse yet.
+   *
+   * **Named for the band and not for a yes/no.** Each strip is entitled to ask
+   * only about its own end of the screen; collapsing the two into one bit makes
+   * the top band vouch for the bottom strip and vice versa, which refuses a real
+   * entry (see `edgeBandAt`).
+   */
+  const pointerRestingBand = useRef<EdgeBand | null>(null)
+
   const nudgePointer = useCallback(
     (event: ReactMouseEvent<HTMLDivElement>) => {
+      // Before anything else, and before the early return below: this is the
+      // only event family that reports *movement*, and the strips' wake is a
+      // function of movement (E-31). It has to be recorded wherever the pointer
+      // moved — over a bar and over a strip just as much as over the stage.
+      pointerRestingBand.current = edgeBandAt(event.clientY)
       setPointerAwake(true)
       if (pointerTimer.current !== null) clearTimeout(pointerTimer.current)
       pointerTimer.current = setTimeout(() => {
@@ -371,6 +512,12 @@ export function ViewerPage() {
 
   // A click on the top or bottom strip both wakes the chrome and must not reach
   // the tap zones underneath, where the same click is a page turn.
+  //
+  // **Ungated, unlike the hover below.** A press is input the reader performed;
+  // there is nothing phantom about it, and it is the escape hatch that keeps
+  // E-31 from ever leaving a reader stranded — a pointer parked in an edge whose
+  // hover has been (correctly) refused can still press the same 44px and get the
+  // chrome back without moving the mouse away first.
   const wakeFromEdge = useCallback(
     (event: ReactMouseEvent) => {
       event.stopPropagation()
@@ -378,6 +525,52 @@ export function ViewerPage() {
     },
     [wake],
   )
+
+  /**
+   * The strips' *hover* half — **an entry, not a position** (**E-31**).
+   *
+   * The strips are rendered only while the chrome is away, so every path that
+   * hides the chrome mounts them, and it mounts them wherever the pointer
+   * happens to be. With the pointer at rest inside the 44px, that mount is
+   * followed ~13 ms later by the browser's own re-hit-test (measured at all four
+   * widths) landing a `mouseover` on a strip that nothing walked into — and the
+   * chrome the reader just dismissed came straight back. Under E-30 it no longer
+   * flickers, it settles: "visible and held", so `H` looked broken at that one
+   * pointer position (E-30 §7, left unruled; E-31 rules it).
+   *
+   * The answer is that waking is an **event**: only movement into a band counts,
+   * so a strip that arrives under a stationary pointer wakes nothing. E-31 is
+   * explicit that this must not share a signal with E-30's hold — the hold is a
+   * function of *where the pointer is*, the wake of *where it moved* — because
+   * one signal cannot express both and the defect comes back.
+   *
+   * ## Why the gate is here and not on the hide paths
+   *
+   * E-31's 적용 범위 is "every path that hides the chrome, auto-hide included",
+   * and the way to honour that is to not mention the hide paths at all. Nothing
+   * below knows or cares whether the chrome went away to `H`, to a centre tap or
+   * to the 2 600 ms deadline; the rule is stated once, on the wake, so a new way
+   * to dismiss the chrome inherits it for free. Scoping it to `H` — the one path
+   * that reaches the defect *today*, only because E-30's hold keeps the
+   * auto-hide from getting there — would leave it to reappear silently the day
+   * the hold rule changes.
+   *
+   * ## One gate, but two bands
+   *
+   * Each strip asks about **its own** band. A pointer resting in the top 44px is
+   * a reason to refuse the top strip and no reason at all to refuse the bottom
+   * one — the pointer was never in the bottom band, so arriving there is an
+   * entry by any reading of the ruling. Two handlers rather than one shared
+   * closure, because the band a strip guards is a property of the strip and the
+   * gate has no other way to learn it.
+   */
+  const wakeFromEdgeEntry = useMemo(() => {
+    const gate = (band: EdgeBand) => () => {
+      if (pointerRestingBand.current === band) return
+      wake()
+    }
+    return { top: gate('top'), bottom: gate('bottom') }
+  }, [wake])
 
   // -------------------------------------------------------------------------
   // The hover-hold (E-27), and why it lives here rather than on the bars
@@ -449,6 +642,14 @@ export function ViewerPage() {
 
   const releaseChromeHold = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
+      // The pointer has left the viewer altogether, so the last position it was
+      // seen at is no longer a claim about anything — and whatever it does next
+      // *is* movement (E-31). Without this, a reader who left the window through
+      // the top edge would come back through it to a strip that refuses to
+      // answer, because the last move it recorded was inside the band.
+      // Unconditional: this half is not about the hold, so it is not about
+      // `pointerType` either.
+      pointerRestingBand.current = null
       if (event.pointerType === 'touch') return
       releaseChrome()
     },
@@ -504,21 +705,25 @@ export function ViewerPage() {
     >
       {/* The screen edges (E-27). Rendered only while the chrome is away: once
           it is up, the bars themselves are what the pointer rests on, and a
-          strip over them would eat the first click on 뒤로. */}
+          strip over them would eat the first click on 뒤로.
+
+          Which is also why the hover half is `wakeFromEdgeEntry` and not `wake`
+          (E-31): being mounted under a pointer is not the same as being entered
+          by one. */}
       {!chromeVisible && detail !== undefined && (
         <>
           <div
             data-role="viewer-edge-top"
             className="absolute inset-x-0 top-0 z-[2]"
             style={{ height: EDGE_STRIP_PX }}
-            onMouseEnter={wake}
+            onMouseEnter={wakeFromEdgeEntry.top}
             onClick={wakeFromEdge}
           />
           <div
             data-role="viewer-edge-bottom"
             className="absolute inset-x-0 bottom-0 z-[2]"
             style={{ height: EDGE_STRIP_PX }}
-            onMouseEnter={wake}
+            onMouseEnter={wakeFromEdgeEntry.bottom}
             onClick={wakeFromEdge}
           />
         </>
@@ -605,7 +810,10 @@ export function ViewerPage() {
         mode={mode}
         dir={dir}
         fit={fit}
+        isOverride={detail?.prefs.is_override ?? false}
         onBack={exit}
+        onLibrary={goLibrary}
+        onResetPrefs={resetPrefs}
         onModeChange={applyMode}
         onDirChange={applyDir}
         onFitChange={applyFit}

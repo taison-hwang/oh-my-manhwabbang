@@ -39,3 +39,46 @@ export const useSeriesDirStore = create<SeriesDirState>()(
     { name: SERIES_DIR_STORAGE_KEY },
   ),
 )
+
+/** The half of `BookPrefs` this rule needs; keeps the store off `api/types`. */
+export interface OpeningPrefs {
+  reading_direction: ReadingDirection
+  /** `false` ⇒ every field is the global default (`GET /api/settings`). */
+  is_override: boolean
+}
+
+/**
+ * The direction a book actually opens at — the seed's **destination** (E-33 §2).
+ *
+ * The seed used to stop here. `store/seriesDir.ts` had exactly one consumer,
+ * `SeriesDetailPage`, and it only fed the `.seg`'s own displayed state:
+ * `openBook` navigated with `?page=` alone and the viewer opened on
+ * `detail.prefs.reading_direction` every time. Setting R→L on the series screen
+ * and opening a volume gave you L→R — while `localStorage` kept the value and
+ * the segment stayed lit, so it *looked* like it had worked. C-9 promises the
+ * opposite ("seeds the direction for books opened from that screen"), and E-33
+ * §2 is the ruling that the promise be kept.
+ *
+ * **Precedence, which is the rest of the ruling.** A book override wins; the
+ * seed only ever replaces the *global default*. `BookPrefs` is already the merge
+ * of those two — the server fills each unset field from the default and reports
+ * whether anything was overridden at all (`internal/httpapi/books.go`,
+ * `mergePrefsWithDefaults`) — so `is_override` is precisely the bit that
+ * separates "this reader chose it for this volume" from "nobody chose anything",
+ * and it is the bit this reads. Nothing here changes the wire (E-33 §1).
+ *
+ * **`is_override` is a statement about the whole object.** A book that overrides
+ * only its display mode reports `true` while its direction is still the global
+ * default, and the seed stands down there too. Telling those apart needs a
+ * per-field flag the contract does not have and E-33 §1 freezes; between a seed
+ * that sometimes does not apply and a seed that sometimes overwrites a direction
+ * the reader chose for this volume, the ruling names the second as the error —
+ * "씨앗은 기본값을 대신하는 것이지 오버라이드를 이기는 것이 아니다".
+ */
+export function openingDirection(
+  prefs: OpeningPrefs,
+  seed: ReadingDirection | undefined,
+): ReadingDirection {
+  if (prefs.is_override) return prefs.reading_direction
+  return seed ?? prefs.reading_direction
+}

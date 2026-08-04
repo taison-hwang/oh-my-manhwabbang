@@ -4,6 +4,7 @@ import {
   Columns2,
   File,
   Image as ImageIcon,
+  Library,
   MoveHorizontal,
   MoveVertical,
 } from 'lucide-react'
@@ -60,11 +61,20 @@ export interface ViewerTopBarProps {
   mode: DisplayMode
   dir: ReadingDirection
   fit: FitMode
+  /** `BookPrefs.is_override` — this volume carries settings of its own (E-33 §3). */
+  isOverride: boolean
   onBack: () => void
+  /** E-34: back to the library, keeping the sidebar filter and the search. */
+  onLibrary: () => void
+  /** Clears the per-book override (E-33 §3). */
+  onResetPrefs: () => void
   onModeChange: (mode: DisplayMode) => void
   onDirChange: (dir: ReadingDirection) => void
   onFitChange: (fit: FitMode) => void
 }
+
+/** E-33 §3: the product is 권 단위, so the chip says 권 — not the prototype's 시리즈. */
+export const OVERRIDE_CHIP_LABEL = '이 권 전용 설정'
 
 /** C-1: the wire value is `spread`; the Korean label stays 양면. */
 const MODE_OPTIONS: readonly SegOption<DisplayMode>[] = [
@@ -109,7 +119,10 @@ export function ViewerTopBar({
   mode,
   dir,
   fit,
+  isOverride,
   onBack,
+  onLibrary,
+  onResetPrefs,
   onModeChange,
   onDirChange,
   onFitChange,
@@ -168,14 +181,62 @@ export function ViewerTopBar({
         뒤로
       </Button>
 
+      {/* E-34. A second destination, beside 뒤로 rather than instead of it:
+          뒤로 is the volume list this book came from, this is the whole shelf.
+          What it must *not* do is arrive there having reset the reader's view —
+          see `goLibrary` in `ViewerPage`. */}
+      <Button
+        variant="secondary"
+        data-role="viewer-library"
+        className="gap-[7px] border-neutral-700 text-sm"
+        onClick={onLibrary}
+      >
+        <Library size={13} aria-hidden={true} />
+        라이브러리
+      </Button>
+
       <div className="flex min-w-0 flex-col">
-        <span className="truncate font-heading text-base font-extrabold text-ink">
+        {/* E-32: 800 → 700. The viewer title is a card title, not a heading. */}
+        <span className="truncate font-heading text-base font-bold text-ink">
           {seriesName}
         </span>
         <span className="truncate text-xs text-neutral-500">{bookName}</span>
       </div>
 
       <div className="flex-1" />
+
+      {/* E-33 §3. The server has always sent `BookPrefs.is_override` and no UI
+          had ever read it: a volume could be sitting on a direction, a mode and
+          a fit of its own with nothing on screen saying so, and no way back to
+          the global defaults short of matching them by hand on three segmented
+          controls.
+
+          It is a button because it *does* something — one press clears all
+          three (`onResetPrefs`).
+
+          ## It is **filled**, not outlined — and that is an AA fix
+
+          It shipped as `color: --color-hot` on a transparent ground because the
+          token had not landed yet and an inline hex was not an option. That is
+          `--color-hot` on the viewer's ground: **2.83:1**, at 11px uppercase.
+          Worse than the 3.76 that E-32 §4 already rejected for this very chip,
+          and the ruling's remedy there was "adjust the foreground", which is
+          what `--on-hot` is: **4.55** on the hot marker. Light ink cannot get
+          there at all — even pure white is 4.20 on the hot marker, which is
+          why the foreground is dark.
+
+          Both colours are Tailwind utilities now (`bg-hot` / `text-on-hot`,
+          tailwind.config.ts), so nothing here is spelled inline any more. */}
+      {isOverride && (
+        <button
+          type="button"
+          data-role="viewer-override-chip"
+          className="flex-none whitespace-nowrap rounded-md bg-hot px-[7px] py-[3px] text-2xs uppercase tracking-[.08em] text-on-hot"
+          onClick={onResetPrefs}
+        >
+          {OVERRIDE_CHIP_LABEL}
+        </button>
+      )}
 
       {modeSeg}
       {dirSeg}

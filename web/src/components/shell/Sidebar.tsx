@@ -154,9 +154,12 @@ export function Sidebar({
       {/* Brand — the bar mark is one of the few places red runs as a solid field
           (ui-spec §2.5). The rail drops the name to the accessible layer rather
           than shrinking it: 68px cannot hold it at any legible size. */}
+      {/* E-32: no hairline under the lockup or over the footer. The sidebar's
+          own edge became an elevation, and two 2px rules inside a panel that
+          has no hard outer edge left are the only square lines on the screen. */}
       <div
         className={cn(
-          'flex items-center gap-2 border-b-2 border-rule-strong',
+          'flex items-center gap-2',
           rail ? 'justify-center px-0 py-3' : 'px-4 py-3',
         )}
       >
@@ -211,7 +214,7 @@ export function Sidebar({
 
       <div
         className={cn(
-          'flex flex-col gap-2 border-t-2 border-rule-strong',
+          'flex flex-col gap-2',
           rail ? 'items-center px-1 py-3' : 'px-4 py-3',
         )}
       >

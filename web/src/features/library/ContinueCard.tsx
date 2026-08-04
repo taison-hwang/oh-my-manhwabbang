@@ -32,12 +32,15 @@ export function ContinueCard({ item, onResume }: ContinueCardProps) {
       type="button"
       onClick={onResume}
       aria-label={`${item.series_name} ${item.book.name}`}
-      className="flex flex-[0_0_272px] cursor-pointer gap-3 border border-rule bg-surface p-3 text-left hover:border-accent md:flex-[0_0_336px]"
+      // E-32: the 1px hairline and its accent-on-hover become a raised card
+      // that lifts. `hover:border-accent` could not survive the reskin anyway —
+      // the accent is a deep teal and 1.2:1 against the dark surface.
+      className="flex flex-[0_0_272px] cursor-pointer gap-3 rounded-lg bg-surface p-3 text-left shadow-md transition-[box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:shadow-lg md:flex-[0_0_336px]"
     >
       {/* 96×144, up from 66×99: the cover is the only thing on this card that
           identifies the book at a glance, and at 66px wide a title in the art
           was unreadable. The 2:3 ratio is unchanged. */}
-      <span className="relative block h-[144px] w-[96px] flex-[0_0_96px] overflow-hidden bg-fill-track">
+      <span className="relative block h-[144px] w-[96px] flex-[0_0_96px] overflow-hidden rounded-md bg-fill-track shadow-inset">
         <FallbackCover title={item.series_name} format={item.book.kind} size="row" />
         {cover.status === 'ready' && (
           <img
@@ -50,7 +53,8 @@ export function ContinueCard({ item, onResume }: ContinueCardProps) {
       </span>
 
       <span className="flex min-w-0 flex-1 flex-col gap-[5px]">
-        <span className="line-clamp-2 font-heading text-base font-extrabold leading-[1.2]">
+        {/* E-32: card titles drop from 800 to 700. Section headings do not. */}
+        <span className="line-clamp-2 font-heading text-base font-bold leading-[1.2]">
           {item.series_name}
         </span>
         <span className="truncate whitespace-nowrap text-xs text-ink-muted">{item.book.name}</span>

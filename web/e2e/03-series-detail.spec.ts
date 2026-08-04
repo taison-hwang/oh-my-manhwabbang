@@ -184,6 +184,24 @@ test('6.5 (guard) · the 읽음 표시 toggle is a hit target only while it is v
   // the resting state differs.
   const canHover = await page.evaluate(() => matchMedia('(hover: hover)').matches)
 
+  // Which branch this project takes is itself pinned, and that is not
+  // decoration. Measured against the four projects, `(hover: hover)` is true on
+  // desktop-1440 / laptop-1024 / tablet-768 and false on mobile-400 — Chrome
+  // derives it from `hasTouch`, which the config sets from `width < 768`. So
+  // both branches below really do run, one project against three.
+  //
+  // The failure this guards is §6.5's shape: an `if` whose condition quietly
+  // stops being true does not go red, it goes *absent*. Flip `hasTouch` to true
+  // for every project and the three hover assertions would simply stop running
+  // while the suite stayed green — the same way `toHaveCount(0)` cannot tell
+  // "the control was removed" from "the feature gate was off". Asserting the
+  // browser's answer against the config's intent makes that a failure instead.
+  const hasTouch = test.info().project.use.hasTouch ?? false
+  expect(
+    canHover,
+    'the branch below is chosen by the browser; this pins it to what the project asked for',
+  ).toBe(!hasTouch)
+
   if (canHover) {
     await expect(overlay).toHaveCSS('opacity', '0')
 

@@ -1,14 +1,15 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import type { ID, SeriesSummary } from '../../api/types'
 import { cn } from '../../lib/cn'
 import { useBreakpoint } from '../../lib/useMediaQuery'
-import { useUiStore, type SortKey } from '../../store/ui'
+import { seriesRowDomId, useUiStore, type SortKey } from '../../store/ui'
 import { SeriesRow } from './SeriesRow'
 import {
   listHeaderPadRight,
   listLayoutFor,
+  LIST_CARD_CLASS,
   LIST_HEADER_BAND_CLASS,
   LIST_HEADER_WRAPPER_CLASS,
   LIST_ROW_HEIGHT,
@@ -46,11 +47,22 @@ import {
 export interface SeriesListProps {
   items: SeriesSummary[]
   query: string
+  /** E-34 §2 — a series to scroll to and focus, or `null`. One-shot. */
+  revealSeries?: ID | null
+  /** Called once the reveal has been acted on, so the instruction is not replayed. */
+  onRevealed?: () => void
   onOpen: (sid: ID) => void
   onEndReached: () => void
 }
 
-export function SeriesList({ items, query, onOpen, onEndReached }: SeriesListProps) {
+export function SeriesList({
+  items,
+  query,
+  revealSeries = null,
+  onRevealed,
+  onOpen,
+  onEndReached,
+}: SeriesListProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const breakpoint = useBreakpoint()
   const layout = listLayoutFor(breakpoint)
@@ -76,6 +88,29 @@ export function SeriesList({ items, query, onOpen, onEndReached }: SeriesListPro
     if (items.length > 0 && lastIndex >= items.length - 1) onEndReached()
   }, [lastIndex, items.length, onEndReached])
 
+  /**
+   * The E-34 §2 reveal — the same rule as `SeriesGrid`, one index simpler.
+   *
+   * This virtualiser windows **rows one series at a time**, so the index in
+   * `items` is the index it takes; the grid has to divide by its column count
+   * first. Everything else is identical and the reasoning is written out there:
+   * `getElementById` cannot find a row outside the window, `align: 'start'`
+   * without the prototype's 96px, and a target that has not been fetched yet
+   * leaves the instruction armed rather than chasing pages.
+   */
+  const [revealed, setRevealed] = useState<ID | null>(null)
+  useEffect(() => {
+    if (revealSeries === null) return
+    const index = items.findIndex((series) => series.id === revealSeries)
+    if (index === -1) return
+    setRevealed(revealSeries)
+    onRevealed?.()
+    virtualizer.scrollToIndex(index, { align: 'start' })
+    requestAnimationFrame(() => {
+      document.getElementById(seriesRowDomId(revealSeries))?.focus()
+    })
+  }, [revealSeries, items, virtualizer, onRevealed])
+
   const sortHeader = (key: SortKey, label: string, align: 'left' | 'right') => {
     const active = sort === key
     return (
@@ -99,7 +134,10 @@ export function SeriesList({ items, query, onOpen, onEndReached }: SeriesListPro
   const [colName, colBooks, colSize, colMtime] = columns
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    /* E-32: header band and rows are one raised card now, not a full-bleed
+       table. `LIST_CARD_CLASS` is shared with `GridSkeleton` so the two states
+       occupy the same box. */
+    <div className={cn('flex min-h-0 flex-1 flex-col', LIST_CARD_CLASS)}>
       <div
         className={LIST_HEADER_WRAPPER_CLASS}
         style={{ paddingRight: listHeaderPadRight(gutter) }}
@@ -134,7 +172,7 @@ export function SeriesList({ items, query, onOpen, onEndReached }: SeriesListPro
 
       <div
         ref={scrollRef}
-        className="min-h-0 flex-1 overflow-y-auto px-4 pb-4"
+        className="min-h-0 flex-1 overflow-y-auto px-2"
         style={{ scrollbarGutter: 'stable' }}
         data-testid="library-scroller"
       >
@@ -153,6 +191,7 @@ export function SeriesList({ items, query, onOpen, onEndReached }: SeriesListPro
                   series={series}
                   layout={layout}
                   query={query}
+                  revealed={series.id === revealed}
                   onOpen={() => {
                     onOpen(series.id)
                   }}

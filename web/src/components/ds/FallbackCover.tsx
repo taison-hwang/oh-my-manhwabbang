@@ -38,7 +38,9 @@ export function FallbackCover({ title, format, size, className }: FallbackCoverP
             {`${formatLabel(format)} · NO THUMBNAIL`}
           </div>
           <div
-            className="line-clamp-4 font-heading text-sm font-extrabold leading-[1.15] text-ink"
+            /* E-32 takes the *card* titles from 800 to 700 while the section
+               headings stay at 800; this is the placeholder cover's title. */
+            className="line-clamp-4 font-heading text-sm font-bold leading-[1.15] text-ink"
             style={{ fontSize: size === 'hero' ? '15px' : '12px' }}
           >
             {title}

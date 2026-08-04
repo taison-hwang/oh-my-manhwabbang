@@ -23,12 +23,17 @@ export function ContinueRow({ suppressed, onResume }: ContinueRowProps) {
   if (suppressed || items.length === 0) return null
 
   return (
-    <section className="flex-none border-b-2 border-rule-strong p-4" aria-label="이어보기">
+    /* E-32 removes the 2px divider under this band: the shelf is separated from
+       the library below it by space and by the cards' own elevation. The
+       track's bottom padding grows from 4px to 16px so the hover lift on a
+       ContinueCard has somewhere to go and its shadow is not clipped by the
+       scroller. */
+    <section className="flex-none p-4" aria-label="이어보기">
       <div className="mb-3 flex items-baseline gap-2">
         <h6>이어보기</h6>
         <span className="text-xs tabular-nums text-ink-dim">{formatItemCount(items.length)}</span>
       </div>
-      <div className="flex gap-3 overflow-x-auto pb-1">
+      <div className="flex gap-3 overflow-x-auto pb-4">
         {items.map((item) => (
           <ContinueCard
             key={item.book.id}

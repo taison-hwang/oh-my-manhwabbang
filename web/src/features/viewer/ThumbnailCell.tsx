@@ -50,8 +50,13 @@ export function ThumbnailCell({ bookId, page, cv, current, onJump }: ThumbnailCe
         // 56×84 on a phone, 48×72 from `md` up: the strip is a touch target
         // there, and 48px is under the 44px minimum once the 2px border and the
         // gap are taken off.
-        'relative flex h-[84px] w-[56px] shrink-0 items-end justify-start overflow-hidden border-2 p-[3px] text-3xs tabular-nums md:h-[72px] md:w-12',
-        current ? 'border-accent text-ink' : 'border-neutral-800 text-neutral-600',
+        'relative flex h-[84px] w-[56px] shrink-0 items-end justify-start overflow-hidden rounded-sm border-2 p-[3px] text-3xs tabular-nums md:h-[72px] md:w-12',
+        // E-32 §1: the **current** thumbnail is one of the seven things the
+        // retired brand red still marks. It used to be `--color-accent`, which
+        // is a deep teal now and 1.2:1 against this strip's own ground — the
+        // reader's place in the book would have been the one cell you cannot
+        // pick out.
+        current ? 'border-hot text-ink' : 'border-neutral-800 text-neutral-600',
       )}
     >
       {image.status === 'ready' && (

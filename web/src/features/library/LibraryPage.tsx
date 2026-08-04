@@ -57,6 +57,21 @@ export function LibraryPage() {
   const setQuery = useUiStore((s) => s.setQuery)
   const openOverlay = useUiStore((s) => s.openOverlay)
 
+  /**
+   * E-34 §2 — the viewer's 라이브러리 button leaves a series id here, and
+   * whichever of the two surfaces is mounted scrolls to it and focuses it.
+   *
+   * The screen only forwards it. Grid and list are windowed differently (rows of
+   * `n` versus one row per series), so the index arithmetic belongs to each of
+   * them; what belongs here is clearing the instruction once it has been acted
+   * on, which is `store/ui.ts`'s state and not theirs.
+   */
+  const revealSeries = useUiStore((s) => s.revealSeries)
+  const setRevealSeries = useUiStore((s) => s.setRevealSeries)
+  const onRevealed = useCallback(() => {
+    setRevealSeries(null)
+  }, [setRevealSeries])
+
   const openSeries = useCallback(
     (sid: ID) => {
       void navigate(`/series/${sid}`)
@@ -158,6 +173,8 @@ export function LibraryPage() {
         <SeriesGrid
           items={library.items}
           query={library.query}
+          revealSeries={revealSeries}
+          onRevealed={onRevealed}
           onOpen={openSeries}
           onResume={resumeSeries}
           onEndReached={library.loadMore}
@@ -166,6 +183,8 @@ export function LibraryPage() {
         <SeriesList
           items={library.items}
           query={library.query}
+          revealSeries={revealSeries}
+          onRevealed={onRevealed}
           onOpen={openSeries}
           onEndReached={library.loadMore}
         />

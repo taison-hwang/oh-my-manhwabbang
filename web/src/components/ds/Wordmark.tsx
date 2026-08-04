@@ -38,19 +38,42 @@ interface MarkProps {
   hero: boolean
 }
 
+/**
+ * E-32: the bars stand **on a small raised card** rather than directly on the
+ * page — a surface fill, a token radius and one step of the dual-light
+ * elevation, at both sizes. It is the same move the skin makes everywhere else
+ * (a thing that was a silhouette becomes a thing that sits on something), and
+ * on the wordmark it is what stops the mark reading as five stray rectangles
+ * beside the name now that nothing else on the screen has a hard edge.
+ *
+ * The bar heights and the one accent bar are untouched: ui-spec §2.5's "exactly
+ * one solid accent field" is a rule about the mark, not about the skin.
+ */
 function Mark({ hero }: MarkProps) {
   const bars = hero ? HERO_BARS : COMPACT_BARS
   return (
     <span
       aria-hidden="true"
-      className={cn('flex flex-none items-end', hero ? 'h-[48px] gap-1' : 'h-[20px] gap-[2px]')}
+      className={cn(
+        // No fixed height: preflight makes every box `border-box`, so a height
+        // plus padding is a *content* budget, and 20px bars in a 22px box with
+        // 5px of padding would hang out of the top of the card.
+        'flex flex-none items-end bg-surface',
+        hero
+          ? 'gap-1 rounded-pill px-[14px] py-3 shadow-md'
+          : 'gap-[3px] rounded-md px-[7px] py-[5px] shadow-sm',
+      )}
     >
       {bars.map((height, i) => (
         <span
           // The bars are a fixed decorative sequence, so the position *is* the
           // identity — there is nothing else about a bar to key on.
           key={i}
-          className={cn('block', hero ? 'w-[9px]' : 'w-1', i === ACCENT_BAR ? 'bg-accent' : 'bg-ink')}
+          className={cn(
+            'block rounded-sm',
+            hero ? 'w-[9px]' : 'w-1',
+            i === ACCENT_BAR ? 'bg-accent' : 'bg-ink',
+          )}
           style={{ height }}
         />
       ))}

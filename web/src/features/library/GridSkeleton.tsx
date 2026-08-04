@@ -1,6 +1,7 @@
 import { Skeleton } from '../../components/ds/Skeleton'
 import {
   CARD_TEXT_HEIGHT,
+  LIST_CARD_CLASS,
   LIST_HEADER_BAND_CLASS,
   LIST_HEADER_WRAPPER_CLASS,
   LIST_ROW_HEIGHT,
@@ -40,7 +41,10 @@ export function GridSkeleton({ variant, count = 18 }: GridSkeletonProps) {
 
   if (variant === 'list') {
     return (
-      <div aria-hidden="true" data-testid="library-skeleton">
+      // `LIST_CARD_CLASS` is the E-32 card the loaded list is drawn in; the
+      // skeleton has to be drawn in the same one or the whole table shifts by a
+      // margin and a padding the instant data lands (see 2. above).
+      <div aria-hidden="true" data-testid="library-skeleton" className={LIST_CARD_CLASS}>
         <div className={LIST_HEADER_WRAPPER_CLASS}>
           <div className={LIST_HEADER_BAND_CLASS} data-testid="library-skeleton-header">
             {/* One text-xs line box, which is what sets the real band's height
@@ -48,11 +52,14 @@ export function GridSkeleton({ variant, count = 18 }: GridSkeletonProps) {
             <span>&nbsp;</span>
           </div>
         </div>
-        <div className="px-4 pb-4">
+        <div className="px-2">
           {cells.map((i) => (
             <div
               key={i}
-              className="flex items-center gap-3 border-b border-rule px-2 py-1"
+              // No row rule: E-32 replaced the dividers with hover chips, and a
+              // skeleton that still ruled its rows would be 1px per row taller
+              // than the list it stands in for.
+              className="flex items-center gap-3 px-2 py-1"
               style={{ height: `${LIST_ROW_HEIGHT.toString()}px` }}
             >
               <Skeleton variant="line" index={i} className="h-[36px] w-[24px]" />

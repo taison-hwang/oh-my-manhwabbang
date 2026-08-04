@@ -1,8 +1,9 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import type { ID, SeriesSummary } from '../../api/types'
 import { useBreakpoint } from '../../lib/useMediaQuery'
+import { seriesCardDomId } from '../../store/ui'
 import { SeriesCard } from './SeriesCard'
 import {
   cardHeight,
@@ -39,13 +40,25 @@ export interface SeriesGridProps {
   items: SeriesSummary[]
   /** The debounced search query, for match highlighting. */
   query: string
+  /** E-34 §2 — a series to scroll to and focus, or `null`. One-shot. */
+  revealSeries?: ID | null
+  /** Called once the reveal has been acted on, so the instruction is not replayed. */
+  onRevealed?: () => void
   onOpen: (sid: ID) => void
   onResume: (series: SeriesSummary) => void
   /** Called when the last row is rendered — the FR-LIB-007 pagination trigger. */
   onEndReached: () => void
 }
 
-export function SeriesGrid({ items, query, onOpen, onResume, onEndReached }: SeriesGridProps) {
+export function SeriesGrid({
+  items,
+  query,
+  revealSeries = null,
+  onRevealed,
+  onOpen,
+  onResume,
+  onEndReached,
+}: SeriesGridProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
   const breakpoint = useBreakpoint()
@@ -70,6 +83,56 @@ export function SeriesGrid({ items, query, onOpen, onResume, onEndReached }: Ser
   useEffect(() => {
     if (rowCount > 0 && lastIndex >= rowCount - 1) onEndReached()
   }, [lastIndex, rowCount, onEndReached])
+
+  // -------------------------------------------------------------------------
+  // The E-34 §2 reveal
+  // -------------------------------------------------------------------------
+  //
+  // **`document.getElementById` cannot do this job here.** That is the
+  // prototype's implementation and it is right for the prototype, which renders
+  // every card. This grid is windowed: at 1440 it holds about five rows of six,
+  // so the card for series #51 of the 60 already fetched is simply not in the
+  // document, and `getElementById` returns `null` for it — silently, which is
+  // the failure mode the ruling calls out. The index in `items` is the thing
+  // that always exists, so the scroll goes through the virtualiser and the
+  // element is looked up **after** it has had a frame to mount.
+  //
+  // `align: 'start'` with no offset. The prototype subtracts 96px because its
+  // scroll container is the whole library screen and its header sits inside
+  // that scroll; ours is the grid band alone (`scrollRef` below) — 이어보기 and
+  // the section header are outside it — so the top of this container is already
+  // below the chrome, and 96px would push the card that much too far down.
+  //
+  // A target that is not in `items` yet is left **armed**: `onRevealed` is not
+  // called, so the instruction survives, and this effect runs again on every
+  // page the infinite list appends. Chasing it instead — fetching pages until
+  // the series turns up — is unbounded on a 10 000-series library and can never
+  // terminate at all when the reader's `scope`/`q` exclude that series, which
+  // E-34 §1 forbids us from clearing. Nothing is focused in the meantime, so
+  // nothing is stolen.
+  //
+  // **`width > 0` is not defensiveness, it is the correctness of the row
+  // arithmetic.** `useElementWidth` measures in a *layout* effect, and React
+  // flushes a commit's pending passive effects before it runs the re-render that
+  // a layout effect's `setState` scheduled — so on the commit this grid mounts,
+  // this effect sees `width === 0`, and `columnCount(0)` is **1**. The reveal
+  // would scroll to row 50 of a one-column grid instead of row 8 of a
+  // six-column one; measured here, that put the scroller at the very bottom
+  // with the card nowhere near it. An unmeasured grid has no rows yet. The
+  // measurement lands one commit later and `columns`/`width` are dependencies,
+  // so the reveal simply happens then.
+  const [revealed, setRevealed] = useState<ID | null>(null)
+  useEffect(() => {
+    if (revealSeries === null || width <= 0) return
+    const index = items.findIndex((series) => series.id === revealSeries)
+    if (index === -1) return
+    setRevealed(revealSeries)
+    onRevealed?.()
+    virtualizer.scrollToIndex(Math.floor(index / columns), { align: 'start' })
+    requestAnimationFrame(() => {
+      document.getElementById(seriesCardDomId(revealSeries))?.focus()
+    })
+  }, [revealSeries, items, columns, width, virtualizer, onRevealed])
 
   const coverWidth = gridCoverWidth(breakpoint)
 
@@ -109,6 +172,7 @@ export function SeriesGrid({ items, query, onOpen, onResume, onEndReached }: Ser
                     series={series}
                     coverWidth={coverWidth}
                     query={query}
+                    revealed={series.id === revealed}
                     onOpen={() => {
                       onOpen(series.id)
                     }}

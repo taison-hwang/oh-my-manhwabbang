@@ -1,5 +1,8 @@
 import '@testing-library/jest-dom/vitest'
 
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
@@ -85,12 +88,16 @@ describe('Tag / FormatBadge (ui-spec §4.5, FR-LIB-009)', () => {
     expect(formatLabel('pdf')).toBe('PDF')
   })
 
-  it('renders the corner variant as an ink field pinned top-left', () => {
+  it('renders the corner variant as a pill inset from the top-left (E-32)', () => {
     render(<FormatBadge format="zip" variant="corner" />)
     const badge = screen.getByText('ZIP')
     expect(badge.className).toContain('absolute')
-    expect(badge.className).toContain('left-0')
-    expect(badge.className).toContain('top-0')
+    // Inset 8px, not flush into the 0,0 corner, and rounded — the two halves of
+    // E-32's badge change. `left-0`/`top-0` is the shipped state this replaces,
+    // so it is asserted absent rather than merely not asserted present.
+    expect(badge).toHaveClass('left-2', 'top-2', 'rounded-full')
+    expect(badge.className).not.toContain('left-0')
+    expect(badge.className).not.toContain('top-0')
     expect(badge).not.toHaveClass('tag')
   })
 
@@ -138,6 +145,77 @@ describe('Seg (ui-spec §2.3)', () => {
   })
 })
 
+/**
+ * The E-32 skin rules that live in `styles/base.css` rather than in a class list.
+ *
+ * These are asserted against the **stylesheet source**, which is the only place
+ * jsdom can see them: this suite runs with `css: false`, so `getComputedStyle`
+ * reports nothing for `.seg-opt[data-checked='true']` and a test that read a
+ * resolved colour would pass whatever the rule said. `tokens.test.ts` parses
+ * `tokens.css` for the same reason.
+ *
+ * Every one of them is a case where the *shipped* value is invisible rather than
+ * merely different, which is why they are pinned at all.
+ */
+describe('E-32 markers in the component stylesheet', () => {
+  const BASE_CSS = readFileSync(resolve(process.cwd(), 'src/styles/base.css'), 'utf8')
+
+  /**
+   * The declarations of the first rule whose selector list contains `selector`,
+   * searching from `after` — the size scale writes `h6` twice, once inside the
+   * `h1, … h6` group selector and once as its own rule, and it is the second
+   * that carries the section-label style.
+   */
+  function block(selector: string, after = 0): string {
+    const at = BASE_CSS.indexOf(selector, after)
+    expect(at, `${selector} is not in base.css`).toBeGreaterThan(-1)
+    const open = BASE_CSS.indexOf('{', at)
+    const close = BASE_CSS.indexOf('}', open)
+    return BASE_CSS.slice(open + 1, close)
+  }
+
+  it('rings the checked segment in --color-hot — without it dark has no selection', () => {
+    // The fill is `--color-accent`, a deep teal, and the viewer ground it sits
+    // on is #263B38: ~1.2:1. On the dark theme the ring is not decoration, it is
+    // the entire difference between a selected option and an unselected one.
+    expect(block(".seg-opt[data-checked='true']")).toContain(
+      'inset 0 0 0 2px var(--color-hot)',
+    )
+  })
+
+  it('rings the selected sidebar row in --color-hot, not a 3px accent rail', () => {
+    const rule = block(".sidebar-nav-row[data-active='true']")
+    expect(rule).toContain('inset 0 0 0 2px var(--color-hot)')
+    // The rail is what the ring replaces; it must not come back, because the
+    // accent it was drawn in is 1.09:1 on the dark ground.
+    expect(rule).not.toContain('border-left')
+  })
+
+  it('turns the sidebar edge and the top bar rule into elevation', () => {
+    const sidebar = block('.sidebar {')
+    expect(sidebar).toContain('box-shadow: var(--shadow-md)')
+    expect(sidebar).not.toContain('border-right')
+  })
+
+  it('gives the row hover chip a dark-theme override, because the ramps do not flip', () => {
+    // `--color-neutral-100` is #F7F3EA in *both* themes — it is an absolute
+    // lightness scale (ui-spec §1.4). Hovering a row in the dark theme with it
+    // paints a white bar, so the dark ground takes `--row-hover` instead.
+    expect(block('.row-chip:hover')).toContain('var(--color-neutral-100)')
+    expect(block("[data-theme='dark'] .row-chip:hover")).toContain('var(--row-hover)')
+  })
+
+  it('keeps the section heading a heading — 16px on the tag, not a <div>', () => {
+    // E-32 §4: the prototype's `<h6>` → `<div>` swap deletes the document
+    // outline and breaks `e2e/06-settings.spec.ts`'s `getByRole('heading')`.
+    const h6 = block('h6 {', BASE_CSS.indexOf('h5 {'))
+    expect(h6).toContain('font-size: 16px')
+    // 13px + 0.08em + uppercase is the label style E-32 replaces.
+    expect(h6).not.toContain('text-transform')
+    expect(h6).not.toContain('13px')
+  })
+})
+
 describe('Radio', () => {
   it('exposes the dot, one of the only two circles in the product', () => {
     const { container } = render(<Radio label="라이트" checked readOnly />)
@@ -159,10 +237,40 @@ describe('ProgressBar (ui-spec §9 #5)', () => {
     expect(container.querySelector('[role=progressbar] > div')).toHaveClass('bg-ink')
   })
 
-  it('uses the heavier trough when it sits on top of a cover', () => {
-    render(<ProgressBar value={0.5} height={4} track="over-art" label="x" />)
-    const bar = screen.getByRole('progressbar', { name: 'x' })
-    expect(bar).toHaveClass('bg-fill-track-2', 'h-[4px]')
+  /**
+   * The fill is `--accent-fill`, never `--color-accent`.
+   *
+   * E-32 turned the accent into #17595B, which is **1.09:1** on `--fill-track`
+   * in the dark theme: a progress bar that renders as an empty trough at every
+   * value, on the library list, the series hero, every continue card and every
+   * volume row at once. `--accent-fill` is the token that moves up the ramp on
+   * dark (3.86) and stays put on light (5.78).
+   *
+   * The assertion is on the **class name**, not on a resolved colour: this suite
+   * runs with `css: false`, so `getComputedStyle` would report the same empty
+   * string for `bg-accent` and `bg-accent-fill` and the test would pass either
+   * way. Naming the token is the only thing jsdom can actually see.
+   */
+  it('fills with --accent-fill, which is the accent that survives the dark ramp', () => {
+    const { container } = render(<ProgressBar value={0.34} />)
+    const fill = container.querySelector('[role=progressbar] > div')
+    expect(fill).toHaveClass('bg-accent-fill')
+    // `classList.contains` matches whole tokens, so this does not trip over
+    // `bg-accent-fill` containing the string `bg-accent`.
+    expect(fill?.classList.contains('bg-accent')).toBe(false)
+  })
+
+  it('is a pill in a recessed channel, and 5px of flat rail over artwork (E-32)', () => {
+    render(<ProgressBar value={0.5} height={5} track="over-art" label="x" />)
+    const overArt = screen.getByRole('progressbar', { name: 'x' })
+    expect(overArt).toHaveClass('bg-fill-track-2', 'h-[5px]', 'overflow-hidden')
+    // No inset highlight on a photograph, and no radius on a full-bleed rail.
+    expect(overArt.classList.contains('shadow-inset')).toBe(false)
+    expect(overArt.classList.contains('rounded-full')).toBe(false)
+
+    render(<ProgressBar value={0.5} label="y" />)
+    const inRow = screen.getByRole('progressbar', { name: 'y' })
+    expect(inRow).toHaveClass('h-[6px]', 'rounded-full', 'bg-fill-track', 'shadow-inset')
   })
 
   it('clamps out-of-range values instead of overflowing the trough', () => {
@@ -212,6 +320,16 @@ describe('Skeleton (ui-spec §4.5)', () => {
   it('holds the 2:3 box so the skeleton has zero layout shift', () => {
     const { container } = render(<Skeleton variant="cover" />)
     expect(container.firstElementChild).toHaveClass('aspect-[2/3]')
+  })
+
+  it('wears the skin of the thing it stands in for (E-32)', () => {
+    // A square-cornered shimmer next to a rounded, recessed cover well reads as
+    // a rendering fault rather than as loading.
+    const { container: cover } = render(<Skeleton variant="cover" />)
+    expect(cover.firstElementChild).toHaveClass('rounded-md', 'shadow-inset')
+
+    const { container: line } = render(<Skeleton variant="line" width="84%" />)
+    expect(line.firstElementChild).toHaveClass('rounded-full')
   })
 })
 
@@ -333,5 +451,22 @@ describe('Wordmark', () => {
     // Five bars, and exactly one of them is the accent field (ui-spec §2.5).
     expect(mark?.children).toHaveLength(5)
     expect(mark?.querySelectorAll('.bg-accent')).toHaveLength(1)
+  })
+
+  it('stands the bars on a small raised card, at both sizes (E-32)', () => {
+    const { container: hero, unmount } = render(<Wordmark variant="hero" />)
+    expect(hero.querySelector('[aria-hidden="true"]')).toHaveClass(
+      'bg-surface',
+      'rounded-pill',
+      'shadow-md',
+    )
+    unmount()
+
+    const { container: compact } = render(<Wordmark variant="compact" />)
+    expect(compact.querySelector('[aria-hidden="true"]')).toHaveClass(
+      'bg-surface',
+      'rounded-md',
+      'shadow-sm',
+    )
   })
 })

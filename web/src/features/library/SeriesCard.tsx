@@ -7,6 +7,7 @@ import { FormatBadge } from '../../components/ds/FormatBadge'
 import { ProgressBar } from '../../components/ds/ProgressBar'
 import { cn } from '../../lib/cn'
 import { formatBytes, formatVolumeCount } from '../../lib/format'
+import { seriesCardDomId } from '../../store/ui'
 import { CARD_TEXT_HEIGHT, highlightParts } from './useLibrary'
 
 /**
@@ -36,11 +37,20 @@ export interface SeriesCardProps {
   coverWidth: ThumbWidth
   /** The active search query, for match highlighting (FR-LIB-006). */
   query: string
+  /** E-34 §2 — this is the card the viewer came back to; ring it. */
+  revealed?: boolean
   onOpen: () => void
   onResume: () => void
 }
 
-export function SeriesCard({ series, coverWidth, query, onOpen, onResume }: SeriesCardProps) {
+export function SeriesCard({
+  series,
+  coverWidth,
+  query,
+  revealed = false,
+  onOpen,
+  onResume,
+}: SeriesCardProps) {
   const cover = useCoverImage(series.id, {
     w: coverWidth,
     v: series.cover_cv,
@@ -53,8 +63,35 @@ export function SeriesCard({ series, coverWidth, query, onOpen, onResume }: Seri
   const parts = highlightParts(series.name, query)
 
   return (
-    <div className="flex flex-col">
-      <div className="group relative aspect-[2/3] overflow-hidden border border-rule bg-surface">
+    // `tabIndex={-1}`: the root is a plain `div` and E-34 §2's reveal focuses
+    // it, so it has to be programmatically focusable without entering the tab
+    // order — the cover button and the two overlay buttons inside it are the
+    // card's keyboard surface and stay so. `outline-none` because the ring the
+    // ruling asks for is the inset one on the cover below, not the UA's.
+    <div
+      id={seriesCardDomId(series.id)}
+      tabIndex={-1}
+      {...(revealed ? { 'data-revealed': 'true' } : {})}
+      className="flex flex-col outline-none"
+    >
+      <div
+        // E-32: a 1px hairline becomes a rounded, raised cover that lifts 3px
+        // under the pointer.
+        className="group relative aspect-[2/3] overflow-hidden rounded-md bg-surface shadow-md transition-[box-shadow,transform] duration-150 hover:-translate-y-[3px] hover:shadow-lg"
+        // An **inset** ring (E-34 §2): the cover is `overflow-hidden` inside a
+        // grid cell with no room around it, so an outset ring would be clipped
+        // by the cell and overlap its neighbours.
+        //
+        // It has to be **composed with the elevation**, not written over it: an
+        // inline `box-shadow` beats the `shadow-md` class, so ringing a card
+        // used to flatten it onto the page. This is the same pair the prototype
+        // computes (`var(--shadow-md), inset 0 0 0 2px var(--color-hot)`), and
+        // the hover class still wins on hover because `:hover` is not what is
+        // being overridden here — the reveal ends the moment the reader moves.
+        {...(revealed
+          ? { style: { boxShadow: 'var(--shadow-md), inset 0 0 0 2px var(--color-hot)' } }
+          : {})}
+      >
         <button
           type="button"
           className="absolute inset-0 block h-full w-full cursor-pointer"
@@ -74,8 +111,11 @@ export function SeriesCard({ series, coverWidth, query, onOpen, onResume }: Seri
 
         <FormatBadge format={series.kind} variant="corner" className="pointer-events-none" />
 
+        {/* E-32: a pill inset 8px from the corner, like the format badge
+            opposite it. `--on-accent`, not `--color-bg`: the ground is the
+            accent fill, and `--color-bg` on it is 1.48:1 in the dark theme. */}
         {done && (
-          <span className="pointer-events-none absolute right-0 top-0 bg-accent px-[6px] py-[2px] text-2xs tracking-[.08em] text-bg">
+          <span className="pointer-events-none absolute right-2 top-2 rounded-full bg-accent px-2 py-[3px] text-2xs font-semibold tracking-[.06em] text-on-accent shadow-sm">
             완독
           </span>
         )}
@@ -83,7 +123,7 @@ export function SeriesCard({ series, coverWidth, query, onOpen, onResume }: Seri
         {!done && ratio > 0 && (
           <ProgressBar
             value={ratio}
-            height={4}
+            height={5}
             track="over-art"
             label={series.name}
             className="pointer-events-none absolute inset-x-0 bottom-0"
@@ -125,7 +165,9 @@ export function SeriesCard({ series, coverWidth, query, onOpen, onResume }: Seri
             touch device (`docs/ui-shots/library-grid-card-hover-1440.png` is
             one such card). Changing that is a product ruling, not a
             component's call; escalated with no ruling in decisions.md yet. */}
-        <div className="pointer-events-none absolute inset-0 flex flex-col justify-end gap-1 bg-scrim-cover p-2 opacity-0 transition-opacity duration-[120ms] group-focus-within:opacity-100 group-hover:opacity-100">
+        {/* E-32: `.cover-scrim` (base.css) replaces the flat 72 % wash with a
+            vertical gradient, and the fade goes 120ms → 140ms. */}
+        <div className="cover-scrim pointer-events-none absolute inset-0 flex flex-col justify-end gap-1 p-2 opacity-0 transition-opacity duration-[140ms] group-focus-within:opacity-100 group-hover:opacity-100">
           <Button
             variant="primary"
             block

@@ -7,22 +7,19 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import globals from 'globals'
 import tseslint from 'typescript-eslint'
 
-/** Radius scale utilities that cannot exist: tailwind.config.ts overrides
- *  `borderRadius` to {none, DEFAULT, full}, so these would silently no-op
- *  (decisions.md D-40). `rounded`, `rounded-none` and `rounded-full` are legal. */
-const bannedRadius = String.raw`\brounded-(sm|md|lg|xl|2xl|3xl|\[)`
+/** Radius utilities that cannot exist: tailwind.config.ts overrides
+ *  `borderRadius` to the `--radius-*` token scale {none, DEFAULT, sm, md, lg,
+ *  pill, full}, so the xl family and every arbitrary `rounded-[13px]` would
+ *  silently no-op (decisions.md D-40 as amended by E-32). The token steps,
+ *  `rounded`, `rounded-none` and `rounded-full` are legal. */
+const bannedRadius = String.raw`\brounded(-[a-z]+)?-(2xl|3xl|xl|\[)`
+
+const radiusMessage =
+  'The radius scale is closed (D-40 as amended by E-32): tailwind.config.ts overrides borderRadius to the --radius-* tokens {none, DEFAULT, sm, md, lg, pill, full}, so rounded-xl|2xl|3xl and arbitrary radii do not exist. Add a token in tokens.css, not a number here.'
 
 const noRadiusUtilities = [
-  {
-    selector: `Literal[value=/${bannedRadius}/]`,
-    message:
-      'Zero corner radius is a design decision (D-40): tailwind.config.ts overrides borderRadius to {none, DEFAULT, full}, so rounded-sm|md|lg|xl|2xl|3xl and arbitrary radii do not exist.',
-  },
-  {
-    selector: `TemplateElement[value.raw=/${bannedRadius}/]`,
-    message:
-      'Zero corner radius is a design decision (D-40): tailwind.config.ts overrides borderRadius to {none, DEFAULT, full}, so rounded-sm|md|lg|xl|2xl|3xl and arbitrary radii do not exist.',
-  },
+  { selector: `Literal[value=/${bannedRadius}/]`, message: radiusMessage },
+  { selector: `TemplateElement[value.raw=/${bannedRadius}/]`, message: radiusMessage },
 ]
 
 const noDefaultExport = {

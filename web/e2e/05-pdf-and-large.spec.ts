@@ -43,36 +43,98 @@ import {
 /** §6.3 step 6.9's target page, clamped for the synthetic twin. */
 const JUMP_TARGET = 1400
 /**
- * The range thumb's width, from ui-spec §2.4 as `web/src/styles/base.css`
- * implements it: `width:12px` normally, `width:16px` below 768 where the whole
- * control grows to a 44px touch box.
+ * Aiming at the page slider.
  *
- * It is load-bearing for *aiming* at the slider, not only for painting it. A
- * native `<input type="range">` — which is exactly what ui-spec §6.7 item 2
- * prescribes — has to keep the thumb inside its own box, so the value under a
- * pointer is read off the **thumb centre's travel**: `width − thumb`, inset
- * half a thumb at each end. Aiming with the border box instead asks the control
- * for a position it cannot occupy, and the miss is
+ * A native `<input type="range">` — which is exactly what ui-spec §6.7 item 2
+ * prescribes — keeps the thumb inside its own box, so the value under a pointer
+ * is read off the **thumb centre's travel**, not the border box: `width − thumb`,
+ * inset half a thumb at each end. Aiming with the border box asks the control
+ * for a position it cannot occupy, and the miss is worst at the ends and worse
+ * the narrower the slider.
  *
- *     (total − 1) × thumb × (f − ½) / (width − thumb)
+ * This file used to carry the thumb width as a pair of constants —
+ * `SLIDER_THUMB_PX = 12`, `SLIDER_THUMB_TOUCH_PX = 16` — copied out of
+ * `base.css`. **Ruling E-32 grew the thumb to 18px (26 below the touch
+ * breakpoint) and the copy stayed at 12.** The constants did not fail; they went
+ * stale, and every drag landed ~3px off, which is §6.5 exactly: the check
+ * restated the thing it was supposed to be checking. A number that has to agree
+ * with a stylesheet will eventually disagree with it, silently, and only on the
+ * projects where the tolerance happens to be tight enough to notice — here,
+ * laptop-1024 and tablet-768, while desktop-1440 stayed green.
  *
- * — zero at the mid-point, worst at the ends, and worse the narrower the
- * slider. At f = 1399/1539 this test measured 6 · 10 · 14 · 47 pages at 1440 ·
- * 1024 · 768 · 400, against a control that was landing on the right page every
- * time. That was the test's arithmetic, not the slider's.
- *
- * Which is also why this is read off the viewport rather than fixed: a ruler
- * that says 12 while the stylesheet paints 16 is the same arithmetic error by
- * another route, and it only shows up on the one narrow project.
+ * So nothing is restated any more. `calibrateSlider` probes the shipped control
+ * at two interior points and fits the straight line through them; whatever the
+ * thumb is, that line is what the slider actually does. Reading the thumb
+ * directly is not an option — Chrome answers
+ * `getComputedStyle(el, '::-webkit-slider-thumb')` with the *input's* box
+ * (measured: 130×44 for a 130px-wide input), not the thumb's.
  */
-const SLIDER_THUMB_PX = 12
-const SLIDER_THUMB_TOUCH_PX = 16
-/** The <768 breakpoint `base.css` grows the slider at. */
-const SLIDER_TOUCH_MAX_WIDTH = 767.98
+interface SliderMapping {
+  /** x of the first probe, and the page it committed. */
+  originX: number
+  originPage: number
+  /** Pages per CSS pixel along the track, measured. */
+  pagesPerPx: number
+  /** The thumb centre's travel, derived — what `jumpTolerance` is a function of. */
+  trackPx: number
+  y: number
+}
 
-function sliderThumbPx(page: Page): number {
-  const width = page.viewportSize()?.width ?? 1_440
-  return width <= SLIDER_TOUCH_MAX_WIDTH ? SLIDER_THUMB_TOUCH_PX : SLIDER_THUMB_PX
+/** Press and release at one point, and report the page the control committed. */
+async function commitAt(page: Page, x: number, y: number): Promise<number> {
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+  await page.mouse.move(x, y)
+  await page.mouse.up()
+  return currentPage(page)
+}
+
+async function sliderBox(page: Page): Promise<{ x: number; y: number; width: number; height: number }> {
+  // The bars are never unmounted — they fade to `pointer-events:none`. A drag
+  // aimed at a faded bar would land on the stage's tap zone and turn a page
+  // instead, so the visible state is a precondition, not a nicety.
+  await wakeChrome(page)
+  await expect(page.locator('[data-role="viewer-bottom-bar"]')).toHaveAttribute(
+    'data-visible',
+    'true',
+  )
+  const slider = page.locator('[data-role="page-slider"] input[type="range"]')
+  const box = await slider.boundingBox()
+  expect(box, 'the page slider must be laid out before it can be dragged').not.toBeNull()
+  return {
+    x: box?.x ?? 0,
+    y: (box?.y ?? 0) + (box?.height ?? 0) / 2,
+    width: box?.width ?? 0,
+    height: box?.height ?? 0,
+  }
+}
+
+/**
+ * Measure the control's own pixel→page mapping from two interior probes.
+ *
+ * 25 % and 75 % are chosen because both are inside the thumb's travel at every
+ * project width, so neither saturates against an end stop — a probe that
+ * saturates would report a slope of zero and make every later aim infinite.
+ * That is asserted rather than assumed.
+ */
+async function calibrateSlider(page: Page, total: number): Promise<SliderMapping> {
+  const box = await sliderBox(page)
+  const x1 = box.x + box.width * 0.25
+  const x2 = box.x + box.width * 0.75
+  const p1 = await commitAt(page, x1, box.y)
+  const p2 = await commitAt(page, x2, box.y)
+  expect(
+    p2 - p1,
+    'the two calibration probes must land on different pages — a slope of zero means a probe saturated against an end stop',
+  ).toBeGreaterThan(0)
+  const pagesPerPx = (p2 - p1) / (x2 - x1)
+  return {
+    originX: x1,
+    originPage: p1,
+    pagesPerPx,
+    trackPx: (total - 1) / pagesPerPx,
+    y: box.y,
+  }
 }
 /**
  * §6.3 step 6.9's virtualisation budget. Counted in **cells**, which is the
@@ -109,48 +171,36 @@ function jumpTolerance(trackPx: number, total: number): number {
 }
 
 /**
- * Drag the page slider to `target`, and report the page it committed on
- * together with the pixel length of track there was to aim at.
+ * Drag the page slider to `target` through a mapping `calibrateSlider` measured,
+ * and report the page it committed on.
  *
- * The x deliberately insets by `SLIDER_THUMB_PX / 2` — see that constant for
- * why the border box is the wrong ruler. Everything else is the product's own
- * contract: the page is committed on pointer-**up** only (`PageSlider`), so the
- * counter cannot be read before then.
+ * The aim is `originX + (target − originPage) / pagesPerPx` — the line through
+ * the two probes, so the thumb inset is already in it and nothing here has to
+ * know what the thumb is. Everything else is the product's own contract: the
+ * page is committed on pointer-**up** only (`PageSlider`), so the counter cannot
+ * be read before then.
  */
-async function dragSliderTo(
-  page: Page,
-  target: number,
-  total: number,
-): Promise<{ landed: number; trackPx: number }> {
+async function dragSliderTo(page: Page, map: SliderMapping, target: number): Promise<number> {
   // The bars are never unmounted — they fade to `pointer-events:none`. A drag
   // aimed at a faded bar would land on the stage's tap zone and turn a page
-  // instead, so the visible state is a precondition, not a nicety.
-  await wakeChrome(page)
-  await expect(page.locator('[data-role="viewer-bottom-bar"]')).toHaveAttribute(
-    'data-visible',
-    'true',
-  )
+  // instead, so the visible state is a precondition, not a nicety. The chrome
+  // auto-hides on a timer, so this is re-established per drag rather than once.
+  const box = await sliderBox(page)
 
-  const slider = page.locator('[data-role="page-slider"] input[type="range"]')
-  const box = await slider.boundingBox()
-  expect(box, 'the page slider must be laid out before it can be dragged').not.toBeNull()
-  const thumbPx = sliderThumbPx(page)
-  const trackPx = (box?.width ?? 0) - thumbPx
-  expect(trackPx, 'a slider narrower than its own thumb cannot be aimed at').toBeGreaterThan(0)
+  const x = map.originX + (target - map.originPage) / map.pagesPerPx
+  expect(
+    x,
+    'the aim must land inside the control that was calibrated — a target outside it is a bug in the maths, not a miss',
+  ).toBeGreaterThanOrEqual(box.x - 1)
+  expect(x).toBeLessThanOrEqual(box.x + box.width + 1)
 
-  const x = (box?.x ?? 0) + thumbPx / 2 + (trackPx * (target - 1)) / (total - 1)
-  const y = (box?.y ?? 0) + (box?.height ?? 0) / 2
-  await page.mouse.move(x, y)
-  await page.mouse.down()
-  await page.mouse.move(x, y)
-  await page.mouse.up()
-
-  const landed = await currentPage(page)
+  const landed = await commitAt(page, x, map.y)
   // The other half of ui-spec §6.7, and the half no tolerance can cover: the
   // control must commit the page it is displaying. A commit path that shipped
   // some other number would still satisfy the geometry above.
+  const slider = page.locator('[data-role="page-slider"] input[type="range"]')
   expect(Number(await slider.inputValue()), 'the slider commits the page it shows').toBe(landed)
-  return { landed, trackPx }
+  return landed
 }
 
 test.beforeEach(async ({ page }) => {
@@ -324,14 +374,14 @@ test('6.9 · a jump into the 1 540-page archive loads, and the strip is virtuali
   // where the thumb inset contributes exactly nothing, so a miss there is a
   // scale error rather than an aiming one, and the tenth and 1 400 sit on
   // opposite sides of it.
+  const map = await calibrateSlider(page, total)
   let landed = 0
   for (const probe of [Math.round(total * 0.1), Math.round(total * 0.5), target]) {
-    const drag = await dragSliderTo(page, probe, total)
-    landed = drag.landed
-    const tolerance = jumpTolerance(drag.trackPx, total)
+    landed = await dragSliderTo(page, map, probe)
+    const tolerance = jumpTolerance(map.trackPx, total)
     expect(
       Math.abs(landed - probe),
-      `the drag should land on ~${String(probe)}; ±${String(tolerance)} page(s) is one pixel of this viewport's ${String(Math.round(drag.trackPx))}px track plus step=1`,
+      `the drag should land on ~${String(probe)}; ±${String(tolerance)} page(s) is one pixel of this viewport's measured ${String(Math.round(map.trackPx))}px track plus step=1`,
     ).toBeLessThanOrEqual(tolerance)
   }
   // `target` is the last probe, so `landed` below is §6.3 step 6.9's own jump.

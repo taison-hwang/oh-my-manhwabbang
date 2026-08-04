@@ -126,7 +126,7 @@ FROZEN_DEPS := \
 	golang.org/x/crypto:v0.54.0
 
 .PHONY: all web build build-go dev test test-int bench lint check-readonly contract \
-        fmt tidy release e2e e2e-synthetic clean help
+        fmt tidy release e2e e2e-synthetic gates web-gates clean help
 
 all: build
 
@@ -228,6 +228,7 @@ bench:
 # internal/thumbs/avif_off.go would otherwise rot unnoticed.
 lint:
 	@scripts/check-readonly.sh
+	@scripts/check-gates.sh
 	$(BUILDENV) $(GO) vet ./...
 	@echo ">> vet of the SHIPPED tag set (-tags \"$(TAGS)\")"
 	$(BUILDENV) $(GO) vet -tags "$(TAGS)" ./...
@@ -358,6 +359,103 @@ e2e:
 ## for a machine where the media volume is not mounted (D-49).
 e2e-synthetic:
 	@scripts/e2e.sh --synthetic $(E2E_ARGS)
+
+## web-gates — the four frontend gates, which live in web/package.json and are
+## NOT reachable from `make lint` or `make test`: `make lint` does not run
+## eslint and `make test` does not run vitest. Kept as its own target so the
+## frontend loop is one word, and so `gates` below has something to name.
+web-gates:
+	cd web && $(PNPM) typecheck && $(PNPM) lint && $(PNPM) test && $(PNPM) build
+
+## gates — every gate this repository has, in one target.
+##
+## The reason this exists: NOTHING depended on `e2e-synthetic`, and there is no
+## CI, so running it was purely a matter of human memory. It sat broken through
+## three consecutive sessions that each reported "all gates green" — nobody ran
+## it, so nothing failed, and the summaries read that silence as agreement
+## (docs/HANDOFF.md §4.3, §6.5). A gate that exists but is never run does not go
+## green; it says nothing at all.
+##
+##   make gates                 all five
+##   make gates GATES_E2E=0     skip `make e2e`, which needs the media volume
+##
+## Ordered so a failure surfaces soonest — the frontend four take seconds to a
+## couple of minutes, `make test` runs the Go suite TWICE, and the two E2E
+## rounds are minutes each. That is a different order from the one HANDOFF §6
+## prints; the numbering below follows §6's names so cross-references still read.
+##
+## Three rules this target must keep:
+##   * no pipes around a gate — `make test | tail; echo $$?` reports tail's exit
+##     code, not make's (§6), and that nearly shipped an unverified green;
+##   * the closing banner names EVERY gate and whether it RAN or was SKIPPED.
+##     A skipped gate must never be readable as a passed one (§6.5, last line);
+##   * each gate records its own name only after it returns 0, and the banner
+##     prints what was recorded — so a gate that FAILS aborts before its record
+##     exists, and GATES_TOTAL refuses to print a result when the count is off.
+##     Both records are `&&`-joined onto the gate's own recipe line.
+##
+##     Read that as exactly what it is and no more. A review found the first
+##     version of this comment claiming the banner was "derived, not asserted",
+##     which it cannot be: the record lives in the same recipe as the gate, so
+##     an edit to the recipe can drop the gate and keep the record. Splitting
+##     them across two lines made a one-line deletion enough; `&&` closes that
+##     accident and nothing closes the deliberate rewrite. **No bookkeeping a
+##     recipe does about itself survives the recipe being rewritten.**
+##
+##     What actually holds the line is `scripts/check-gates.sh`, which reads
+##     this Makefile as an artefact from outside — same shape as
+##     check-readonly.sh and contractcheck, and for the same reason. It runs in
+##     `make lint`. Its header explains what it asserts.
+##
+##     The log is written outside the repository on purpose: e2e step 9 fails on
+##     new files under the tree, and that check is correct.
+GATES_E2E  ?= 1
+GATES_TOTAL := 5
+GATES_LOG   := $(shell mktemp -u "$${TMPDIR:-/tmp}/shelf-gates-XXXXXX.log")
+
+gates:
+	@rm -f '$(GATES_LOG)'
+	@echo ''
+	@echo '=== gate 3/5 · web: typecheck · lint · test · build ==================='
+	@$(MAKE) --no-print-directory web-gates && echo '3/5  web typecheck/lint/test/build   RAN' >> '$(GATES_LOG)'
+	@echo ''
+	@echo '=== gate 1/5 · make lint ============================================='
+	@$(MAKE) --no-print-directory lint && echo '1/5  make lint                       RAN' >> '$(GATES_LOG)'
+	@echo ''
+	@echo '=== gate 2/5 · make test ============================================='
+	@$(MAKE) --no-print-directory test && echo '2/5  make test                       RAN' >> '$(GATES_LOG)'
+	@echo ''
+	@echo '=== gate 4/5 · make e2e-synthetic ===================================='
+	@$(MAKE) --no-print-directory e2e-synthetic && echo '4/5  make e2e-synthetic              RAN' >> '$(GATES_LOG)'
+	@echo ''
+	@if [ "$(GATES_E2E)" = "0" ]; then \
+		echo '=== gate 5/5 · make e2e · SKIPPED ===================================='; \
+		echo '5/5  make e2e                        SKIPPED (GATES_E2E=0)' >> '$(GATES_LOG)'; \
+	else \
+		echo '=== gate 5/5 · make e2e ============================================='; \
+		$(MAKE) --no-print-directory e2e && echo '5/5  make e2e                        RAN' >> '$(GATES_LOG)'; \
+	fi
+	@echo ''
+	@echo '  ────────────────────────────────────────────────────────────'
+	@sort '$(GATES_LOG)' | sed 's/^/   /'
+	@echo '  ────────────────────────────────────────────────────────────'
+	@ran=$$(grep -c 'RAN$$' '$(GATES_LOG)' || true); \
+	skipped=$$(grep -c 'SKIPPED' '$(GATES_LOG)' || true); \
+	total=$$((ran + skipped)); \
+	rm -f '$(GATES_LOG)'; \
+	if [ "$$total" -ne $(GATES_TOTAL) ]; then \
+		echo "   $$total gate outcomes recorded, expected $(GATES_TOTAL)."; \
+		echo "   The banner is derived from what actually ran, so this means a"; \
+		echo "   gate was added or removed without updating GATES_TOTAL. Refusing"; \
+		echo "   to report a result — an incomplete run must not read as a green."; \
+		echo ''; \
+		exit 1; \
+	elif [ "$$skipped" -gt 0 ]; then \
+		echo "   $$ran of $(GATES_TOTAL) gates ran, $$skipped SKIPPED. This is NOT a full green."; \
+	else \
+		echo "   All $(GATES_TOTAL) gates ran and passed."; \
+	fi
+	@echo ''
 
 clean:
 	rm -rf dist web/dist/*

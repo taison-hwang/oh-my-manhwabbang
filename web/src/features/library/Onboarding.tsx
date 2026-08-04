@@ -132,7 +132,11 @@ export function Onboarding({ configPath, rootEditingEnabled, onOpenSettings }: O
             }}
           />
         )}
-        <div className="mt-4 flex w-full flex-col gap-[2px] border-t-2 border-rule-strong pt-3 text-sm tracking-[.02em] text-ink-dim">
+        {/* E-32: the 2px rule above the paths becomes a recessed well — the
+            paths are a quotation of the filesystem, not a footnote to the copy
+            above them, and the skin says "read-only input" with `--shadow-inset`
+            exactly as `.input` does. */}
+        <div className="mt-3 flex w-full flex-col gap-[3px] rounded-lg bg-fill-subtle p-3 text-sm tracking-[.02em] text-ink-dim shadow-inset">
           {/* Rendered only when there is something to render: an empty `<span>`
               would occupy the line where a path belongs and would satisfy any
               test that looked for the element rather than the value. */}

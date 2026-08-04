@@ -22,10 +22,12 @@ import type {
   Settings,
   SettingsUpdate,
 } from '../../api/types'
+import { queryKeys } from '../../api/queries'
 import { resetBasePath } from '../../api/urls'
 import { matchRange } from '../../lib/chosung'
 import { useUiStore } from '../../store/ui'
 import { LibraryPage } from './LibraryPage'
+import { LIST_CARD_CLASS } from './useLibrary'
 
 /**
  * The Home / Library screen against MSW (impl-plan §6.1, WP-09).
@@ -373,7 +375,15 @@ function stubRects(height: number): void {
   vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(rect)
 }
 
-function renderLibrary(): void {
+/**
+ * Renders the library screen.
+ *
+ * Returns the `QueryClient` so a test can invalidate a key the way the product
+ * does — `invalidateRootState` in `api/queries.ts` invalidates `roots` *and*
+ * `settings` on every root add/remove. Callers that do not need it may ignore
+ * the return value.
+ */
+function renderLibrary(): QueryClient {
   const client = new QueryClient({
     // `retry` here is advisory only — `queries.ts` pins its own `retryQuery` on
     // every hook, and a 5xx is retried twice on purpose. `retryDelay: 0` is
@@ -395,6 +405,7 @@ function renderLibrary(): void {
       </MemoryRouter>
     </QueryClientProvider>,
   )
+  return client
 }
 
 /** Waits for the first list *and* the settings hydration to have landed. */
@@ -506,6 +517,27 @@ describe('grid mode (FR-LIB-001, FR-LIB-008)', () => {
     expect(bars).toHaveLength(1)
     expect(bars[0]).toHaveAttribute('aria-valuenow', '34')
     expect(bars[0]).toHaveAttribute('aria-label', MONSTER.name)
+  })
+
+  /**
+   * E-32's structural swap on the card, asserted on the class list.
+   *
+   * The 1px hairline round every cover became elevation plus a hover lift. What
+   * is worth pinning is not the look but the pair of things that were *removed*:
+   * a `border` on a cover that now has a radius clips the artwork at the corners
+   * and reads as a mis-render, and `hover:border-accent` — which is what the
+   * continue card and the volume tile used to do — is a deep teal at ~1.2:1
+   * against the surface in the dark theme, i.e. a hover state that does nothing.
+   */
+  it('gives the cover elevation and a lift instead of a hairline (E-32)', async () => {
+    renderLibrary()
+    await waitForLibrary()
+
+    const cover = await screen.findByRole('button', { name: MONSTER.name })
+    const box = cover.parentElement
+    expect(box).toHaveClass('rounded-md', 'shadow-md', 'hover:shadow-lg')
+    expect(box?.classList.contains('border')).toBe(false)
+    expect(box?.classList.contains('border-rule')).toBe(false)
   })
 
   it('lays out the auto-fill column count of the inner grid box (acceptance 1, ui-spec §7)', async () => {
@@ -648,9 +680,9 @@ describe('grid mode (FR-LIB-001, FR-LIB-008)', () => {
     const scrim = parentOf(detail, 'the 상세 button')
     // Named, so a DOM refactor cannot leave the assertions below pointed at
     // some other div and still passing.
-    expect(scrim.className, 'both buttons sit inside the inset-0 scrim').toContain(
-      'bg-scrim-cover',
-    )
+    // `.cover-scrim` (base.css), not `bg-scrim-cover`: E-32 turns the flat 72 %
+    // wash into a vertical gradient, which no Tailwind colour utility can name.
+    expect(scrim.className, 'both buttons sit inside the inset-0 scrim').toContain('cover-scrim')
     expect(scrim.className).toContain('absolute inset-0')
     expect(scrim).toContainElement(primary)
 
@@ -735,6 +767,32 @@ describe('list mode (FR-LIB-003)', () => {
     expect(within(row).getByText('4.0 GB')).toBeInTheDocument()
     expect(within(row).getByText('2017-02-11')).toBeInTheDocument()
     expect(within(row).getByText('34%')).toBeInTheDocument()
+  })
+
+  /**
+   * E-32: the rows lose their 1px dividers and gain `.row-chip`, and the whole
+   * table is drawn inside one raised card.
+   *
+   * `.row-chip` carries the hover *and* the radius, and it exists as a class
+   * rather than as `hover:bg-neutral-100` at the call site because the light
+   * hover is a ramp step and the ramps do not flip with the theme — see the
+   * rule and its dark override in base.css, pinned in `ds.test.tsx`. A row that
+   * keeps `border-b` here is a row that draws a hairline across a card that has
+   * no other hard edge on it.
+   */
+  it('draws rows as hover chips inside one card, with no dividers (E-32)', async () => {
+    renderLibrary()
+    await waitForLibrary()
+
+    const row = await screen.findByRole('button', { name: MONSTER.name })
+    expect(row).toHaveClass('row-chip')
+    expect(row.classList.contains('border-b')).toBe(false)
+    expect(row.classList.contains('hover:bg-row-hover')).toBe(false)
+
+    // The card is the list's own root — the header band and the scroller are
+    // both inside it, so the two grids stay on one surface.
+    const card = screen.getByTestId('library-list-header-wrapper').parentElement
+    expect(card).toHaveClass(...LIST_CARD_CLASS.split(/\s+/))
   })
 
   it('shows 완독 for a finished series and — for an untouched one', async () => {
@@ -956,6 +1014,172 @@ describe('settings write-back (A-5)', () => {
       {
         library_view: 'list',
         library_sort: 'name',
+        library_order: 'desc',
+        library_scope: 'reading',
+      },
+    ])
+  })
+
+  /**
+   * The **refetch** path — the same lost update, one door further along.
+   *
+   * The first fix made `hydrated` a `useState` boolean, which closed the
+   * hydrating-commit race but left the flag latched: once true, a settings
+   * payload carrying *new* server values never re-hydrated, and the write-back
+   * that followed PUT the client's older values straight back over them. It is
+   * reachable through `invalidateRootState` (`api/queries.ts`), which invalidates
+   * `queryKeys.settings` on every root add and remove — so adding a root in one
+   * tab could silently revert the other tab's library preferences on the server.
+   *
+   * The subject is the request list, for the same two reasons the block header
+   * gives: hydration moves the store either way, and `onUnhandledRequest` fails
+   * requests rather than tests.
+   */
+  it('re-hydrates from a refetch carrying new values instead of writing the old ones back', async () => {
+    scenario.settings = { ...settingsFixture, ...REMOTE }
+    const client = renderLibrary()
+    await waitForLibrary()
+
+    await waitFor(() => {
+      expect(useUiStore.getState().sort).toBe('mtime')
+    })
+    await flushSettingsWrites()
+    expect(settingsUpdates).toEqual([])
+
+    // The server's values change underneath us — another tab, or this one adding
+    // a root — and the key is invalidated exactly as the product invalidates it.
+    scenario.settings = {
+      ...settingsFixture,
+      library_view: 'grid',
+      library_sort: 'name',
+      library_order: 'asc',
+      library_scope: 'all',
+    }
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: queryKeys.settings })
+    })
+
+    // The store must follow the server, on all four values.
+    await waitFor(() => {
+      expect(useUiStore.getState().sort).toBe('name')
+    })
+    const rehydrated = useUiStore.getState()
+    expect([rehydrated.view, rehydrated.sort, rehydrated.order, rehydrated.scope]).toEqual([
+      'grid',
+      'name',
+      'asc',
+      'all',
+    ])
+
+    // And nothing may have been written back. Before the fix this recorded one
+    // PUT carrying list/mtime/desc/reading — the values the server had just
+    // replaced.
+    await flushSettingsWrites()
+    expect(settingsUpdates).toEqual([])
+
+    // Positive control, same recorder and same flush: a genuine local change
+    // after the refetch still writes back exactly once, and carries the *new*
+    // server values alongside it rather than the pre-refetch ones.
+    act(() => {
+      useUiStore.getState().setView('list')
+    })
+    await flushSettingsWrites()
+    expect(settingsUpdates).toEqual([
+      {
+        library_view: 'list',
+        library_sort: 'name',
+        library_order: 'asc',
+        library_scope: 'all',
+      },
+    ])
+  })
+
+  /**
+   * `lastSent` remembers one snapshot; a refetch has to forget it.
+   *
+   * Both cases below were found by review, against a version of the hook that
+   * had the reset deleted on the grounds that a mutation removing it stayed
+   * green. It did — because no test walked these paths. The lesson is worth more
+   * than the tests: **a surviving mutation says the line is unguarded, not that
+   * it is unneeded**, and the two are only the same thing if you already know
+   * the test set is complete.
+   */
+  it('writes back a value it has already sent once, after a refetch moved the store off it', async () => {
+    scenario.settings = { ...settingsFixture, ...REMOTE }
+    const client = renderLibrary()
+    await waitForLibrary()
+    await waitFor(() => {
+      expect(useUiStore.getState().view).toBe('list')
+    })
+
+    // The reader picks 그리드. It is sent, and remembered.
+    act(() => {
+      useUiStore.getState().setView('grid')
+    })
+    await flushSettingsWrites()
+    expect(settingsUpdates).toHaveLength(1)
+
+    // The server's own value comes back — another tab, or `invalidateRootState`
+    // on a root add — and the store follows it back to `list`.
+    scenario.settings = { ...settingsFixture, ...REMOTE }
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: queryKeys.settings })
+    })
+    await waitFor(() => {
+      expect(useUiStore.getState().view).toBe('list')
+    })
+
+    // The reader picks 그리드 again. Without the reset this is byte-identical to
+    // the remembered snapshot and is dropped on the floor: the screen shows
+    // 그리드 and the server keeps 리스트.
+    act(() => {
+      useUiStore.getState().setView('grid')
+    })
+    await flushSettingsWrites()
+    expect(settingsUpdates.slice(1)).toEqual([
+      {
+        library_view: 'grid',
+        library_sort: 'mtime',
+        library_order: 'desc',
+        library_scope: 'reading',
+      },
+    ])
+  })
+
+  it('still repairs an unreadable library_sort that arrives on a refetch, not just on the first load', async () => {
+    scenario.settings = { ...settingsFixture, ...REMOTE }
+    const client = renderLibrary()
+    await waitForLibrary()
+    await waitFor(() => {
+      expect(useUiStore.getState().sort).toBe('mtime')
+    })
+
+    // Any earlier write-back is enough to arm the trap — it is what puts a
+    // snapshot in `lastSent`.
+    act(() => {
+      useUiStore.getState().setView('grid')
+    })
+    await flushSettingsWrites()
+    expect(settingsUpdates).toHaveLength(1)
+
+    // Now the server hands over a sort the client cannot read. `hydrateFromSettings`
+    // leaves `sort` alone, so the store's own valid key has to travel back — the
+    // one genuine PUT on a hydration path.
+    scenario.settings = {
+      ...settingsFixture,
+      ...REMOTE,
+      library_view: 'grid',
+      library_sort: 'nonsense' as unknown as Settings['library_sort'],
+    }
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: queryKeys.settings })
+    })
+
+    await flushSettingsWrites()
+    expect(settingsUpdates.slice(1)).toEqual([
+      {
+        library_view: 'grid',
+        library_sort: 'mtime',
         library_order: 'desc',
         library_scope: 'reading',
       },
@@ -1475,6 +1699,11 @@ describe('skeleton (prd §5.3, WP-09 acceptance 9)', () => {
     const header = await screen.findByTestId('library-list-header')
     expect(header.className).toBe(band.className)
     expect(header.parentElement?.className).toBe(bandWrapper?.className)
+    // E-32 put the whole table inside a card with its own margin and padding.
+    // The skeleton has to be inside the identical one, or the band comparison
+    // above is satisfied while every row still moves by 16px when data lands —
+    // which the Layout Instability API cannot see either.
+    expect(bandWrapper?.parentElement).toHaveClass(...LIST_CARD_CLASS.split(/\s+/))
   })
 })
 

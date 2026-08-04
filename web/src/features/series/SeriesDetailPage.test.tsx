@@ -296,6 +296,14 @@ async function setup(detail = detailOf(), rescanStatus = 202): Promise<Recorded>
 // ---------------------------------------------------------------------------
 
 describe('series header (prd UI-002, ui-spec §5.1)', () => {
+  it('is a card, not a band with a rule under it (E-32)', async () => {
+    await setup()
+    const header = screen.getByRole('banner')
+    expect(header).toHaveClass('m-4', 'rounded-pill', 'bg-surface', 'shadow-md')
+    expect(header.classList.contains('border-b-2')).toBe(false)
+    expect(header.classList.contains('border-rule-strong')).toBe(false)
+  })
+
   it('shows the cover, name, source path and the four stats', async () => {
     await setup(detailOf({ path: '[만화] 군계 1~25 (root-relative)' }))
     const header = screen.getByRole('banner')
@@ -445,6 +453,28 @@ describe('volume grid (FR-LIB-009, ui-spec §5.3)', () => {
     expect(recorded.thumbs.map((t) => t.bid)).not.toContain('dddddddddddddddd')
   })
 
+  /**
+   * E-32 removed the 1px border every tile carried, which is also where the
+   * volume's *tone* used to be drawn. Three of the four tones were saying
+   * "1px of divider", which said nothing; the fourth — broken — has to stay
+   * visible, so it becomes the accent-300 ring the prototype computes for it.
+   * Without that the only mark on a broken volume is the scrim, and a raised
+   * card that merely declines to lift is not a signal.
+   */
+  it('rings a broken volume instead of bordering it, and lifts the openable ones (E-32)', async () => {
+    await setup()
+    const grid = screen.getByTestId('volume-grid')
+    const rings = grid.querySelectorAll('.ring-accent-300')
+    // `cccccccccccccccc` truncated + `dddddddddddddddd` encrypted.
+    expect(rings).toHaveLength(2)
+    for (const box of grid.querySelectorAll('.fallback-cover')) {
+      expect(box).toHaveClass('rounded-md', 'shadow-md')
+      expect(box.classList.contains('border')).toBe(false)
+      expect(box.classList.contains('group-hover:border-accent')).toBe(false)
+    }
+    expect(grid.querySelectorAll('.group-hover\\:shadow-lg')).toHaveLength(3)
+  })
+
   it('badges a truncated volume 손상 with its reason and makes it unclickable (FR-IDX-010)', async () => {
     await setup()
     expect(screen.getByText('손상')).toBeInTheDocument()
@@ -488,6 +518,17 @@ describe('volume list mode (ui-spec §5.4)', () => {
     expect(within(list).getByText('19%')).toBeInTheDocument() // 42/214 floors to 19
     expect(within(list).getAllByText('ERR')).toHaveLength(2)
     expect(within(list).getAllByText('—').length).toBeGreaterThan(0)
+  })
+
+  it('is a card of hover chips, not a ruled table (E-32)', async () => {
+    await setup()
+    const list = screen.getByTestId('volume-list')
+    expect(list).toHaveClass('rounded-lg', 'bg-surface', 'shadow-md')
+    for (const row of within(list).getAllByTestId('volume-row')) {
+      expect(row).toHaveClass('row-chip')
+      expect(row.classList.contains('border-b')).toBe(false)
+      expect(row.classList.contains('hover:bg-row-hover')).toBe(false)
+    }
   })
 
   it('shows the badge and reason inline for an unopenable row (FR-IDX-010)', async () => {

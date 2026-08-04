@@ -75,7 +75,12 @@ export function TopBar({
   return (
     <div
       className={cn(
-        'flex flex-none flex-wrap items-center gap-3 border-b-2 border-rule-strong px-4 py-3',
+        // E-32: the 2px bottom rule becomes a surface + an elevation. The bar
+        // has to be *positioned* and stacked for that shadow to fall on the
+        // content band below it — an unpositioned sibling's box-shadow is
+        // painted before the next sibling's background, so the bar would have
+        // cast onto nothing.
+        'relative z-sticky flex flex-none flex-wrap items-center gap-3 bg-surface px-4 py-3 shadow-md',
         className,
       )}
     >

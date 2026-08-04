@@ -11,6 +11,7 @@ import {
   formatProgressLabel,
   formatVolumeCount,
 } from '../../lib/format'
+import { seriesRowDomId } from '../../store/ui'
 import { highlightParts, LIST_TEMPLATE, type ListLayout } from './useLibrary'
 
 /**
@@ -33,10 +34,12 @@ export interface SeriesRowProps {
   series: SeriesSummary
   layout: ListLayout
   query: string
+  /** E-34 §2 — this is the row the viewer came back to; outline it. */
+  revealed?: boolean
   onOpen: () => void
 }
 
-export function SeriesRow({ series, layout, query, onOpen }: SeriesRowProps) {
+export function SeriesRow({ series, layout, query, revealed = false, onOpen }: SeriesRowProps) {
   const cover = useCoverImage(series.id, {
     w: THUMB_WIDTH_FOR.listRow,
     v: series.cover_cv,
@@ -82,12 +85,23 @@ export function SeriesRow({ series, layout, query, onOpen }: SeriesRowProps) {
   return (
     <button
       type="button"
+      id={seriesRowDomId(series.id)}
       aria-label={series.name}
+      {...(revealed ? { 'data-revealed': 'true' } : {})}
       onClick={onOpen}
-      className="grid w-full cursor-pointer items-center gap-3 border-b border-rule px-2 py-1 text-left hover:bg-row-hover"
-      style={{ gridTemplateColumns: LIST_TEMPLATE[layout] }}
+      // E-32: the 1px rule between rows is gone and the hover is a rounded chip
+      // (`.row-chip`, base.css) rather than a full-bleed tint.
+      className="row-chip grid w-full cursor-pointer items-center gap-3 px-2 py-1 text-left"
+      // An **outline** rather than the grid's inset ring (E-34 §2): a row is
+      // full-bleed inside the scroller and has no cover box to ring, and
+      // `outlineOffset: -2px` keeps it off the row above.
+      style={{
+        gridTemplateColumns: LIST_TEMPLATE[layout],
+        ...(revealed ? { outline: '2px solid var(--color-hot)', outlineOffset: '-2px' } : {}),
+      }}
     >
-      <span className="relative block h-[36px] w-[24px] border border-rule">
+      {/* E-32: the 1px-bordered well becomes a rounded, recessed one. */}
+      <span className="relative block h-[36px] w-[24px] overflow-hidden rounded-sm shadow-inset">
         <FallbackCover title={series.name} format={series.kind} size="row" />
         {cover.status === 'ready' && (
           <img

@@ -16,14 +16,30 @@ import {
   bookDetail,
   bookSummary,
   errorEnvelope,
+  root,
+  scanStatusIdle,
   seriesDetail,
+  seriesSummary,
   settings,
 } from '../../api/fixtures'
-import type { BookDetail, BookPrefs, PageInfo, Progress } from '../../api/types'
+import type {
+  BookDetail,
+  BookPrefs,
+  DisplayMode,
+  FitMode,
+  PageInfo,
+  Progress,
+  ReadingDir,
+  SeriesSummary,
+} from '../../api/types'
 import { resetBasePath } from '../../api/urls'
-import { useUiStore } from '../../store/ui'
+import { LibraryPage } from '../library/LibraryPage'
+import { SeriesDetailPage } from '../series/SeriesDetailPage'
+import { useSeriesDirStore } from '../../store/seriesDir'
+import { seriesCardDomId, seriesRowDomId, useUiStore } from '../../store/ui'
 import { CHROME_AUTOHIDE_MS, cancelChromeAutoHide, useViewerStore } from '../../store/viewer'
-import { POINTER_IDLE_MS, ViewerPage } from './ViewerPage'
+import { EDGE_STRIP_PX, POINTER_IDLE_MS, ViewerPage } from './ViewerPage'
+import { OVERRIDE_CHIP_LABEL } from './ViewerTopBar'
 import { THUMB_SLOT_PX, THUMB_SLOT_TOUCH_PX } from './ThumbnailStrip'
 import { LOADING_INDICATOR_DELAY_MS } from './useDelayedFlag'
 
@@ -108,6 +124,49 @@ function newRecorded(): Recorded {
   return { progressPuts: [], prefsPuts: [], prefetched: [] }
 }
 
+type PrefsPatch = Partial<Record<'reading_direction' | 'display_mode' | 'fit_mode', string | null>>
+
+const PREF_FIELDS = ['reading_direction', 'display_mode', 'fit_mode'] as const
+
+/**
+ * What `PUT /api/books/{bid}/prefs` actually answers — the **server's merge**,
+ * not an echo of the request body.
+ *
+ * The distinction is the whole of E-33 §3. `internal/httpapi/books.go` decodes
+ * each field as a `json.RawMessage` precisely so that `{"fit_mode": null}` and
+ * `{}` are different requests: the first *clears* the override and the book
+ * falls back to the global default, the second leaves it alone.
+ * `mergePrefsWithDefaults` then fills every cleared field from
+ * `GET /api/settings` and reports `is_override` for the object as a whole.
+ *
+ * The handler used to reply `{ ...detail.prefs, ...body }`, which for the reset
+ * this file now exercises would have answered `reading_direction: null` — a
+ * shape the contract cannot produce. A test written against that is pinning a
+ * fiction, and the store setters it is meant to police would have been fed
+ * `null` instead of a direction.
+ */
+function applyPrefsPatch(effective: BookPrefs, patch: PrefsPatch): BookPrefs {
+  // The fixture reports effective values plus one flag, so "what is stored" has
+  // to be reconstructed the only way the flag allows: overridden ⇒ all three are
+  // the book's own, not overridden ⇒ none of them are.
+  const stored: Record<string, string | null> = effective.is_override
+    ? {
+        reading_direction: effective.reading_direction,
+        display_mode: effective.display_mode,
+        fit_mode: effective.fit_mode,
+      }
+    : { reading_direction: null, display_mode: null, fit_mode: null }
+  for (const field of PREF_FIELDS) {
+    if (field in patch) stored[field] = patch[field] ?? null
+  }
+  return {
+    reading_direction: (stored.reading_direction ?? settings.reading_direction) as ReadingDir,
+    display_mode: (stored.display_mode ?? settings.display_mode) as DisplayMode,
+    fit_mode: (stored.fit_mode ?? settings.fit_mode) as FitMode,
+    is_override: PREF_FIELDS.some((field) => stored[field] != null),
+  }
+}
+
 function handlers(detail: BookDetail, recorded: Recorded, prefetch = 4) {
   return [
     http.get(`${ORIGIN}/api/books/:bid`, ({ params }) =>
@@ -137,9 +196,9 @@ function handlers(detail: BookDetail, recorded: Recorded, prefetch = 4) {
       return HttpResponse.json(progressOf())
     }),
     http.put(`${ORIGIN}/api/books/:bid/prefs`, async ({ request }) => {
-      const body = await request.json()
+      const body = (await request.json()) as PrefsPatch
       recorded.prefsPuts.push(body)
-      return HttpResponse.json({ ...detail.prefs, ...(body as object) })
+      return HttpResponse.json(applyPrefsPatch(detail.prefs, body))
     }),
     // Thumbnails are lazy (FR-THM-004); nothing on this screen may break on one.
     http.get(`${ORIGIN}/api/books/:bid/thumbs/:n`, () =>
@@ -306,6 +365,53 @@ function crossPointer(
   fireEvent(target, event)
 }
 
+interface ChromeWatch {
+  /** Every value `data-chrome` has *changed to* since the watch began. */
+  flips: () => string[]
+  stop: () => void
+}
+
+/**
+ * The unit tier's `MutationObserver` on `data-chrome` — the only shape in which
+ * "**nothing happened**" can be asserted here (**E-31**, 뒤집을 경우의 전제).
+ *
+ * `toHaveAttribute` retries. `expect(viewer).toHaveAttribute('data-chrome',
+ * 'hidden')` is therefore satisfied by a chrome that woke on the action under
+ * test and went back down on its own 2 600 ms later, which is precisely what
+ * this ruling's defect looks like — session 8 wrote that assertion and got a
+ * green first mutation out of it, and `e2e/09-viewer-chrome.spec.ts` records the
+ * same trap twice over from the browser side. A transition list has nothing to
+ * retry into: one entry means one thing happened, and `[]` means none did.
+ *
+ * Read through `takeRecords()` rather than the callback, because the callback is
+ * a microtask and everything asserted here is synchronous under a fake clock. A
+ * `MutationRecord` carries only `oldValue`, so the value each change landed *on*
+ * is the next record's `oldValue` — and, for the last change, the attribute as
+ * it now stands.
+ */
+function watchChrome(): ChromeWatch {
+  const root = viewerRoot()
+  const seen: MutationRecord[] = []
+  const observer = new MutationObserver((records) => {
+    seen.push(...records)
+  })
+  observer.observe(root, {
+    attributes: true,
+    attributeFilter: ['data-chrome'],
+    attributeOldValue: true,
+  })
+  return {
+    flips: () => {
+      seen.push(...observer.takeRecords())
+      if (seen.length === 0) return []
+      return [...seen.slice(1).map((r) => r.oldValue ?? ''), root.getAttribute('data-chrome') ?? '']
+    },
+    stop: () => {
+      observer.disconnect()
+    },
+  }
+}
+
 /**
  * Summons the chrome from the top screen-edge strip, leaves the pointer in the
  * bar that replaced it, and **proves the hold is really in force** by letting
@@ -402,7 +508,15 @@ afterAll(() => {
 
 beforeEach(() => {
   localStorage.clear()
-  useUiStore.setState({ theme: 'light', overlays: [] })
+  useUiStore.setState({
+    theme: 'light',
+    overlays: [],
+    scope: 'all',
+    query: '',
+    view: 'grid',
+    revealSeries: null,
+  })
+  useSeriesDirStore.setState({ bySeries: {} })
   useViewerStore.getState().close()
 })
 
@@ -797,6 +911,338 @@ describe('the chromeless ground (acceptance 1, 2; ui-spec §6.1, ruling E-27)', 
       bar.compareDocumentPosition(notice) & Node.DOCUMENT_POSITION_FOLLOWING,
       'the notice must break the order-first tie *after* the bar',
     ).toBeTruthy()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Ruling E-31 — the edge strip wakes on *entry*
+// ---------------------------------------------------------------------------
+
+/**
+ * **Waking is an event, not a state (E-31).**
+ *
+ * The strips exist only while the chrome is away, so *every* path that dismisses
+ * the chrome mounts them — wherever the pointer happens to be at that instant.
+ * With the pointer at rest inside the 44 px, the browser's own post-layout hit
+ * test then lands a `mouseover` on a strip nothing walked into (~13 ms, measured
+ * at all four widths), and the chrome the reader just sent away came straight
+ * back. Before E-30 that was a 2.6 s flicker loop; after it, the derived hold
+ * catches the returning chrome on the first cycle and it settles as "visible and
+ * held" — so at that one pointer position `H` simply looked broken (E-30 §7,
+ * measured and deliberately left unruled).
+ *
+ * E-31 rules it: if the pointer was already inside the strip's area when the
+ * strip mounted, that is not an entry, and it does not wake. And it is explicit
+ * that this must **not** share a signal with E-30's hold — the hold is a
+ * function of where the pointer *is*, the wake of where it *moved* — because one
+ * signal cannot answer both questions and the defect returns.
+ *
+ * The two are asserted here as a pair: the last test in this block is E-30's
+ * hold, re-proved on top of the new gate.
+ */
+describe('the screen edge wakes on entry, not on arriving under a pointer (ruling E-31)', () => {
+  /**
+   * `useTouchZones` swallows a mouse press within 600 ms of a `touchend`, and a
+   * fake clock starts at zero — which reads as "a touch has just ended". A
+   * moment on that clock, well inside the 2 600 ms auto-hide, puts the centre
+   * tap back within reach.
+   */
+  const TAP_ARMED_MS = 700
+
+  type Edge = 'top' | 'bottom'
+
+  /** Half a strip deep — unambiguously inside the band, at either end. */
+  const insideEdge = (edge: Edge): number =>
+    edge === 'top'
+      ? Math.round(EDGE_STRIP_PX / 2)
+      : window.innerHeight - Math.round(EDGE_STRIP_PX / 2)
+
+  /** The middle of the screen: as far from both bands as it is possible to be. */
+  const overThePage = (): number => Math.round(window.innerHeight / 2)
+
+  const barOf = (edge: Edge): string => (edge === 'top' ? 'viewer-top-bar' : 'viewer-bottom-bar')
+  const stripOf = (edge: Edge): string => `viewer-edge-${edge}`
+
+  /**
+   * A pointer **movement** to `clientY`, reported by whatever it is over.
+   *
+   * The one event family that carries movement, and therefore the only one the
+   * wake is allowed to read (E-31). It bubbles to the viewer root from a bar and
+   * from a strip exactly as it does from the stage, which is what lets the rule
+   * be stated once.
+   */
+  function movePointerOver(target: Element, clientY: number): void {
+    fireEvent.mouseMove(target, { clientX: 500, clientY })
+  }
+
+  /**
+   * The reader's whole journey to *chrome up, pointer at rest inside the 44 px*
+   * — which is the state every hide path in this block then acts on.
+   *
+   * Every step is a real one: on the page, up into the strip (a crossing, so it
+   * wakes), and then the bar arrives under a pointer that does not move again.
+   */
+  function reachForTheEdge(edge: Edge): void {
+    movePointerOver(zones(), overThePage())
+    fireEvent.mouseEnter(need(stripOf(edge)))
+    expect(
+      useViewerStore.getState().chromeVisible,
+      'a pointer that walked into the strip must still summon the chrome, or nothing below is about E-31',
+    ).toBe(true)
+    // The bar is now what the pointer is over, and it goes on saying so — this
+    // is the reading that used to summon the chrome back the instant it left.
+    movePointerOver(need(barOf(edge)), insideEdge(edge))
+  }
+
+  /**
+   * The defect E-31 closes, from both ends of the screen.
+   *
+   * Two strips, two `onMouseEnter`s: a fix applied to one of them leaves the
+   * other exactly as it was, so both are walked.
+   */
+  it.each(['top', 'bottom'] as const)(
+    '`H` sends the chrome away for good, with the pointer at rest in the %s strip',
+    async (edge) => {
+      await setup()
+      vi.useFakeTimers()
+      try {
+        reachForTheEdge(edge)
+        // E-30 is in force here and is *not* what is under test: the pointer
+        // really is inside the chrome, so the chrome really is held. `H` is
+        // still entitled to take it down.
+        crossPointer('pointerover', need(barOf(edge)), viewerRoot())
+
+        const watch = watchChrome()
+        try {
+          fireEvent.keyDown(window, { key: 'h' })
+          expect(useViewerStore.getState().chromeVisible).toBe(false)
+          // The strip is back under a pointer that has not moved. Chrome's
+          // post-layout hit test reaches it about 13 ms later (E-30 §1,
+          // measured); here it is dispatched by hand.
+          fireEvent.mouseEnter(need(stripOf(edge)))
+          act(() => {
+            vi.advanceTimersByTime(CHROME_AUTOHIDE_MS * 3)
+          })
+          expect(
+            watch.flips(),
+            `E-31: the ${edge} strip mounted under a pointer that was already there, which is not an entry — one transition, away, and nothing after it`,
+          ).toEqual(['hidden'])
+        } finally {
+          watch.stop()
+        }
+      } finally {
+        vi.useRealTimers()
+      }
+    },
+  )
+
+  /**
+   * …and the strips are not disarmed, only the phantom is removed.
+   *
+   * Two ways back in, because they are two different pieces of the rule: the
+   * pointer that walks out over the page and reaches for the edge again reads
+   * the *movement* memory, and the pointer that leaves the window entirely reads
+   * the root's `pointerleave` — without which a reader who left through the top
+   * edge would come back through it to a strip that will not answer.
+   */
+  it.each([
+    {
+      how: 'walks back over the page and reaches for the edge again',
+      comeBack: () => {
+        movePointerOver(zones(), overThePage())
+      },
+    },
+    {
+      how: 'leaves the window altogether and comes back in through the edge',
+      comeBack: () => {
+        // `relatedTarget: null` is the browser saying "nowhere", which is how a
+        // pointer leaving the window is announced.
+        crossPointer('pointerout', need(stripOf('top')), null)
+      },
+    },
+  ])('wakes again once the pointer $how (E-31 removes a phantom, not a feature)', async ({
+    comeBack,
+  }) => {
+    await setup()
+    vi.useFakeTimers()
+    try {
+      reachForTheEdge('top')
+      const watch = watchChrome()
+      try {
+        fireEvent.keyDown(window, { key: 'h' })
+        fireEvent.mouseEnter(need(stripOf('top')))
+        expect(
+          watch.flips(),
+          'the strip arriving under the resting pointer is the wake E-31 refuses',
+        ).toEqual(['hidden'])
+
+        comeBack()
+        fireEvent.mouseEnter(need(stripOf('top')))
+        expect(
+          watch.flips(),
+          'E-31: only genuine movement into the strip wakes — and it still does',
+        ).toEqual(['hidden', 'visible'])
+      } finally {
+        watch.stop()
+      }
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  /**
+   * **There are two bands, and the memory has to say *which*.**
+   *
+   * The gate above answers "was the pointer already inside a strip's area?" —
+   * and a single boolean answers that question for *both* strips at once. A
+   * pointer parked in the top band therefore silences the **bottom** strip, and
+   * the reverse, even though crossing the screen into the other band is the
+   * plainest entry there is: the pointer moved, and it moved into a strip it was
+   * not in.
+   *
+   * The sequence below is the browser's, not an invention. Boundary events are
+   * dispatched **before** the `mousemove` that lands at the new position, so the
+   * band the gate reads on a crossing is always the one the *previous* sample
+   * reported. A flick fast enough that no sample lands between the two bands —
+   * one frame's worth of pointer travel across the viewport — hands the bottom
+   * strip's `mouseenter` a memory that still says `top`.
+   *
+   * Both directions, because they are two `onMouseEnter`s and a fix applied to
+   * one leaves the other as it was.
+   */
+  it.each([
+    { from: 'top', into: 'bottom' },
+    { from: 'bottom', into: 'top' },
+  ] as const)(
+    'wakes when the pointer crosses from the $from band into the $into strip (E-31: two bands, not one)',
+    async ({ from, into }) => {
+      await setup()
+      vi.useFakeTimers()
+      try {
+        reachForTheEdge(from)
+        const watch = watchChrome()
+        try {
+          fireEvent.keyDown(window, { key: 'h' })
+          // Its own strip, under a pointer that has not moved: refused, and that
+          // half is the rule working. Asserted so the test cannot pass by simply
+          // waking everything.
+          fireEvent.mouseEnter(need(stripOf(from)))
+          expect(
+            watch.flips(),
+            `E-31: the ${from} strip mounted under a pointer already in the ${from} band`,
+          ).toEqual(['hidden'])
+
+          // Now the pointer crosses the screen. Nothing about the *other* band
+          // was ever true of it.
+          fireEvent.mouseEnter(need(stripOf(into)))
+          expect(
+            watch.flips(),
+            `E-31: entering the ${into} strip from the ${from} band is an entry — the ${from} band is not the ${into} band, and one boolean cannot tell them apart`,
+          ).toEqual(['hidden', 'visible'])
+        } finally {
+          watch.stop()
+        }
+      } finally {
+        vi.useRealTimers()
+      }
+    },
+  )
+
+  /**
+   * **E-31's 적용 범위**: the rule stands on every path that hides the chrome.
+   *
+   * The ruling says so in as many words, and says why — the auto-hide cannot
+   * reach this state *today* only because E-30's hold gets there first, so a
+   * rule written into the `H` handler would sit there looking correct until the
+   * hold rule changes and then fail silently. Neither path below goes anywhere
+   * near a key handler.
+   */
+  it.each([
+    {
+      path: 'a centre tap',
+      hide: () => {
+        tapAt(500)
+      },
+    },
+    {
+      path: 'the 2 600 ms auto-hide',
+      hide: () => {
+        act(() => {
+          vi.advanceTimersByTime(CHROME_AUTOHIDE_MS)
+        })
+      },
+    },
+  ])('stands when the chrome goes to $path, not only to `H` (E-31 적용 범위)', async ({ hide }) => {
+    await setup()
+    vi.useFakeTimers()
+    try {
+      // No `pointerover` on the bar, so nothing holds the chrome: this is the
+      // state the ruling describes as out of reach *for now*, and the reason it
+      // refuses to let the rule be scoped to the key that reaches it.
+      reachForTheEdge('top')
+      act(() => {
+        vi.advanceTimersByTime(TAP_ARMED_MS)
+      })
+
+      const watch = watchChrome()
+      try {
+        hide()
+        expect(
+          useViewerStore.getState().chromeVisible,
+          'the hide path under test has to have hidden something',
+        ).toBe(false)
+        fireEvent.mouseEnter(need(stripOf('top')))
+        act(() => {
+          vi.advanceTimersByTime(CHROME_AUTOHIDE_MS * 3)
+        })
+        expect(
+          watch.flips(),
+          'E-31 적용 범위: the strip does not know which path dismissed the chrome, and must not need to',
+        ).toEqual(['hidden'])
+      } finally {
+        watch.stop()
+      }
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  /**
+   * **E-30 is untouched.** The hold is still a function of where the pointer is.
+   *
+   * The gate above reads movement; the hold reads the browser's answer to "what
+   * is under the pointer now". Implement both from one signal and E-31 says the
+   * defect returns — so this walks the path E-30 exists for, on top of the new
+   * gate, and asserts the transition list rather than the attribute for the
+   * reason E-30 §1 gives: an oscillating chrome answers `visible` to almost
+   * every sample of its state.
+   */
+  it('still holds a chrome the edge just summoned, under a pointer that never moved (E-30 §1)', async () => {
+    await setup()
+    vi.useFakeTimers()
+    try {
+      movePointerOver(zones(), overThePage())
+      const watch = watchChrome()
+      try {
+        fireEvent.mouseEnter(need(stripOf('top')))
+        expect(
+          document.querySelector('[data-role="viewer-edge-top"]'),
+          'the strip is gone and the bar is where the pointer is: that is the whole of E-30',
+        ).toBeNull()
+        crossPointer('pointerover', topBar(), viewerRoot())
+        act(() => {
+          vi.advanceTimersByTime(CHROME_AUTOHIDE_MS * 3)
+        })
+        expect(
+          watch.flips(),
+          'E-30: one transition, and the reader is left looking at the control they are about to press — no auto-hide, and no strip summoning it back',
+        ).toEqual(['visible'])
+      } finally {
+        watch.stop()
+      }
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
@@ -1346,5 +1792,599 @@ describe('a book that cannot be opened', () => {
     expect(await screen.findByText('열 수 없는 파일')).toBeInTheDocument()
     expect(screen.getByText('unexpected EOF')).toBeInTheDocument()
     expect(document.querySelector('[data-role="stage"]')).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Ruling E-33 §2 — the series-detail seed reaches the viewer
+// ---------------------------------------------------------------------------
+
+/**
+ * The extra handlers the *series* screen needs, on top of `handlers()`.
+ *
+ * `SeriesHeader` reads `useRoots()` for the 원본 경로 and `useCoverImage`, and
+ * the page polls `useScanStatus`. Without them MSW fails the **request** rather
+ * than the test (`onUnhandledRequest: 'error'` is not a test-level assertion),
+ * and the screen renders in a degraded shape that would still let a wrong
+ * assertion pass.
+ */
+function seriesScreenHandlers() {
+  return [
+    http.get(`${ORIGIN}/api/roots`, () => HttpResponse.json({ items: [root] })),
+    http.get(`${ORIGIN}/api/scan/status`, () => HttpResponse.json(scanStatusIdle)),
+    http.get(`${ORIGIN}/api/series/:sid/cover`, () =>
+      HttpResponse.json(errorEnvelope('not_found', 'no cover'), { status: 404 }),
+    ),
+  ]
+}
+
+/**
+ * Renders the **series screen and the viewer in one router**, starting on the
+ * series screen.
+ *
+ * E-33 §2 spells out why the test has to be shaped like this: "스토어를 단언하는
+ * 테스트로는 보이지 않는다 — 스토어는 결함이 있을 때도 올바른 값을 담고 있었다."
+ * `store/seriesDir.ts` held `rtl` perfectly well throughout the defect; what was
+ * missing was a consumer, and the only way to see a missing consumer is to walk
+ * the reader's actual path — set the direction on one screen, open a volume, and
+ * read the direction off the *other* screen's DOM.
+ */
+async function setupSeriesThenViewer(prefs: Partial<BookPrefs> = {}): Promise<Recorded> {
+  const recorded = newRecorded()
+  const detail = detailOf(prefs)
+  server.use(...handlers(detail, recorded), ...seriesScreenHandlers())
+  stubViewport(1_440)
+  stubImage(recorded)
+
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={[`/series/${SERIES_ID}`]}>
+        <Routes>
+          <Route path="/series/:sid" element={<SeriesDetailPage />} />
+          <Route path="/series/:sid/books/:bid" element={<ViewerPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  await screen.findByRole('heading', { name: seriesDetail.name })
+  return recorded
+}
+
+/** Opens the first volume from the series screen's grid. */
+async function openFirstVolume(): Promise<void> {
+  const grid = await screen.findByTestId('volume-grid')
+  const tiles = within(grid).getAllByRole('button')
+  const tile = tiles[0]
+  if (tile === undefined) throw new Error('the series screen listed no openable volume')
+  await userEvent.click(tile)
+  await screen.findAllByRole('img', { name: /page_/ })
+}
+
+describe('the series-detail 읽기 방향 seed (ruling E-33 §2, C-9)', () => {
+  it('opens a volume in the direction the series screen was just set to', async () => {
+    // `is_override: false` ⇒ every field of `prefs` is the global default, which
+    // is what the seed is entitled to replace.
+    await setupSeriesThenViewer({ reading_direction: 'ltr', is_override: false })
+
+    const group = screen.getByRole('radiogroup', { name: '읽기 방향' })
+    await userEvent.click(within(group).getByRole('radio', { name: 'R→L' }))
+
+    await openFirstVolume()
+
+    // The DOM of the *viewer*, not the seed store: the store was already right
+    // while the product was wrong (E-33 §2).
+    expect(stage()).toHaveAttribute('data-dir', 'rtl')
+    expect(screen.getByRole('radio', { name: 'R→L' })).toBeChecked()
+  })
+
+  it('leaves a volume that has its own settings alone — the seed is not an override', async () => {
+    // A book the reader has already set to L→R for itself. The seed replaces the
+    // *global default*; it does not beat a choice made for this volume.
+    await setupSeriesThenViewer({ reading_direction: 'ltr', is_override: true })
+
+    const group = screen.getByRole('radiogroup', { name: '읽기 방향' })
+    await userEvent.click(within(group).getByRole('radio', { name: 'R→L' }))
+
+    await openFirstVolume()
+
+    expect(stage()).toHaveAttribute('data-dir', 'ltr')
+  })
+
+  it('falls back to the global default when the series has no seed', async () => {
+    await setupSeriesThenViewer({ reading_direction: 'rtl', is_override: false })
+    // Nothing touched on the series screen: `bySeries` is empty, so the book's
+    // effective prefs stand exactly as the server sent them.
+    await openFirstVolume()
+    expect(stage()).toHaveAttribute('data-dir', 'rtl')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Ruling E-33 §3 — 이 권 전용 설정: the badge and the reset
+// ---------------------------------------------------------------------------
+
+function chip(): HTMLElement | null {
+  return document.querySelector('[data-role="viewer-override-chip"]')
+}
+
+describe('the per-book override chip (ruling E-33 §3)', () => {
+  it('is raised only for a book that actually carries an override', async () => {
+    await setup({ prefs: { is_override: true } })
+    expect(chip()).toHaveTextContent(OVERRIDE_CHIP_LABEL)
+    // 권, not the prototype's 시리즈: the product persists per book (C-9).
+    expect(screen.queryByText('이 시리즈 전용 설정')).not.toBeInTheDocument()
+  })
+
+  it('is absent when the book is simply on the global defaults', async () => {
+    await setup({ prefs: { is_override: false } })
+    expect(chip()).toBeNull()
+  })
+
+  it('clears the override with three nulls and puts the viewer back on the defaults', async () => {
+    // A book overriding all three, every one of them different from the global
+    // defaults in `settings` (ltr / single / height) — so nothing below can pass
+    // by coincidence.
+    const recorded = await setup({
+      prefs: {
+        reading_direction: 'rtl',
+        display_mode: 'spread',
+        fit_mode: 'original',
+        is_override: true,
+      },
+    })
+    expect(stage()).toHaveAttribute('data-dir', 'rtl')
+    expect(stage()).toHaveAttribute('data-mode', 'spread')
+    expect(stage()).toHaveAttribute('data-fit', 'original')
+
+    const button = chip()
+    if (button === null) throw new Error('the override chip was not raised')
+    await userEvent.click(button)
+
+    // The request list, not the store: `null` and "field absent" are different
+    // requests to this endpoint and only the recorded body can tell them apart.
+    await waitFor(() => {
+      expect(recorded.prefsPuts).toHaveLength(1)
+    })
+    expect(recorded.prefsPuts[0]).toEqual({
+      reading_direction: null,
+      display_mode: null,
+      fit_mode: null,
+    })
+
+    // …and the trap E-33 §3 names. `useSetPrefs.onSuccess` writes the query
+    // cache; `open()` is guarded by `openedRef` and will not run again. A reset
+    // that only invalidated leaves all three of these on the deleted override.
+    await waitFor(() => {
+      expect(stage()).toHaveAttribute('data-dir', 'ltr')
+    })
+    expect(stage()).toHaveAttribute('data-mode', 'single')
+    expect(stage()).toHaveAttribute('data-fit', 'height')
+    expect(useViewerStore.getState().mode).toBe('single')
+    expect(useViewerStore.getState().dir).toBe('ltr')
+    expect(useViewerStore.getState().fit).toBe('height')
+
+    // The controls the reader looks at agree, and the chip has gone.
+    expect(screen.getByRole('radio', { name: 'L→R' })).toBeChecked()
+    expect(screen.getByRole('radio', { name: '단면' })).toBeChecked()
+    expect(screen.getByRole('radio', { name: '높이' })).toBeChecked()
+    expect(chip()).toBeNull()
+  })
+
+  it('keeps the reader on their page while it resets', async () => {
+    await setup({ prefs: { display_mode: 'spread', is_override: true } })
+    fireEvent.keyDown(window, { key: 'ArrowRight' })
+    const before = counter()
+    const button = chip()
+    if (button === null) throw new Error('the override chip was not raised')
+    await userEvent.click(button)
+    await waitFor(() => {
+      expect(useViewerStore.getState().mode).toBe('single')
+    })
+    expect(counter()).toBe(before)
+  })
+
+  it('lands on the series seed rather than the global default, when there is one', async () => {
+    // One rule, two call sites: with the override gone, "what this volume shows
+    // when nobody chose anything for it" is the seed (E-33 §2) — otherwise 이 권
+    // 전용 설정 would clear the override and then disagree with the very next
+    // open of the same book.
+    useSeriesDirStore.setState({ bySeries: { [SERIES_ID]: 'rtl' } })
+    await setup({
+      prefs: { reading_direction: 'ltr', display_mode: 'spread', is_override: true },
+    })
+    const button = chip()
+    if (button === null) throw new Error('the override chip was not raised')
+    await userEvent.click(button)
+
+    await waitFor(() => {
+      expect(useViewerStore.getState().mode).toBe('single')
+    })
+    expect(stage()).toHaveAttribute('data-dir', 'rtl')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Ruling E-34 — the 라이브러리 button, and the focus reveal through the virtualiser
+// ---------------------------------------------------------------------------
+
+/** 120 series, all under the `scan` root; the one at `TARGET_INDEX` is this book's. */
+const LIBRARY_COUNT = 120
+/**
+ * Inside the first page of 60, so it is in `items` — and outside the 30 cards
+ * (five rows of six) the 1 440 window renders, so it is **not in the document**.
+ * That gap is the entire point of E-34 §2.
+ */
+const TARGET_INDEX = 36
+const LIBRARY_SCOPE = 'scan'
+const LIBRARY_QUERY = '시리즈'
+
+const LIBRARY_ROOTS = [
+  root,
+  { ...root, name: LIBRARY_SCOPE, label: '03. scan (PDF)', path: '/pds/scan', series_count: 120 },
+]
+
+function librarySeries(): SeriesSummary[] {
+  return Array.from({ length: LIBRARY_COUNT }, (_, i) => ({
+    ...seriesSummary,
+    // The viewer's own series has to be the one at TARGET_INDEX, or the reveal
+    // has nothing to find.
+    id: i === TARGET_INDEX ? SERIES_ID : `libseries${String(i).padStart(6, '0')}`,
+    name: `시리즈 ${String(i + 1).padStart(3, '0')}`,
+    root_name: LIBRARY_SCOPE,
+    // No cover request per card: this file's MSW has no cover route and an
+    // unhandled request would fail silently as a degraded render.
+    has_cover: false,
+    cover_cv: null,
+  }))
+}
+
+interface LibraryRecorded {
+  /** Every `GET /api/series` the library issued, as a query string. */
+  seriesQueries: string[]
+  /** Every `PUT /api/settings` — the A-5 write-back E-34 §1 must not trigger. */
+  settingsPuts: unknown[]
+}
+
+function libraryHandlers(recorded: LibraryRecorded, view: 'grid' | 'list' = 'grid') {
+  const items = librarySeries()
+  return [
+    http.get(`${ORIGIN}/api/roots`, () => HttpResponse.json({ items: LIBRARY_ROOTS })),
+    http.get(`${ORIGIN}/api/continue`, () => HttpResponse.json({ items: [] })),
+    // The server already stores what the sidebar shows (A-5). If it did not,
+    // `useLibrarySettingsSync` would hydrate the store back to `all` on arrival
+    // and this file would be testing the hydration, not the button.
+    http.get(`${ORIGIN}/api/settings`, () =>
+      HttpResponse.json({ ...settings, library_scope: LIBRARY_SCOPE, library_view: view }),
+    ),
+    http.put(`${ORIGIN}/api/settings`, async ({ request }) => {
+      recorded.settingsPuts.push(await request.json())
+      return HttpResponse.json(settings)
+    }),
+    http.get(`${ORIGIN}/api/series`, ({ request }) => {
+      const url = new URL(request.url)
+      recorded.seriesQueries.push(url.search)
+      const offset = Number(url.searchParams.get('offset') ?? '0')
+      const limit = Number(url.searchParams.get('limit') ?? '60')
+      return HttpResponse.json({
+        items: items.slice(offset, offset + limit),
+        total: items.length,
+        offset,
+        limit,
+      })
+    }),
+  ]
+}
+
+/**
+ * jsdom does no layout, so every element measures 0×0 and the virtualiser gets a
+ * zero-height window. `SeriesGrid` also derives its column count from
+ * `clientWidth`, and `clientWidth` **includes padding** — the `p-4` wrapper
+ * reports 32px the grid box does not have.
+ */
+function stubLibraryLayout(): () => void {
+  const rect: DOMRect = {
+    x: 0,
+    y: 0,
+    top: 0,
+    left: 0,
+    right: 1_154,
+    bottom: 900,
+    width: 1_154,
+    height: 900,
+    toJSON: () => ({}),
+  }
+  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(rect)
+
+  const width = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth')
+  Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+    configurable: true,
+    get(this: HTMLElement): number {
+      return 1_154 + (this.classList.contains('p-4') ? 32 : 0)
+    },
+  })
+
+  // `virtual-core`'s `getOffsetForAlignment` clamps every scroll to
+  // `scrollElement.scrollHeight - size`, and jsdom reports `scrollHeight === 0`
+  // for everything — so the clamp is `-900` and **every** scroll resolves to 0.
+  // A test without this cannot fail: the reveal and a no-op both leave the
+  // scroller at the top. The virtualiser sizes exactly one child to the whole
+  // content height, so that inline height is the honest answer.
+  const scrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight')
+  Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+    configurable: true,
+    get(this: HTMLElement): number {
+      const sizer = this.querySelector<HTMLElement>('div[style*="height:"]')
+      const px = sizer === null ? 0 : Number.parseFloat(sizer.style.height)
+      return Number.isFinite(px) ? px : 0
+    },
+  })
+
+  // jsdom has **no** `Element.prototype.scrollTo` at all, and `virtual-core`'s
+  // `elementScroll` is an optional call — so without this the scroll silently
+  // does nothing and the only observable left would be "`scrollToIndex` was
+  // called", one step short of the claim. This is the browser's half: move the
+  // scroller, then fire the `scroll` event `observeElementOffset` subscribes to.
+  const scrollTo = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollTo')
+  Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+    configurable: true,
+    writable: true,
+    value(this: HTMLElement, options: ScrollToOptions) {
+      this.scrollTop = Math.round(options.top ?? 0)
+      this.dispatchEvent(new Event('scroll'))
+    },
+  })
+
+  return () => {
+    if (width === undefined) Reflect.deleteProperty(HTMLElement.prototype, 'clientWidth')
+    else Object.defineProperty(HTMLElement.prototype, 'clientWidth', width)
+    if (scrollHeight === undefined) Reflect.deleteProperty(HTMLElement.prototype, 'scrollHeight')
+    else Object.defineProperty(HTMLElement.prototype, 'scrollHeight', scrollHeight)
+    if (scrollTo === undefined) Reflect.deleteProperty(HTMLElement.prototype, 'scrollTo')
+    else Object.defineProperty(HTMLElement.prototype, 'scrollTo', scrollTo)
+  }
+}
+
+/** The `translateY` a virtualised row is positioned at, in px. */
+function rowOffset(row: HTMLElement | null): number {
+  const m = /translateY\((-?[\d.]+)px\)/.exec(row?.style.transform ?? '')
+  return m?.[1] === undefined ? Number.NaN : Number.parseFloat(m[1])
+}
+
+interface LibrarySetup {
+  recorded: Recorded
+  library: LibraryRecorded
+}
+
+/** The viewer and the real library screen in one router, starting in the viewer. */
+async function setupViewerThenLibrary(
+  options: { scope?: string; query?: string; view?: 'grid' | 'list' } = {},
+): Promise<LibrarySetup> {
+  const recorded = newRecorded()
+  const library: LibraryRecorded = { seriesQueries: [], settingsPuts: [] }
+  // The library's handlers go first: MSW resolves in registration order, and
+  // `handlers()` carries a `GET /api/settings` whose `library_scope` is `all`.
+  // Left in front it would hydrate the store back to `all` on arrival (A-5, the
+  // server wins), and this file would be testing the hydration rather than the
+  // button.
+  server.use(...libraryHandlers(library, options.view ?? 'grid'), ...handlers(detailOf(), recorded))
+  stubViewport(1_440)
+  stubImage(recorded)
+  useUiStore.setState({
+    scope: options.scope ?? LIBRARY_SCOPE,
+    query: options.query ?? LIBRARY_QUERY,
+    view: options.view ?? 'grid',
+  })
+
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={[`/series/${SERIES_ID}/books/${BOOK_ID}?page=12`]}>
+        <Routes>
+          <Route path="/" element={<LibraryPage />} />
+          <Route path="/series/:sid" element={<LocationProbe />} />
+          <Route path="/series/:sid/books/:bid" element={<ViewerPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  await screen.findAllByRole('img', { name: /page_/ })
+  return { recorded, library }
+}
+
+async function pressLibrary(): Promise<void> {
+  act(() => {
+    useViewerStore.getState().wake()
+  })
+  await userEvent.click(screen.getByRole('button', { name: '라이브러리' }))
+  await screen.findByTestId('library-scroller')
+}
+
+interface FilterWatch {
+  /** Every value `scope` and `query` *changed to* since the watch began. */
+  moves: () => string[]
+  stop: () => void
+}
+
+/**
+ * The store's **transition list** for the sidebar filter and the search box —
+ * the only shape in which "the button did not touch them" can be asserted here.
+ *
+ * E-34 §1 rules on `scope` *and* `q`, and the three obvious observables can only
+ * see the `q` half:
+ *
+ *  * **The wire.** `useLibrarySettingsSync` runs its hydration effect on the
+ *    library's mount, and `GET /api/settings` is already in the cache because
+ *    the viewer asked for it — so `library_scope` is put back **before** the
+ *    first `GET /api/series` is ever issued. `root=` on the wire is the server's
+ *    value under either behaviour. `q` is not a settings field, so nothing
+ *    repairs it and that half stays honest.
+ *  * **`PUT /api/settings`.** The repair leaves the store equal to the payload,
+ *    so the write-back's `snapshot === serverKey` guard closes and no request is
+ *    sent. A cleared scope produces no `PUT` at all.
+ *  * **`useUiStore.getState().scope` afterwards.** Same repair, one step later.
+ *
+ * All three read the value **after** it settles, and the value settles back to
+ * the truth. What no repair can undo is that it *moved*: `store/ui.ts` is behind
+ * zustand's `persist`, which writes `shelf.ui` on every `set`, so a scope that
+ * went to `all` and back was written to `localStorage` as `all` in between — a
+ * reload, a second tab, or a settings request that never answers in that window
+ * keeps it. And it is the plain reading of the ruling: 건드리지 않는다. A value
+ * changed and changed back was touched.
+ *
+ * Same reasoning as `watchChrome` above, one layer down: a list has nothing to
+ * settle into, and `[]` means nothing happened.
+ */
+function watchFilters(): FilterWatch {
+  const seen: string[] = []
+  const stop = useUiStore.subscribe((state, prev) => {
+    if (state.scope !== prev.scope) seen.push(`scope=${state.scope}`)
+    if (state.query !== prev.query) seen.push(`q=${state.query}`)
+  })
+  return { moves: () => [...seen], stop }
+}
+
+describe('the 라이브러리 button (ruling E-34)', () => {
+  let restoreLayout: () => void = () => undefined
+
+  beforeEach(() => {
+    restoreLayout = stubLibraryLayout()
+  })
+  afterEach(() => {
+    restoreLayout()
+  })
+
+  it('reaches the library without clearing the scope or the search (E-34 §1)', async () => {
+    const { library } = await setupViewerThenLibrary()
+    const watch = watchFilters()
+    try {
+      await pressLibrary()
+
+      // The whole of the ruling, and the only assertion here that can see the
+      // `scope` half: neither value moved at any point between the press and the
+      // library settling. Everything below is the `q` half and the corroboration
+      // — see `watchFilters` for why they cannot stand in for this line.
+      expect(
+        watch.moves(),
+        'E-34 §1: 라이브러리 touches neither the sidebar filter nor the search box — a value that went to `all` and was hydrated back was still touched',
+      ).toEqual([])
+
+      // The *request list*. `q` is not a settings field, so nothing on arrival
+      // repairs it: a cleared search is visible on the wire, and this is where
+      // it shows.
+      await waitFor(() => {
+        expect(library.seriesQueries.length).toBeGreaterThan(0)
+      })
+      const last = library.seriesQueries.at(-1) ?? ''
+      expect(new URLSearchParams(last).getAll('root')).toEqual([LIBRARY_SCOPE])
+      expect(new URLSearchParams(last).get('q')).toBe(LIBRARY_QUERY)
+      expect(library.settingsPuts).toEqual([])
+      expect(useUiStore.getState().scope).toBe(LIBRARY_SCOPE)
+      expect(useUiStore.getState().query).toBe(LIBRARY_QUERY)
+      expect(
+        watch.moves(),
+        'nothing moved them on the way to the first request either',
+      ).toEqual([])
+    } finally {
+      watch.stop()
+    }
+  })
+
+  it('scrolls the virtualiser to a card outside the window and focuses it (E-34 §2)', async () => {
+    await setupViewerThenLibrary()
+    await pressLibrary()
+
+    const target = librarySeries()[TARGET_INDEX]
+    if (target === undefined) throw new Error('no target series')
+    expect(target.id).toBe(SERIES_ID)
+
+    // The premise, asserted rather than assumed: at this width the grid renders
+    // about five rows of six, so the prototype's `document.getElementById` has
+    // nothing to find here and would fail silently.
+    const scroller = screen.getByTestId('library-scroller')
+    expect(scroller.querySelectorAll('[data-index]').length).toBeGreaterThan(0)
+
+    await waitFor(() => {
+      expect(document.getElementById(seriesCardDomId(SERIES_ID))).not.toBeNull()
+    })
+    const card = document.getElementById(seriesCardDomId(SERIES_ID))
+    await waitFor(() => {
+      expect(document.activeElement).toBe(card)
+    })
+    // …and it is marked, which is the other half of the ruling.
+    expect(card).toHaveAttribute('data-revealed', 'true')
+
+    // **Where** it landed, not merely that something moved. `align: 'start'`
+    // means the card's own row is flush with the top of the scroller — which is
+    // also what rules out the prototype's 96px offset, and what catches a
+    // reveal that ran against an unmeasured grid and scrolled to the wrong row
+    // (the card can still end up on screen there, several hundred pixels off).
+    const rowBox = card?.closest('[data-index]') as HTMLElement | null
+    expect(rowBox?.dataset.index).toBe(String(Math.floor(TARGET_INDEX / 6)))
+    expect(rowOffset(rowBox)).toBeCloseTo(scroller.scrollTop, 0)
+    expect(scroller.scrollTop).toBeGreaterThan(0)
+
+    // One-shot: the instruction is consumed, or every later mount of the library
+    // would steal the focus again.
+    expect(useUiStore.getState().revealSeries).toBeNull()
+  })
+
+  it('marks exactly one card', async () => {
+    await setupViewerThenLibrary()
+    await pressLibrary()
+    await waitFor(() => {
+      expect(document.querySelectorAll('[data-revealed="true"]')).toHaveLength(1)
+    })
+  })
+
+  it('reveals the row through the list virtualiser too', async () => {
+    // `library_view` is server-held too (A-5), so the payload has to agree or
+    // the hydration puts the screen straight back into the grid.
+    await setupViewerThenLibrary({ view: 'list' })
+    await pressLibrary()
+
+    await waitFor(() => {
+      expect(document.getElementById(seriesRowDomId(SERIES_ID))).not.toBeNull()
+    })
+    const row = document.getElementById(seriesRowDomId(SERIES_ID))
+    await waitFor(() => {
+      expect(document.activeElement).toBe(row)
+    })
+    expect(row).toHaveAttribute('data-revealed', 'true')
+    const scroller = screen.getByTestId('library-scroller')
+    expect(rowOffset(row?.closest('[data-index]') as HTMLElement | null)).toBeCloseTo(
+      scroller.scrollTop,
+      0,
+    )
+    expect(scroller.scrollTop).toBeGreaterThan(0)
+  })
+
+  it('stays armed, and steals no focus, while the series is not in the loaded pages', async () => {
+    // `scope` narrowed to a root the target is not under: the series is simply
+    // not in `items`, and no amount of paging would bring it in — which is
+    // exactly why chasing pages is the wrong answer (E-34 §1 forbids clearing
+    // the scope to widen the search).
+    const { library } = await setupViewerThenLibrary({ scope: 'mangga' })
+    server.use(
+      http.get(`${ORIGIN}/api/series`, ({ request }) => {
+        library.seriesQueries.push(new URL(request.url).search)
+        return HttpResponse.json({ items: [], total: 0, offset: 0, limit: 60 })
+      }),
+    )
+    await act(async () => {
+      useViewerStore.getState().wake()
+      await Promise.resolve()
+    })
+    await userEvent.click(screen.getByRole('button', { name: '라이브러리' }))
+
+    await screen.findByText('검색 결과 없음')
+    expect(document.activeElement).toBe(document.body)
+    // Still armed: the reveal has not happened, so the instruction must survive
+    // for the page that finally carries the series.
+    expect(useUiStore.getState().revealSeries).toBe(SERIES_ID)
   })
 })

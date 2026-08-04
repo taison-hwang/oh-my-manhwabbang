@@ -760,9 +760,18 @@ grid/list toggle now switches the **volume** list.
     spacer `flex:1` · `읽기 방향` label (10px, .1em, uppercase, `--ink-dim`) ·
     `.seg` `L→R` / `R→L`.
 
-**Reading-direction default** (FR-VWR-002): `dirs[seriesId] ?? (root is a manga root ? 'rtl' : 'ltr')`.
-Persist per series. The prototype defaults root #1 (`01. mangga`) to RTL — see the screenshot, `R→L` is the
-lit segment.
+**Reading-direction default** (FR-VWR-002). ~~`dirs[seriesId] ?? (root is a manga root ? 'rtl' : 'ltr')`.
+Persist per series.~~ **Superseded — conflict resolution C-9 (`impl-plan.md`) and ruling E-33.** There is no
+"manga root" metadata to key a heuristic on, so the heuristic never existed in the product; and the
+persisted direction is **per book**, on the server (`PUT /api/books/{bid}/prefs`), falling back to the
+global default in `/api/settings`. The sentence above is kept struck through rather than deleted because
+two sessions re-derived it from here and it needs to stay findable.
+
+The `.seg` on **this** screen is the seed C-9 describes: it is client-only (`store/seriesDir.ts`,
+`localStorage`), it never writes the server, and per **E-33 §2** it seeds the direction of a book opened
+from this screen **only when that book has no override of its own**. Before E-33 it seeded nothing at all —
+the value was written and displayed but never travelled to the viewer, so the control looked like it worked
+and did not. A test that asserts on the store cannot see that; assert on what the viewer opens with.
 
 ### 5.2 Volume list header
 
@@ -1062,10 +1071,23 @@ volume was the card's own two buttons.
 display:flex; flex-wrap:wrap; align-items:center; gap:12px`. Left → right:
 
 1. `.btn.btn-secondary` `← 뒤로` — `color:var(--color-bg); border-color:var(--color-neutral-700); font-size:12px`
-2. Title block `min-width:0; display:flex; flex-direction:column`:
+2. `.btn.btn-secondary` `라이브러리` (**E-34**) — the same treatment. `뒤로` returns to the series detail
+   the reader came from; this one goes to the library. It **does not clear `scope` or `q`**: in this
+   product `library_scope` is written back to the server (A-5), so the prototype's
+   `scope:'all'; q:''` would make "I left the viewer" permanently unset the reader's sidebar filter.
+   It sets the reveal target, and the library scrolls that card into view and focuses it — through the
+   **virtualiser's `scrollToIndex`**, not `getElementById`, because both the grid and the list are
+   virtualised and paginated so an off-window card is not in the DOM at all (E-34 §2).
+3. Title block `min-width:0; display:flex; flex-direction:column`:
    series title Archivo 800 13px, ellipsis nowrap; volume name 11px `color:var(--color-neutral-500)`, ellipsis nowrap
-3. Spacer `flex:1`
-4. Three `.seg` groups, each `color:var(--color-bg); border-color:var(--color-neutral-700)`, with each
+4. Spacer `flex:1`
+5. **Override chip** (**E-33 §3**), rendered only when `BookPrefs.is_override` is true. Label
+   `이 권 전용 설정` — *권*, not *시리즈*: the override is per book (C-9, prd FR-VWR-002), and the
+   prototype's per-series wording would name a scope the product does not have. It is a button; one press
+   `PUT`s all three fields as `null` and clears the override. Filled `background:var(--color-hot);
+   color:var(--on-hot)` — **not** an outline. `--color-hot` on the dark viewer ground measures **2.83:1**,
+   below the prototype's own rejected 3.76 (E-32 §4) and far below AA for 11px text; filled it is **4.55**.
+6. Three `.seg` groups, each `color:var(--color-bg); border-color:var(--color-neutral-700)`, with each
    `.seg-opt + .seg-opt` overriding `border-left-color: var(--color-neutral-700)`, and each carrying
    `flex:none; white-space:nowrap`:
 

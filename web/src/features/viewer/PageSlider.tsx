@@ -96,7 +96,11 @@ export function PageSlider({
       {dragging && (
         <div
           data-role="slider-preview"
-          className="pointer-events-none absolute bottom-6 flex h-[102px] w-[68px] items-end border-2 border-accent p-1 text-xs tabular-nums text-ink"
+          // E-32 §1: the drag preview's border is a `--color-hot` marker — it
+          // says "this is the page you are pointing at", which is the same
+          // "current" signal the strip's cell carries. The accent it used to be
+          // is a deep teal at 1.2:1 on the preview's own dark stripes.
+          className="pointer-events-none absolute bottom-6 flex h-[102px] w-[68px] items-end overflow-hidden rounded-sm border-2 border-hot p-1 text-xs tabular-nums text-ink"
           style={{
             left: `${String(sliderPercent(previewPage, pageCount))}%`,
             transform: 'translateX(-50%)',

@@ -45,9 +45,18 @@
     outline: none;
   }
 
+  /* E-32 §1: focus is a `--color-hot` marker, not the accent. The accent is a
+     deep teal now — on the dark ground it is 1.2:1 against the surface it would
+     have to ring, which is not a focus indicator. */
   :focus-visible {
-    outline: 2px solid var(--color-accent);
+    outline: 2px solid var(--color-hot);
     outline-offset: 2px;
+  }
+
+  /* E-32 §1: the browser's own checked marker is a "selected" marker. */
+  input[type='checkbox'],
+  input[type='radio'] {
+    accent-color: var(--color-hot);
   }
 
   ::selection {
@@ -61,7 +70,16 @@
   }
 
   /* Headings — the DS type scale. `h6` is the section-label style used all over
-     the app, which is why it carries the tracking and the uppercasing. */
+     the app.
+
+     **E-32 restyles it and keeps the tag.** The section label used to be 13px,
+     uppercase, +0.08em; the soft-UI skin draws it as 16px / -0.01em / mixed
+     case. The prototype gets there by swapping every `<h6>`/`<h4>` for a styled
+     `<div>`, which E-32 §4 refuses: that deletes the document outline, kills
+     screen-reader heading navigation and breaks `e2e/06-settings.spec.ts`'s
+     `getByRole('heading')`. So the *style* moves and the *tag* stays, and the
+     seven section headers in the product all say `<h6>` (they used to be six
+     `<h6>` and one `<h4>` — `SectionHeader`). */
   h1,
   h2,
   h3,
@@ -91,35 +109,59 @@
     font-size: 16px;
   }
   h6 {
-    font-size: 13px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    font-size: 16px;
+    letter-spacing: -0.01em;
   }
 
   p {
     margin: 0;
   }
 
+  /* The soft-UI scrollbar (E-32): a 10px gutter with a 4px pill floating in it.
+     The 3px transparent border plus `background-clip: content-box` is what
+     insets the thumb — painting a narrower thumb is not possible otherwise.
+     `scrollbar-width: thin` is the Firefox half of the same rule; it is on `*`
+     because Firefox reads it from the scroll container, not from the root. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
+
   ::-webkit-scrollbar {
-    width: 12px;
-    height: 12px;
+    width: 10px;
+    height: 10px;
   }
   ::-webkit-scrollbar-thumb {
     background: var(--scrollbar-thumb);
+    border-radius: var(--radius-full);
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-thumb-hover);
+    background-clip: content-box;
   }
   ::-webkit-scrollbar-track {
     background: transparent;
   }
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
 
-  /* Square slider: 2px divider track, 12x18 accent thumb (ui-spec §2.4).
+  /* Pill slider: 6px trough, 18px round thumb (E-32; ui-spec §2.4 for the box).
 
      The **element** carries the height, not a wrapper. A range input with no
-     height collapses onto its 2px track, so the thumb overflows a hit area two
+     height collapses onto its track, so the thumb overflows a hit area a few
      pixels tall — unusable with a finger and unreachable with a careless mouse.
      24px is the desktop box; the media query below takes it to 44px on a phone,
      which is ui-spec §7's minimum touch target. Putting the phone height on
      every width (what the viewer's slider used to do inline) made the bottom
-     bar 12px taller than the design at every desktop size. */
+     bar 12px taller than the design at every desktop size.
+
+     The thumb keeps `--accent-fill` rather than the prototype's near-white
+     disc: the disc is 1.25:1 on the trough, and this control has to be findable
+     without relying on its shadow. `--accent-fill` is 5.78 on light, 3.86 on
+     dark. */
   input[type='range'] {
     -webkit-appearance: none;
     appearance: none;
@@ -131,39 +173,45 @@
     accent-color: var(--color-accent);
   }
   input[type='range']::-webkit-slider-runnable-track {
-    height: 2px;
-    background: var(--color-divider);
+    height: 6px;
+    border-radius: var(--radius-full);
+    background: var(--fill-track);
   }
   input[type='range']::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    width: 12px;
+    width: 18px;
     height: 18px;
-    margin-top: -8px;
-    background: var(--color-accent);
+    margin-top: -6px;
+    background: var(--accent-fill);
     border: 0;
-    border-radius: 0;
+    border-radius: 50%;
+    box-shadow: var(--shadow-sm);
   }
   input[type='range']::-moz-range-track {
-    height: 2px;
-    background: var(--color-divider);
+    height: 6px;
+    border-radius: var(--radius-full);
+    background: var(--fill-track);
   }
   input[type='range']::-moz-range-thumb {
-    width: 12px;
+    width: 18px;
     height: 18px;
-    background: var(--color-accent);
+    background: var(--accent-fill);
     border: 0;
-    border-radius: 0;
+    border-radius: 50%;
+    box-shadow: var(--shadow-sm);
   }
 
-  /* On the viewer's reading ground `--color-divider` is nearly the background:
-     the track disappeared and the thumb read as a floating mark with nothing to
-     travel along. `.on-dark` is the one place a slider needs a lighter rail. */
+  /* On the viewer's reading ground the ordinary trough is 1.6:1 and the rail
+     disappeared, leaving the thumb as a floating mark with nothing to travel
+     along. `--fill-track-2` is the "trough over imagery" step and is 2.6:1
+     there. (It used to be `--color-neutral-600`, which is a warm ochre now and
+     reads as a brown stripe across a teal bar.) */
   input[type='range'].on-dark::-webkit-slider-runnable-track {
-    background: var(--color-neutral-600);
+    background: var(--fill-track-2);
   }
   input[type='range'].on-dark::-moz-range-track {
-    background: var(--color-neutral-600);
+    background: var(--fill-track-2);
   }
 
   /* 767.98px, not 767px: the same edge every other <768 rule in this sheet
@@ -173,13 +221,13 @@
       height: var(--touch-min);
     }
     input[type='range']::-webkit-slider-thumb {
-      width: 16px;
-      height: 28px;
-      margin-top: -13px;
+      width: 26px;
+      height: 26px;
+      margin-top: -10px;
     }
     input[type='range']::-moz-range-thumb {
-      width: 16px;
-      height: 28px;
+      width: 26px;
+      height: 26px;
     }
   }
 
@@ -228,7 +276,7 @@
     border: 1px solid transparent;
     /* var(--space-2) calc(var(--space-3) * 1.2) => 8px 14.4px */
     padding: var(--space-2) calc(var(--space-3) * 1.2);
-    border-radius: 0;
+    border-radius: var(--radius-pill);
     cursor: pointer;
     transition: background var(--hover-fade) ease;
   }
@@ -242,9 +290,12 @@
     cursor: not-allowed;
   }
 
+  /* `--on-accent`, not `--color-bg`. The accent used to be a light-ish red, so
+     the dark ground doubled as its foreground; the teal is dark in both themes
+     and `--color-bg` on it is 1.48:1 in the dark theme. */
   .btn-primary {
     background: var(--color-accent);
-    color: var(--color-bg);
+    color: var(--on-accent);
   }
   .btn-primary:hover:not(:disabled) {
     background: var(--accent-hover);
@@ -254,7 +305,7 @@
   }
 
   .btn-secondary {
-    border-color: var(--color-divider);
+    border-color: var(--control-border);
   }
   .btn-secondary:hover:not(:disabled) {
     background: var(--hover-tint);
@@ -264,7 +315,7 @@
   }
 
   .btn-ghost {
-    color: var(--color-accent);
+    color: var(--accent-text);
     padding-inline: var(--space-1);
   }
   .btn-ghost:hover:not(:disabled) {
@@ -296,7 +347,7 @@
     font-size: 11px;
     letter-spacing: 0.02em;
     padding: 3px 10px;
-    border-radius: 0;
+    border-radius: var(--radius-sm);
     border: 1px solid transparent;
   }
   .tag-accent {
@@ -312,8 +363,8 @@
     color: var(--color-neutral-800);
   }
   .tag-outline {
-    border-color: var(--color-accent);
-    color: var(--color-accent);
+    border-color: var(--accent-text);
+    color: var(--accent-text);
   }
 
   /* ----------------------------------------------------------------- fields */
@@ -331,16 +382,16 @@
     font-size: 14px;
     font-family: inherit;
     color: var(--color-text);
-    caret-color: var(--color-accent);
+    caret-color: var(--accent-text);
     background: var(--color-surface);
-    border: 1px solid var(--color-divider);
-    border-radius: 0;
+    border: 1px solid var(--control-border);
+    border-radius: var(--radius-md);
   }
   .input:hover {
     border-color: var(--control-border-hover);
   }
   .input:focus-visible {
-    border-color: var(--color-accent);
+    border-color: var(--color-hot);
     outline-offset: 0;
   }
   .input::placeholder {
@@ -361,12 +412,15 @@
     height: 16px;
     flex: 0 0 16px;
     border-radius: 50%;
-    border: 1.5px solid var(--color-divider);
+    border: 1.5px solid var(--control-border);
     box-sizing: border-box;
   }
+  /* `--accent-fill`, not `--color-accent`: the checked dot has to read against
+     the ground, and the teal accent is 1.09:1 on the dark one — a checked radio
+     would look unchecked in the dark theme. */
   .radio[data-checked='true'] .dot {
-    border-color: var(--color-accent);
-    background: var(--color-accent);
+    border-color: var(--accent-fill);
+    background: var(--accent-fill);
     box-shadow: inset 0 0 0 4px var(--color-bg);
   }
 
@@ -374,8 +428,8 @@
   .seg {
     display: inline-flex;
     overflow: hidden;
-    border: 1px solid var(--color-divider);
-    border-radius: 0;
+    border: 1px solid var(--control-border);
+    border-radius: var(--radius-lg);
   }
 
   .seg-opt {
@@ -388,17 +442,26 @@
     white-space: nowrap;
   }
   .seg-opt + .seg-opt {
-    border-left: 1px solid var(--color-divider);
+    border-left: 1px solid var(--control-border);
   }
+  /* E-32 §1: the checked option carries a `--color-hot` **inset ring**, and it
+     is load-bearing rather than decorative. The fill is the teal accent, which
+     is 1.2:1 against the dark viewer ground — on the dark theme a selected
+     segment without the ring is simply not distinguishable from an unselected
+     one. Measured on the prototype as `<dual-light>, rgb(236,48,19) 0 0 0 2px
+     inset`, i.e. `--shadow-sm` plus the ring, and that is what this is. */
   .seg-opt[data-checked='true'] {
     background: var(--color-accent);
-    color: var(--color-bg);
+    color: var(--on-accent);
+    box-shadow:
+      var(--shadow-sm),
+      inset 0 0 0 2px var(--color-hot);
   }
   .seg-opt[data-checked='false']:hover {
     background: var(--hover-tint);
   }
   .seg-opt:has(input:focus-visible) {
-    outline: 2px solid var(--color-accent);
+    outline: 2px solid var(--color-hot);
     outline-offset: -2px;
   }
 
@@ -409,13 +472,13 @@
     gap: var(--space-2);
     padding: var(--space-3);
     background: var(--color-surface);
-    border-radius: 0;
+    border-radius: var(--radius-lg);
   }
   .card-kicker {
     font-size: 10px;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: var(--color-accent);
+    color: var(--accent-text);
   }
   .card-title {
     font-family: var(--font-heading);
@@ -503,7 +566,7 @@
     padding: var(--space-4);
     background: var(--color-surface);
     box-shadow: var(--shadow-lg);
-    border-radius: 0;
+    border-radius: var(--radius-lg);
   }
   .dialog-title {
     font-family: var(--font-heading);
@@ -540,8 +603,8 @@
   .spinner {
     width: 11px;
     height: 11px;
-    border: 2px solid var(--color-neutral-700);
-    border-top-color: var(--color-accent-400);
+    border: 2px solid var(--fill-track-2);
+    border-top-color: var(--accent-fill);
     border-radius: 50%;
     animation: spin 0.7s linear infinite;
   }
@@ -565,11 +628,20 @@
     min-height: 0;
   }
 
+  /* E-32: the 2px right rule becomes an elevation. The prototype spells it
+     `4px 0 18px rgba(150,128,96,.16)`, which is `--shadow-md`'s ochre lobe with
+     the vertical offset taken out; there is no token for that exact triple and
+     tokens.css is not this change's to extend, so the shadow token nearest it is
+     used instead. `position:relative` + `--z-sticky` is what lets the shadow
+     fall *over* the content column — an unpositioned sibling's box-shadow is
+     painted before the next sibling's background. */
   .sidebar {
     width: var(--sidebar-w);
     flex: 0 0 var(--sidebar-w);
-    border-right: 2px solid var(--rule-strong);
     background: var(--color-surface);
+    box-shadow: var(--shadow-md);
+    position: relative;
+    z-index: var(--z-sticky);
     display: flex;
     flex-direction: column;
     min-height: 0;
@@ -583,17 +655,29 @@
     }
   }
 
+  /* E-32: a full-bleed row with a 3px left rail becomes an inset chip —
+     `margin: 2px 8px`, `padding: 7px 11px`, `--radius-md`.
+     The width is `calc(100% - 2 × --space-2)`, and it is not decoration.
+     `width: 100%` plus the new side margins overflows the panel by 16px; but
+     dropping the width entirely does **not** work either, because a `<button>`
+     is not made block-level by `display: flex` in Chrome — it shrink-wraps its
+     label. Measured at 1440: a 240px sidebar drew 160px rows, so the hover chip
+     and the selected ring covered the text and stopped short of the count.
+     `min-height` stays on `--touch-min` — E-32 §4 refuses the prototype's flat
+     42px because NFR-CMP-002 wants 44 below 768, and that is what this token
+     already is (0 above it, where a pointer is not a finger). */
   .sidebar-nav-row {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 7px 16px;
+    width: calc(100% - 2 * var(--space-2));
+    margin: 2px var(--space-2);
+    padding: 7px 11px;
+    border-radius: var(--radius-md);
     cursor: pointer;
-    width: 100%;
     text-align: left;
     background: transparent;
     border: 0;
-    border-left: 3px solid transparent;
     color: var(--ink-dim);
     font-size: 13px;
     font-family: inherit;
@@ -609,16 +693,31 @@
   .sidebar-nav-row:disabled {
     cursor: default;
   }
+  /* E-32 §1: the selected row is a `--color-hot` marker. It used to be a 3px
+     left rail in the accent, which is now a teal sitting at 1.09:1 on the dark
+     ground — the marker for the current root would have vanished there. The
+     chip carries it as an inset ring plus `--shadow-sm`, which is exactly the
+     pair the prototype computes for a selected row. */
   .sidebar-nav-row[data-active='true'] {
-    border-left-color: var(--color-accent);
     background: var(--nav-active);
     color: var(--ink);
+    box-shadow:
+      var(--shadow-sm),
+      inset 0 0 0 2px var(--color-hot);
   }
 
-  /* The 56px icon rail (768–1023): labels collapse, the 3px accent marker and
-     the hit area stay. The scope name moves into the section header. */
+  /* The 56px icon rail (768–1023): labels collapse, the selected ring and the
+     hit area stay. The scope name moves into the section header.
+
+     The chip's side margin is halved here. `--space-2` on each side of a 56px
+     rail leaves a 40×36 target where the full-bleed row used to be 56 wide —
+     a 29 % loss of hit area on the one tier that is plausibly a tablet, and the
+     tier `--touch-min` is 0 on, so nothing else would have caught it. 4px keeps
+     the chip visible and the target 48 wide. */
   .sidebar-rail .sidebar-nav-row {
     justify-content: center;
+    width: calc(100% - 2 * var(--space-1));
+    margin: 2px var(--space-1);
     padding: 10px 0;
     gap: 0;
   }
@@ -641,12 +740,49 @@
     min-height: 0;
     z-index: var(--z-overlay);
   }
-  /* Inside the drawer the sidebar is always the full-width variant. */
+  /* Inside the drawer the sidebar is always the full-width variant, and the
+     drawer's own edge is the edge — the sidebar's elevation would otherwise be
+     painted twice, once by each. */
   .drawer-panel .sidebar {
     display: flex;
     width: 100%;
     flex: 1;
-    border-right: 0;
+    box-shadow: none;
+  }
+
+  /* E-32: a list row is no longer separated by a hairline; it is a rounded chip
+     that appears under the pointer.
+
+     The light hover is `--color-neutral-100`, one step *lighter* than the
+     `--color-surface` card the rows now sit on. That is a ramp step, and the
+     ramps are a theme-invariant absolute lightness scale (ui-spec §1.4) — on
+     the dark theme that same near-white step is a white bar, not a hover. So
+     the dark ground
+     takes the semantic `--row-hover` instead, and the split lives here, once,
+     rather than as a `dark:` variant repeated at four call sites. */
+  .row-chip {
+    border-radius: var(--radius-md);
+  }
+  .row-chip:hover {
+    background: var(--color-neutral-100);
+  }
+  [data-theme='dark'] .row-chip:hover {
+    background: var(--row-hover);
+  }
+
+  /* E-32: the cover hover overlay stops being a flat 72% wash and becomes a
+     vertical gradient, so the title under it stays readable while the two
+     buttons at the bottom get a solid ground. The prototype's stops are
+     .15 → .55 @62% → .92; these are the nearest scrims tokens.css already
+     defines (7% → 50% @62% → 72%), because a gradient is not a colour and
+     adding three more scrim tokens is not this change's call. */
+  .cover-scrim {
+    background-image: linear-gradient(
+      to top,
+      var(--scrim-cover),
+      var(--scrim-modal) 62%,
+      var(--hover-tint)
+    );
   }
 
   /* The striped FR-LIB-008 fallback cover. Stripe pitch is 16px on cards and

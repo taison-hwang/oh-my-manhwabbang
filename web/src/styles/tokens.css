@@ -1,5 +1,5 @@
 /*
- * SHELF design tokens — ui-spec §1.2 (light) + §1.4 (dark).
+ * SHELF design tokens — ui-spec §1.2 (light) + §1.4 (dark), as amended by E-32.
  *
  * Imported once from main.tsx, before Tailwind's layers. Nothing else in the
  * app may contain a colour literal; every hex in the product is in this file.
@@ -17,6 +17,34 @@
  * The same applies in reverse: `<div data-theme="light">` inside the dark
  * viewer re-scopes back to the light palette, which is exactly what the
  * next-volume card of ui-spec §6.5 needs.
+ *
+ * ---------------------------------------------------------------------------
+ * E-32 — the soft-UI skin
+ * ---------------------------------------------------------------------------
+ * The ground is warm cream, the accent a deep teal, the ramps warm ochre, and
+ * elevation is dual-light (highlight up-left, shadow down-right) rather than a
+ * single ink drop. Three consequences run through the whole file:
+ *
+ *  1. `--color-hot` (#EC3013, the retired brand red) is NOT a brand colour any
+ *     more. It marks "current / selected / focused" and nothing else. The
+ *     moment it is used as an accent again this decision has been undone.
+ *
+ *  2. The accent is a *dark* teal, so it can no longer double as ink on a dark
+ *     ground and `--color-bg` can no longer double as its foreground. Two
+ *     tokens exist for that: `--accent-text` (the accent when it is ink, flips
+ *     with the theme) and `--on-accent` (the ink that sits on an accent fill,
+ *     constant because the accent is constant). `--accent-fill` is the accent
+ *     when it is a fill that must read against the ground — on dark it moves up
+ *     the ramp, because #17595B tops out at 2.6:1 against *any* darker ground.
+ *
+ *  3. `soft-ui.css` has no dark palette, so the dark block below is derived,
+ *     not copied: a teal-ink ground seeded on the light theme's #263B38, with
+ *     every semantic token re-flipped onto it. The ramps stay put — they are an
+ *     absolute lightness scale, and inlining raw ramp steps the way the
+ *     prototype does is exactly what breaks contrast when the theme flips.
+ *
+ * Every ratio quoted below is WCAG 2.1 relative luminance, computed, not eyed;
+ * the same numbers are re-derived and asserted in tokens.test.ts.
  */
 
 :root,
@@ -24,78 +52,99 @@
   color-scheme: light;
 
   /* ---- roles ---------------------------------------------------------- */
-  --color-bg: #f3f2f2;
-  --color-surface: #eae9e9;
-  --color-text: #201e1d;
-  --color-accent: #ec3013;
-  --color-accent-2: #e15b47;
-  --color-divider: rgb(32 30 29 / 0.4);
+  --color-bg: #EAE3D4;
+  --color-surface: #F3EEE3;
+  --color-text: #263B38;
+  --color-accent: #17595B;
+  /* E-32: the secondary accent collapses into the accent. The tokens survive
+     because `.tag-accent-2` and the Tailwind mapping still name them. */
+  --color-accent-2: var(--color-accent);
+  --color-divider: #DDD3C0;
+
+  /* The retired brand red, kept for ONE job: "current / selected / focused".
+     Theme-invariant — it is a marker, not part of either palette. */
+  --color-hot: #EC3013;
 
   /* ---- semantic, theme-flipping (ui-spec §1.4) ------------------------ */
-  --ink: var(--color-text);
-  --ink-muted: rgb(32 30 29 / 0.55);
-  --ink-dim: #7d7979; /* neutral-600 */
-  --ink-faint: #9b9797; /* neutral-500 */
-  --ink-label: rgb(32 30 29 / 0.7); /* .field > label */
-  --ink-meta: rgb(32 30 29 / 0.5); /* .card-meta */
-  --ink-th: rgb(32 30 29 / 0.6); /* .table th */
+  --ink: var(--color-text); /* 9.31 on bg / 10.28 on surface */
+  --ink-muted: rgb(38 59 56 / 0.8); /* 5.47 / 5.84 */
+  --ink-dim: #5F5849; /* neutral-700 — 5.52 / 6.09. The prototype's
+                         neutral-600 is 3.31 on this ground: an AA fail at the
+                         10–12px this token is used at (E-32 §4). */
+  --ink-faint: #6C6453; /* 4.58 / 5.06 — neutral-600 lifted toward 700 until it
+                           clears AA on the *bg*, the harder of the two grounds.
+                           neutral-500 is 2.37 on surface (E-32 §4). */
+  --ink-label: rgb(38 59 56 / 0.78); /* .field > label — 5.18 / 5.52 */
+  --ink-meta: rgb(38 59 56 / 0.75); /* .card-meta, 11px — 4.79 / 5.07 */
+  --ink-th: rgb(38 59 56 / 0.76); /* .table th, 11px — 4.92 / 5.22 */
   --rule: var(--color-divider); /* 1px hairlines */
-  --rule-strong: var(--color-divider); /* 2px section rules */
-  --control-border: var(--color-divider);
-  --control-border-hover: rgb(32 30 29 / 0.45);
-  --fill-subtle: #eae7e7; /* neutral-200 */
-  --fill-track: #d7d3d3; /* neutral-300 — progress troughs */
-  --fill-track-2: #bab6b6; /* neutral-400 — troughs over imagery */
-  --hover-tint: rgb(32 30 29 / 0.07);
-  --press-tint: rgb(32 30 29 / 0.14);
-  --row-hover: rgb(32 30 29 / 0.05);
-  --row-hover-table: rgb(32 30 29 / 0.04);
-  --nav-hover: rgb(32 30 29 / 0.06);
-  --nav-active: rgb(236 48 19 / 0.08);
-  --scrim-cover: rgb(32 30 29 / 0.72);
-  --scrim-modal: rgb(45 43 43 / 0.5);
-  --accent-hover: #dd2b0f; /* accent-600 — one step past base on light */
-  --accent-press: #ae1800; /* accent-700 */
-  --accent-text: #ae1800; /* accent-700 — accent at paragraph size */
-  --scrollbar-thumb: rgb(32 30 29 / 0.3);
+  --rule-strong: #CFC5B0; /* neutral-400 — the 2px structural rules */
+  --control-border: #A79B84; /* neutral-500 — 2.14 / 2.37. The soft divider is
+                                1.16 on the ground; a control boundary drawn in
+                                it is not a boundary. */
+  --control-border-hover: #857A66; /* neutral-600 — 3.31 / 3.65 */
+  --fill-subtle: #EFE9DC; /* neutral-200 */
+  --fill-track: #E2DACA; /* neutral-300 — progress troughs */
+  --fill-track-2: #CFC5B0; /* neutral-400 — troughs over imagery */
+  --hover-tint: rgb(38 59 56 / 0.07);
+  --press-tint: rgb(38 59 56 / 0.14);
+  --row-hover: rgb(38 59 56 / 0.05);
+  --row-hover-table: rgb(38 59 56 / 0.04);
+  --nav-hover: rgb(38 59 56 / 0.06);
+  --nav-active: rgb(23 89 91 / 0.1);
+  --scrim-cover: rgb(38 59 56 / 0.72);
+  --scrim-modal: rgb(38 59 56 / 0.5);
+  --accent-hover: #135052; /* accent-600 — one step past base on light */
+  --accent-press: #114547; /* accent-700 */
+  --accent-text: #114547; /* accent-700 — the accent at paragraph size, 8.36 */
+  --accent-fill: var(--color-accent); /* 5.78 on --fill-track (floor is 3) */
+  --scrollbar-thumb: #A79B84; /* neutral-500. The prototype's neutral-400 is
+                                 1.34 on the ground and the thumb is 4px wide
+                                 once the 3px transparent border is cut. */
+  --scrollbar-thumb-hover: #857A66; /* neutral-600 */
+  --ghost-hover: rgb(23 89 91 / 0.1);
+  --ghost-press: rgb(23 89 91 / 0.18);
+  --selection-bg: rgb(23 89 91 / 0.22); /* ink stays at 6.68 on the selection */
 
   /* ---- ramps — constant across themes (an absolute lightness scale) --- */
-  --color-neutral-100: #f8f4f4;
-  --color-neutral-200: #eae7e7;
-  --color-neutral-300: #d7d3d3;
-  --color-neutral-400: #bab6b6;
-  --color-neutral-500: #9b9797;
-  --color-neutral-600: #7d7979;
-  --color-neutral-700: #605d5d;
-  --color-neutral-800: #444141;
-  --color-neutral-900: #2d2b2b;
-  --color-accent-100: #fff2ef;
-  --color-accent-200: #ffe0d9;
-  --color-accent-300: #ffc4b8;
-  --color-accent-400: #ff9783;
-  --color-accent-500: #ff563c;
-  --color-accent-600: #dd2b0f;
-  --color-accent-700: #ae1800;
-  --color-accent-800: #7c1405;
-  --color-accent-900: #4d170e;
-  --color-accent-2-100: #fff2ef;
-  --color-accent-2-200: #ffe0da;
-  --color-accent-2-300: #ffc4b9;
-  --color-accent-2-400: #ff9784;
-  --color-accent-2-500: #ef6853;
-  --color-accent-2-600: #c94b39;
-  --color-accent-2-700: #9e3526;
-  --color-accent-2-800: #71261b;
-  --color-accent-2-900: #471d16;
+  --color-neutral-100: #F7F3EA;
+  --color-neutral-200: #EFE9DC;
+  --color-neutral-300: #E2DACA;
+  --color-neutral-400: #CFC5B0;
+  --color-neutral-500: #A79B84;
+  --color-neutral-600: #857A66;
+  --color-neutral-700: #5F5849;
+  --color-neutral-800: #3B3730;
+  --color-neutral-900: #23211D;
+  --color-accent-100: #E4EEEC;
+  --color-accent-200: #C7DCDA;
+  --color-accent-300: #9BC3C1;
+  --color-accent-400: #5E9B9B;
+  --color-accent-500: #17595B;
+  --color-accent-600: #135052;
+  --color-accent-700: #114547;
+  --color-accent-800: #0D3436;
+  --color-accent-900: #082325;
+  --color-accent-2-100: var(--color-accent-100);
+  --color-accent-2-200: var(--color-accent-200);
+  --color-accent-2-300: var(--color-accent-300);
+  --color-accent-2-400: var(--color-accent-400);
+  --color-accent-2-500: var(--color-accent-500);
+  --color-accent-2-600: var(--color-accent-600);
+  --color-accent-2-700: var(--color-accent-700);
+  --color-accent-2-800: var(--color-accent-800);
+  --color-accent-2-900: var(--color-accent-900);
 
-  /* ---- scrims that are absolute, not theme-relative -------------------- */
-  /* The viewer ground is #201e1d in both app themes, so the scrims painted on
-     top of it are constants rather than `text @ N%`. */
-  --scrim-volume-end: rgb(32 30 29 / 0.92);
-  --scrim-broken: rgb(77 23 14 / 0.82); /* accent-900 @ 82% */
-  --ghost-hover: rgb(236 48 19 / 0.1);
-  --ghost-press: rgb(236 48 19 / 0.18);
-  --selection-bg: rgb(236 48 19 / 0.3);
+  /* ---- absolutes — not theme-relative ---------------------------------- */
+  /* The viewer ground is #263B38 in both app themes, so the scrims painted on
+     top of it are constants rather than `text @ N%`. So are the two foregrounds
+     below: the surfaces they sit on (the accent, the hot marker) do not flip. */
+  --scrim-volume-end: rgb(38 59 56 / 0.92);
+  --scrim-broken: rgb(8 35 37 / 0.82); /* accent-900 @ 82% */
+  --on-accent: #F6F2E9; /* 7.18 on the accent, 8.18 on accent-600 */
+  --on-hot: #1B0B07; /* 4.55 on --color-hot. Light ink cannot get there:
+                        #F6F2E9 is 3.76 (E-32 §4) and even pure white is 4.20,
+                        so anything on the hot marker has to be dark. */
 
   /* ---- type ------------------------------------------------------------ */
   /* Archivo is vendored latin-only (C-14 / decisions E-7); it has no Hangul
@@ -113,14 +162,32 @@
   --space-4: 16px;
   --space-6: 24px;
   --space-8: 32px;
-  --radius-sm: 0px;
-  --radius-md: 0px;
-  --radius-lg: 0px;
+  /* E-32 retires D-40's zero-radius rule. The ban did not go away with it: the
+     hygiene whitelist is now *bound to these five values*, so an arbitrary px
+     radius is still a build failure. Add a step here, not at a call site. */
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+  --radius-pill: 7px;
+  --radius-full: 999px;
 
-  /* ---- elevation — soft ink-tinted shadows on a light ground ----------- */
-  --shadow-sm: 0 1px 2px rgb(45 43 43 / 0.14);
-  --shadow-md: 0 3px 10px rgb(45 43 43 / 0.16);
-  --shadow-lg: 0 12px 32px rgb(45 43 43 / 0.22);
+  /* ---- elevation — dual light on a warm ground ------------------------- */
+  /* Down-right lobe = ochre shadow, up-left lobe = the cream highlight. The
+     highlight is what makes the skin read as soft; it is also what makes this
+     shadow unusable on a dark ground, where it becomes a white outline. The
+     dark block re-derives all four. */
+  --shadow-sm:
+    3px 3px 8px rgb(150 128 96 / 0.22),
+    -3px -3px 8px rgb(255 253 246 / 0.9);
+  --shadow-md:
+    6px 6px 16px rgb(150 128 96 / 0.26),
+    -5px -5px 14px rgb(255 253 246 / 0.92);
+  --shadow-lg:
+    12px 14px 34px rgb(150 128 96 / 0.3),
+    -8px -8px 22px rgb(255 253 246 / 0.9);
+  --shadow-inset:
+    inset 3px 3px 7px rgb(150 128 96 / 0.28),
+    inset -3px -3px 7px rgb(255 253 246 / 0.85);
 
   /* ---- z-index ladder (ui-spec §3) ------------------------------------- */
   --z-content: 0;
@@ -137,50 +204,72 @@
 [data-theme='dark'] {
   color-scheme: dark;
 
-  --color-bg: #201e1d; /* was --color-text  */
-  --color-surface: #2d2b2b; /* neutral-900       */
-  --color-text: #f3f2f2; /* was --color-bg    */
-  --color-accent: #ec3013; /* brand constant    */
-  --color-accent-2: #e15b47;
-  --color-divider: #444141; /* neutral-800, SOLID — the viewer chrome rule */
+  /* Derived, not copied: soft-ui.css ships light only. The ground is the light
+     theme's ink (#263B38) and the ink is the light theme's ground, the same
+     swap the Modernist palette used, carried onto the teal. */
+  --color-bg: #263B38; /* was --color-text */
+  --color-surface: #2F4A46; /* one step up, 1.24 against the ground —
+                               the same separation the old #201e1d/#2d2b2b had */
+  --color-text: #EAE3D4; /* was --color-bg */
+  --color-accent: #17595B; /* brand constant */
+  --color-accent-2: var(--color-accent);
+  --color-divider: #3E5B57; /* SOLID — the viewer chrome rule */
 
-  --ink: #f3f2f2;
-  --ink-muted: rgb(243 242 242 / 0.62);
-  --ink-dim: #9b9797; /* neutral-500 reads as "dim" on dark */
-  --ink-faint: #7d7979; /* neutral-600 */
-  --ink-label: rgb(243 242 242 / 0.7);
-  --ink-meta: rgb(243 242 242 / 0.5);
-  --ink-th: rgb(243 242 242 / 0.6);
-  --rule: #444141; /* neutral-800 */
-  --rule-strong: #444141;
-  --control-border: #605d5d; /* neutral-700 — the viewer's button/seg borders */
-  --control-border-hover: #7d7979;
-  --fill-subtle: #2d2b2b; /* neutral-900 */
-  --fill-track: #444141; /* neutral-800 */
-  --fill-track-2: #605d5d; /* neutral-700 */
-  --hover-tint: rgb(243 242 242 / 0.08);
-  --press-tint: rgb(243 242 242 / 0.16);
-  --row-hover: rgb(243 242 242 / 0.06);
-  --row-hover-table: rgb(243 242 242 / 0.05);
-  --nav-hover: rgb(243 242 242 / 0.07);
-  --nav-active: rgb(236 48 19 / 0.14); /* 8% is invisible on dark */
+  --ink: var(--color-text); /* 9.31 on bg / 7.51 on surface */
+  --ink-muted: rgb(234 227 212 / 0.78); /* 6.36 / 5.29 */
+  --ink-dim: #B9C8C4; /* 6.87 / 5.54 */
+  --ink-faint: #A9BAB6; /* 5.88 / 4.75 — on dark the *surface* is the harder
+                           ground, and the shipped dark faint was 3.27 on it */
+  --ink-label: rgb(234 227 212 / 0.75); /* 6.01 / 5.03 */
+  --ink-meta: rgb(234 227 212 / 0.7); /* 5.46 / 4.61 */
+  --ink-th: rgb(234 227 212 / 0.72); /* 5.67 / 4.77 */
+  --rule: #3E5B57;
+  --rule-strong: #4A6B66;
+  --control-border: #5A7C77; /* the viewer's button/seg borders */
+  --control-border-hover: #79A09A;
+  --fill-subtle: #2F4A46;
+  --fill-track: #3E5B57;
+  --fill-track-2: #5A7C77;
+  --hover-tint: rgb(234 227 212 / 0.08);
+  --press-tint: rgb(234 227 212 / 0.16);
+  --row-hover: rgb(234 227 212 / 0.06);
+  --row-hover-table: rgb(234 227 212 / 0.05);
+  --nav-hover: rgb(234 227 212 / 0.07);
+  /* Tinting a teal ground with the teal accent does nothing — the two are the
+     same hue at nearly the same lightness. The active row is washed with
+     accent-300 instead. */
+  --nav-active: rgb(155 195 193 / 0.16);
   --scrim-cover: rgb(0 0 0 / 0.72);
   --scrim-modal: rgb(0 0 0 / 0.6);
-  --accent-hover: #ff563c; /* accent-500 */
-  --accent-press: #ff9783; /* accent-400 — one step past base on dark */
-  --accent-text: #ff9783; /* accent-400 */
-  --scrollbar-thumb: rgb(243 242 242 / 0.3);
+  /* Up the ramp, but only as far as the cream label on the fill still clears
+     AA: accent-400 would take #F6F2E9 down to 2.6. */
+  --accent-hover: #256668; /* label 5.91 */
+  --accent-press: #2C6D6E; /* label 5.34 */
+  --accent-text: #9BC3C1; /* accent-300 — 6.21 / 5.01 */
+  --accent-fill: #9BC3C1; /* 3.86 on --fill-track; --color-accent is 1.09 */
+  --scrollbar-thumb: rgb(234 227 212 / 0.4);
+  --scrollbar-thumb-hover: rgb(234 227 212 / 0.55);
+  --ghost-hover: rgb(155 195 193 / 0.12);
+  --ghost-press: rgb(155 195 193 / 0.2);
+  --selection-bg: rgb(155 195 193 / 0.32);
 
-  /* Elevation on a dark ground = hairline edge + ambient darkness. */
+  /* Elevation on a dark ground = hairline edge + ambient darkness. The light
+     block's up-left lobe is rgb(255 253 246 / 0.9); painted here it is a white
+     outline around every card, not a highlight. The inset keeps the dual-light
+     *shape* — dark down-left, light up-right — at an alpha a dark ground can
+     carry. */
   --shadow-sm:
-    0 0 0 1px #444141,
+    0 0 0 1px #3E5B57,
     0 1px 2px rgb(0 0 0 / 0.5);
   --shadow-md:
-    0 0 0 1px #444141,
+    0 0 0 1px #3E5B57,
     0 3px 10px rgb(0 0 0 / 0.55);
   --shadow-lg:
-    0 0 0 1px #444141,
+    0 0 0 1px #3E5B57,
     0 12px 32px rgb(0 0 0 / 0.6);
+  --shadow-inset:
+    inset 3px 3px 7px rgb(0 0 0 / 0.5),
+    inset -3px -3px 7px rgb(155 195 193 / 0.12);
 }
 
 /*

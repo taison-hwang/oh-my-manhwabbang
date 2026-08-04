@@ -10,6 +10,11 @@ import { cn } from '../../lib/cn'
  * The `cover` variant carries the 2:3 aspect ratio rather than a height, so the
  * skeleton occupies the *exact* box the real cover will — zero layout shift is
  * an acceptance criterion, not a nicety.
+ *
+ * E-32 gives both variants the skin the loaded state has: the cover is a
+ * rounded well (`--radius-md` + `--shadow-inset`, matching the cover boxes it
+ * stands in for) and the text bars are fully rounded, so the shimmer does not
+ * announce itself as the one square-cornered thing on the screen.
  */
 export interface SkeletonProps {
   variant: 'cover' | 'line'
@@ -27,7 +32,9 @@ export function Skeleton({ variant, index = 0, width, className }: SkeletonProps
       aria-hidden="true"
       className={cn(
         'animate-shimmer',
-        variant === 'cover' ? 'aspect-[2/3] w-full bg-fill-track' : 'h-[10px] bg-fill-track',
+        variant === 'cover'
+          ? 'aspect-[2/3] w-full rounded-md bg-fill-track shadow-inset'
+          : 'h-[10px] rounded-full bg-fill-track',
         className,
       )}
       style={{ animationDelay: delay, ...(width === undefined ? {} : { width }) }}

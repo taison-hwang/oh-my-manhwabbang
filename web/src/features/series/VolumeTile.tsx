@@ -40,11 +40,18 @@ export interface VolumeTileProps {
   onOpen: (book: BookSummary) => void
 }
 
-const BORDER_BY_TONE = {
-  broken: 'border-accent',
-  started: 'border-ink-muted',
-  finished: 'border-rule',
-  unread: 'border-rule',
+/**
+ * E-32: the 1px border becomes elevation, so the tone can no longer be a border
+ * colour. A broken volume keeps a mark of its own — the accent-300 **ring** the
+ * prototype computes for it — because the scrim over it is dark and a card that
+ * merely fails to lift is not a signal. The other three tones said "1px of
+ * divider" and said nothing, so they are plain raised covers.
+ */
+const RING_BY_TONE = {
+  broken: 'ring-2 ring-inset ring-accent-300',
+  started: '',
+  finished: '',
+  unread: '',
 } as const
 
 export function VolumeTile({ book, number, onOpen }: VolumeTileProps) {
@@ -62,9 +69,10 @@ export function VolumeTile({ book, number, onOpen }: VolumeTileProps) {
   const box = (
     <div
       className={cn(
-        'fallback-cover relative aspect-[2/3] overflow-hidden border',
-        BORDER_BY_TONE[tone],
-        openable && 'group-hover:border-accent',
+        'fallback-cover relative aspect-[2/3] overflow-hidden rounded-md shadow-md',
+        RING_BY_TONE[tone],
+        openable &&
+          'transition-[box-shadow,transform] duration-150 group-hover:-translate-y-0.5 group-hover:shadow-lg',
       )}
     >
       <span
@@ -94,7 +102,9 @@ export function VolumeTile({ book, number, onOpen }: VolumeTileProps) {
           className="absolute inset-0 flex flex-col items-start justify-end gap-1 bg-scrim-broken p-2"
           {...(badge.detail === null ? {} : { title: badge.detail })}
         >
-          <span className="flex items-center gap-[5px] bg-accent px-[6px] py-[3px] text-2xs tracking-[.08em] text-bg">
+          {/* E-32: the badge family becomes pills. `--on-accent` rather than
+              `--color-bg`, which is 1.48:1 on the accent in the dark theme. */}
+          <span className="flex items-center gap-[5px] rounded-full bg-accent px-2 py-[3px] text-2xs font-semibold tracking-[.06em] text-on-accent">
             <TriangleAlert size={11} aria-hidden={true} />
             {badge.label}
           </span>
@@ -105,7 +115,7 @@ export function VolumeTile({ book, number, onOpen }: VolumeTileProps) {
       {tone === 'started' && (
         <ProgressBar
           value={ratio}
-          height={4}
+          height={5}
           track="over-art"
           className="absolute inset-x-0 bottom-0"
           label={`${book.name} 진행률`}

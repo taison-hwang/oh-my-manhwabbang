@@ -128,11 +128,18 @@ function isTerminalState(state: string): boolean {
   return state === 'ERR' || state === '완독'
 }
 
-const BORDER_BY_TONE = {
-  broken: 'border-accent',
-  started: 'border-ink-muted',
-  finished: 'border-rule',
-  unread: 'border-rule',
+/**
+ * E-32: the thumb well is a rounded recess, not a 1px box, so the tone can no
+ * longer be a border colour. Only the broken tone still needs to be visible from
+ * across the row — the other three said "1px of divider" and said nothing — so
+ * it becomes a **ring**, the same accent-300 ring the prototype puts on a broken
+ * volume, and the rest are plain wells.
+ */
+const WELL_BY_TONE = {
+  broken: 'ring-2 ring-inset ring-accent-300',
+  started: '',
+  finished: '',
+  unread: '',
 } as const
 
 export function VolumeRow({ book, onOpen }: VolumeRowProps) {
@@ -152,15 +159,16 @@ export function VolumeRow({ book, onOpen }: VolumeRowProps) {
     <div
       data-testid="volume-row"
       className={cn(
-        'grid items-center gap-3 border-b border-rule px-2 py-1 hover:bg-row-hover',
+        // E-32: no divider, and the hover is a rounded chip (`.row-chip`).
+        'row-chip grid items-center gap-3 px-2 py-1',
         VOLUME_ROW_GRID_CLASS,
       )}
     >
       <span
         aria-hidden="true"
         className={cn(
-          'fallback-cover-row relative block h-[30px] w-[20px] border',
-          BORDER_BY_TONE[tone],
+          'fallback-cover-row relative block h-[30px] w-[20px] overflow-hidden rounded-sm shadow-inset',
+          WELL_BY_TONE[tone],
         )}
       >
         {thumb.status === 'ready' && (
@@ -189,7 +197,11 @@ export function VolumeRow({ book, onOpen }: VolumeRowProps) {
         )}
         {badge !== null && (
           <>
-            <span className="flex-none bg-accent px-[6px] py-[2px] text-2xs tracking-[.08em] text-bg">
+            {/* `--on-accent`, not `--color-bg` (E-32 §1). The accent is a deep
+                teal that is dark in *both* themes, so the ground can no longer
+                double as its foreground: `--color-bg` on it measures 1.48:1 in
+                the dark theme. */}
+            <span className="flex-none bg-accent px-[6px] py-[2px] text-2xs tracking-[.08em] text-on-accent">
               {badge.label}
             </span>
             <span
@@ -224,13 +236,15 @@ export function VolumeRow({ book, onOpen }: VolumeRowProps) {
         <span className="flex w-[46px] flex-none justify-end">
           {/* E-12: the terminal states are badges — a solid accent field, which
               ui-spec §2.5 permits for exactly 완독 and the 손상 family. The
-              in-progress and untouched states stay plain text. */}
+              in-progress and untouched states stay plain text.
+              `--on-accent` for the badge's ink (E-32 §1): on the teal accent
+              `--color-bg` is 1.48:1 in the dark theme. */}
           <span
             data-role="volume-state"
             className={cn(
               'text-xs tabular-nums',
               isTerminalState(state)
-                ? 'bg-accent px-[5px] py-px text-bg'
+                ? 'bg-accent px-[5px] py-px text-on-accent'
                 : state === '—'
                   ? 'text-ink-faint'
                   : 'text-accent-text',

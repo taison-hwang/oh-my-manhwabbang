@@ -32,19 +32,56 @@ const rel = (p: string): string => p.slice(ROOT.length + 1)
 
 const SOURCES = ALL.filter((p) => /\.(ts|tsx|css)$/.test(p) && !/\.test\.tsx?$/.test(p))
 
-/** Radius utilities that tailwind.config.ts deliberately does not generate. */
-const BANNED_RADIUS = /\brounded-(sm|md|lg|xl|2xl|3xl|\[)/
+/**
+ * The radius scale, read out of tokens.css rather than restated here.
+ *
+ * E-32 retires D-40's "zero radius everywhere" but explicitly keeps its
+ * enforcement: the ban is not lifted, the allowed set is *bound to the tokens*.
+ * So this map is the whitelist's only source of truth — adding `--radius-xl` to
+ * tokens.css legalises `border-radius: var(--radius-xl)` and the literal it
+ * resolves to, and nothing else ever becomes legal.
+ */
+const RADIUS_TOKENS = new Map<string, string>(
+  [...readFileSync(resolve(ROOT, 'styles/tokens.css'), 'utf8').matchAll(
+    /(--radius-[a-z]+):\s*([^;}\n]+)/g,
+  )].map((m) => [m[1] ?? '', (m[2] ?? '').trim()]),
+)
 
-describe('zero corner radius (D-40)', () => {
-  it('has no rounded-* utility anywhere in src/', () => {
+/** Radius utilities that tailwind.config.ts deliberately does not generate.
+ *  `borderRadius` is an override of {none, DEFAULT, sm, md, lg, pill, full}, so
+ *  the xl family and every arbitrary value are still absent. The optional
+ *  `-t`/`-bl`/… segment is matched too: `rounded-tl-[3px]` is the same bug. */
+const BANNED_RADIUS = /\brounded(-[a-z]+)?-(2xl|3xl|xl|\[)/
+
+describe('the radius scale is closed (D-40 as amended by E-32)', () => {
+  it('reads a non-empty scale out of tokens.css', () => {
+    // If this map ever comes back empty the whitelist below degenerates to
+    // {0, 0px, 50%, 9999px} and the two assertions after it pass for the wrong
+    // reason — a green suite that is checking nothing.
+    expect([...RADIUS_TOKENS.keys()].sort()).toEqual([
+      '--radius-full',
+      '--radius-lg',
+      '--radius-md',
+      '--radius-pill',
+      '--radius-sm',
+    ])
+  })
+
+  it('has no radius utility outside the scale anywhere in src/', () => {
     const offenders = SOURCES.filter((p) => BANNED_RADIUS.test(readFileSync(p, 'utf8'))).map(rel)
     expect(offenders).toEqual([])
   })
 
-  it('rounds nothing but the radio dot and the spinner', () => {
-    // The two true circles of ui-spec §0.1 are `50%`; everything else must be
-    // flat. Anything that is neither is a corner someone softened.
+  it('rounds nothing with a number that is not a token', () => {
+    // `50%` is a true circle (the radio dot, the spinner, the slider thumb) and
+    // `9999px` is Tailwind's pill; everything else must name a `--radius-*`
+    // token or the value one resolves to. An arbitrary px is a corner someone
+    // softened by hand, which is the thing D-40 existed to stop.
     const allowed = new Set(['0', '0px', '50%', '9999px'])
+    for (const [name, value] of RADIUS_TOKENS) {
+      allowed.add(value)
+      allowed.add(`var(${name})`)
+    }
     const offenders: string[] = []
     for (const path of SOURCES) {
       for (const m of readFileSync(path, 'utf8').matchAll(/border-radius:\s*([^;}\n]+)/g)) {

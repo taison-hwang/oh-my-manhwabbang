@@ -243,7 +243,9 @@ export function gridCoverWidth(breakpoint: Breakpoint): ThumbWidth {
   return breakpoint === 'tablet' ? THUMB_WIDTH_FOR.gridCoverNarrow : THUMB_WIDTH_FOR.gridCoverWide
 }
 
-/** ui-spec §4.5: 45px rows (36px thumb + 4px padding + the 1px rule). */
+/** ui-spec §4.5: 45px rows (36px thumb + 4px padding + 1px).
+ *  E-32 removed the rule that last pixel used to be; it is kept as the gap
+ *  between two hover chips, which now need one. */
 export const LIST_ROW_HEIGHT = 45
 /** Below 768 the row becomes two lines (ui-spec §7). */
 export const LIST_ROW_HEIGHT_STACKED = 60
@@ -274,9 +276,24 @@ export const LIST_TEMPLATE: Record<ListLayout, string> = {
  * nodes inserted rather than moved. The band is therefore defined once, here,
  * and `library.test.tsx` asserts the two elements carry the identical string.
  */
-export const LIST_HEADER_WRAPPER_CLASS = 'px-4 pt-4'
+export const LIST_HEADER_WRAPPER_CLASS = 'px-2 pt-2'
 export const LIST_HEADER_BAND_CLASS =
   'grid items-center gap-3 border-b-2 border-rule-strong p-2 text-xs uppercase tracking-[.08em] text-ink-dim'
+
+/**
+ * The list view's **card** (E-32): `--radius-lg`, `--color-surface`,
+ * `--shadow-md`, 8px of padding with 14 at the bottom.
+ *
+ * Shared by `SeriesList` and `GridSkeleton` for the same reason the band above
+ * is: the two have to occupy one geometry, and a card on the loaded list alone
+ * would move every row by its own margin the moment data arrived. The column
+ * header keeps its 2px underline — E-32 removes the *row* dividers, not the one
+ * that separates the head of a table from its body.
+ *
+ * `pb-[14px]` rather than `pb-4` is the prototype's own number, and it is the
+ * bottom inset the last row's hover chip needs to sit inside the card.
+ */
+export const LIST_CARD_CLASS = 'mx-4 mb-4 mt-4 rounded-lg bg-surface pb-[14px] shadow-md'
 
 // ---------------------------------------------------------------------------
 // Small hooks
@@ -385,42 +402,62 @@ function isSortKey(value: string): value is SortKey {
   return (SORT_KEYS as readonly string[]).includes(value)
 }
 
+/** The four library preferences of a settings payload, as one comparable key. */
+function settingsKey(s: {
+  library_view: string
+  library_sort: string
+  library_order: string
+  library_scope: string
+}): string {
+  return JSON.stringify([s.library_view, s.library_sort, s.library_order, s.library_scope])
+}
+
 /**
  * Keeps the four library preferences in step with `GET/PUT /api/settings`.
  *
- * The server is authoritative once it answers (`store/ui.ts`), so the first
- * settings payload hydrates the store; every local change after that is written
- * back exactly once. `lastSent` bounds the write to one request per distinct
- * local state, so a server that echoes a value it did not persist costs one
- * wasted `PUT` rather than an infinite loop.
+ * The server is authoritative once it answers (`store/ui.ts`): **every** settings
+ * payload hydrates the store, and every local change after that is written back
+ * exactly once. `lastSent` bounds the write to one request per distinct local
+ * state, so a `PUT` cannot be sent twice while its own response is in flight.
  *
- * **`hydrated` is `useState`, not `useRef`, and that is the whole point.** Both
- * effects below list `data`, so the commit where the payload first arrives runs
- * *both* of them. A ref is mutated during that commit, so the write-back would
- * read `hydrated.current === true` while `view/sort/order/scope` still hold the
- * **pre-hydration** closure values — the store defaults, or whatever the user's
- * own `localStorage` copy said — and `PUT` them straight back over the payload
- * the server just sent. It converges (the next render matches, so no third
- * request), which is exactly why it stayed invisible: every fixture's settings
- * equal the store defaults, and the screen shows the server's value while the
- * server has been handed the client's. With two tabs open it is a lost update.
+ * **`reconciled` is `useState`, not `useRef`, and it holds a payload key rather
+ * than a boolean. Both halves of that matter.**
  *
- * State fixes it because a state flag cannot change mid-commit: the write-back
- * sees `hydrated === false` on the hydrating commit and returns. What follows is
- * **two** commits, not one — `hydrateFromSettings` settles the zustand selectors
- * in the first, and `hydrated` only becomes `true` in the one after that. So by
- * the time the guard opens, `view/sort/order/scope` are the server's values and
- * never the pre-hydration closure. (That two-commit split is also why `hydrated`
- * has to be in the write-back's dependency array — see the comment on that
- * effect.) It is also the safer shape under StrictMode's double invocation — the
- * second run of the hydrate effect still sees `false`, so it re-hydrates
- * idempotently instead of unlocking a stale write-back.
+ * *Why state.* Both effects below list `data`, so the commit where a payload
+ * arrives runs *both* of them. A ref is mutated during that commit, so the
+ * write-back would see the guard already open while `view/sort/order/scope` still
+ * hold the **pre-hydration** closure values — the store defaults, or whatever the
+ * user's own `localStorage` copy said — and `PUT` them straight back over the
+ * payload the server just sent. It converges (the next render matches, so no
+ * third request), which is exactly why it stayed invisible: every fixture's
+ * settings equal the store defaults, and the screen shows the server's value
+ * while the server has been handed the client's. With two tabs open it is a lost
+ * update. State cannot change mid-commit, so the write-back sees the *old* key on
+ * the hydrating commit and returns. What follows is **two** commits, not one —
+ * `hydrateFromSettings` settles the zustand selectors in the first, and
+ * `setReconciled` lands in the one after. By the time the guard opens,
+ * `view/sort/order/scope` are the server's values and never the stale closure.
  *
- * So: **do not "simplify" this back into a ref.** The invalid-`library_sort`
- * repair below (`isSortKey` fails → the store keeps its own valid sort → the
- * write-back fixes the server) is the one genuine `PUT` on the hydration path,
- * and `library.test.tsx` asserts on the recorded request list — not on the
- * store — to tell the two apart.
+ * *Why a key and not a boolean.* A boolean `hydrated` latches: once true, a
+ * **refetch carrying new server values never re-hydrates**, and the write-back
+ * that follows PUTs the client's older values back over them. That is the same
+ * lost update on the refetch path, and it is reachable — `invalidateRootState`
+ * (`api/queries.ts`) invalidates `queryKeys.settings` whenever a root is added or
+ * removed. Keying on the payload closes it: a payload the store has not been
+ * reconciled against is, by definition, news from the server, and the server
+ * wins. A successful `PUT` goes through the same door, because `useSaveSettings`
+ * writes its response into the cache with `setQueryData` — the echo is just
+ * another payload, and adopting it is what makes a server that stores something
+ * other than what it was sent terminate instead of loop.
+ *
+ * So: **do not "simplify" this back into a ref, and do not collapse the key back
+ * into a boolean.** Two behaviours depend on it and only tests defend them —
+ * `react-hooks/exhaustive-deps` is `warn`, not `error` (`eslint.config.js` takes
+ * the plugin's recommended set as-is), so `pnpm lint` exits 0 with a missing dep.
+ * The invalid-`library_sort` repair below (`isSortKey` fails → the store keeps its
+ * own valid sort → the write-back fixes the server) is the one genuine `PUT` on
+ * the hydration path, and `library.test.tsx` asserts on the recorded request list
+ * — not on the store — to tell the two apart.
  */
 export function useLibrarySettingsSync(): void {
   const settings = useSettings()
@@ -432,11 +469,16 @@ export function useLibrarySettingsSync(): void {
   const scope = useUiStore((s) => s.scope)
 
   const data = settings.data
-  const [hydrated, setHydrated] = useState(false)
+  // `null` until the first payload lands, which is what keeps the write-back shut
+  // on a cold start — no payload has been reconciled, so there is nothing to
+  // write back *to* yet.
+  const [reconciled, setReconciled] = useState<string | null>(null)
   const lastSent = useRef<string | null>(null)
+  const serverKey = data === undefined ? null : settingsKey(data)
 
   useEffect(() => {
-    if (hydrated || data === undefined) return
+    if (data === undefined || serverKey === null) return
+    if (reconciled === serverKey) return
     const next: Partial<PersistedUi> = {
       view: data.library_view,
       order: data.library_order,
@@ -444,36 +486,53 @@ export function useLibrarySettingsSync(): void {
     }
     if (isSortKey(data.library_sort)) next.sort = data.library_sort
     hydrateFromSettings(next)
-    setHydrated(true)
-  }, [hydrated, data, hydrateFromSettings])
+    setReconciled(serverKey)
+    // A new server truth reopens the write-back. `lastSent` remembers one
+    // snapshot forever otherwise, and the store can come back to it: the reader
+    // picks 그리드 (sent, remembered), a refetch re-hydrates the store to the
+    // server's 리스트, the reader picks 그리드 again — `snapshot ===
+    // lastSent.current`, the write is suppressed, the screen says 그리드 and the
+    // server keeps 리스트 until the next reload throws the choice away. The
+    // invalid-`library_sort` repair below dies the same way: after any earlier
+    // write-back, a payload carrying an unreadable sort re-hydrates the other
+    // three fields and the repair `PUT` is swallowed by the same guard.
+    //
+    // This line was deleted once and a review put it back. The reasoning that
+    // deleted it was that a mutation removing it left every test in this file
+    // green — but that is a statement about the tests, not about the code, and
+    // the two scenarios above are exactly the paths the tests did not walk.
+    // **"The mutation survived" is evidence a line is unguarded, never evidence
+    // it is unnecessary.** Both scenarios now have tests (`library.test.tsx`).
+    lastSent.current = null
+  }, [reconciled, serverKey, data, hydrateFromSettings])
 
-  // `hydrated` is a dependency, not just a guard — unconditionally, whatever the
-  // payload happens to contain. `hydrateFromSettings` and `setHydrated(true)` sit
-  // in the same effect body but land in **two separate commits**: the zustand
-  // selectors settle first, and `hydrated` flips in the commit after. So on the
-  // commit where this guard finally opens, *nothing else in this dependency array
-  // has changed* — there is no re-run left to piggyback on. Drop `hydrated` and
-  // the effect simply never runs again after the guard opens, and the
-  // invalid-`library_sort` repair below never fires.
+  // `reconciled` and `serverKey` are dependencies, not just guards —
+  // unconditionally, whatever the payload happens to contain. `hydrateFromSettings`
+  // and `setReconciled` sit in the same effect body but land in **two separate
+  // commits**: the zustand selectors settle first, and `reconciled` catches up in
+  // the commit after. So on the commit where this guard finally opens, *nothing
+  // else in this dependency array has changed* — there is no re-run left to
+  // piggyback on. Drop `reconciled` and the effect simply never runs again after
+  // the guard opens, and the invalid-`library_sort` repair never fires.
   //
   // Do not talk yourself out of it with "but the payload disagrees with the store
   // here, so a selector will re-trigger it anyway". That is the false step: those
   // selectors change one commit too early, while the guard is still shut. The
   // repair test's payload disagrees on three of the four values and dropping the
-  // dep still breaks it. `react-hooks/exhaustive-deps` is `warn`, not `error`
-  // (`eslint.config.js` takes the plugin's recommended set as-is), so `pnpm lint`
-  // exits 0 without the dep — `library.test.tsx` is the only guard there is.
+  // dep still breaks it.
   useEffect(() => {
-    if (!hydrated || data === undefined) return
-    if (
-      data.library_view === view &&
-      data.library_sort === sort &&
-      data.library_order === order &&
-      data.library_scope === scope
-    ) {
-      return
-    }
-    const snapshot = JSON.stringify([view, sort, order, scope])
+    if (data === undefined || serverKey === null) return
+    // Shut while a payload is still being absorbed. On the commit a *new* payload
+    // arrives, `reconciled` still names the previous one and the store still holds
+    // the previous values — writing back here is precisely the lost update.
+    if (reconciled !== serverKey) return
+    const snapshot = settingsKey({
+      library_view: view,
+      library_sort: sort,
+      library_order: order,
+      library_scope: scope,
+    })
+    if (snapshot === serverKey) return
     if (lastSent.current === snapshot) return
     lastSent.current = snapshot
     mutate({
@@ -482,7 +541,7 @@ export function useLibrarySettingsSync(): void {
       library_order: order,
       library_scope: scope,
     })
-  }, [hydrated, data, view, sort, order, scope, mutate])
+  }, [reconciled, serverKey, data, view, sort, order, scope, mutate])
 }
 
 // ---------------------------------------------------------------------------

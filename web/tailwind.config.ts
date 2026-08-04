@@ -5,11 +5,16 @@ import type { Config } from 'tailwindcss'
  *
  * Two rules travel with it and are the whole point of the file:
  *
- *  1. `borderRadius` is **overridden, not extended** (decisions.md D-40). After
- *     this config `rounded-sm|md|lg|xl|2xl|3xl` do not exist as utilities at
- *     all — the class silently doing nothing is not good enough, the build has
- *     to be unable to produce it. `rounded-full` survives for the radio dot and
- *     the viewer spinner, the only two circles in the product.
+ *  1. `borderRadius` is **overridden, not extended** (decisions.md D-40, as
+ *     amended by E-32). D-40's zero-radius rule is retired, but its reasoning —
+ *     enforcement beats discipline — is not, so the override stays and the
+ *     allowed set is bound to the `--radius-*` tokens. After this config the
+ *     only radius utilities that exist are the five token steps plus
+ *     `rounded-none`/`rounded-full`; `rounded-xl`, `rounded-2xl`, `rounded-3xl`
+ *     and every arbitrary `rounded-[13px]` still cannot be produced. A new
+ *     radius is a new token in tokens.css, not a number at a call site —
+ *     src/lib/hygiene.test.ts reads the token block and fails the build on
+ *     anything outside it.
  *
  *  2. Every colour resolves to a CSS custom property rather than a literal, so
  *     flipping `data-theme` re-themes every utility with no rebuild (ui-spec
@@ -29,9 +34,17 @@ export default {
   darkMode: ['selector', '[data-theme="dark"]'],
 
   theme: {
-    // Zero corner radius, everywhere. Overriding rather than extending is what
-    // makes `rounded-lg` un-writable.
-    borderRadius: { none: '0px', DEFAULT: '0px', full: '9999px' },
+    // The E-32 radius scale, and nothing else. Overriding rather than extending
+    // is what keeps `rounded-2xl` and `rounded-[13px]` un-writable.
+    borderRadius: {
+      none: '0px',
+      DEFAULT: 'var(--radius-md)',
+      sm: 'var(--radius-sm)',
+      md: 'var(--radius-md)',
+      lg: 'var(--radius-lg)',
+      pill: 'var(--radius-pill)',
+      full: '9999px',
+    },
 
     extend: {
       // The four widths the responsive layer of ui-spec §7 is specified
@@ -84,6 +97,12 @@ export default {
         },
         divider: 'var(--color-divider)',
 
+        // E-32: the retired brand red, now a "current / selected / focused"
+        // marker and nothing else. `on-hot` is its foreground — dark, because
+        // no light ink clears AA on #EC3013 (white is 4.20).
+        hot: 'var(--color-hot)',
+        'on-hot': 'var(--on-hot)',
+
         // Semantic, theme-flipping. Prefer these over raw ramp steps: the ramps
         // are an absolute lightness scale and do not change when the theme does
         // (ui-spec §1.4).
@@ -112,6 +131,12 @@ export default {
         'accent-hover': 'var(--accent-hover)',
         'accent-press': 'var(--accent-press)',
         'accent-text': 'var(--accent-text)',
+        // The accent as a *fill* that has to read against the ground. On dark
+        // it moves up the ramp: #17595B cannot exceed 2.6:1 against any darker
+        // ground, so `bg-accent` on a progress bar is invisible there.
+        'accent-fill': 'var(--accent-fill)',
+        // The ink that sits on an accent fill. Constant, because the accent is.
+        'on-accent': 'var(--on-accent)',
       },
 
       borderColor: { DEFAULT: 'var(--color-divider)' },
@@ -153,6 +178,8 @@ export default {
         sm: 'var(--shadow-sm)',
         md: 'var(--shadow-md)',
         lg: 'var(--shadow-lg)',
+        // The pressed/recessed lobe of the dual-light set (E-32).
+        inset: 'var(--shadow-inset)',
       },
 
       zIndex: {

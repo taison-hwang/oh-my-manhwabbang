@@ -38,6 +38,27 @@ export function defaultOrderFor(key: SortKey): SortOrder {
   return key === 'name' ? 'asc' : 'desc'
 }
 
+/**
+ * The DOM ids the E-34 §2 reveal focuses, beside the `revealSeries` instruction
+ * that targets them — the pair is one mechanism and drifts if it is two files.
+ *
+ * They live here rather than in `SeriesCard`/`SeriesRow` for a second reason:
+ * exporting a *function* next to a component turns off Vite's fast refresh for
+ * that module (`react-refresh/only-export-components`), and these two are the
+ * only non-component exports either card would have.
+ *
+ * The id is never the reveal *mechanism*. Both surfaces are virtualised, so the
+ * element does not exist until the virtualiser has been scrolled to its index —
+ * see the long note in `SeriesGrid`.
+ */
+export function seriesCardDomId(seriesId: string): string {
+  return `series-card-${seriesId}`
+}
+
+export function seriesRowDomId(seriesId: string): string {
+  return `series-row-${seriesId}`
+}
+
 export interface UiState {
   theme: ThemeSetting
   view: ViewMode
@@ -50,6 +71,19 @@ export interface UiState {
   paletteQuery: string
   /** Off-canvas sidebar below 768px (ui-spec §7). Closed by default. */
   drawerOpen: boolean
+  /**
+   * The series the library should scroll to and focus on arrival (**E-34 §2**).
+   *
+   * A **one-shot instruction**, not a selection: whichever of the grid or the
+   * list is mounted consumes it, clears it, and keeps its own local mark. Left
+   * standing it would re-steal the focus every time the library mounted, which
+   * is a different product.
+   *
+   * Deliberately outside `PersistedUi`. `scope`, `sort`, `order` and `view` are
+   * remembered across sessions (A-5); "where I was a moment ago" is not — and
+   * writing it back would put a transient into `PUT /api/settings`.
+   */
+  revealSeries: string | null
   /**
    * Open overlays, oldest first. A stack rather than a single slot so the `Esc`
    * ladder of ui-spec §8.1 ("close palette / shortcuts / settings if any is
@@ -71,6 +105,8 @@ export interface UiState {
   setPaletteQuery: (query: string) => void
   setDrawerOpen: (open: boolean) => void
   toggleDrawer: () => void
+  /** Arms (or, with `null`, disarms) the E-34 §2 reveal. */
+  setRevealSeries: (seriesId: string | null) => void
   openOverlay: (overlay: Overlay) => void
   closeOverlay: (overlay: Overlay) => void
   toggleOverlay: (overlay: Overlay) => void
@@ -102,6 +138,7 @@ export const useUiStore = create<UiState>()(
       query: '',
       paletteQuery: '',
       drawerOpen: false,
+      revealSeries: null,
       overlays: [],
 
       setTheme: (theme) => {
@@ -146,6 +183,10 @@ export const useUiStore = create<UiState>()(
 
       toggleDrawer: () => {
         set((s) => ({ drawerOpen: !s.drawerOpen }))
+      },
+
+      setRevealSeries: (revealSeries) => {
+        set({ revealSeries })
       },
 
       openOverlay: (overlay) => {

@@ -115,10 +115,13 @@ export function SeriesHeader({
   const started = hasStarted(series.progress)
 
   return (
-    <header className="flex flex-col gap-6 border-b-2 border-rule-strong px-4 py-6 md:flex-row">
+    /* E-32: the hero stops being a band with a 2px rule under it and becomes a
+       card — `--radius-pill` (the prototype's 7px), `--color-surface`,
+       `--shadow-md`, 16 of margin and 16 of padding. */
+    <header className="m-4 flex flex-col gap-6 rounded-pill bg-surface p-4 shadow-md md:flex-row">
       {/* The fallback is always beneath the image, never swapped in for it, so
           a cover arriving late cannot shift the header (FR-LIB-008). */}
-      <div className="relative h-[192px] w-[128px] flex-none overflow-hidden border border-rule bg-fill-track md:h-[264px] md:w-[176px]">
+      <div className="relative h-[192px] w-[128px] flex-none overflow-hidden rounded-md bg-fill-track shadow-inset md:h-[264px] md:w-[176px]">
         <FallbackCover title={series.name} format={series.kind} size="hero" />
         {cover.status === 'ready' && (
           <img src={cover.url} alt="" className="absolute inset-0 h-full w-full object-cover" />
@@ -147,7 +150,9 @@ export function SeriesHeader({
             data-role="series-error"
             className="flex min-w-0 items-center gap-2 border border-accent px-2 py-1"
           >
-            <span className="flex-none bg-accent px-[6px] py-[2px] text-2xs tracking-[.08em] text-bg">
+            {/* `--on-accent`, not `--color-bg` (E-32 §1): the teal accent is
+                dark in both themes, and the ground on it is 1.48:1 in dark. */}
+            <span className="flex-none bg-accent px-[6px] py-[2px] text-2xs tracking-[.08em] text-on-accent">
               손상
             </span>
             <span className="min-w-0 truncate text-xs text-accent-text" title={error}>
@@ -176,7 +181,8 @@ export function SeriesHeader({
             <span className="font-heading text-[22px] font-extrabold tabular-nums text-accent-text">
               {formatPercent(ratio)}
             </span>
-            <ProgressBar value={ratio} height={4} label={`${series.name} 진행률`} />
+            {/* E-32: the stat strip's bar is the tallest of the three — 7px. */}
+            <ProgressBar value={ratio} height={7} label={`${series.name} 진행률`} />
           </Stat>
         </div>
 
