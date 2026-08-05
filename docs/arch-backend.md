@@ -1018,7 +1018,7 @@ A ZIP entry or directory child is **excluded from the page list** when any of th
 
 ### 4.6 Incremental scan (FR-IDX-003)
 
-> **Amended by E-39 (DRAFT — 미서명; `docs/decisions.md` carries the text).** The first bullet below is new
+> **Amended by E-39 (BINDING — 사용자 서명 2026-08-06; `docs/decisions.md` carries the text).** The first bullet below is new
 > and it widens this section: **the skip applies only to a book whose recorded `books.status` is `'ok'`.**
 > Any other status is re-examined even when `(size, mtime)` have not moved. What this replaces is a rule
 > that skipped on timestamps alone with one narrow exception for `'unsupported'` — an exception that was
@@ -1027,12 +1027,13 @@ A ZIP entry or directory child is **excluded from the page list** when any of th
 > write a verdict the bytes on disk do not support, and both were then unreachable for ever, because the
 > `(size, mtime)` they were recorded with are the file's real ones. Measured on the real library: `궁 24.zip`
 > was repaired on disk and stayed `비어 있음` through every later 재스캔; `full: true` was the only escape and
-> the 재스캔 button does not send it. **If the ruling is refused, the first bullet and the `prior.Status != StatusOK`
-> line in `internal/scanner/incremental.go` come out together.**
+> the 재스캔 button does not send it. **The ruling was signed, so this is now the section's contract** —
+> the follow-up ruling that a refusal would have forced (making the 재스캔 button send `{"full": true}`)
+> is not needed.
 
 * **Any book whose recorded `status` is not `'ok'`** — never skipped. It costs one open plus one
   central-directory read per non-ok book per scan (57 of 11,261 books in the real collection: 0.5%), reads no
-  entry payload (FR-IDX-002), and is exactly the cost the `'unsupported'` exception already accepted. *(E-39, draft.)*
+  entry payload (FR-IDX-002), and is exactly the cost the `'unsupported'` exception already accepted. *(E-39.)*
 * **Archive and PDF books** — skip entirely when `stat.Size() == books.file_size && stat.ModTime().Unix() == books.file_mtime`. The central directory is not read, `pages` rows are left untouched, `scan_gen` is stamped forward. This is the whole of NFR-PRF-004.
 * **Directory books** — `stat` on a directory does not change when a nested file changes, so we compute a **fingerprint** over one `os.ReadDir` of the book directory: FNV-1a-64 over the natural-sorted tuples `(name, size, mtimeUnix, isDir)` of its *direct* children, rendered as 16 hex chars. Unchanged fingerprint → skip page re-enumeration.
 * **Series level** — the same fingerprint over the series directory's direct children decides whether `collectBooks` re-runs. Unchanged → we still descend to let each book run its own cheap check, because a nested archive can change without the series directory's fingerprint moving.

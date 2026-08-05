@@ -1578,8 +1578,8 @@ Header: `.dialog-title` `flex:1` `설정` + `.btn.btn-secondary` `font-size:12px
    **INFO → `--ink-dim`, WARN → `--accent-text`, ERROR → `--color-accent`**),
    message (`min-width:0; ellipsis; nowrap; color:var(--ink)`).
 
-> **Amended by E-38 (DRAFT — 미서명, this session's report carries the text) — the dialog gains a scan
-> progress block and a scan-failure alert, both inside 루트 관리.** The user's report was
+> **Amended by E-38 (BINDING — 사용자 서명 2026-08-06; `docs/decisions.md` carries the text) — the dialog
+> gains a scan progress block and a scan-failure alert, both inside 루트 관리.** The user's report was
 > *"재스캔이 있을 경우, 처리진행 상태를 볼 수 있어야 하는데 안 보임"*, and re-measurement found the
 > requirement it names, **FR-IDX-004**, already implemented **twice** — `TopBar` draws the 96×2px bar and
 > `ScanIndicator` prints `스캔 중 {done} / {total}` in the sidebar footer (§4.1, §9 #11). Both of them sit
@@ -1592,7 +1592,8 @@ Header: `.dialog-title` `flex:1` `설정` + `.btn.btn-secondary` `font-size:12px
 > "scanning (accent dot + 96px bar **in the top bar**)". Neither text has a slot for a third site. The
 > block above is therefore a new element and is written here **attributed**, not slipped in — the failure
 > mode **E-36** §2 and **E-37** both diagnosed in this very file was a contract that outlived the ruling
-> which retired it. If the owner refuses E-38, this bullet and the code behind it come out together.
+> which retired it. It was drafted unsigned for exactly that reason and **has since been signed**, so the
+> block and the code behind it now stand on a ruling rather than on a session report.
 >
 > **Two things it deliberately does not do.** It shows **no per-root progress**: `ScanStatus` has no
 > per-root breakdown (`PerRoot` is dropped at the HTTP boundary and `Root` carries no scan state), so a
@@ -1649,7 +1650,7 @@ interface Volume {
 | 8 | `SidebarItem` (사이드바 항목) | `{ label: string; count?: number; active: boolean; onSelect() }` | default · hover · active (accent bar + tint) | [`library-sidebar-scope-active-1440`](./ui-shots/library-sidebar-scope-active-1440.png) |
 | 9 | `SortSelect` (정렬 드롭다운) | `{ value: SortKey; onChange() }` | closed · open · plus the sortable list-header cells with ↑/↓ | [`library-list-sorted-size-desc-1440`](./ui-shots/library-list-sorted-size-desc-1440.png) |
 | 10 | `ViewToggle` (뷰 토글) | `{ value: ViewMode; onChange() }` | grid selected · list selected (accent field) | [`library-grid-1440`](./ui-shots/library-grid-1440.png) / [`library-list-1440`](./ui-shots/library-list-1440.png) |
-| 11 | `ScanIndicator` (스캔 인디케이터) | `{ scanning: boolean; pct: number; label: string; onOpenLog() }` — **`pct` is not a prop of the shipped component** (`components/shell/ScanIndicator.tsx` takes `{ scanning, label, onOpenLog, compact }`; the percentage is the top bar's, computed there from `scanPercent`). Flagged, not corrected — see E-36 §2 | idle (grey dot) · scanning (accent dot + 96px bar in the top bar) · **a third site: the 스캔 진행 block inside the settings dialog, which is not this component — §8.6 §1, E-38 (draft)** | [`library-scanning-progress-1440`](./ui-shots/library-scanning-progress-1440.png) |
+| 11 | `ScanIndicator` (스캔 인디케이터) | `{ scanning: boolean; pct: number; label: string; onOpenLog() }` — **`pct` is not a prop of the shipped component** (`components/shell/ScanIndicator.tsx` takes `{ scanning, label, onOpenLog, compact }`; the percentage is the top bar's, computed there from `scanPercent`). Flagged, not corrected — see E-36 §2 | idle (grey dot) · scanning (accent dot + 96px bar in the top bar) · **a third site: the 스캔 진행 block inside the settings dialog, which is not this component — §8.6 §1, E-38** | [`library-scanning-progress-1440`](./ui-shots/library-scanning-progress-1440.png) |
 | 12 | `ViewerOverlayBar` (뷰어 오버레이 바) | `{ position:'top'\|'bottom'; visible: boolean; children }` | visible (`opacity:1; pointer-events:auto`) · hidden (`opacity:0; pointer-events:none`) | [`viewer-overlay-visible-1440`](./ui-shots/viewer-overlay-visible-1440.png), [`viewer-chromeless-base-1440`](./ui-shots/viewer-chromeless-base-1440.png) |
 | 13 | `PageSlider` (페이지 슬라이더) | `{ page: number; total: number; onChange(); onDragStart(); onDragEnd() }` | idle · dragging (thumbnail preview above the thumb) | [`viewer-slider-drag-preview-1440`](./ui-shots/viewer-slider-drag-preview-1440.png) |
 | 14 | `ThumbnailStrip` (썸네일 스트립) | `{ total: number; current: number; onJump(n) }` | closed · open · current-page highlighted (accent border) | [`viewer-thumbnail-strip-1440`](./ui-shots/viewer-thumbnail-strip-1440.png) |
