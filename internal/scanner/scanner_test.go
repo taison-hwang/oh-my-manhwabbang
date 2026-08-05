@@ -1138,6 +1138,75 @@ func TestScan_whileOneIsRunning_returnsErrBusy(t *testing.T) {
 	}
 }
 
+// Start must publish this run's status before it returns, or the whole run can
+// be invisible.
+//
+// `POST /api/scan` answers 202 the moment Start returns; the client invalidates
+// ['scan','status'] and polls once. Its refetchInterval returns false while the
+// snapshot says idle, refetchOnWindowFocus is off, and the query is mounted at
+// the router root — so a poll that lands on the *previous* run's idle snapshot
+// is the last poll of the run. The UI then reads `스캔 대기` for the entire scan
+// and there is no second chance. Start returning before progress.begin left
+// exactly that window open.
+//
+// The loop is the measurement rather than decoration: the window was a goroutine
+// scheduling delay, so one sample proves nothing about whether it is closed.
+func TestScan_start_publishesThisRunsStatusBeforeItReturns(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, map[string]any{
+		"시리즈": map[string]any{"01권.zip": jpegZIP(t, "001.jpg")},
+	})
+
+	// The run cannot finish while the gate is shut, so an idle snapshot after
+	// Start can only be the stale one.
+	release := make(chan struct{})
+	defer close(release)
+	h.lister.inner = blockingLister{inner: h.lister.inner, gate: release}
+
+	for i := range 64 {
+		runID, err := h.scanner.Start(h.t.Context(), Request{})
+		if err != nil {
+			t.Fatalf("iteration %d: Start: %v", i, err)
+		}
+		// Exactly what a client polling on the 202 sees.
+		st := h.scanner.Status()
+		if st.RunID != runID || st.State == PhaseIdle {
+			t.Fatalf("iteration %d: Start returned with the published snapshot still %s/%q; "+
+				"want run %q in a non-idle state — a client polling on the 202 stops polling "+
+				"on idle and would show nothing for the whole run",
+				i, st.State, st.RunID, runID)
+		}
+		h.scanner.Cancel()
+		h.scanner.Wait()
+	}
+}
+
+// A run that cannot be started publishes nothing: Start reports the bad request
+// to its caller instead of leaving a status that never finishes behind.
+func TestScan_start_unknownRoot_isReportedToTheCallerAndPublishesNothing(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, map[string]any{
+		"시리즈": map[string]any{"01권.zip": jpegZIP(t, "001.jpg")},
+	})
+	h.run(Request{}) // so there is a finished run to be confused with
+
+	before := h.scanner.Status()
+	if _, err := h.scanner.Start(h.t.Context(), Request{Roots: []string{"nope"}}); !errors.Is(err, ErrUnknownRoot) {
+		// httpapi.scanStartError has always mapped this to `400 bad_param`; before
+		// the run id was published synchronously, Start could only log it.
+		t.Fatalf("Start with an unknown root = %v, want ErrUnknownRoot", err)
+	}
+	after := h.scanner.Status()
+	if after.State != PhaseIdle || after.RunID != before.RunID {
+		t.Errorf("a refused Start moved the status to %s/%q from %s/%q",
+			after.State, after.RunID, before.State, before.RunID)
+	}
+	// And the permit is free again.
+	if _, err := h.scanner.Run(h.t.Context(), Request{}); err != nil {
+		t.Errorf("a scan after a refused Start: %v", err)
+	}
+}
+
 type blockingLister struct {
 	inner BookLister
 	gate  chan struct{}

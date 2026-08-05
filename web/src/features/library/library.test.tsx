@@ -2473,6 +2473,36 @@ describe('이어보기 (FR-LIB-010)', () => {
     })
     expect(await screen.findByText('이어보기')).toBeInTheDocument()
   })
+
+  /**
+   * The card width, pinned on the class list (E-37 §4).
+   *
+   * The point of this test is **not** that 218 and 269 are good numbers — it is
+   * that nothing anywhere else fails when they change. ui-spec §4.3 carried
+   * `flex:0 0 300px` from the first commit while this component shipped 272/336
+   * and then 218/269, and no check in five gates ever noticed, because no check
+   * looked: the width is not a behaviour, so no unit, e2e or contrast test has
+   * an opinion about it. That is how a spec number survives ten sessions of
+   * being wrong.
+   *
+   * So this assertion exists to make the spec and this class list **change in
+   * the same edit**. If you are here because it went red, the fix is to update
+   * `ui-spec.md` §4.3 and the 이어보기 column of the §7 matrix and this line —
+   * not to relax the assertion.
+   *
+   * jsdom does no layout, so this reads the class list rather than a measured
+   * width; the geometry it stands for was measured in Chrome (218 − 96 cover −
+   * 12 gap − 24 padding = an 86px text column).
+   */
+  it('pins the card width so the spec cannot drift from it again (E-37)', async () => {
+    scenario.continueItems = [makeContinueItem()]
+    renderLibrary()
+    await waitForLibrary()
+
+    const card = await screen.findByRole('button', { name: /군계\(軍鷄\) 01권\.zip/ })
+    expect(card.className).toContain('flex-[0_0_218px]')
+    expect(card.className).toContain('md:flex-[0_0_269px]')
+  })
 })
 
 // ---------------------------------------------------------------------------

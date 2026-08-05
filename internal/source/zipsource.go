@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"shelf/internal/archive"
+	"shelf/internal/openpool"
 )
 
 // zipSource serves a book that is a single ZIP container.
@@ -39,7 +40,7 @@ func (s *zipSource) Close() error { return nil }
 // archive. No entry payload is touched, and the whole read is the two ReadAt
 // calls of arch §4.3.
 func (s *zipSource) List(ctx context.Context) (*Listing, error) {
-	ref, err := s.f.pool.Acquire(ctx, s.abs, s.book.FileMtime, s.book.FileSize)
+	ref, err := s.acquireMatching(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("listing book %s: %w", s.book.ID, err)
 	}
@@ -92,6 +93,54 @@ func (s *zipSource) List(ctx context.Context) (*Listing, error) {
 		return l, fmt.Errorf("listing book %s: %w", s.book.ID, ErrNoPages)
 	}
 	return l, nil
+}
+
+// acquireMatching borrows a handle whose (mtime, size) are the ones the caller
+// passed in — that is, the metadata this listing is about to be recorded under.
+//
+// The pool is an LRU of descriptors that are *already open*, and a cache hit
+// answers without re-stat-ing anything (openpool.Pool.Acquire). After
+// `mv 궁\ 24.zip.new 궁\ 24.zip` the path resolves to a new inode while the pool
+// still holds a live descriptor on the old, unlinked one. Reading that is not a
+// stale read — it is a read of a file the user deleted — and every number
+// derived from it gets written down against the new file's identity. That is
+// how a repaired archive keeps its `비어 있음` badge: the verdict is real, it is
+// just about a file that no longer exists.
+//
+// So the mismatch is not tolerated here. The handle is dropped from the pool
+// and the path re-opened once, which is one open in the only case that needs
+// it. If the fresh descriptor still disagrees, no inode matches what we are
+// about to record — the archive is being rewritten right now, or the metadata
+// was never measured from this file — and the honest answer is to fail this one
+// book (FR-IDX-010) and read it again next scan, which the recorded
+// (size, mtime) themselves guarantee.
+//
+// Only listing does this. openpool's tolerance is written for the serving path
+// (arch §5.2, §7.6) and is left exactly as it was: a page stream is committed to
+// the offsets the index recorded, and those belong to the descriptor the pool
+// is holding, not to the file that replaced it.
+func (s *zipSource) acquireMatching(ctx context.Context) (*openpool.Ref, error) {
+	ref, err := s.f.pool.Acquire(ctx, s.abs, s.book.FileMtime, s.book.FileSize)
+	if err != nil {
+		return nil, err
+	}
+	if !ref.Stale() {
+		return ref, nil
+	}
+
+	ref.Release()
+	s.f.pool.Invalidate(s.abs)
+	ref, err = s.f.pool.Acquire(ctx, s.abs, s.book.FileMtime, s.book.FileSize)
+	if err != nil {
+		return nil, err
+	}
+	if ref.Stale() {
+		size, mtime := ref.Size(), ref.ModTime()
+		ref.Release()
+		return nil, fmt.Errorf("%w: it is %d bytes at mtime %d, not the %d at %d being recorded",
+			ErrContainerChanged, size, mtime, s.book.FileSize, s.book.FileMtime)
+	}
+	return ref, nil
 }
 
 // Open streams one entry (FR-SRV-001, FR-SRV-002, FR-SRV-003, NFR-PRF-006).

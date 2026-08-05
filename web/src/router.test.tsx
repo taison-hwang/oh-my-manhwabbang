@@ -32,6 +32,7 @@ import {
   root,
   rootsResponse,
   scanStatusIdle,
+  scanStatusRunning,
   settings,
 } from './api/fixtures'
 import type { AuthStatus, SeriesListResponse, Settings } from './api/types'
@@ -136,6 +137,79 @@ describe('ShellDataProvider — sidebar counts (A-8 / ruling E-9)', () => {
     // from it, and a fourth request would be one nobody reads.
     expect(seriesQueries.some((q) => new URLSearchParams(q).toString() === 'limit=1')).toBe(false)
   })
+})
+
+// ---------------------------------------------------------------------------
+// The scan-completion refresh, mounted — FR-IDX-004
+// ---------------------------------------------------------------------------
+
+/**
+ * `useScanCompletionRefresh` is unit-tested in `api/queries.test.tsx`. This
+ * asserts the half that file cannot: that something **mounts** it.
+ *
+ * That is the exact defect shape this repo has now shipped twice — a prop or a
+ * hook that worked, and a caller that never supplied it (rulings E-25, E-26).
+ * The provider is the single component that outlives every screen and every
+ * overlay, so it is the only correct mount point *and* the only place a missing
+ * mount is invisible. Nothing here is passed in: the run has to travel
+ * `GET /api/scan/status` → `useScanStatus` → the provider → `invalidateQueries`
+ * → a second `GET /api/series` on the wire.
+ */
+describe('ShellDataProvider — refreshing when a scan finishes (FR-IDX-004)', () => {
+  it('re-reads the library and the roots on the non-idle → idle edge', async () => {
+    let rootsCalls = 0
+    let statusCalls = 0
+    server.use(
+      http.get(`${ORIGIN}/api/roots`, () => {
+        rootsCalls += 1
+        return HttpResponse.json(rootsResponse)
+      }),
+      http.get(`${ORIGIN}/api/scan/status`, () => {
+        statusCalls += 1
+        // running, running, then finished — the C-11 poll carries it across.
+        return HttpResponse.json(statusCalls < 3 ? scanStatusRunning : scanStatusIdle)
+      }),
+    )
+    renderProvider()
+
+    // The three `limit=1` counts and the one root list, before the run ends.
+    await waitFor(() => {
+      expect(seriesQueries).toHaveLength(3)
+    })
+    expect(rootsCalls).toBe(1)
+
+    await waitFor(
+      () => {
+        expect(seriesQueries).toHaveLength(6)
+      },
+      { timeout: 6_000 },
+    )
+    expect(rootsCalls).toBe(2)
+    // The same three queries, not three new ones: the counts are re-read, and
+    // a scan does not change which questions the sidebar asks.
+    expect([...new Set(seriesQueries)]).toHaveLength(3)
+  }, 15_000)
+
+  it('re-reads nothing when the server was idle the whole time', async () => {
+    // The negative control the positive one needs: `beforeEach` already serves
+    // an idle status, and a hook that fired on mount would refetch the entire
+    // library on every cold start.
+    let rootsCalls = 0
+    server.use(
+      http.get(`${ORIGIN}/api/roots`, () => {
+        rootsCalls += 1
+        return HttpResponse.json(rootsResponse)
+      }),
+    )
+    renderProvider()
+
+    await waitFor(() => {
+      expect(seriesQueries).toHaveLength(3)
+    })
+    await new Promise((resolve) => setTimeout(resolve, 1_200))
+    expect(seriesQueries).toHaveLength(3)
+    expect(rootsCalls).toBe(1)
+  }, 10_000)
 })
 
 // ---------------------------------------------------------------------------

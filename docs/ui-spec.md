@@ -651,21 +651,61 @@ Left → right:
 
 **Hidden entirely when there is nothing in progress** (and hidden during the skeleton state).
 
-`padding:16px; border-bottom:2px solid rule`
+`padding:16px` ~~`; border-bottom:2px solid rule`~~ — **no border.** E-32 replaced the divider with space
+and the cards' own elevation (`ContinueRow.tsx`, `flex-none p-4`).
 
 - Header: `display:flex; align-items:baseline; gap:8px; margin-bottom:12px`.
   `<h6>이어보기</h6>` + count `font-size:11px; tabular-nums; color:var(--ink-dim)` (e.g. `5개`).
-- Track: `display:flex; gap:12px; overflow-x:auto; padding-bottom:4px`. Max 5 cards.
-- Card: `flex:0 0 300px; display:flex; gap:12px; padding:12px; background:var(--color-surface);
-  cursor:pointer; border:1px solid var(--rule)`; hover → `border-color:var(--color-accent)`.
+- Track: `display:flex; gap:12px; overflow-x:auto; padding-bottom:` ~~`4px`~~ **`16px`** (`pb-4`,
+  `--space-4` — the hover lift needs somewhere to go or the scroller clips the card's shadow).
+  Max 5 cards.
+- Card: ~~`flex:0 0 300px`~~ **`flex:0 0 218px`, and `flex:0 0 269px` at ≥768** — see the note below;
+  `display:flex; gap:12px; padding:12px; background:var(--color-surface);
+  cursor:pointer` ~~`; border:1px solid var(--rule)`; hover → `border-color:var(--color-accent)`~~
+  **→ `--radius-lg` + `--shadow-md`, lifting to `--shadow-lg` on hover (E-32)**.
   Click → resume that book at its saved page.
-  - Thumb `flex:0 0 66px; height:99px` (2:3); `overflow:hidden; background:var(--fill-track)`.
+  - Thumb ~~`flex:0 0 66px; height:99px`~~ **`flex:0 0 96px; height:144px`** (still 2:3 — at 66px a
+    title in the cover art was unreadable); `overflow:hidden; background:var(--fill-track)`.
   - Body `flex:1; min-width:0; display:flex; flex-direction:column; gap:5px`:
-    - Title — Archivo 800 13px / 1.2, `-webkit-line-clamp:2`.
+    - Title — Archivo ~~800~~ **700** (`font-bold`; E-32's commit changed it) 13px / 1.2,
+      `-webkit-line-clamp:2`.
     - Volume name — 11px `color:var(--ink-muted)`, ellipsis nowrap.
     - Spacer `flex:1`.
     - Page counter — 12px tabular, `color:var(--accent-text)`, format `` `${page} / ${total}p` ``.
-    - Bar — `height:3px; background:var(--fill-track)`, fill `var(--color-accent)`.
+    - Bar — `height:` ~~`3px`~~ **`6px`, and a `--radius-full` pill, not a square bar**;
+      `background:var(--fill-track)` + `--shadow-inset`, fill ~~`var(--color-accent)`~~
+      **`var(--accent-fill)`** (`ProgressBar`'s defaults — `ContinueCard` passes no `height` and no
+      `tone`). The accent itself is 1.09:1 on the trough in dark; `--accent-fill` is the token that
+      moves up the ramp there (E-32).
+
+> **Amended by E-37 — the card is 218 / 269px, and `300px` never shipped a day in its life.** What ships
+> is `flex-[0_0_218px] md:flex-[0_0_269px]` — `web/src/features/library/ContinueCard.tsx`, which is the
+> source of truth for this bullet and for the 이어보기 column of the §7 matrix at ≥1024.
+>
+> **Where the numbers actually came from, because the first draft of this note got it wrong.** 272 / 336
+> and the 96×144 thumb entered in **session 5**, applied **판정 없이** — deliberately without a ruling,
+> as one line of a dimensions table (`docs/HANDOFF.md` §1.0e: *"이어보기 카드 300→336px(터치 272), 커버
+> 66×99→96×144"*, under *"나머지(브랜드·아이콘·치수)는 충돌이 없어 판정 없이 반영했다"*). They are in the
+> **first commit** and every commit since. **E-32 did not widen the card and did not enlarge the thumb**:
+> its own commit leaves `flex-[0_0_272px] md:flex-[0_0_336px]` and `h-[144px] w-[96px]` byte-identical
+> (`git show 27b122d -- web/src/features/library/ContinueCard.tsx`), and the E-32 ruling text contains
+> neither number. E-32 restyled this card — radius, shadow, hover lift, title weight — and that is all.
+> **So until E-37 these dimensions had no ruling behind them at all**, which is exactly why the spec
+> could carry `300px` for ten sessions with nothing to contradict it.
+>
+> Both numbers are **border-box**, so the arithmetic an implementer actually needs is
+> `width − 96 thumb − 12 gap − 24 padding`: the body column is **86px** below 768 and **137px** at and
+> above (it was 140 / 204, measured in Chrome). The two-line clamped title and the truncated volume name
+> are sized against *that*, not against the card. The 12px gap, the 12px padding, the 5px body gap and
+> the counter format did not move.
+>
+> **Four other values in this section were already wrong and are struck above, not silently corrected**
+> — the section's `border-bottom`, the track's `padding-bottom`, the card's border-and-hover, the title
+> weight and the bar. Every one of them is a pre-E-32 contract that survived the ruling which retired
+> it: the same disease **E-36** §2 diagnosed, in the same file, found again by re-measuring instead of
+> re-reading. The card border in particular is **E-36**'s own work to close, and is flagged rather than
+> fixed here because a width edit quietly rewriting the skin is how the two got out of step to begin
+> with.
 
 ### 4.4 Section header (sticky)
 
@@ -1311,10 +1351,43 @@ and their labels break to vertical). Build the layer below.
 
 | Breakpoint | Sidebar | Grid | List | Continue row | Viewer |
 |---|---|---|---|---|---|
-| **≥1440** | Fixed, 240px | `--grid-min: 152px` → **6 cols @1440, 8 @1760** | All 7 columns | 300px cards, horizontal scroll | Full chrome, all 3 `.seg` groups inline |
-| **1024–1439** | Fixed, 240px | `--grid-min: 150px` → **4–5 cols** | All 7 columns | 300px cards | Full chrome ([`viewer-overlay-1024.png`](./ui-shots/viewer-overlay-1024.png)) |
-| **768–1023** | **Collapsed** to a 56px icon rail; the scope name moves into the section header. Full sidebar opens as an overlay drawer from a hamburger in the top bar | `--grid-min: 224px` → **3 cols** | **Drop 수정일 + 용량** → `32px minmax(0,1fr) 66px 64px 120px`. Format tag stays (it is primary metadata) | 260px cards | **All 3 `.seg` groups stay inline**; the bar wraps to a second row instead (**E-28**). ~103px at 900 ([`viewer-overlay-768.png`](./ui-shots/viewer-overlay-768.png) predates the ruling and shows the old overflow menu) |
-| **<768** | **Off-canvas drawer** (`position:fixed; inset:0 auto 0 0; width:280px`) over a `--scrim-modal` backdrop. Closed by default | `--grid-min: 150px; gap: 12px` → **2 cols** | **Two-line row**: line 1 = title; line 2 = tag · 권 · 용량 · progress at 11px. Grid becomes `32px minmax(0,1fr)` | Full-width cards, one per screen, snap scroll | Touch-first (§8.3). **All 3 `.seg` groups stay inline and the top bar wraps to three rows** — ~151px at 500 (**E-28**, which deleted the `⋯` bottom sheet this row used to require). The bottom bar's control row wraps too, and the page slider grows to a 44px box |
+| **≥1440** | Fixed, 240px | `--grid-min: 152px` → **6 cols @1440, 8 @1760** | All 7 columns | 269px cards, horizontal scroll | Full chrome, all 3 `.seg` groups inline |
+| **1024–1439** | Fixed, 240px | `--grid-min: 150px` → **4–5 cols** | All 7 columns | 269px cards, horizontal scroll | Full chrome ([`viewer-overlay-1024.png`](./ui-shots/viewer-overlay-1024.png)) |
+| **768–1023** | **Collapsed** to a 56px icon rail; the scope name moves into the section header. Full sidebar opens as an overlay drawer from a hamburger in the top bar | `--grid-min: 224px` → **3 cols** | **Drop 수정일 + 용량** → `32px minmax(0,1fr) 66px 64px 120px`. Format tag stays (it is primary metadata) | **260px cards** — ⚠ **not built**, ships 269 | **All 3 `.seg` groups stay inline**; the bar wraps to a second row instead (**E-28**). ~103px at 900 ([`viewer-overlay-768.png`](./ui-shots/viewer-overlay-768.png) predates the ruling and shows the old overflow menu) |
+| **<768** | **Off-canvas drawer** (`position:fixed; inset:0 auto 0 0; width:280px`) over a `--scrim-modal` backdrop. Closed by default | `--grid-min: 150px; gap: 12px` → **2 cols** | **Two-line row**: line 1 = title; line 2 = tag · 권 · 용량 · progress at 11px. Grid becomes `32px minmax(0,1fr)` | **Full-width cards, one per screen, snap scroll** — ⚠ **not built**, ships a 218px scroller | Touch-first (§8.3). **All 3 `.seg` groups stay inline and the top bar wraps to three rows** — ~151px at 500 (**E-28**, which deleted the `⋯` bottom sheet this row used to require). The bottom bar's control row wraps too, and the page slider grows to a 44px box |
+
+> **Amended by E-37 — only the top two 이어보기 cells changed. The bottom two are requirements this
+> table is owed, and they are still open.**
+>
+> Read the two halves of that column differently, because they have different standing:
+>
+> - **≥1440 and 1024–1439 — the code is the target, so the number moves.** This table's job below 1024
+>   is to specify a layer that does not exist; at and above it, it is describing the desktop layout the
+>   product already has. `300px` there was never a requirement — it was the **prototype's** width,
+>   copied into this cell, and the product has never once shipped it (272/336 from the first commit,
+>   now **269**). Those two cells now read 269px, sourced from
+>   `flex-[0_0_218px] md:flex-[0_0_269px]` in `web/src/features/library/ContinueCard.tsx` (§4.3).
+> - **768–1023 (260px) and `<768` (full-width, one per screen, snap scroll) — requirements, NOT spec
+>   errors, and both are UNBUILT.** They belong to the responsive layer this section opens by saying
+>   *"The prototype implements none of this … Build the layer below"*, which §0.5 lists as a thing an
+>   implementer must not get wrong, and which §0.2's own amendment tells you to read as the
+>   specification with the stylesheet behind it — **not the other way round**. They are restored and
+>   marked ⚠, not overwritten with what ships. **A previous edit of this note rewrote both cells to
+>   match the code. That was backwards** and is recorded here rather than quietly reverted, because
+>   "the code disagrees with the spec" resolving as "amend the spec" is the failure mode this whole
+>   section exists to prevent.
+>
+> **The gap, measured.** `ContinueRow.tsx` is `flex gap-3 overflow-x-auto pb-4` at **every** width and
+> `ContinueCard` has exactly one breakpoint, Tailwind's `md` (768). There is **no `scroll-snap`
+> anywhere in the tree** — zero hits for `scroll-snap` / `snap-x` / `snap-center` across `web/src` and
+> `web/e2e` — so `<768` shows most of two 218px cards on a 400px viewport instead of one, and 768–1023
+> is 9px wide of its tier.
+>
+> **Why nobody noticed for ten sessions: `web/e2e/07-responsive.spec.ts` has zero 이어보기 coverage.**
+> The file drives the sidebar, the grid, the list and the viewer through all four tiers and never once
+> mentions the shelf, so every cell in this column has been unchecked since the day it was written. A
+> check that does not look at the thing cannot report the thing missing — the §6.5 pattern again.
+> Closing this gap means a test at 400 and at 900 first, then the CSS.
 
 Implementation: drive `--grid-min` from a single media-query block in `tokens.css` rather than sprinkling
 Tailwind breakpoint variants across the grid class. `gap` stays `16px` down to 768 and drops to `12px` below.
@@ -1475,6 +1548,15 @@ Header: `.dialog-title` `flex:1` `설정` + `.btn.btn-secondary` `font-size:12px
    Name `13px`; path `11px; color:var(--ink-dim); ellipsis; nowrap`; stats `11px; tabular;
    color:var(--ink-muted)` → `21 · 4.9 TB`; `.btn.btn-secondary` `재스캔`; `.btn.btn-ghost` `제거`.
    Then `.btn.btn-secondary` `align-self:flex-start; margin-top:8px` → `+ 루트 추가`.
+   - **스캔 진행 (new)** — between the `<h6>` and the first row, **present only while
+     `ScanStatus.state !== "idle"`**. `display:flex; flex-direction:column; gap:4px`: a baseline row
+     with `formatScanLabel` (`11px; color:var(--accent-text)` → `스캔 중 41 / 96`) and `scanPercent`
+     (`11px; tabular; color:var(--ink-muted)` → `42%`), then `ProgressBar` `height:6`, then
+     `` `${current_root} · ${current_item}` `` (`11px; color:var(--ink-dim); ellipsis; nowrap`), omitted
+     when the wire sends `null` for both. Whole-run, never per row.
+   - **스캔 실패 (new)** — `<p role="alert">` `11px; color:var(--accent-text)`, one per panel, carrying
+     `POST /api/scan`'s refusal (arch §7.10: `400`, `404`, `409`, `503`).
+   - `재스캔` is **disabled for the whole run**, not only while the `POST` is in flight.
 2. **Two columns** `display:flex; gap:24px` (stack below 768px):
    - **캐시** — `<h6>` · value row `display:flex; align-items:baseline; gap:8px` with the number in
      **Archivo 800 32px tabular** and the unit in `13px; color:var(--ink-muted)` → `1.84` `GB / 4.00 GB` ·
@@ -1495,6 +1577,33 @@ Header: `.dialog-title` `flex:1` `설정` + `.btn.btn-secondary` `font-size:12px
    timestamp (`tabular; color:var(--ink-dim)`), level (`width:48px; flex:0 0 48px; letter-spacing:.06em`,
    **INFO → `--ink-dim`, WARN → `--accent-text`, ERROR → `--color-accent`**),
    message (`min-width:0; ellipsis; nowrap; color:var(--ink)`).
+
+> **Amended by E-38 (DRAFT — 미서명, this session's report carries the text) — the dialog gains a scan
+> progress block and a scan-failure alert, both inside 루트 관리.** The user's report was
+> *"재스캔이 있을 경우, 처리진행 상태를 볼 수 있어야 하는데 안 보임"*, and re-measurement found the
+> requirement it names, **FR-IDX-004**, already implemented **twice** — `TopBar` draws the 96×2px bar and
+> `ScanIndicator` prints `스캔 중 {done} / {total}` in the sidebar footer (§4.1, §9 #11). Both of them sit
+> **under `.dialog-backdrop`**, and the 재스캔 button that starts the run sits inside it. So the one screen
+> a user can start a per-root scan from was the one screen that could not watch it, and the button
+> produced no visible change of any kind.
+>
+> **Why it needs a ruling at all.** This section enumerates the dialog's contents, and §9 #11 catalogues
+> `ScanIndicator` as `{ scanning, pct, label, onOpenLog }` with two states, "idle (grey dot)" and
+> "scanning (accent dot + 96px bar **in the top bar**)". Neither text has a slot for a third site. The
+> block above is therefore a new element and is written here **attributed**, not slipped in — the failure
+> mode **E-36** §2 and **E-37** both diagnosed in this very file was a contract that outlived the ruling
+> which retired it. If the owner refuses E-38, this bullet and the code behind it come out together.
+>
+> **Two things it deliberately does not do.** It shows **no per-root progress**: `ScanStatus` has no
+> per-root breakdown (`PerRoot` is dropped at the HTTP boundary and `Root` carries no scan state), so a
+> bar on a root's row would be a claim the API cannot answer — `current_root` is printed as part of the
+> current item's path instead. And it renders **nothing when idle**: `ScanIndicator` owns the
+> `스캔 대기 — {n}분 전 완료` sentence, and a second copy here would be a second place to keep it in step.
+>
+> Transport is unchanged and is **D-16**'s: 1 s polling of `GET /api/scan/status`, never SSE. The numbers
+> are `lib/format.ts`'s `formatScanLabel` / `scanPercent` — the sidebar's own, so the two cannot drift by
+> a rounding rule — and the bar is `components/ds/ProgressBar` rather than the top bar's hand-rolled
+> `<span>`, which carries no `role="progressbar"`.
 
 ---
 
@@ -1540,7 +1649,7 @@ interface Volume {
 | 8 | `SidebarItem` (사이드바 항목) | `{ label: string; count?: number; active: boolean; onSelect() }` | default · hover · active (accent bar + tint) | [`library-sidebar-scope-active-1440`](./ui-shots/library-sidebar-scope-active-1440.png) |
 | 9 | `SortSelect` (정렬 드롭다운) | `{ value: SortKey; onChange() }` | closed · open · plus the sortable list-header cells with ↑/↓ | [`library-list-sorted-size-desc-1440`](./ui-shots/library-list-sorted-size-desc-1440.png) |
 | 10 | `ViewToggle` (뷰 토글) | `{ value: ViewMode; onChange() }` | grid selected · list selected (accent field) | [`library-grid-1440`](./ui-shots/library-grid-1440.png) / [`library-list-1440`](./ui-shots/library-list-1440.png) |
-| 11 | `ScanIndicator` (스캔 인디케이터) | `{ scanning: boolean; pct: number; label: string; onOpenLog() }` | idle (grey dot) · scanning (accent dot + 96px bar in the top bar) | [`library-scanning-progress-1440`](./ui-shots/library-scanning-progress-1440.png) |
+| 11 | `ScanIndicator` (스캔 인디케이터) | `{ scanning: boolean; pct: number; label: string; onOpenLog() }` — **`pct` is not a prop of the shipped component** (`components/shell/ScanIndicator.tsx` takes `{ scanning, label, onOpenLog, compact }`; the percentage is the top bar's, computed there from `scanPercent`). Flagged, not corrected — see E-36 §2 | idle (grey dot) · scanning (accent dot + 96px bar in the top bar) · **a third site: the 스캔 진행 block inside the settings dialog, which is not this component — §8.6 §1, E-38 (draft)** | [`library-scanning-progress-1440`](./ui-shots/library-scanning-progress-1440.png) |
 | 12 | `ViewerOverlayBar` (뷰어 오버레이 바) | `{ position:'top'\|'bottom'; visible: boolean; children }` | visible (`opacity:1; pointer-events:auto`) · hidden (`opacity:0; pointer-events:none`) | [`viewer-overlay-visible-1440`](./ui-shots/viewer-overlay-visible-1440.png), [`viewer-chromeless-base-1440`](./ui-shots/viewer-chromeless-base-1440.png) |
 | 13 | `PageSlider` (페이지 슬라이더) | `{ page: number; total: number; onChange(); onDragStart(); onDragEnd() }` | idle · dragging (thumbnail preview above the thumb) | [`viewer-slider-drag-preview-1440`](./ui-shots/viewer-slider-drag-preview-1440.png) |
 | 14 | `ThumbnailStrip` (썸네일 스트립) | `{ total: number; current: number; onJump(n) }` | closed · open · current-page highlighted (accent border) | [`viewer-thumbnail-strip-1440`](./ui-shots/viewer-thumbnail-strip-1440.png) |

@@ -10,7 +10,7 @@ import { renderHook, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
 import type { ReactNode } from 'react'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { listSeries } from './client'
 import { isApiError, isAuthError } from './errors'
@@ -61,10 +61,12 @@ import {
   useSeries,
   useSeriesList,
   useSeriesListInfinite,
+  useScanCompletionRefresh,
   useSetPrefs,
   useSettings,
   useStartScan,
 } from './queries'
+import type { ScanStatus } from './types'
 import { resetBasePath } from './urls'
 
 const server = setupServer()
@@ -261,6 +263,174 @@ describe('useScanStatus polling', () => {
     await new Promise((resolve) => setTimeout(resolve, SCAN_POLL_MS * 2))
     expect(requests).toBe(settled)
   }, 12_000)
+})
+
+// ---------------------------------------------------------------------------
+// Refreshing the library when a run ends (FR-IDX-004)
+// ---------------------------------------------------------------------------
+
+/**
+ * The gap this closes: **nothing** watched the `non-idle → idle` edge.
+ *
+ * `useStartScan` invalidates `['scan','status']`, which only re-arms the poll;
+ * the poll writes the status into the cache and stops. Every other cache entry
+ * a scan can change — the series lists, the root rows' counts and
+ * `last_scan_*`, 이어보기, and the scan log — kept whatever it held *before* the
+ * run. The log is the sharpest case: `useScanLog` has no `refetchInterval` and
+ * its key is `['scan','log',params]`, which `['scan','status']` does not match,
+ * so the panel the user opens to watch the scan never moved at all.
+ *
+ * Two properties are asserted, and the second is the one a naive
+ * `state === 'idle'` check gets wrong: it must fire **once per completed run**,
+ * and it must **not** fire on mount against a server that was already idle —
+ * which is every cold start.
+ */
+describe('useScanCompletionRefresh (FR-IDX-004)', () => {
+  /** Serves `GET /api/scan/status` from a script; later calls repeat the last. */
+  function serveScanStatus(pages: ScanStatus[]): void {
+    let calls = 0
+    server.use(
+      http.get(`${ORIGIN}/api/scan/status`, () => {
+        const body = pages[Math.min(calls, pages.length - 1)] ?? scanStatusIdle
+        calls += 1
+        return HttpResponse.json(body)
+      }),
+    )
+  }
+
+  /**
+   * The query keys `invalidateQueries` was called with, as JSON, in order.
+   *
+   * Structurally typed rather than `ReturnType<typeof vi.spyOn>`: the spy's own
+   * type is generic over `InvalidateQueryFilters` and does not unify with the
+   * bare `MockInstance` that expression produces.
+   */
+  function invalidatedKeys(spy: { mock: { calls: readonly unknown[][] } }): string[] {
+    return spy.mock.calls.map((call) => {
+      const filters: unknown = call[0]
+      const key: unknown =
+        typeof filters === 'object' && filters !== null
+          ? (filters as { queryKey?: unknown }).queryKey
+          : undefined
+      return JSON.stringify(key)
+    })
+  }
+
+  function mount(client: QueryClient) {
+    return renderHook(
+      () => {
+        const status = useScanStatus()
+        useScanCompletionRefresh(status.data)
+        return status
+      },
+      { wrapper: makeWrapper(client) },
+    )
+  }
+
+  it('invalidates the series, roots, continue and log caches exactly once per run', async () => {
+    serveScanStatus([
+      scanStatusRunning,
+      scanStatusRunning,
+      scanStatusIdle,
+      // A **fourth**, *different* idle page, and it is load-bearing. TanStack
+      // Query's structural sharing hands back the previous object when the
+      // payload is deeply equal, so re-fetching a byte-identical idle status
+      // does not change the reference and the effect never re-runs — which
+      // means "fires once" would be proved by React, not by the hook, and a
+      // mutant that never advances its remembered state survives. Measured:
+      // with `previous.current = before ?? status.state` this test passed.
+      // One changed field forces the second observation the guard must absorb.
+      { ...scanStatusIdle, elapsed_ms: 33_000 },
+    ])
+    const client = makeClient()
+    const spy = vi.spyOn(client, 'invalidateQueries')
+    const { result } = mount(client)
+
+    await waitFor(
+      () => {
+        expect(result.current.data?.state).toBe('idle')
+      },
+      { timeout: 6_000 },
+    )
+    await waitFor(() => {
+      expect(invalidatedKeys(spy)).toHaveLength(4)
+    })
+
+    // The four caches a scan can change, and no others. `settings` is absent
+    // because a scan writes none of it, and `image` because a regenerated cover
+    // arrives as a new `cover_cv` inside the series payload — which is already
+    // being refetched — so its key turns over on its own.
+    expect(invalidatedKeys(spy)).toEqual([
+      JSON.stringify(queryKeys.series.all),
+      JSON.stringify(queryKeys.roots),
+      JSON.stringify(queryKeys.continueReading.all),
+      JSON.stringify(queryKeys.scan.logs),
+    ])
+    // `['scan','status']` is not one of them: invalidating it would restart the
+    // poll it was just switched off by.
+    expect(invalidatedKeys(spy)).not.toContain(JSON.stringify(queryKeys.scan.status))
+    // And the log prefix is the one that actually matches a `useScanLog` key.
+    expect(queryKeys.scan.log({ limit: 200 }).slice(0, 2)).toEqual([...queryKeys.scan.logs])
+
+    // Once, not once per observation: the status is read again and answers a
+    // *different* idle payload, so the effect really does re-run — and the
+    // guard absorbs it.
+    await client.refetchQueries({ queryKey: queryKeys.scan.status })
+    await waitFor(() => {
+      expect(result.current.data?.elapsed_ms).toBe(33_000)
+    })
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(invalidatedKeys(spy)).toHaveLength(4)
+    spy.mockRestore()
+  }, 15_000)
+
+  it('does not fire on mount when the server was already idle', async () => {
+    // The case that makes "previously observed" a *three*-valued question. A
+    // hook that only tested `state === 'idle'` would refetch the whole library
+    // on every page load, and would look correct in a test that only ever
+    // started from a running server.
+    serveScanStatus([scanStatusIdle])
+    const client = makeClient()
+    const spy = vi.spyOn(client, 'invalidateQueries')
+    const { result } = mount(client)
+
+    await waitFor(() => {
+      expect(result.current.data?.state).toBe('idle')
+    })
+    await new Promise((resolve) => setTimeout(resolve, SCAN_POLL_MS + 100))
+    expect(invalidatedKeys(spy)).toEqual([])
+    spy.mockRestore()
+  }, 10_000)
+
+  it('does not fire while the run is still going', async () => {
+    // The pages **differ**, for the same structural-sharing reason as above: a
+    // run that reports byte-identical progress twice hands the effect the same
+    // object and never re-runs it, so this would pass against a hook with no
+    // `state` test in it at all. Measured: deleting the `state !== 'idle'`
+    // guard left the single-page version of this test green.
+    serveScanStatus([
+      scanStatusRunning,
+      { ...scanStatusRunning, done: 72, elapsed_ms: 21_000 },
+    ])
+    const client = makeClient()
+    const spy = vi.spyOn(client, 'invalidateQueries')
+    const { result } = mount(client)
+
+    await waitFor(() => {
+      expect(result.current.data?.state).toBe('indexing')
+    })
+    // Poll on, and land on the second page: the run has moved and not finished.
+    await waitFor(
+      () => {
+        expect(result.current.data?.done).toBe(72)
+      },
+      { timeout: 4_000 },
+    )
+    await new Promise((resolve) => setTimeout(resolve, SCAN_POLL_MS))
+    expect(result.current.data?.state).toBe('indexing')
+    expect(invalidatedKeys(spy)).toEqual([])
+    spy.mockRestore()
+  }, 15_000)
 })
 
 // ---------------------------------------------------------------------------

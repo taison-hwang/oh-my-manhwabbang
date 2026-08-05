@@ -120,11 +120,16 @@ type seedSeries struct {
 }
 
 type seedBook struct {
-	id    string
-	name  string
-	ord   int
-	kind  string
+	id   string
+	name string
+	ord  int
+	kind string
+	// pages is both the books.page_count and the number of page rows written.
 	pages int
+	// status is books.status (arch §4.11: "ok", "error", "encrypted", "empty",
+	// "unsupported"). Empty means "ok", so every fixture written before broken
+	// books mattered keeps its meaning.
+	status string
 }
 
 // seed writes a whole small library through the single-writer API.
@@ -180,13 +185,17 @@ func seed(t *testing.T, idx *index.DB, rootName string, all []seedSeries) {
 			t.Fatalf("UpsertSeries %s: %v", s.id, err)
 		}
 		for _, b := range s.books {
+			bookStatus := b.status
+			if bookStatus == "" {
+				bookStatus = "ok"
+			}
 			bk := index.Book{
 				ID: b.id, SeriesID: s.id, RootName: rootName,
 				RelPath: s.name + "/" + b.name, DisplayName: b.name,
 				SortKey: sortKeyOf(b.name), Ord: b.ord, Kind: b.kind,
 				PageCount: int64(b.pages), TotalBytes: int64(b.pages) * 1000,
 				FileSize: int64(b.pages) * 900, FileMtime: s.mtime,
-				ContentVersion: "cv" + b.id, Status: "ok", ScanGen: 1,
+				ContentVersion: "cv" + b.id, Status: bookStatus, ScanGen: 1,
 			}
 			if bk.Kind == "" {
 				bk.Kind = "zip"
@@ -968,6 +977,823 @@ func TestListContinue_joinsBothDatabases(t *testing.T) {
 	}
 	if items[0].Book.Progress == nil || items[0].Book.Progress.LastPage != 3 {
 		t.Errorf("progress not joined: %+v", items[0].Book.Progress)
+	}
+}
+
+// ------------------------------------ the shelf shows one card per series --
+//
+// 이어보기 carries AT MOST ONE card per series, and the survivor is the LATER
+// volume (뒷화 우선): a readable volume first of all, then greatest `ord`, then
+// greatest `id` to break a tie. The tests below pin each part of that
+// separately, because "one per series", "the later one" and "the readable one"
+// fail independently — a `GROUP BY series_id` with no ordering passes the first
+// and flunks the rest, and an `ord`-only ranking passes the first two.
+
+// continueIDs is the book ids of a shelf, in shelf order.
+func continueIDs(items []index.ContinueItem) []string {
+	out := make([]string, len(items))
+	for i, it := range items {
+		out[i] = it.Book.ID
+	}
+	return out
+}
+
+// continueSeries is the distinct series ids on a shelf, in shelf order.
+func continueSeries(items []index.ContinueItem) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, it := range items {
+		if !seen[it.SeriesID] {
+			seen[it.SeriesID] = true
+			out = append(out, it.SeriesID)
+		}
+	}
+	return out
+}
+
+// (a) Two unfinished books in one series collapse to one card, and it is the
+// higher-`ord` one. `library()`'s 군계 is the fixture: 01권 is ord 0, 02권 ord 1.
+func TestListContinue_oneCardPerSeries_keepsTheLaterVolume(t *testing.T) {
+	t.Parallel()
+	idx, ud, _ := newDBs(t)
+	ctx := t.Context()
+	seed(t, idx, "manga", library())
+
+	mustPut(t, ud, "b1aaaaaaaaaaaaaa", "aaaaaaaaaaaaaaaa", 3, 5, false) // ord 0
+	mustPut(t, ud, "b2aaaaaaaaaaaaaa", "aaaaaaaaaaaaaaaa", 2, 7, false) // ord 1
+
+	items, err := idx.ListContinue(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListContinue: %v", err)
+	}
+	if got := continueIDs(items); !equalStrings(got, []string{"b2aaaaaaaaaaaaaa"}) {
+		t.Fatalf("shelf = %v, want [b2aaaaaaaaaaaaaa] — one card per series, the later volume", got)
+	}
+	if items[0].Book.Ord != 1 {
+		t.Errorf("ord = %d, want 1", items[0].Book.Ord)
+	}
+	// The surviving row must carry ITS OWN progress, not the loser's.
+	if p := items[0].Book.Progress; p == nil || p.LastPage != 2 || p.PageCount != 7 {
+		t.Errorf("progress = %+v, want the 02권 row (page 2 of 7)", p)
+	}
+}
+
+// (b) The reported bug, exactly: 「사랑」 07권 sat at page 1 of 113 while 01권 sat
+// at page 24 of 116 and had been read more recently. The shelf showed both;
+// 뒷화 우선 says it must show 07권 alone. So the LOWER-`ord` book here is given
+// every advantage the losing rule would reward — a later `updated_at` and more
+// pages read — and must still lose.
+func TestListContinue_laterVolumeWins_evenWhenTheEarlierIsFresherAndFurther(t *testing.T) {
+	t.Parallel()
+	idx, ud, clk, _ := newDBsAt(t)
+	ctx := t.Context()
+	seed(t, idx, "manga", library())
+
+	// 02권 (ord 1) — barely started, and read FIRST.
+	mustPut(t, ud, "b2aaaaaaaaaaaaaa", "aaaaaaaaaaaaaaaa", 1, 7, false)
+	clk.Advance(time.Hour)
+	// 01권 (ord 0) — nearly finished, and read LAST.
+	mustPut(t, ud, "b1aaaaaaaaaaaaaa", "aaaaaaaaaaaaaaaa", 4, 5, false)
+
+	items, err := idx.ListContinue(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListContinue: %v", err)
+	}
+	if got := continueIDs(items); !equalStrings(got, []string{"b2aaaaaaaaaaaaaa"}) {
+		t.Fatalf("shelf = %v, want [b2aaaaaaaaaaaaaa]: 뒷화 우선 outranks both a more "+
+			"recent updated_at and greater progress", got)
+	}
+	// Guard the pair the rule is defined against: if these were equal the test
+	// would pass for the wrong reason.
+	lower, err := idx.GetBook(ctx, "b1aaaaaaaaaaaaaa")
+	if err != nil {
+		t.Fatalf("GetBook: %v", err)
+	}
+	if lower.Progress.UpdatedAt <= items[0].Book.Progress.UpdatedAt {
+		t.Fatalf("the fixture is wrong: the loser's updated_at (%d) must be the LATER one (%d)",
+			lower.Progress.UpdatedAt, items[0].Book.Progress.UpdatedAt)
+	}
+	if lower.Progress.LastPage <= items[0].Book.Progress.LastPage {
+		t.Fatalf("the fixture is wrong: the loser must be read FURTHER (%d vs %d)",
+			lower.Progress.LastPage, items[0].Book.Progress.LastPage)
+	}
+}
+
+// (b′) The election ranks by `ord`, and `ord` is a key of its own — not a
+// synonym for the id that happens to sit beside it.
+//
+// EVERY other fixture in this file gives the higher-`ord` volume the higher id
+// (`b1…`/`b2…`, `brk01…`/`brk02…`, `abk01…`/`abk02…`, `act%02d…`,
+// `bk%05d%09d`), so "greatest ord" and "greatest id" name the same row and the
+// two keys cannot be told apart. Real ids are nothing like that: `ids.BookID` is
+// 80 bits of SHA-256 rendered in base32 (`internal/ids/ids.go`), keyed on the
+// root name and the ROOT-relative path, so a volume's id carries no information
+// about its position in its series. Measured before this test existed: deleting
+// `b2.ord DESC` from the election left all of `TestListContinue` — and all of
+// `internal/httpapi` — green, so `ORDER BY (b2.status='ok') DESC, b2.id DESC`
+// would have shipped an effectively arbitrary volume per series with nothing to
+// catch it. 뒷화 우선 is the user's requirement (E-37); it needs a test that can
+// fail.
+//
+// The fixture therefore makes the two keys disagree in BOTH directions at once.
+// Four volumes, digest-shaped ids, and the `ord` winner's id is neither the
+// greatest nor the least of the four — so `id DESC` picks 02권, `id ASC` picks
+// 03권, `ord ASC` picks 01권, and only `ord DESC` picks 04권.
+func TestListContinue_electionRanksByOrd_whenTheIDOrderDisagrees(t *testing.T) {
+	t.Parallel()
+	// 16 characters of `ids.Alphabet` each, like the ids the scanner writes —
+	// deliberately NOT the readable `xxNN…` shape the rest of this file uses,
+	// because that shape is the thing that hid the defect.
+	const (
+		sid   = "dgstser4mkqz7vhn"
+		vol01 = "m4k7qz2vhbn6rdcs" // ord 0
+		vol02 = "z6pd3nkxqm2vwhtj" // ord 1 — the GREATEST id
+		vol03 = "c2vhq7mz4kbnrsdx" // ord 2 — the LEAST id
+		vol04 = "q5nbmz3kwhdvrtc7" // ord 3 — the greatest ord, and neither of those
+	)
+	byOrd := []string{vol01, vol02, vol03, vol04}
+
+	// The write order must not matter either: an un-keyed sort can land on the
+	// right answer by insertion accident, which is how the `b2.id DESC`
+	// tie-break nearly escaped its own test (see the note above (d)).
+	for _, w := range []struct {
+		name  string
+		order []string
+	}{
+		{"written in ord order", []string{vol01, vol02, vol03, vol04}},
+		{"written in reverse ord order", []string{vol04, vol03, vol02, vol01}},
+		{"written in id order", []string{vol03, vol01, vol04, vol02}},
+	} {
+		t.Run(w.name, func(t *testing.T) {
+			t.Parallel()
+			idx, ud, clk, _ := newDBsAt(t)
+			ctx := t.Context()
+
+			books := make([]seedBook, 0, len(byOrd))
+			for k, id := range byOrd {
+				books = append(books, seedBook{
+					id: id, name: fmt.Sprintf("%02d권.zip", k+1), ord: k, kind: "zip", pages: 20,
+				})
+			}
+			seed(t, idx, "manga", []seedSeries{{
+				id: sid, name: "id가 ord를 따르지 않는 시리즈", sortKey: "dgst", searchKey: "dgst",
+				mtime: 1, addedAt: 1, books: books,
+			}})
+			for i, id := range w.order {
+				if i > 0 {
+					clk.Advance(time.Hour)
+				}
+				mustPut(t, ud, id, sid, 1, 20, false)
+			}
+
+			// Guard the fixture: if the two orders agreed, or if the `ord`
+			// winner also held an extreme id, the test would pass for an
+			// id-only rule and prove nothing.
+			byID := append([]string(nil), byOrd...)
+			sort.Strings(byID)
+			if equalStrings(byID, byOrd) {
+				t.Fatalf("the fixture is wrong: id order %v must DISAGREE with ord order %v",
+					byID, byOrd)
+			}
+			if byID[0] == vol04 || byID[len(byID)-1] == vol04 {
+				t.Fatalf("the fixture is wrong: the ord winner %s must be neither the least nor "+
+					"the greatest id (sorted: %v), or an id-only ranking would pick it by accident",
+					vol04, byID)
+			}
+
+			items, err := idx.ListContinue(ctx, 10)
+			if err != nil {
+				t.Fatalf("ListContinue: %v", err)
+			}
+			if got := continueIDs(items); !equalStrings(got, []string{vol04}) {
+				t.Fatalf("shelf = %v, want [%s] — the election ranks by `ord` (뒷화 우선), and this "+
+					"series' ids run in a different order from its volumes", got, vol04)
+			}
+			if items[0].Book.Ord != len(byOrd)-1 {
+				t.Errorf("ord = %d, want %d", items[0].Book.Ord, len(byOrd)-1)
+			}
+		})
+	}
+}
+
+// (c) `limit` counts SERIES, because de-duplication happens before it. Five
+// series each with three unfinished volumes, asked for three, must answer three
+// cards from three different series — not three volumes of the first one, and
+// not fewer than three because duplicates were dropped after the LIMIT.
+func TestListContinue_limitCountsDistinctSeries(t *testing.T) {
+	t.Parallel()
+	idx, ud, clk, _ := newDBsAt(t)
+	ctx := t.Context()
+
+	const nSeries, nBooks = 5, 3
+	fixture := make([]seedSeries, 0, nSeries)
+	for s := 0; s < nSeries; s++ {
+		sid := fmt.Sprintf("ser%013d", s)
+		books := make([]seedBook, 0, nBooks)
+		for k := 0; k < nBooks; k++ {
+			books = append(books, seedBook{
+				id: fmt.Sprintf("bk%05d%09d", s, k), name: fmt.Sprintf("%02d권.zip", k+1),
+				ord: k, kind: "zip", pages: 10,
+			})
+		}
+		fixture = append(fixture, seedSeries{
+			id: sid, name: fmt.Sprintf("시리즈 %d", s), sortKey: sid, searchKey: sid,
+			mtime: int64(s), addedAt: int64(s), books: books,
+		})
+	}
+	seed(t, idx, "manga", fixture)
+
+	for s := 0; s < nSeries; s++ {
+		for k := 0; k < nBooks; k++ {
+			mustPut(t, ud, fmt.Sprintf("bk%05d%09d", s, k), fmt.Sprintf("ser%013d", s), 1, 10, false)
+			clk.Advance(time.Minute)
+		}
+	}
+
+	items, err := idx.ListContinue(ctx, 3)
+	if err != nil {
+		t.Fatalf("ListContinue: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("limit=3 returned %d cards (%v); de-duplicating after the LIMIT would "+
+			"have shrunk the shelf", len(items), continueIDs(items))
+	}
+	if got := continueSeries(items); len(got) != 3 {
+		t.Fatalf("limit=3 covered %d distinct series (%v), want 3", len(got), got)
+	}
+	for _, it := range items {
+		if it.Book.Ord != nBooks-1 {
+			t.Errorf("series %s kept ord %d, want %d (the last volume)",
+				it.SeriesID, it.Book.Ord, nBooks-1)
+		}
+	}
+
+	// The whole shelf is one card per series, no more and no less.
+	all, err := idx.ListContinue(ctx, 50)
+	if err != nil {
+		t.Fatalf("ListContinue: %v", err)
+	}
+	if len(all) != nSeries {
+		t.Fatalf("unlimited shelf = %d cards (%v), want %d — one per series",
+			len(all), continueIDs(all), nSeries)
+	}
+}
+
+// (d) De-duplication is PER SERIES, not global: two different series both keep
+// their card. A `GROUP BY` written one column too wide would collapse them.
+func TestListContinue_differentSeriesEachKeepTheirCard(t *testing.T) {
+	t.Parallel()
+	idx, ud, clk, _ := newDBsAt(t)
+	ctx := t.Context()
+	seed(t, idx, "manga", library())
+
+	mustPut(t, ud, "b1aaaaaaaaaaaaaa", "aaaaaaaaaaaaaaaa", 3, 5, false) // 군계, ord 0
+	clk.Advance(time.Hour)
+	mustPut(t, ud, "b3bbbbbbbbbbbbbb", "bbbbbbbbbbbbbbbb", 1, 3, false) // 강철의 연금술사
+	clk.Advance(time.Hour)
+	mustPut(t, ud, "b5eeeeeeeeeeeeee", "eeeeeeeeeeeeeeee", 1, 2, false) // 20세기소년
+
+	items, err := idx.ListContinue(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListContinue: %v", err)
+	}
+	// Shelf order is unchanged: most recently read first.
+	want := []string{"b5eeeeeeeeeeeeee", "b3bbbbbbbbbbbbbb", "b1aaaaaaaaaaaaaa"}
+	if got := continueIDs(items); !equalStrings(got, want) {
+		t.Fatalf("shelf = %v, want %v (three series, three cards, newest first)", got, want)
+	}
+}
+
+// A series whose LAST volume is FINISHED still belongs on the shelf, showing
+// the latest volume that is not.
+//
+// This is the failure mode of electing the winner without repeating
+// `completed = 0` inside the de-duplication: 군계 would elect 02권, 02권 would
+// then be filtered out as finished, and 군계 would disappear from 이어보기
+// altogether even though 01권 is half-read. Losing a card is worse than the
+// duplicate this change set out to fix, so it gets its own test.
+func TestListContinue_seriesSurvivesWhenItsLastVolumeIsFinished(t *testing.T) {
+	t.Parallel()
+	idx, ud, _ := newDBs(t)
+	ctx := t.Context()
+	seed(t, idx, "manga", library())
+
+	mustPut(t, ud, "b1aaaaaaaaaaaaaa", "aaaaaaaaaaaaaaaa", 3, 5, false) // ord 0, reading
+	mustPut(t, ud, "b2aaaaaaaaaaaaaa", "aaaaaaaaaaaaaaaa", 7, 7, true)  // ord 1, done
+
+	items, err := idx.ListContinue(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListContinue: %v", err)
+	}
+	if got := continueIDs(items); !equalStrings(got, []string{"b1aaaaaaaaaaaaaa"}) {
+		t.Fatalf("shelf = %v, want [b1aaaaaaaaaaaaaa] — the finished later volume must not "+
+			"take the series' card with it", got)
+	}
+}
+
+// A tie in `ord` is RARE, not routine, and the tie-break still has to exist.
+//
+// `ord` is `INTEGER NOT NULL` and the scanner assigns it as a 0-based dense rank
+// over the series' books, in the natural-sort order collect.go materialises
+// (`for ord := range t.results` in scanner.go's series writer). So after any
+// scan that ran to completion the values are strictly distinct within a series
+// and this fixture is unreachable. What makes it reachable is a scan whose
+// generation sweep was BLOCKED — scanner/gen.go's `decideSweep` refuses to sweep
+// a targeted run, so `POST /api/series/{sid}/rescan` after a volume was deleted
+// from disk re-ranks the surviving books from 0 while the deleted book's row
+// keeps its old `ord` at the previous generation. Two rows of one series then
+// carry the same `ord` until a full scan sweeps the stale one away. The shelf
+// must be deterministic in that window, not
+// whichever-row-SQLite-reached-first.
+//
+// All four arrangements of (write order × which row is fresher) are run, and
+// that is the whole point of the test rather than thoroughness for its own
+// sake. With the `b2.id DESC` tie-break deleted the query still answers
+// correctly in two of these four — SQLite's untie-broken sort happens to
+// surface the greater id when the greater id was written last or read more
+// recently — so a single-arrangement test passes against a query that has no
+// tie-break at all. Measured: deleting `, b2.id DESC` leaves cases 1 and 4
+// green and turns cases 2 and 3 red.
+func TestListContinue_tiedOrd_breaksOnTheGreaterID(t *testing.T) {
+	t.Parallel()
+	const (
+		lo = "tieaaaaaaaaaaaaa"
+		hi = "tiezzzzzzzzzzzzz"
+	)
+	cases := []struct {
+		name    string
+		order   []string // the order progress is written in
+		advance bool     // whether the second write also gets a later updated_at
+	}{
+		{"greater id written first", []string{hi, lo}, false},
+		{"lesser id written first", []string{lo, hi}, false},
+		{"lesser id read more recently", []string{hi, lo}, true},
+		{"greater id read more recently", []string{lo, hi}, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			idx, ud, clk, _ := newDBsAt(t)
+			ctx := t.Context()
+			seed(t, idx, "manga", []seedSeries{{
+				id: "tie0000000000000", name: "동률", sortKey: "tie", searchKey: "tie",
+				books: []seedBook{
+					{id: lo, name: "a.zip", ord: 4, kind: "zip", pages: 6},
+					{id: hi, name: "z.zip", ord: 4, kind: "zip", pages: 6},
+				},
+			}})
+			for i, id := range c.order {
+				if i > 0 && c.advance {
+					clk.Advance(time.Hour)
+				}
+				mustPut(t, ud, id, "tie0000000000000", 1, 6, false)
+			}
+
+			items, err := idx.ListContinue(ctx, 10)
+			if err != nil {
+				t.Fatalf("ListContinue: %v", err)
+			}
+			if got := continueIDs(items); !equalStrings(got, []string{hi}) {
+				t.Fatalf("shelf = %v, want [%s] — equal ord breaks on the greater id, "+
+					"whatever order the progress rows were written in", got, hi)
+			}
+		})
+	}
+}
+
+// ------------------------------- the shelf's ORDER agrees with its CHOICE --
+
+// The shelf ranks a series by the series' own most recent reading, not by the
+// card it happens to show.
+//
+// Once one card per series is elected by `ord`, the elected card's `updated_at`
+// stops being a statement about the SERIES. A reader who peeked at 07권 a month
+// ago and read 01권 five minutes ago is actively reading that series; ranking it
+// by 07권's month-old timestamp sends it to the BOTTOM of 이어보기, and at the
+// shelf's cap (ui-spec §4.3 shows five cards, useLibrary.ts asks for limit=5) it
+// falls off the shelf altogether. The card shown stays the 뒷화 winner — only
+// the ordering key is the series'.
+func TestListContinue_ranksBySeriesActivity_notByTheElectedCard(t *testing.T) {
+	t.Parallel()
+	idx, ud, clk, _ := newDBsAt(t)
+	ctx := t.Context()
+
+	const (
+		seriesA = "act0000000000000"
+		vol01   = "act00aaaaaaaaaaa"
+		vol07   = "act06aaaaaaaaaaa"
+	)
+
+	// 「사랑」: seven volumes. Only 01권 and 07권 are ever opened.
+	active := []seedBook{}
+	for k := 0; k < 7; k++ {
+		active = append(active, seedBook{
+			id:   fmt.Sprintf("act%02daaaaaaaaaaa", k),
+			name: fmt.Sprintf("%02d권.zip", k+1), ord: k, kind: "zip", pages: 110 + k,
+		})
+	}
+	fixture := []seedSeries{{
+		id: seriesA, name: "사랑", sortKey: "act", searchKey: "사랑",
+		mtime: 1, addedAt: 1, books: active,
+	}}
+	// Five more in-progress series, so the shelf is over its five-card cap.
+	for s := 0; s < 5; s++ {
+		sid := fmt.Sprintf("oth%013d", s)
+		fixture = append(fixture, seedSeries{
+			id: sid, name: fmt.Sprintf("다른 시리즈 %d", s), sortKey: sid, searchKey: sid,
+			mtime: int64(s), addedAt: int64(s),
+			books: []seedBook{{
+				id: fmt.Sprintf("oth%05d00000000", s), name: "01권.zip",
+				ord: 0, kind: "zip", pages: 20,
+			}},
+		})
+	}
+	seed(t, idx, "manga", fixture)
+
+	// A month ago: a peek at 07권.
+	mustPut(t, ud, vol07, seriesA, 1, 113, false)
+	clk.Advance(30 * 24 * time.Hour)
+	// Then five other series, one an hour.
+	for s := 0; s < 5; s++ {
+		mustPut(t, ud, fmt.Sprintf("oth%05d00000000", s), fmt.Sprintf("oth%013d", s), 3, 20, false)
+		clk.Advance(time.Hour)
+	}
+	// Five minutes ago: back to 01권 of 「사랑」. The series is the freshest thing
+	// on the shelf.
+	mustPut(t, ud, vol01, seriesA, 24, 116, false)
+
+	// Guard the fixture: the elected card really is the STALE one, so the test
+	// cannot pass by accident.
+	winner, err := idx.GetBook(ctx, vol07)
+	if err != nil {
+		t.Fatalf("GetBook: %v", err)
+	}
+	fresh, err := idx.GetBook(ctx, vol01)
+	if err != nil {
+		t.Fatalf("GetBook: %v", err)
+	}
+	if winner.Progress.UpdatedAt >= fresh.Progress.UpdatedAt {
+		t.Fatalf("the fixture is wrong: 07권's updated_at (%d) must be OLDER than 01권's (%d)",
+			winner.Progress.UpdatedAt, fresh.Progress.UpdatedAt)
+	}
+
+	items, err := idx.ListContinue(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListContinue: %v", err)
+	}
+	if len(items) != 6 {
+		t.Fatalf("shelf = %d cards (%v), want 6 — one per in-progress series",
+			len(items), continueIDs(items))
+	}
+	if items[0].SeriesID != seriesA {
+		t.Fatalf("shelf = %v, want 「사랑」 (%s) first: it was read five minutes ago, and the "+
+			"shelf ranks a series by ITS most recent unfinished-book activity, not by the "+
+			"elected card's own updated_at", continueSeries(items), seriesA)
+	}
+	// The ordering key moved; the CHOICE did not. 뒷화 우선 still elects 07권.
+	if items[0].Book.ID != vol07 || items[0].Book.Ord != 6 {
+		t.Fatalf("card for 「사랑」 = %s (ord %d), want %s (ord 6) — ranking by the series must "+
+			"not change which volume the card shows", items[0].Book.ID, items[0].Book.Ord, vol07)
+	}
+
+	// The reachable half of the defect: at the shelf's real cap the series that
+	// is being read right now must not be the one that falls off.
+	capped, err := idx.ListContinue(ctx, 5)
+	if err != nil {
+		t.Fatalf("ListContinue: %v", err)
+	}
+	if len(capped) != 5 {
+		t.Fatalf("limit=5 returned %d cards (%v), want 5", len(capped), continueIDs(capped))
+	}
+	if capped[0].SeriesID != seriesA || capped[0].Book.ID != vol07 {
+		t.Fatalf("limit=5 shelf = %v (books %v); 「사랑」's 07권 card must survive the cap at "+
+			"position 0, not be pushed off by five series read less recently",
+			continueSeries(capped), continueIDs(capped))
+	}
+}
+
+// The shelf's ordering key counts UNFINISHED reading and nothing else. A volume
+// the reader FINISHED must not lift its series up the shelf.
+//
+// That is what `p3.completed = 0` inside `seriesActivity` buys, and deleting it
+// left every other test in this file — and all of `internal/httpapi` — green,
+// even though the behaviour change is real and points the wrong way. Finishing
+// 03권 is the reader saying they are DONE with that volume; 이어보기 is the shelf
+// of what is left unfinished, so a series where the newest thing that happened
+// was a completion must rank BELOW a series the reader is in the middle of.
+// Without the clause the finished volume's timestamp — the newest in the whole
+// fixture — becomes the series' ordering key and lifts it to the top.
+//
+// The fixture is also arranged so that removing the ordering key altogether
+// fails here: `fin…` sorts before `oth…`, so the `b.id ASC` tie-break alone
+// would produce the same wrong answer as the mutation.
+func TestListContinue_seriesActivity_ignoresFinishedVolumes(t *testing.T) {
+	t.Parallel()
+	idx, ud, clk, _ := newDBsAt(t)
+	ctx := t.Context()
+
+	const (
+		finished = "fin0000000000000"
+		fin01    = "fin01aaaaaaaaaaa"
+		fin02    = "fin02aaaaaaaaaaa"
+		fin03    = "fin03aaaaaaaaaaa"
+		other    = "oth0000000000000"
+		oth01    = "oth01aaaaaaaaaaa"
+	)
+	seed(t, idx, "manga", []seedSeries{
+		{id: finished, name: "마지막 권을 완독한 시리즈", sortKey: "fin", searchKey: "fin",
+			mtime: 1, addedAt: 1, books: []seedBook{
+				{id: fin01, name: "01권.zip", ord: 0, kind: "zip", pages: 30},
+				{id: fin02, name: "02권.zip", ord: 1, kind: "zip", pages: 30},
+				{id: fin03, name: "03권.zip", ord: 2, kind: "zip", pages: 30},
+			}},
+		{id: other, name: "읽는 중인 시리즈", sortKey: "oth", searchKey: "oth",
+			mtime: 2, addedAt: 2, books: []seedBook{
+				{id: oth01, name: "01권.zip", ord: 0, kind: "zip", pages: 30},
+			}},
+	})
+
+	// Three progress rows on the first series, and the ONLY finished one is the
+	// most recent thing the reader did anywhere.
+	mustPut(t, ud, fin01, finished, 5, 30, false)
+	clk.Advance(time.Hour)
+	mustPut(t, ud, fin02, finished, 9, 30, false) // the series' real activity
+	clk.Advance(time.Hour)
+	mustPut(t, ud, oth01, other, 4, 30, false) // read AFTER that
+	clk.Advance(time.Hour)
+	mustPut(t, ud, fin03, finished, 30, 30, true) // finished, and newest of all
+
+	// Guard the fixture on both halves: the completed row must really be
+	// completed, and it must really be the newest timestamp in the database.
+	done, err := idx.GetBook(ctx, fin03)
+	if err != nil {
+		t.Fatalf("GetBook: %v", err)
+	}
+	live, err := idx.GetBook(ctx, oth01)
+	if err != nil {
+		t.Fatalf("GetBook: %v", err)
+	}
+	if done.Progress == nil || !done.Progress.Completed {
+		t.Fatalf("the fixture is wrong: 03권's progress = %+v; want a COMPLETED row", done.Progress)
+	}
+	if done.Progress.UpdatedAt <= live.Progress.UpdatedAt {
+		t.Fatalf("the fixture is wrong: the completed 03권 (%d) must be NEWER than the other "+
+			"series' unfinished row (%d), or the mutation has nothing to lift",
+			done.Progress.UpdatedAt, live.Progress.UpdatedAt)
+	}
+
+	items, err := idx.ListContinue(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListContinue: %v", err)
+	}
+	want := []string{oth01, fin02}
+	if got := continueIDs(items); !equalStrings(got, want) {
+		t.Fatalf("shelf = %v, want %v — a series' place on 이어보기 is its most recent UNFINISHED "+
+			"reading; the volume it finished must not carry it up the shelf", got, want)
+	}
+	// The election is unaffected: 뒷화 우선 over the unfinished volumes is 02권,
+	// not the finished 03권 and not the older 01권.
+	if items[1].Book.ID != fin02 || items[1].Book.Ord != 1 {
+		t.Errorf("card for the first series = %s (ord %d), want %s (ord 1)",
+			items[1].Book.ID, items[1].Book.Ord, fin02)
+	}
+}
+
+// A book on a DISABLED root is off the shelf.
+//
+// `r.enabled = 1` in the outer WHERE is the only thing that removes it, and
+// deleting it left both `internal/index` and `internal/httpapi` green. The
+// clause is reasoned about at length in `latestPerSeries`' comment — which
+// explains why it is deliberately NOT repeated inside the election — while
+// nothing pinned the outer one it depends on. arch §3.2 keeps a disabled root's
+// rows so that re-enabling loses nothing, which is exactly why every read path
+// has to filter them on the way out.
+func TestListContinue_disabledRoot_isOffTheShelf(t *testing.T) {
+	t.Parallel()
+	idx, ud, _ := newDBs(t)
+	ctx := t.Context()
+
+	const (
+		usbSeries = "usb0000000000000"
+		usbBook   = "usb01aaaaaaaaaaa"
+	)
+	seed(t, idx, "manga", library()[:1])
+	seed(t, idx, "usb", []seedSeries{{
+		id: usbSeries, name: "뽑아 둔 드라이브", sortKey: "usb", searchKey: "usb",
+		mtime: 1, addedAt: 1,
+		books: []seedBook{{id: usbBook, name: "01권.zip", ord: 0, kind: "zip", pages: 9}},
+	}})
+
+	mustPut(t, ud, "b1aaaaaaaaaaaaaa", "aaaaaaaaaaaaaaaa", 3, 5, false)
+	mustPut(t, ud, usbBook, usbSeries, 2, 9, false)
+
+	// Both roots enabled: both cards. Without this half the assertion below
+	// would also pass against a query that returned nothing at all.
+	before, err := idx.ListContinue(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListContinue: %v", err)
+	}
+	if len(before) != 2 {
+		t.Fatalf("shelf with both roots enabled = %v, want both cards", continueIDs(before))
+	}
+
+	if err := idx.UpsertRoot(ctx, index.Root{
+		Name: "usb", Path: "/media/usb", Label: "usb", Enabled: false}); err != nil {
+		t.Fatalf("disabling root: %v", err)
+	}
+
+	after, err := idx.ListContinue(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListContinue: %v", err)
+	}
+	if got := continueIDs(after); !equalStrings(got, []string{"b1aaaaaaaaaaaaaa"}) {
+		t.Fatalf("shelf = %v, want [b1aaaaaaaaaaaaaa] — a book whose root is disabled must not "+
+			"appear on 이어보기, even though its rows are deliberately kept", got)
+	}
+}
+
+// ------------------------------ a broken volume must not hide a good one --
+
+// A book whose `status` is not "ok" loses the election to a readable volume of
+// the same series.
+//
+// 02권 is `status='error', page_count=0` — the shape httpapi/progress.go
+// documents as a supported PUT ("length unknown"). Such a row can never become
+// `completed` on its own: userdata.PutProgress only auto-completes when
+// `PageCount > 0`. So without a readability key the broken 02권 wins its
+// partition FOREVER and the 01권 the reader is actually on disappears from
+// 이어보기.
+func TestListContinue_readableVolumeWins_overABrokenLaterOne(t *testing.T) {
+	t.Parallel()
+	idx, ud, clk, _ := newDBsAt(t)
+	ctx := t.Context()
+
+	const (
+		sid   = "brk0000000000000"
+		vol01 = "brk01aaaaaaaaaaa"
+		vol02 = "brk02aaaaaaaaaaa"
+	)
+	seed(t, idx, "manga", []seedSeries{{
+		id: sid, name: "부서진 권이 있는 시리즈", sortKey: "brk", searchKey: "brk",
+		mtime: 1, addedAt: 1,
+		books: []seedBook{
+			{id: vol01, name: "01권.zip", ord: 0, kind: "zip", pages: 10},
+			{id: vol02, name: "02권.zip", ord: 1, kind: "zip", pages: 0, status: "error"},
+		},
+	}})
+
+	// Opened the broken 02권 once — page 1 of "length unknown".
+	mustPut(t, ud, vol02, sid, 1, 0, false)
+	clk.Advance(time.Hour)
+	// Then went back to 01권, which is what the reader is on.
+	mustPut(t, ud, vol01, sid, 3, 10, false)
+
+	// Guard the fixture: the broken row is PERMANENTLY unfinished, so it is a
+	// permanent competitor rather than a transient one.
+	broken, err := idx.GetBook(ctx, vol02)
+	if err != nil {
+		t.Fatalf("GetBook: %v", err)
+	}
+	if broken.Status != "error" || broken.PageCount != 0 {
+		t.Fatalf("the fixture is wrong: 02권 = status %q, page_count %d; want error/0",
+			broken.Status, broken.PageCount)
+	}
+	if broken.Progress == nil || broken.Progress.Completed {
+		t.Fatalf("the fixture is wrong: 02권's progress = %+v; want a row that is not completed",
+			broken.Progress)
+	}
+
+	items, err := idx.ListContinue(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListContinue: %v", err)
+	}
+	if got := continueIDs(items); !equalStrings(got, []string{vol01}) {
+		t.Fatalf("shelf = %v, want [%s] — a book that cannot be read must not win its series' "+
+			"card and hide the volume actually being read", got, vol01)
+	}
+	if items[0].Book.PageCount != 10 || items[0].Book.Status != "ok" {
+		t.Errorf("card = status %q, %d pages; want the readable ok/10 volume",
+			items[0].Book.Status, items[0].Book.PageCount)
+	}
+}
+
+// Readability PREFERS, it does not EXCLUDE: a series whose started books are ALL
+// non-"ok" keeps its card and shows its latest volume.
+//
+// This is the property that rules out the one-line fix for the defect above.
+// `AND b2.status = 'ok'` inside the election would make this series match
+// nothing and vanish from 이어보기 entirely — trading one silent behaviour
+// change for another, and losing a card the reader put there.
+func TestListContinue_seriesWithOnlyBrokenBooks_stillKeepsItsCard(t *testing.T) {
+	t.Parallel()
+	idx, ud, clk, _ := newDBsAt(t)
+	ctx := t.Context()
+
+	const (
+		sid   = "abk0000000000000"
+		vol01 = "abk01aaaaaaaaaaa"
+		vol02 = "abk02aaaaaaaaaaa"
+	)
+	seed(t, idx, "manga", []seedSeries{{
+		id: sid, name: "전부 부서진 시리즈", sortKey: "abk", searchKey: "abk",
+		mtime: 1, addedAt: 1,
+		books: []seedBook{
+			{id: vol01, name: "01권.zip", ord: 0, kind: "zip", pages: 0, status: "error"},
+			{id: vol02, name: "02권.zip", ord: 1, kind: "zip", pages: 0, status: "encrypted"},
+		},
+	}})
+
+	mustPut(t, ud, vol01, sid, 1, 0, false)
+	clk.Advance(time.Hour)
+	mustPut(t, ud, vol02, sid, 1, 0, false)
+
+	items, err := idx.ListContinue(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListContinue: %v", err)
+	}
+	if got := continueIDs(items); !equalStrings(got, []string{vol02}) {
+		t.Fatalf("shelf = %v, want [%s] — when nothing in the series is readable the shelf "+
+			"still shows its latest volume; readability prefers, it never excludes", got, vol02)
+	}
+}
+
+// Two series last read in the SAME SECOND are ordered by the card's `id`, so the
+// shelf does not shuffle between two reloads that read the same rows.
+//
+// progress timestamps are Unix *seconds* and the reader debounces page turns to
+// about one, so closing one book and opening another inside the same second is
+// ordinary. Ranking by the series' MAX(updated_at) rather than by the elected
+// card's own makes the tie MORE reachable, not less: two series now collide
+// whenever ANY of their unfinished volumes share a second, not just the two
+// elected ones.
+//
+// HONEST LIMIT OF THIS TEST. It does not kill the mutation that deletes
+// `, b.id ASC` from the shelf's ORDER BY, and four arrangements — card ids with
+// and against the series ids, in both write orders — were tried to make it.
+// SQLite lands on the same answer without the tie-break in all four, even
+// though the election list demonstrably feeds the sort in the OTHER order
+// (measured against the raw query: the list emits [hi, lo] and the un-tie-broken
+// sort still returns [lo, hi]). That is coincidence rather than the tie-break
+// being redundant — asking for `b.id DESC` instead does change the answer — so
+// the clause stays: the shelf's determinism must not rest on which row SQLite
+// happens to emit first. What this test does pin is the observable contract,
+// which a future rewrite of the query could break in a way SQLite would not
+// silently repair: two series read in the same second both appear, in card-id
+// order, whatever their series ids or write order.
+func TestListContinue_tiedSeriesActivity_breaksOnTheCardID(t *testing.T) {
+	t.Parallel()
+	const (
+		lo   = "sameaaaaaaaaaaaa"
+		hi   = "samezzzzzzzzzzzz"
+		ser1 = "same000000000001"
+		ser2 = "same000000000002"
+	)
+	layouts := []struct {
+		name string
+		// which book id lives in the LOWER series id
+		inSer1, inSer2 string
+	}{
+		{"card ids agree with series ids", lo, hi},
+		{"card ids oppose series ids", hi, lo},
+	}
+	for _, l := range layouts {
+		for _, first := range []string{lo, hi} {
+			t.Run(fmt.Sprintf("%s, %s written first", l.name, first), func(t *testing.T) {
+				t.Parallel()
+				idx, ud, _ := newDBs(t) // no clock advance: both writes share a second
+				ctx := t.Context()
+				seed(t, idx, "manga", []seedSeries{
+					{id: ser1, name: "동시 1", sortKey: "s1", searchKey: "s1",
+						books: []seedBook{{id: l.inSer1, name: "01권.zip", ord: 0, kind: "zip", pages: 6}}},
+					{id: ser2, name: "동시 2", sortKey: "s2", searchKey: "s2",
+						books: []seedBook{{id: l.inSer2, name: "01권.zip", ord: 0, kind: "zip", pages: 6}}},
+				})
+				seriesOf := map[string]string{l.inSer1: ser1, l.inSer2: ser2}
+				second := lo
+				if first == lo {
+					second = hi
+				}
+				for _, id := range []string{first, second} {
+					mustPut(t, ud, id, seriesOf[id], 1, 6, false)
+				}
+
+				items, err := idx.ListContinue(ctx, 10)
+				if err != nil {
+					t.Fatalf("ListContinue: %v", err)
+				}
+				if len(items) != 2 {
+					t.Fatalf("shelf = %v, want both series", continueIDs(items))
+				}
+				if items[0].Book.Progress.UpdatedAt != items[1].Book.Progress.UpdatedAt {
+					t.Fatalf("the fixture is wrong: the two rows must share an updated_at (%d vs %d)",
+						items[0].Book.Progress.UpdatedAt, items[1].Book.Progress.UpdatedAt)
+				}
+				if got := continueIDs(items); !equalStrings(got, []string{lo, hi}) {
+					t.Fatalf("shelf = %v, want [%s %s] — series read in the same second are ordered "+
+						"by the card's id, whatever the series ids or the write order say", got, lo, hi)
+				}
+			})
+		}
 	}
 }
 

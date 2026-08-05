@@ -307,12 +307,27 @@ func (s *Scanner) Run(ctx context.Context, req Request) (*Result, error) {
 		return nil, err
 	}
 	defer release()
-	return s.run(runCtx, req, runID)
+	begun, err := s.begin(runID, req)
+	if err != nil {
+		return nil, err
+	}
+	return s.run(runCtx, req, runID, begun)
 }
 
 // Start launches a scan in the background and returns its run id, which is what
 // `POST /api/scan` answers with. ErrBusy means a scan is already running
-// (`409 conflict`).
+// (`409 conflict`); ErrUnknownRoot means the request named a root that is not
+// configured (`400 bad_param`).
+//
+// The status snapshot is published **before this returns**, and that ordering is
+// the contract rather than an implementation detail. The HTTP layer writes its
+// 202 the moment it has the run id, and the client answers a 202 by polling
+// `GET /api/scan/status` once and then stopping if the state is idle. A run that
+// left idle only after Start returned could therefore be missed entirely by the
+// one poll that mattered, and the UI would read `스캔 대기` for the whole run with
+// no second chance (arch §7.10, conflict resolution C-11). Publishing first
+// makes that unobservable: any snapshot a caller can reach after Start belongs
+// to this run.
 //
 // The run is deliberately detached from ctx's cancellation — an HTTP handler's
 // context ends when the response is written, and a scan that died the moment its
@@ -327,15 +342,53 @@ func (s *Scanner) Start(ctx context.Context, req Request) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	begun, err := s.begin(runID, req)
+	if err != nil {
+		// Nothing was published, so there is no run to finish. Refusing here
+		// rather than inside the goroutine is also what makes the ErrUnknownRoot
+		// branch of httpapi.scanStartError reachable at all.
+		release()
+		return "", err
+	}
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
 		defer release()
-		if _, err := s.run(runCtx, req, runID); err != nil {
+		if _, err := s.run(runCtx, req, runID, begun); err != nil {
 			s.log.Error("scan failed", "run_id", runID, "err", err)
 		}
 	}()
 	return runID, nil
+}
+
+// begunRun is what a scan resolves before it can be said to have started: the
+// roots it will visit and the instant it started at. It exists so that Start can
+// do this work synchronously, on the caller's goroutine, and hand the result to
+// the background run.
+type begunRun struct {
+	roots []config.Root
+	names []string
+	start time.Time
+}
+
+// begin resolves the request and publishes the run's opening status. The caller
+// must already hold the one-scan permit, or this would overwrite the progress of
+// a scan that is still running.
+//
+// A request that names an unknown root fails here, before anything is published:
+// a status that no goroutine will ever finish is worse than an error the caller
+// can act on.
+func (s *Scanner) begin(runID string, req Request) (*begunRun, error) {
+	roots, err := s.selectRoots(req)
+	if err != nil {
+		return nil, err
+	}
+	b := &begunRun{roots: roots, start: s.now(), names: make([]string, 0, len(roots))}
+	for _, r := range roots {
+		b.names = append(b.names, r.Name)
+	}
+	s.progress.begin(runID, req.Full, b.names, b.start)
+	return b, nil
 }
 
 // Cancel asks a running scan to stop. It reports whether there was one. The
@@ -433,19 +486,11 @@ func newRunID() (string, error) {
 	return hex.EncodeToString(b[:]), nil
 }
 
-// run is the body of one scan.
-func (s *Scanner) run(ctx context.Context, req Request, runID string) (*Result, error) {
-	roots, err := s.selectRoots(req)
-	if err != nil {
-		return nil, err
-	}
-
-	start := s.now()
-	names := make([]string, 0, len(roots))
-	for _, r := range roots {
-		names = append(names, r.Name)
-	}
-	s.progress.begin(runID, req.Full, names, start)
+// run is the body of one scan. The run has already been published by begin, so
+// every exit from here has to end at progress.finish — which is why the deferred
+// finish is the first statement.
+func (s *Scanner) run(ctx context.Context, req Request, runID string, begun *begunRun) (*Result, error) {
+	roots, names, start := begun.roots, begun.names, begun.start
 
 	res := &Result{RunID: runID, Full: req.Full, StartedAt: start}
 	defer func() {

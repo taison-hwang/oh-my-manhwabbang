@@ -10,7 +10,14 @@ import { useCallback, useMemo, type ReactNode } from 'react'
 import { createBrowserRouter } from 'react-router-dom'
 
 import { App } from './App'
-import { useAuthStatus, useLogin, useRoots, useScanStatus, useSeriesList } from './api/queries'
+import {
+  useAuthStatus,
+  useLogin,
+  useRoots,
+  useScanCompletionRefresh,
+  useScanStatus,
+  useSeriesList,
+} from './api/queries'
 import { RouteErrorScreen } from './components/shell/RouteScaffold'
 import { LibraryPage } from './features/library/LibraryPage'
 import { Overlays } from './features/overlays/Overlays'
@@ -75,6 +82,13 @@ export function ShellDataProvider({ children }: { children: ReactNode }) {
   const roots = useRoots()
   const scan = useScanStatus()
   const login = useLogin()
+
+  // The one mount, and it belongs here for the same reason the poll does: this
+  // provider is the single component that outlives every screen and every
+  // overlay, so "a run finished" is observed once no matter what the user is
+  // looking at. A copy inside the settings dialog would fire a second set of
+  // refetches, and only for users who happened to have the dialog open.
+  useScanCompletionRefresh(scan.data)
 
   // `limit: 1` — only `total` is read. One row is the smallest answer the
   // contract allows (`limit` is 1..200) and keeps these three off the payload

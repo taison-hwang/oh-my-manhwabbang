@@ -67,6 +67,16 @@ var (
 	// ErrUnsafePath — a stored relative path is not local (path-traversal
 	// layer 2). This can only happen if the index was tampered with.
 	ErrUnsafePath = errors.New("unsafe relative path")
+	// ErrContainerChanged — the container could not be read at the (size,
+	// mtime) the caller asked for, even after re-opening it. Only [BookSource.List]
+	// raises it, and only for the scanner: a listing is written down beside the
+	// metadata that was passed in, so listing one file under another's identity
+	// produces a *wrong verdict that looks measured*. books.status='error'
+	// (archive.StatusOf's default), which the next scan re-reads because the
+	// recorded (size, mtime) no longer match the disk. Serving is unaffected —
+	// it reads offsets that belong to the file as the index recorded it, and
+	// arch §5.2 tolerates that deliberately.
+	ErrContainerChanged = errors.New("archive changed on disk while it was being read")
 )
 
 // StatusOf maps a failure to the books.status value of arch §4.11.

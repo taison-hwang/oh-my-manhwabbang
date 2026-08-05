@@ -167,6 +167,15 @@ var _ io.ReaderAt = (*Ref)(nil)
 // for either to skip the check. A mismatch is reported through Ref.Stale, not
 // as an error: refusing to serve a page because the file grew would be worse
 // than serving it and telling the client to refresh its metadata.
+//
+// Note what a *hit* does and does not do. It answers from the descriptor the
+// pool already holds and re-stats nothing, so the (mtime, size) a Ref reports
+// are the ones its file had when it was opened — after `mv new.zip old.zip` the
+// path is a new inode and this handle is the old, unlinked one, still perfectly
+// readable. That is the right answer for a reader committed to offsets the index
+// recorded before the change, and the wrong one for anybody deriving a fresh
+// verdict: source.zipSource.List treats a stale ref as a reason to Invalidate
+// and re-open rather than as a fact to report onwards (arch §4.6, §5.2).
 func (p *Pool) Acquire(ctx context.Context, path string, wantMtime, wantSize int64) (*Ref, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -303,11 +312,12 @@ func (p *Pool) unpublishLocked(el *list.Element) {
 
 // Invalidate drops the handle for path so the next Acquire re-opens the file.
 //
-// The scanner calls it whenever it rewrites a book: a rebuilt index carries new
-// offsets, and serving those against a handle opened before the archive changed
-// would read the wrong bytes. In-flight readers keep the old descriptor until
-// they finish — they are already committed to the old offsets, which are the
-// ones that match what they are reading.
+// The scanner calls it before re-reading a container whose (mtime, size) do not
+// match the handle on offer: a rebuilt index carries new offsets, and reading
+// those out of a handle opened before the archive changed would produce a
+// verdict about a file that is no longer there. In-flight readers keep the old
+// descriptor until they finish — they are already committed to the old offsets,
+// which are the ones that match what they are reading.
 func (p *Pool) Invalidate(path string) {
 	p.mu.Lock()
 	el, ok := p.items[path]

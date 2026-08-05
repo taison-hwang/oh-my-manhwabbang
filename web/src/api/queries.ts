@@ -4,6 +4,7 @@
  *
  * Policies encoded here (WP-06 acceptance 4):
  *  * `useScanStatus` polls every 1 000 ms while `state !== "idle"` and stops otherwise (C-11).
+ *  * `useScanCompletionRefresh` re-reads the library once per completed run, off that poll.
  *  * A `202` on an image endpoint retries after `Retry-After`, at most 10 attempts, then
  *    reports `unavailable` so the caller falls back to the FR-LIB-008 placeholder.
  *  * A `409 stale_version` invalidates the book query and retries once.
@@ -74,6 +75,7 @@ import type {
   ScanLogResponse,
   ScanRunResponse,
   ScanStartRequest,
+  ScanState,
   ScanStatus,
   SeriesDetail,
   SeriesListParams,
@@ -149,6 +151,15 @@ export const queryKeys = {
   scan: {
     all: ['scan'] as const,
     status: ['scan', 'status'] as const,
+    /**
+     * The **prefix** every `useScanLog` key starts with; `log(params)` appends
+     * the params object, so `['scan','log',{limit:200}]` and
+     * `['scan','log',{level:'error'}]` are different queries and neither is
+     * matched by `queryKeys.scan.status`. Invalidating the log therefore needs
+     * this, not `status` — the omission is why the 스캔 로그 panel never moved
+     * while the user watched it.
+     */
+    logs: ['scan', 'log'] as const,
     log: (params: ScanLogParams) => ['scan', 'log', params] as const,
   },
   auth: { status: ['auth', 'status'] as const },
@@ -543,6 +554,83 @@ export function useCancelScan(): UseMutationResult<void, Error, void> {
       void queryClient.invalidateQueries({ queryKey: queryKeys.scan.status })
     },
   })
+}
+
+/**
+ * Everything a finished scan can have changed, and nothing else.
+ *
+ *  * `series` — the run is what adds, removes and re-counts them, and the
+ *    covers it generated arrive as a new `cover_cv` *inside* the series
+ *    payload, so the image keys (which carry `cover_cv`) turn over on their own
+ *    once this lands. Invalidating `image.all` here would instead re-request
+ *    every cover on screen for a byte-identical answer.
+ *  * `roots` — `series_count`, `total_bytes`, `last_scan_at` and
+ *    `last_scan_error` are all written by the run (arch §7.4).
+ *  * `continue` — a rescan can drop the book a card points at, or move a
+ *    series' latest volume (E-37).
+ *  * `scan.logs` — the run's warnings and errors only exist here. This is the
+ *    key `['scan','status']` never matched.
+ *
+ * `settings` is deliberately absent: a scan writes none of it.
+ */
+function invalidateAfterScan(queryClient: QueryClient): void {
+  void queryClient.invalidateQueries({ queryKey: queryKeys.series.all })
+  void queryClient.invalidateQueries({ queryKey: queryKeys.roots })
+  void queryClient.invalidateQueries({ queryKey: queryKeys.continueReading.all })
+  void queryClient.invalidateQueries({ queryKey: queryKeys.scan.logs })
+}
+
+/**
+ * Re-reads the library when a scan run **finishes** (FR-IDX-004's other half).
+ *
+ * Nothing else in the app watches for this. `useStartScan` invalidates
+ * `['scan','status']` — which only re-arms the 1 s poll — and the poll itself
+ * writes the status into the cache and stops. So the grid, the sidebar counts,
+ * the root rows and the scan log all stayed on whatever they held *before* the
+ * run, and a user who rescanned a root watched a progress bar reach 100 % and
+ * then watched nothing change.
+ *
+ * ## Why it fires exactly once, and never on mount
+ *
+ * The transition is read from the **previous state this hook observed**, held
+ * in a ref, not from the payload:
+ *
+ *  * `previous.current` starts as `null` — *nothing observed yet*, which is a
+ *    third value and not a synonym for `idle`. The first payload only ever
+ *    records itself, so a mount against an already-idle server cannot fire.
+ *    That is the case a `state === 'idle'` test alone would get wrong on every
+ *    page load, and there is one on every page load.
+ *  * The edge is `non-idle → idle`. After it fires, `previous.current` is
+ *    `idle`, so every later poll of the same idle status takes the early
+ *    return. One completed run, one invalidation.
+ *  * The effect is keyed on the `status` **object**, and TanStack Query's
+ *    structural sharing keeps that reference stable while the payload is
+ *    unchanged — so an idle server that is polled again does not even re-run
+ *    the effect. Under StrictMode's double-invoke it does re-run, with the same
+ *    object and `previous.current` already `idle`, and returns early. Refs
+ *    survive that remount, which is what makes the guard hold there too.
+ *
+ * `run_id` is not consulted, and cannot be: arch §7.10 keeps it set after the
+ * run ends, so a finished run and the run before it are indistinguishable by
+ * id. `state` is the only edge on the wire.
+ *
+ * Mount it **once** — `ShellDataProvider` — for the same reason: one mount, one
+ * invalidation. A second copy would double every refetch.
+ */
+export function useScanCompletionRefresh(status: ScanStatus | undefined): void {
+  const queryClient = useQueryClient()
+  const previous = useRef<ScanState | null>(null)
+
+  useEffect(() => {
+    if (status === undefined) return
+    const before = previous.current
+    previous.current = status.state
+    // `null` is "first payload", not "was idle": firing here would refetch the
+    // whole library on every cold start.
+    if (before === null || before === 'idle') return
+    if (status.state !== 'idle') return
+    invalidateAfterScan(queryClient)
+  }, [queryClient, status])
 }
 
 // ---------------------------------------------------------------------------

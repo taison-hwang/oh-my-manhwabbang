@@ -13,6 +13,7 @@ import {
   ORIGIN,
   rootsResponse,
   scanLogResponse,
+  scanStatusIdle,
   settings,
 } from '../../api/fixtures'
 import type { Settings } from '../../api/types'
@@ -30,12 +31,23 @@ import { Overlays } from './Overlays'
 const server = setupServer()
 
 /**
- * The four requests `SettingsDialog`'s panels make, in the order this file
- * registers recorders for them: `RootsPanel` (`useRoots` + the A-10
- * `useSettings`), `CachePanel`, `ReadDefaultsPanel` (a second `useSettings`,
- * deduplicated by the query key) and `ScanLogPanel`.
+ * The five requests `SettingsDialog`'s panels make, in the order this file
+ * registers recorders for them: `RootsPanel` (`useRoots`, the A-10 `useSettings`
+ * and — since the panel grew the FR-IDX-004 progress block — `useScanStatus`),
+ * `CachePanel`, `ReadDefaultsPanel` (a second `useSettings`, deduplicated by the
+ * query key) and `ScanLogPanel`.
+ *
+ * `/api/scan/status` is listed here rather than exempted: it is the one that
+ * *polls*, so "not mounted while closed" is worth more for it than for any of
+ * the others.
  */
-const SETTINGS_PATHS = ['/api/roots', '/api/settings', '/api/cache/usage', '/api/scan/log']
+const SETTINGS_PATHS = [
+  '/api/roots',
+  '/api/settings',
+  '/api/cache/usage',
+  '/api/scan/log',
+  '/api/scan/status',
+]
 
 /**
  * Every settings request MSW saw, appended by the handlers themselves — the
@@ -68,6 +80,10 @@ function recordSettingsRequests(): void {
     http.get(`${ORIGIN}/api/scan/log`, () => {
       settingsRequests.push('/api/scan/log')
       return HttpResponse.json(scanLogResponse)
+    }),
+    http.get(`${ORIGIN}/api/scan/status`, () => {
+      settingsRequests.push('/api/scan/status')
+      return HttpResponse.json(scanStatusIdle)
     }),
   )
 }
@@ -161,7 +177,7 @@ describe('Overlays', () => {
     expect(screen.queryByText('루트 관리')).not.toBeInTheDocument()
 
     // Positive control, same recorders and same flush: opening the dialog must
-    // produce all four. Without it `toEqual([])` would pass just as happily
+    // produce all five. Without it `toEqual([])` would pass just as happily
     // against a recorder that records nothing, or a flush that returns too soon.
     act(() => {
       useUiStore.getState().openOverlay('settings')
@@ -194,6 +210,7 @@ describe('Overlays', () => {
       ),
       http.get(`${ORIGIN}/api/cache/usage`, () => HttpResponse.json(cacheUsage)),
       http.get(`${ORIGIN}/api/scan/log`, () => HttpResponse.json(scanLogResponse)),
+      http.get(`${ORIGIN}/api/scan/status`, () => HttpResponse.json(scanStatusIdle)),
     )
     renderOverlays()
     act(() => {

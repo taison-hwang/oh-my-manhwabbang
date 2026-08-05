@@ -17,9 +17,11 @@ import {
   rootEntry,
   rootsResponse,
   scanLogResponse,
+  scanStatusIdle,
+  scanStatusRunning,
   settings,
 } from '../../api/fixtures'
-import type { Root, ServerSettings, Settings, SettingsUpdate } from '../../api/types'
+import type { Root, ScanStatus, ServerSettings, Settings, SettingsUpdate } from '../../api/types'
 import { resetBasePath } from '../../api/urls'
 import { useUiStore } from '../../store/ui'
 import { SettingsDialog } from './SettingsDialog'
@@ -98,6 +100,10 @@ beforeEach(() => {
         ],
       }),
     ),
+    // Idle by default. The FR-IDX-004 block reads this, so every test in the
+    // file needs it answered — and the default has to be *idle*, or the tests
+    // that count 재스캔 buttons would be counting disabled ones.
+    http.get(`${ORIGIN}/api/scan/status`, () => HttpResponse.json(scanStatusIdle)),
     http.post(`${ORIGIN}/api/scan`, async ({ request }) => {
       recorded.scans.push(await request.json())
       return HttpResponse.json({ run_id: 'run-1' }, { status: 202 })
@@ -262,6 +268,191 @@ describe('루트 관리 (prd UI-004, ruling E-3)', () => {
       expect(recorded.scans).toEqual([{ roots: ['lanovel'] }])
     })
   })
+})
+
+// ---------------------------------------------------------------------------
+// 스캔 진행 상황 + POST /api/scan 실패 — FR-IDX-004, arch §7.10
+// ---------------------------------------------------------------------------
+
+/**
+ * The user's report, verbatim: *"재스캔이 있을 경우, 처리진행 상태를 볼 수 있어야
+ * 하는데 안 보임."*
+ *
+ * FR-IDX-004 was already implemented — twice. `TopBar` draws the 96px bar and
+ * `ScanIndicator` prints `스캔 중 {done} / {total}`, and **both sit under
+ * `.dialog-backdrop`**, which is where the 재스캔 button that starts the run
+ * lives. So the requirement passed every test it had and the user still saw
+ * nothing, because nothing in this repo had ever driven a *non-idle* status
+ * through the provider to a renderer: `router.test.tsx` serves the idle fixture
+ * and this file served none at all.
+ *
+ * Every test below therefore scripts `GET /api/scan/status` and lets the 1 s
+ * poll (C-11 / D-16 — polling, never SSE) carry the state across. Nothing is
+ * passed as a prop: `RootsPanel` reads its own `useScanStatus`, exactly as
+ * ruling E-25 requires of every panel in this dialog.
+ */
+describe('스캔 진행 상황 (FR-IDX-004)', () => {
+  /**
+   * Serves `GET /api/scan/status` from a script: call 1 gets `pages[0]`, call 2
+   * `pages[1]`, and every later call repeats the last. The returned function
+   * reports how many times the endpoint was hit, so "it polled" is a fact about
+   * the wire rather than an inference from the DOM.
+   */
+  function serveScanStatus(pages: ScanStatus[]): () => number {
+    let calls = 0
+    server.use(
+      http.get(`${ORIGIN}/api/scan/status`, () => {
+        const body = pages[Math.min(calls, pages.length - 1)] ?? scanStatusIdle
+        calls += 1
+        return HttpResponse.json(body)
+      }),
+    )
+    return () => calls
+  }
+
+  it('names 대상 수, 완료 수 and 현재 항목 inside the dialog while a run is in flight', async () => {
+    serveScanStatus([scanStatusRunning])
+    renderDialog()
+
+    const block = await screen.findByTestId('scan-progress')
+    // 완료 수 / 대상 수, in `lib/format.ts`'s words — the sidebar's exact
+    // sentence, so the two can never drift apart by a formatting rule.
+    expect(within(block).getByText('스캔 중 41 / 96')).toBeInTheDocument()
+    // 현재 항목, prefixed by the root the run is inside (`current_root`).
+    expect(within(block).getByTestId('scan-current-item')).toHaveTextContent(
+      'mangga · [만화] 군계 1~25/군계(軍鷄) 01권.zip',
+    )
+
+    // `41/96` floors to 42, and the printed % and the bar are the same integer
+    // because both come from `scanPercent`.
+    expect(within(block).getByText('42%')).toBeInTheDocument()
+    const bar = within(block).getByRole('progressbar', { name: '스캔 진행률' })
+    expect(bar).toHaveAttribute('aria-valuenow', '42')
+    expect(bar).toHaveAttribute('aria-valuemin', '0')
+    expect(bar).toHaveAttribute('aria-valuemax', '100')
+  })
+
+  it('says nothing while the server is idle — that copy belongs to the sidebar', async () => {
+    renderDialog()
+    await screen.findByText('만화')
+    expect(screen.queryByTestId('scan-progress')).not.toBeInTheDocument()
+    expect(screen.queryByRole('progressbar', { name: '스캔 진행률' })).not.toBeInTheDocument()
+  })
+
+  /**
+   * The scripted `running → running → idle` sequence, driven by the real 1 s
+   * poll. The middle page is what separates "renders a snapshot" from "follows
+   * the run": a component that read the status once would stay at 41.
+   */
+  it('follows the run across polls and clears the block when it ends', async () => {
+    const calls = serveScanStatus([
+      scanStatusRunning,
+      { ...scanStatusRunning, done: 72, current_item: '[만화] 군계 1~25/군계(軍鷄) 18권.zip' },
+      scanStatusIdle,
+    ])
+    renderDialog()
+
+    expect(await screen.findByText('스캔 중 41 / 96')).toBeInTheDocument()
+    expect(await screen.findByText('스캔 중 72 / 96', undefined, { timeout: 4_000 })).toBeInTheDocument()
+    expect(screen.getByTestId('scan-current-item')).toHaveTextContent('18권.zip')
+
+    await waitFor(
+      () => {
+        expect(screen.queryByTestId('scan-progress')).not.toBeInTheDocument()
+      },
+      { timeout: 4_000 },
+    )
+    expect(calls()).toBeGreaterThanOrEqual(3)
+  }, 15_000)
+
+  /**
+   * Every refusal `POST /api/scan` can give (arch §7.10), each with its own
+   * sentence. Before this the panel read `startScan.isPending` and nothing
+   * else: the button un-greyed and the screen was byte-identical to a success,
+   * for all four.
+   *
+   * The negative half is every *other* row's message, for the same reason
+   * `rootErrors.ts`'s table carries one — a single 실패했습니다 for all four
+   * would satisfy any positive-only assertion.
+   */
+  const SCAN_FAILURES: [status: number, code: 'bad_request' | 'not_found' | 'conflict' | 'unavailable', says: RegExp][] = [
+    [400, 'bad_request', /서버가 모르는 루트입니다/],
+    [404, 'not_found', /설정에서 제거된 루트입니다/],
+    [409, 'conflict', /이미 스캔이 진행 중입니다/],
+    [503, 'unavailable', /서버가 지금 스캔을 실행할 수 없습니다/],
+  ]
+
+  it.each(SCAN_FAILURES)('surfaces the %s from POST /api/scan as its own alert', async (status, code) => {
+    server.use(
+      http.post(`${ORIGIN}/api/scan`, () =>
+        HttpResponse.json(errorEnvelope(code, 'refused'), { status }),
+      ),
+    )
+    renderDialog()
+    await screen.findByText('만화')
+    await userEvent.click(at(screen.getAllByRole('button', { name: '재스캔' }), 0))
+
+    const alert = await screen.findByTestId('scan-start-error')
+    // The house's live region, the same one the 제거 confirmation uses.
+    expect(alert).toHaveAttribute('role', 'alert')
+
+    for (const [otherStatus, , otherSays] of SCAN_FAILURES) {
+      if (otherStatus === status) {
+        expect.soft(alert).toHaveTextContent(otherSays)
+      } else {
+        expect.soft(alert).not.toHaveTextContent(otherSays)
+      }
+    }
+  })
+
+  it('says the connection failed when the request never reached the server', async () => {
+    server.use(http.post(`${ORIGIN}/api/scan`, () => HttpResponse.error()))
+    renderDialog()
+    await screen.findByText('만화')
+    await userEvent.click(at(screen.getAllByRole('button', { name: '재스캔' }), 0))
+
+    expect(await screen.findByTestId('scan-start-error')).toHaveTextContent('서버에 연결하지 못했습니다')
+  })
+
+  /**
+   * The 409 the panel used to manufacture for itself.
+   *
+   * `scanDisabled` was `startScan.isPending` alone — true for the milliseconds
+   * the POST is in flight and false for the *seconds* the scan then takes. So
+   * the second press, which is the most natural thing to do when the first
+   * appeared to do nothing, went to a server that answers `409` to it — and the
+   * panel had no way to show that either.
+   */
+  it('disables 재스캔 for the whole run, not just while the POST is in flight', async () => {
+    serveScanStatus([scanStatusRunning])
+    renderDialog()
+    await screen.findByTestId('scan-progress')
+
+    const buttons = screen.getAllByRole('button', { name: '재스캔' })
+    expect(buttons).toHaveLength(2)
+    for (const button of buttons) expect(button).toBeDisabled()
+
+    // And it is disabled in the sense that matters: the click makes no request.
+    await userEvent.click(at(buttons, 0))
+    expect(recorded.scans).toEqual([])
+  })
+
+  it('gives the button back when the run ends', async () => {
+    serveScanStatus([scanStatusRunning, scanStatusIdle])
+    renderDialog()
+    await screen.findByTestId('scan-progress')
+
+    await waitFor(
+      () => {
+        expect(at(screen.getAllByRole('button', { name: '재스캔' }), 0)).toBeEnabled()
+      },
+      { timeout: 4_000 },
+    )
+    await userEvent.click(at(screen.getAllByRole('button', { name: '재스캔' }), 0))
+    await waitFor(() => {
+      expect(recorded.scans).toEqual([{ roots: ['mangga'] }])
+    })
+  }, 15_000)
 })
 
 // ---------------------------------------------------------------------------

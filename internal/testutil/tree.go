@@ -155,6 +155,49 @@ func writeFile(t testing.TB, path string, data []byte, mode os.FileMode) {
 	}
 }
 
+// ReplaceFile swaps a file's contents for new bytes the way a person repairing
+// a broken download does: the bytes are written beside the path and renamed
+// over it, so the name ends up on a **different inode** and any descriptor
+// still open on the old one keeps reading the old bytes.
+//
+// That distinction is the whole reason this exists. Rewriting the same path
+// with os.WriteFile truncates in place, so an already-open descriptor follows
+// the new content and a test written that way cannot see a handle pool serving
+// a replaced file. `mv 궁\ 24.zip.new 궁\ 24.zip` — the operation the user
+// actually performed — leaves the old inode alive and readable, which is the
+// failure mode the pool has to survive.
+//
+// when pins the new file's mtime; a zero time leaves whatever the filesystem
+// set. Pinning it matters because (size, mtime) is the index's whole notion of
+// identity and the clock's one-second granularity would otherwise decide the
+// test's outcome.
+func ReplaceFile(t testing.TB, path string, data []byte, when time.Time) {
+	t.Helper()
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("testutil: ReplaceFile needs an existing file at %q: %v", path, err)
+	}
+	tmp := path + ".testutil-replacement"
+	writeFile(t, tmp, data, before.Mode().Perm())
+	if !when.IsZero() {
+		if err := os.Chtimes(tmp, when, when); err != nil {
+			t.Fatalf("testutil: setting mtime on %q: %v", tmp, err)
+		}
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		t.Fatalf("testutil: renaming %q over %q: %v", tmp, path, err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("testutil: stat %q after replacing it: %v", path, err)
+	}
+	// Proof, not assumption: a helper that quietly rewrote the same inode would
+	// make every test built on it pass for the wrong reason.
+	if os.SameFile(before, after) {
+		t.Fatalf("testutil: ReplaceFile left %q on the same inode", path)
+	}
+}
+
 // Touch moves a path's modification time forward by d, which is how a test
 // says "this file changed" to the incremental scanner (FR-IDX-003) without
 // sleeping.

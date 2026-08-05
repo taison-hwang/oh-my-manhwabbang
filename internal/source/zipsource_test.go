@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"shelf/internal/archive"
 	"shelf/internal/source"
@@ -334,9 +335,103 @@ func TestZipSource_openPage_doesNotScaleWithArchiveSize(t *testing.T) {
 	t.Logf("archive %d bytes / %d pages; pool stats %+v", len(data), pages, f.pool.Stats())
 }
 
+// The repaired-volume regression, measured on the real library: `궁 24.zip` was
+// replaced with a good copy and stayed `비어 있음` afterwards.
+//
+// The scan that recorded the wrong verdict left an open descriptor for the old
+// inode in the handle pool. The next scan asked the pool for the same path,
+// carrying the *new* file's (size, mtime); the pool answered from its cache
+// without revalidating, List ignored the mismatch it was handed, and the
+// listing that got written against the new file's metadata was a reading of a
+// file that no longer exists.
+//
+// The property: a listing must never be derived from an inode whose
+// (mtime, size) disagree with the metadata it is about to be recorded under.
+func TestZipSource_List_afterTheFileIsReplaced_readsTheNewInode(t *testing.T) {
+	t.Parallel()
+	jpg := testutil.TinyJPEG(t, 12, 16)
+
+	// The shape the user actually had: an archive with nothing readable in it,
+	// which is books.status='empty' / "no supported image entries".
+	broken := testutil.BuildZIP(t, testutil.ZIPSpec{Entries: []testutil.Entry{
+		{Name: "readme.txt", Data: []byte("this download never finished")},
+	}})
+	repaired := testutil.BuildZIP(t, testutil.ZIPSpec{Entries: []testutil.Entry{
+		{Name: "001.jpg", Data: jpg}, {Name: "002.jpg", Data: jpg}, {Name: "003.jpg", Data: jpg},
+	}})
+
+	f := newFixture(t, map[string]any{"series": map[string]any{"vol.zip": broken}})
+	abs := filepath.Join(f.root, "series", "vol.zip")
+
+	// The scan that recorded 'empty'. It is what puts the handle in the pool —
+	// as would any page or cover the viewer read out of the volume.
+	first, err := f.listAsScanner(t, "series/vol.zip")
+	if !errors.Is(err, source.ErrNoPages) {
+		t.Fatalf("first listing err = %v, want ErrNoPages", err)
+	}
+	if len(first.Pages) != 0 {
+		t.Fatalf("first listing has %d pages, want 0", len(first.Pages))
+	}
+	if h := f.pool.Stats().Size; h != 1 {
+		t.Fatalf("the pool holds %d handles after a listing, want 1 — "+
+			"this test proves nothing unless the descriptor is cached", h)
+	}
+
+	// The user replaces the file. The old inode stays alive underneath the
+	// pool's descriptor, which is the whole point.
+	testutil.ReplaceFile(t, abs, repaired, time.Now().Add(2*time.Second))
+
+	// 재스캔.
+	second, err := f.listAsScanner(t, "series/vol.zip")
+	if err != nil {
+		t.Fatalf("listing the repaired archive: %v", err)
+	}
+	if got := pageNames(second.Pages); len(got) != 3 {
+		t.Fatalf("the repaired archive listed %d pages %v, want the 3 of the file on disk — "+
+			"the listing came from the descriptor of the replaced file", len(got), got)
+	}
+	// And the pages must be usable, not just counted: a listing taken from the
+	// old inode's offsets would still have a plausible length.
+	if got := readPage(t, f.openAsScanner(t, "series/vol.zip"), second.Pages[0]); len(got) != len(jpg) {
+		t.Errorf("page 1 read back %d bytes, want %d", len(got), len(jpg))
+	}
+}
+
+// listAsScanner lists a container the way the scanner does: carrying the
+// (size, mtime) the walk just stat-ed, which is the metadata the verdict will
+// be recorded under.
+func (f *fixture) listAsScanner(t *testing.T, rel string) (*source.Listing, error) {
+	t.Helper()
+	src := f.openAsScanner(t, rel)
+	return src.List(t.Context())
+}
+
+func (f *fixture) openAsScanner(t *testing.T, rel string) source.BookSource {
+	t.Helper()
+	fi, err := os.Stat(filepath.Join(f.root, filepath.FromSlash(rel)))
+	if err != nil {
+		t.Fatalf("stat %s: %v", rel, err)
+	}
+	src, err := f.factory.Open(t.Context(), source.Book{
+		ID: "bk", Kind: source.KindZIP, RootName: rootName, RelPath: rel,
+		FileSize: fi.Size(), FileMtime: fi.ModTime().Unix(),
+	})
+	if err != nil {
+		t.Fatalf("Factory.Open(%q): %v", rel, err)
+	}
+	t.Cleanup(func() { _ = src.Close() })
+	return src
+}
+
 // arch §5.2 / §7.6: an archive that changed on disk since the scan is still
 // served — refusing would be worse — but it is reported stale so the API can
 // answer 409 and the client can refetch its metadata.
+//
+// The serving half and the scanning half part company here, deliberately.
+// Serving reads offsets the index recorded for the file as it was, so the
+// descriptor the pool already holds is the one those offsets belong to; the
+// scanner is *writing* that record, so it may not read one file and record it
+// under another's identity.
 func TestZipSource_staleContainer_isReportedNotRefused(t *testing.T) {
 	t.Parallel()
 	jpg := testutil.TinyJPEG(t, 16, 16)
@@ -376,13 +471,25 @@ func TestZipSource_staleContainer_isReportedNotRefused(t *testing.T) {
 	if !stale {
 		t.Error("Stale() = false for a container whose size and mtime both differ")
 	}
-	// It must still serve.
-	list, err := drifted.List(t.Context())
+	// It must still serve. The page comes from the honest source because that is
+	// where a real request's page row comes from — the index — and serving it is
+	// what arch §5.2 refuses to refuse.
+	list, err := fresh.List(t.Context())
 	if err != nil {
-		t.Fatalf("List on a stale container: %v", err)
+		t.Fatalf("List: %v", err)
 	}
 	if got := readPage(t, drifted, list.Pages[0]); string(got) != string(jpg) {
 		t.Error("a stale container must still serve its bytes, not fail")
+	}
+
+	// Listing is the other half. The scanner is about to write (size, mtime)
+	// down beside whatever this returns, so a listing of some other inode is
+	// worse than no listing: it is a wrong verdict that looks like a measured
+	// one. Re-opening cannot reconcile these two — the index's numbers are
+	// invented — so the book is failed and re-read next scan.
+	if _, err := drifted.List(t.Context()); !errors.Is(err, source.ErrContainerChanged) {
+		t.Errorf("List on a container that does not match its metadata = %v, "+
+			"want source.ErrContainerChanged", err)
 	}
 }
 

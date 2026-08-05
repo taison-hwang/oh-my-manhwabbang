@@ -268,11 +268,26 @@ func (s *server) scan(full bool, limit time.Duration) time.Duration {
 	if status != http.StatusAccepted {
 		s.t.Fatalf("POST /api/scan = %d: %s", status, truncate(resp))
 	}
+	var accepted struct {
+		RunID string `json:"run_id"`
+	}
+	if err := json.Unmarshal(resp, &accepted); err != nil || accepted.RunID == "" {
+		s.t.Fatalf("POST /api/scan returned no run id: %s", truncate(resp))
+	}
+
+	// The run id is checked, not just the state. `idle` is both "not started
+	// yet" and "finished" — arch §7.10 has no "done" — so reading the first
+	// `idle` as "finished" is only honest because Scanner.Start publishes this
+	// run's snapshot before the 202 is written: every status this loop can
+	// reach therefore belongs to this run. Comparing the id keeps that honest
+	// from *this* side too, so a regression of that ordering surfaces as a
+	// timeout here rather than as a suite that silently asserts against the
+	// previous scan's index.
 	start := time.Now()
 	for time.Since(start) < limit {
 		var st scanStatus
 		s.get("/api/scan/status", &st)
-		if st.State == "idle" {
+		if st.State == "idle" && st.RunID == accepted.RunID {
 			return time.Since(start)
 		}
 		time.Sleep(500 * time.Millisecond)

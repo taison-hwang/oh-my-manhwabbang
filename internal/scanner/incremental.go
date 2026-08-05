@@ -84,22 +84,39 @@ func contentVersion(kind source.Kind, size, mtime int64, fingerprint string) str
 
 // unchanged decides whether a book can be skipped (arch §4.6).
 //
+//	status != 'ok'                              -> never skip, re-examine
 //	archive / PDF   (size, mtime) both equal    -> skip, never open the file
 //	directory       fingerprint equal           -> skip, never re-enumerate
 //	full: true                                  -> never skip
 //
-// One refinement over the literal rule, and it is deliberate: a book recorded as
-// 'unsupported' is re-examined even when the file has not moved. That status
-// means "this *build* cannot read it" — a PDF under `-tags nopdf` or
-// `pdf.enabled: false` (arch §4.11) — which is a property of the binary, not of
-// the file, so a differently-built binary must be allowed to reach a different
-// answer. The cost is one failed Factory.Open per PDF per scan in a nopdf build,
-// which never touches the disk.
+// The first line is ruling E-39 (draft) and it widens arch §4.6, which skipped
+// on (size, mtime) alone whatever the recorded status was.
+//
+// The rule it replaces already carried one exception — 'unsupported' — for the
+// right reason: that status means "this *build* cannot read it" (a PDF under
+// `-tags nopdf`, arch §4.11), which is a property of the binary and not of the
+// file, so a differently-built binary must be free to reach a different answer.
+// The exception was simply drawn too narrowly. 'empty' and 'error' are not
+// reliably properties of the file either: a listing taken from a handle the pool
+// had open on a since-replaced inode, a transient read failure, a book abandoned
+// by a scan that raced a copy — every one of them writes a verdict that the
+// bytes on disk do not support, and every one of them is then skipped for ever,
+// because the (size, mtime) it was recorded with are the file's real ones. That
+// is how `궁 24.zip` stayed `비어 있음` after it was repaired.
+//
+// So the skip is now what it always meant: an optimisation for books we have
+// already read *successfully*. A book whose recorded answer is a failure is
+// re-derived, never remembered.
+//
+// The cost is one open plus one central-directory read per non-ok book per scan
+// — exactly the cost the 'unsupported' exception already accepted, and bounded
+// by a quantity that is small in any healthy library (57 of 11,261 books in the
+// real collection, 0.5%, none of which reads an entry payload: FR-IDX-002).
 func unchanged(u bookUnit, prior index.Book, full bool) bool {
 	if full {
 		return false
 	}
-	if prior.Status == StatusUnsupported {
+	if prior.Status != StatusOK {
 		return false
 	}
 	if u.kind == source.KindDir {

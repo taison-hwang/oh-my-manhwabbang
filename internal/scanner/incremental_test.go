@@ -1,9 +1,11 @@
 package scanner
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
+	"shelf/internal/archive"
 	"shelf/internal/index"
 	"shelf/internal/source"
 	"shelf/internal/testutil"
@@ -99,14 +101,36 @@ func TestUnchanged_appliesTheArchSkipRule(t *testing.T) {
 			prior: index.Book{Status: StatusOK, DirFingerprint: "bbbbbbbbbbbbbbbb"}},
 		{name: "directory with no recorded fingerprint", unit: dirUnit,
 			prior: index.Book{Status: StatusOK}},
-		{name: "a broken archive stays broken without being re-read", unit: zipUnit,
-			prior: index.Book{Status: StatusError, FileSize: 1024, FileMtime: 1_500_000_000}, want: true},
+		{
+			// Ruling E-39 (draft). 'error' is not reliably a property of the
+			// file — a transient read failure and a listing taken from a
+			// replaced inode both look exactly like this — so the timestamps
+			// may not settle it and the book is re-derived.
+			name: "a book recorded broken is re-examined", unit: zipUnit,
+			prior: index.Book{Status: StatusError, FileSize: 1024, FileMtime: 1_500_000_000},
+		},
+		{
+			name: "a book recorded empty is re-examined", unit: zipUnit,
+			prior: index.Book{Status: StatusEmpty, FileSize: 1024, FileMtime: 1_500_000_000},
+		},
+		{
+			name: "a book recorded encrypted is re-examined", unit: dirUnit,
+			prior: index.Book{Status: StatusEncrypted, DirFingerprint: "aaaaaaaaaaaaaaaa"},
+		},
 		{
 			// 'unsupported' says "this BUILD cannot read it" — a PDF under
 			// -tags nopdf. A differently-built binary must be free to reach a
 			// different answer, so the file's timestamps do not settle it.
+			// This was the only exception before E-39; it is now the general
+			// rule's first instance rather than a special case.
 			name: "an unsupported book is always re-examined", unit: zipUnit,
 			prior: index.Book{Status: StatusUnsupported, FileSize: 1024, FileMtime: 1_500_000_000},
+		},
+		{
+			// A row with no status at all (a partially written book) is not
+			// evidence of a successful read either.
+			name: "a book with no recorded status is re-examined", unit: zipUnit,
+			prior: index.Book{FileSize: 1024, FileMtime: 1_500_000_000},
 		},
 	}
 	for _, tc := range cases {
@@ -312,9 +336,10 @@ func TestScan_incremental_stampsUnchangedRowsForwardSoTheSweepSparesThem(t *test
 	}
 }
 
-// A book that was broken and stays byte-identical is not re-opened, and keeps
-// its status and its reason (FR-IDX-003 ∩ FR-IDX-010).
-func TestScan_incremental_brokenBook_keepsItsStatusWithoutBeingReopened(t *testing.T) {
+// A book that is still broken keeps its status and its reason — but it keeps
+// them because the next scan looked again and got the same answer, not because
+// the answer was remembered (FR-IDX-010 ∩ ruling E-39, draft).
+func TestScan_incremental_brokenBook_keepsItsStatusByBeingReExamined(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, map[string]any{
 		"시리즈": map[string]any{"07권.zip": []byte("not a zip at all")},
@@ -327,12 +352,84 @@ func TestScan_incremental_brokenBook_keepsItsStatusWithoutBeingReopened(t *testi
 
 	h.lister.reset()
 	h.run(Request{})
-	if got := h.lister.listedPaths(); len(got) != 0 {
-		t.Errorf("the broken book was re-opened: %v", got)
+	if got := h.lister.listedPaths(); !equalStrings(got, []string{"시리즈/07권.zip"}) {
+		t.Errorf("the broken book was read %v, want [시리즈/07권.zip] — E-39 re-examines it", got)
 	}
 	second := h.books("manga", "시리즈")[0]
 	if second.Status != first.Status || second.Error != first.Error {
-		t.Errorf("status/error changed on a skip: %q/%q -> %q/%q",
+		t.Errorf("status/error changed on a re-read of the same broken bytes: %q/%q -> %q/%q",
 			first.Status, first.Error, second.Status, second.Error)
+	}
+}
+
+// A wrong verdict must not be permanent — ruling E-39 (draft).
+//
+// Measured on the real library: `궁 24.zip` was repaired on disk and stayed
+// `비어 있음 / 읽을 수 있는 페이지가 없습니다` through every later 재스캔, because
+// arch §4.6's skip rule only ever re-examined 'unsupported'. An 'empty' or an
+// 'error' whose (size, mtime) already match the disk was skipped for ever, and
+// the only escape was `full: true` — which the 재스캔 button does not send.
+//
+// The two failures here are the two shapes that are *not* properties of the
+// file: a listing derived from the wrong inode (defect ①, which produced this
+// exact 'empty'), and a transient I/O error. Neither moves a byte on disk, so
+// under the old rule neither could ever be revisited.
+func TestScan_incremental_aWrongVerdictIsNotPermanent(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, map[string]any{
+		"시리즈": map[string]any{
+			"01권.zip": jpegZIP(t, "001.jpg", "002.jpg"),
+			"02권.zip": jpegZIP(t, "001.jpg"),
+			"03권.zip": jpegZIP(t, "001.jpg"),
+		},
+	})
+
+	// The scan that got it wrong. The archives on disk are perfectly readable
+	// throughout — only this run's answer is bad.
+	h.lister.failWith["시리즈/01권.zip"] = fmt.Errorf("listing: %w", source.ErrNoPages)
+	h.lister.failWith["시리즈/02권.zip"] = fmt.Errorf("listing: %w", archive.ErrCorrupt)
+	h.run(Request{})
+
+	books := h.books("manga", "시리즈")
+	if len(books) != 3 {
+		t.Fatalf("indexed %d books, want 3", len(books))
+	}
+	if books[0].Status != StatusEmpty || books[1].Status != StatusError || books[2].Status != StatusOK {
+		t.Fatalf("first-scan statuses = %q/%q/%q, want empty/error/ok",
+			books[0].Status, books[1].Status, books[2].Status)
+	}
+
+	// Nothing on disk changes. Not one byte, not one timestamp — that is the
+	// whole point: (size, mtime) cannot tell these books apart from the healthy
+	// one, so the *status* has to.
+	before := snapshotTree(t, h.rootDirs["manga"])
+	clear(h.lister.failWith)
+	h.lister.reset()
+	res := h.run(Request{}) // an ordinary rescan, exactly what 재스캔 sends
+	if diff := before.diff(snapshotTree(t, h.rootDirs["manga"])); len(diff) != 0 {
+		t.Fatalf("the fixture moved between the two scans, so this proves nothing: %v", diff)
+	}
+
+	books = h.books("manga", "시리즈")
+	for i, b := range books {
+		if b.Status != StatusOK || b.Error != "" {
+			t.Errorf("book %d (%s) = %q/%q after the rescan, want ok with no error",
+				i+1, b.RelPath, b.Status, b.Error)
+		}
+	}
+	if books[0].PageCount != 2 || books[1].PageCount != 1 {
+		t.Errorf("recovered page counts = %d/%d, want 2/1 — the rows were healed but not re-read",
+			books[0].PageCount, books[1].PageCount)
+	}
+	if got := len(h.pages(books[0].ID)); got != 2 {
+		t.Errorf("the recovered book has %d page rows, want 2", got)
+	}
+
+	// And the rule stays a skip rule: the healthy volume was still not opened.
+	if got := h.lister.listedPaths(); !equalStrings(got, []string{"시리즈/01권.zip", "시리즈/02권.zip"}) {
+		t.Errorf("the rescan read %v, want only the two non-ok books", got)
+	}
+	if _, _, _, skipped, _ := res.Totals(); skipped != 1 {
+		t.Errorf("the rescan skipped %d books, want 1 (the ok one)", skipped)
 	}
 }

@@ -1018,6 +1018,21 @@ A ZIP entry or directory child is **excluded from the page list** when any of th
 
 ### 4.6 Incremental scan (FR-IDX-003)
 
+> **Amended by E-39 (DRAFT — 미서명; `docs/decisions.md` carries the text).** The first bullet below is new
+> and it widens this section: **the skip applies only to a book whose recorded `books.status` is `'ok'`.**
+> Any other status is re-examined even when `(size, mtime)` have not moved. What this replaces is a rule
+> that skipped on timestamps alone with one narrow exception for `'unsupported'` — an exception that was
+> right for the wrong scope. `'empty'` and `'error'` are not properties of the file either: a listing read
+> from a handle the pool still had open on a since-replaced inode (§5.2) and a transient I/O failure both
+> write a verdict the bytes on disk do not support, and both were then unreachable for ever, because the
+> `(size, mtime)` they were recorded with are the file's real ones. Measured on the real library: `궁 24.zip`
+> was repaired on disk and stayed `비어 있음` through every later 재스캔; `full: true` was the only escape and
+> the 재스캔 button does not send it. **If the ruling is refused, the first bullet and the `prior.Status != StatusOK`
+> line in `internal/scanner/incremental.go` come out together.**
+
+* **Any book whose recorded `status` is not `'ok'`** — never skipped. It costs one open plus one
+  central-directory read per non-ok book per scan (57 of 11,261 books in the real collection: 0.5%), reads no
+  entry payload (FR-IDX-002), and is exactly the cost the `'unsupported'` exception already accepted. *(E-39, draft.)*
 * **Archive and PDF books** — skip entirely when `stat.Size() == books.file_size && stat.ModTime().Unix() == books.file_mtime`. The central directory is not read, `pages` rows are left untouched, `scan_gen` is stamped forward. This is the whole of NFR-PRF-004.
 * **Directory books** — `stat` on a directory does not change when a nested file changes, so we compute a **fingerprint** over one `os.ReadDir` of the book directory: FNV-1a-64 over the natural-sorted tuples `(name, size, mtimeUnix, isDir)` of its *direct* children, rendered as 16 hex chars. Unchanged fingerprint → skip page re-enumeration.
 * **Series level** — the same fingerprint over the series directory's direct children decides whether `collectBooks` re-runs. Unchanged → we still descend to let each book run its own cheap check, because a nested archive can change without the series directory's fingerprint moving.
@@ -1233,6 +1248,25 @@ Rules:
 * Over capacity → walk from the LRU tail and evict entries with `refs == 0`. An entry with `refs > 0` is marked `evicted` and removed from the map immediately (new acquirers open a fresh handle) but its `*os.File` is closed only when the last in-flight reader releases it. **A file descriptor is never closed underneath an active stream.**
 * Invalidation: an explicit `Pool.Invalidate(path)` is called by the scanner whenever it rewrites a book, so a changed archive can never be served from a stale offset.
 * Metrics: hits, misses, evictions, current size, exposed at `GET /api/health?verbose=1`.
+
+> **Corrected 2026-08-06 — a hit does not re-stat, and until now nothing called `Invalidate`.** Two things
+> this section said were not true of the landed code. (1) The "Miss →" rule above is the *only* place
+> `(size, mtime)` are ever compared against the file: on a **hit** `Acquire` answers from the descriptor it
+> already holds, and `Ref.Stale()` compares the caller's numbers against the ones recorded when that
+> descriptor was opened. After `mv 궁\ 24.zip.new 궁\ 24.zip` the path is a new inode while the pool holds a
+> live descriptor on the old, unlinked one — so the read is not a stale read, it is a read of a file the user
+> deleted. (2) `grep -rn Invalidate` found **no non-test caller at all**; the scanner's promise in the bullet
+> above had never been implemented.
+>
+> **The listing path and the serving path now part company, deliberately.** Serving keeps the tolerance this
+> section describes — a page stream is committed to the offsets the index recorded, and those belong to the
+> descriptor the pool is holding, so refusing to serve would be worse (§7.6 answers `409` and enqueues a
+> rescan). **Listing may not.** `source.zipSource.List` is the scanner's only door into an archive and its
+> result is written down *beside* the `(size, mtime)` it was handed, so a listing of some other inode is a
+> wrong verdict that looks like a measured one. On a stale ref it now drops the handle
+> (`Pool.Invalidate` — the bullet above, honoured at last), re-opens once, and if the fresh descriptor still
+> disagrees fails that one book with `source.ErrContainerChanged` → `books.status='error'` (FR-IDX-010),
+> which the next scan re-reads because the recorded `(size, mtime)` no longer match the disk.
 
 Default 64 is deliberately far below typical `ulimit -n` (1024). At startup we log the current `RLIMIT_NOFILE` and warn if `Options.Max + 64 > limit`.
 
@@ -2120,10 +2154,33 @@ interface ContinueItem {
   series_id: ID;
   series_name: string;
   has_cover: boolean;
-  progress: Progress;     // completed === false, ordered by updated_at DESC
+  progress: Progress;     // completed === false. AMENDED BY E-37: the shelf is ordered by the
+                          //   SERIES' MAX(updated_at) over its unfinished books, not by this
+                          //   row's own updated_at. See the amendment note below.
 }
 ```
 An empty `items` array is the signal to hide the whole shelf (design.md: "진행 중인 항목이 없으면 영역 자체를 숨김").
+
+> **Amended by E-37 — at most ONE item per series.** The survivor is the later volume (뒷화 우선).
+> The election is `ORDER BY (books.status = 'ok') DESC, books.ord DESC, books.id DESC`, taken per
+> series: a volume that can actually be READ first, then the greatest `books.ord`, then the greatest
+> `books.id` as a deterministic tie-break. Not the most recently read and not the furthest read —
+> those come apart in practice, and the reported case is exactly that shape.
+> Consequently **`limit` now bounds distinct series, not rows**: the de-duplication runs inside the SQL
+> *before* `LIMIT`, precisely so that a `limit=20` whose first page happens to hold six volumes of one
+> series still returns twenty cards. Filtering in Go after the query would silently return fourteen.
+>
+> **Corrected 2026-08-05 (still E-37 — this is that ruling's record, not a new one).** This paragraph
+> said the readability key did not exist and that `ORDER BY p.updated_at DESC, b.id ASC` over the
+> surviving rows was "unchanged". Both were wrong, and the second was wrong about the one thing the
+> amendment did change. The shelf is ordered by the **series'** activity — `MAX(progress.updated_at)`
+> over that series' *unfinished* books, `b.id ASC` to break a tie — not by the elected card's own
+> `updated_at`. Once one card per series is elected by `ord`, that card's timestamp stops being a
+> statement about the series: a reader who peeked at 07권 a month ago and read 01권 five minutes ago
+> would see the series sink to the bottom of a shelf that shows five cards. Both keys — readability
+> and series activity — were added when a review of the first implementation found the two defects
+> they close; see `decisions.md` E-37 §2. Normative source: `internal/index/books.go`
+> (`latestPerSeries`, `seriesActivity`).
 
 ### 7.8 Settings (UI-004)
 
@@ -2284,6 +2341,19 @@ refusals were undocumented until 2026-07-30, and A-11's revision R1 widened one 
 A **full** scan (no `roots` in the body) silently skips the removed ones rather than refusing: it is a request
 about the library as it now stands, and the removed root is not part of it. Naming one explicitly is a
 statement about that root, which is why it gets an answer instead.
+
+**The `202` is not sent before the run is visible.** `Scanner.Start` publishes this run's `ScanStatus`
+— `run_id`, `state:"walking"`, `started_at` — **before it returns**, so the handler cannot answer `202` while
+the snapshot still describes the previous run. That ordering is part of the contract, not an implementation
+detail: the client answers a `202` by invalidating `['scan','status']` and polling once, and its poll stops
+the moment it reads `idle`. A poll that landed on the previous run's idle snapshot was therefore the *last*
+poll of the run, and the UI sat at `스캔 대기` for the whole scan with no second chance — `refetchOnWindowFocus`
+is off and the query is mounted at the router root, so nothing re-armed it. Any snapshot a caller can reach
+after the `202` now belongs to the run that `202` announced. *(Fixed 2026-08-06; regression test
+`TestScan_start_publishesThisRunsStatusBeforeItReturns`.)* One consequence worth naming: the `400` row above
+was **unreachable** until this change — `Start` resolved `roots[]` inside its background goroutine, so an
+unknown root was logged and answered `202`. It is resolved on the caller's goroutine now, which is what makes
+`httpapi.scanStartError`'s `ErrUnknownRoot` branch fire.
 
 **Polling, not SSE — and why.** `GET /api/scan/status` is the normative mechanism. The frontend polls at **1 s while `state !== "idle"`** and stops when idle (re-arming on a user-initiated scan). Rationale: a full cold scan of the reference collection takes **32 s**, so a whole run costs ~32 requests against an in-memory atomic snapshot — a rounding error. Meanwhile SSE would permanently consume one of the browser's six HTTP/1.1 connections per origin (the viewer needs those for page prefetch, FR-VWR-006), needs `X-Accel-Buffering`/`proxy_buffering off` handling behind the reverse proxy that NFR-SEC-003 explicitly anticipates, and needs reconnect logic. 1 s polling satisfies FR-IDX-004's "real time" for a job with second-scale granularity. **SSE is explicitly out of scope for v1**; if it is added later it will carry the identical `ScanStatus` payload at `GET /api/scan/stream`, and the frontend must keep working without it.
 

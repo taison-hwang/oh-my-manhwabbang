@@ -6,7 +6,24 @@ import { ProgressBar } from '../../components/ds/ProgressBar'
 import { formatContinueCounter } from '../../lib/format'
 
 /**
- * `ContinueCard` (ui-spec §9 #3, §4.3) — one 300px card of the 이어보기 track.
+ * `ContinueCard` (ui-spec §9 #3, §4.3) — one card of the 이어보기 track:
+ * **218px wide below `md` (768), 269px at and above it.**
+ *
+ * Both numbers are the *whole* card, border-box, so what the text column gets is
+ * `width − 96 cover − 12 gap − 2×12 padding` = **86px** below 768 and **137px**
+ * at and above (measured in Chrome, not derived). They are the previous pair,
+ * 272 / 336, narrowed by 20% at the user's request (**E-37**); the cover, the
+ * gap and the padding did not move.
+ *
+ * 272 / 336 were **not** E-32's — that attribution was made up and then
+ * repeated into ui-spec twice. They arrived in **session 5**, applied
+ * `판정 없이` (HANDOFF §1.0e), are in the first commit, and E-32's own commit
+ * leaves them byte-identical. **Until E-37 no ruling had ever covered the width
+ * of this card**, which is how ui-spec §4.3 came to say `flex:0 0 300px` from
+ * day one — a number this file has never held — with nothing to contradict it.
+ * That is the defect **E-36** was raised over. So: if the flex-basis below
+ * changes, this comment and ui-spec §4.3 / §7 change in the same edit, and
+ * `library.test.tsx` will fail until they do.
  *
  * Clicking it resumes that **book** at its saved page, not the series: the whole
  * point of the shelf is that it is one click from where the reader stopped
@@ -35,7 +52,7 @@ export function ContinueCard({ item, onResume }: ContinueCardProps) {
       // E-32: the 1px hairline and its accent-on-hover become a raised card
       // that lifts. `hover:border-accent` could not survive the reskin anyway —
       // the accent is a deep teal and 1.2:1 against the dark surface.
-      className="flex flex-[0_0_272px] cursor-pointer gap-3 rounded-lg bg-surface p-3 text-left shadow-md transition-[box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:shadow-lg md:flex-[0_0_336px]"
+      className="flex flex-[0_0_218px] cursor-pointer gap-3 rounded-lg bg-surface p-3 text-left shadow-md transition-[box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:shadow-lg md:flex-[0_0_269px]"
     >
       {/* 96×144, up from 66×99: the cover is the only thing on this card that
           identifies the book at a glance, and at 66px wide a title in the art

@@ -113,7 +113,15 @@ export const THUMB_WIDTH_FOR = {
   viewerStrip: 120,
   /** List-row thumb — 24 CSS px. */
   listRow: 120,
-  /** 이어보기 card thumb — 66 CSS px. */
+  /**
+   * 이어보기 card thumb — **96 CSS px** (`ContinueCard.tsx`, `w-[96px]`).
+   *
+   * The comment used to say 66, the value this consumer had when impl-plan §0.4
+   * derived the table; the thumb has been 96 since the first commit. `240` is
+   * still the right request — 96×2 = 192 snaps **up** to 240, the same rung 66
+   * landed on — so only the reasoning was stale, and it is corrected rather
+   * than deleted so the next re-derivation starts from the shipped number.
+   */
   continueCard: 240,
   /** Slider drag preview — 68 CSS px. */
   sliderPreview: 240,
