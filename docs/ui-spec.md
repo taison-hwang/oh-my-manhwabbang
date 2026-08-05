@@ -86,6 +86,20 @@ listed below was driven directly through the prototype's own state controller an
 
 ## 1. Design tokens
 
+> **⚠ SUPERSEDED — every value in §1 is pre-E-32 and none of it has been re-derived here.**
+> Ruling **E-32** (2026-08-04) replaced the whole visual system: the ground/surface/ink became
+> `#EAE3D4` / `#F3EEE3` / `#263B38`, the accent became `#17595B`, D-40's `--radius-*: 0px` was retired
+> for a 3/4/6/7/999 scale, and the shadows became dual-light. `--shadow-inset`, `--color-hot` and
+> `--shadow-sidebar` **do not appear in the tables below at all** — they were added after this section
+> was last touched. Session 10 corrected §0.1, §0.2 and §2.3 but **not** §1; closing this is step 1 of
+> open item `y` (HANDOFF §5.7, ruling **E-36**).
+>
+> **Until then, `web/src/styles/tokens.css` is the source of truth for every token value, and
+> `web/src/styles/tokens.test.ts` is what enforces it.** This section is kept for its *structure* —
+> which roles exist, how the dark theme is derived, how Tailwind reaches them — not for its numbers.
+> Reading a colour out of the tables below and putting it in the product would violate E-32.
+
+
 ### 1.1 Complete token table (light ground — verbatim from `styles.css`)
 
 #### Roles
