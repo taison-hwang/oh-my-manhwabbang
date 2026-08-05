@@ -5,6 +5,8 @@ import { render, screen } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
+import type { BookSummary } from '../../api/types'
+import { NextVolumeCard } from './NextVolumeCard'
 import { PageSlider } from './PageSlider'
 import { ThumbnailCell } from './ThumbnailCell'
 import { OVERRIDE_CHIP_LABEL, ViewerTopBar } from './ViewerTopBar'
@@ -122,5 +124,60 @@ describe('E-32 §1 — the "current" markers are --color-hot', () => {
     const preview = container.querySelector('[data-role="slider-preview"]')
     expect(preview).toHaveClass('border-hot')
     expect(preview?.classList.contains('border-accent')).toBe(false)
+  })
+})
+
+const NEXT_VOLUME: BookSummary = {
+  id: 'b2',
+  series_id: 's1',
+  name: '02권.zip',
+  path: '만화/몬스터/02권.zip',
+  kind: 'zip',
+  ord: 1,
+  page_count: 198,
+  total_bytes: 84_000_000,
+  file_size: 84_000_000,
+  mtime: 1_700_000_000,
+  cv: 'v1',
+  status: 'ok',
+  error: null,
+  progress: null,
+}
+
+describe('the next-volume card’s title (open item `o`, ui-spec §6.5)', () => {
+  /**
+   * 700, not 800.
+   *
+   * The Claude Design v2 prototype paints this one line
+   * `font-family:var(--font-heading);font-weight:700;font-size:20px;
+   * line-height:1.15`, and it is the only 헤딩 in the app that is not extrabold.
+   * The previous session recorded the change and could not make it — the file
+   * was outside its file list — so the card shipped at 800 against a prototype
+   * that says 700. `font-extrabold` is asserted *absent* as well, because
+   * Tailwind emits both weights and a class list carrying the two would resolve
+   * by source order rather than by intent.
+   */
+  it('is font-bold, the prototype’s 700, and not font-extrabold', () => {
+    const { container } = render(
+      <NextVolumeCard
+        nextBook={NEXT_VOLUME}
+        completed={false}
+        appTheme="light"
+        onNext={vi.fn()}
+        onBackToSeries={vi.fn()}
+        onToggleCompleted={vi.fn()}
+      />,
+    )
+    const title = screen.getByText('02권.zip')
+
+    expect(title).toHaveClass('font-heading', 'text-h4', 'font-bold')
+    expect(title.classList.contains('font-extrabold')).toBe(false)
+    // …and not smuggled back in inline, which is how the weight would most
+    // easily come back without touching the class list this test reads.
+    expect(title.style.fontWeight).toBe('')
+
+    // The card itself is still there and still the app theme's surface: a
+    // `getByText` that matched some other node would otherwise pass quietly.
+    expect(container.querySelector('[data-role="next-volume-card"]')).toContainElement(title)
   })
 })

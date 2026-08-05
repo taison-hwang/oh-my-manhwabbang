@@ -189,6 +189,12 @@ export default {
         chrome: '3',
         viewer: '60',
         overlay: '80',
+        /** The paper grain (`body::after`). Top of the ladder on purpose: the
+         *  texture is a property of the screen, so a dialog is printed on it
+         *  too. No utility should need this — the layer is declared once in
+         *  base.css — but the ladder is stated in both files or it is stated in
+         *  neither, and `--z-texture` is what base.css names. */
+        texture: '90',
       },
 
       keyframes: {

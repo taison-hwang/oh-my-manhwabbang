@@ -108,6 +108,93 @@ function ratio(map: Map<string, string>, token: string, ground: string): number 
   )
 }
 
+// ---------------------------------------------------------------------------
+// The paper wash
+//
+// Every pair below is painted *under* the grain, so the ratio the reader gets is
+// not the ratio of the two tokens. This was found the expensive way: the texture
+// shipped with a comment claiming it broke no AA floor, because the floor was
+// checked by looking at the pair that *dropped* the most (9.164 → 8.880) rather
+// than the pair with the least room over 4.5. Three pairs had under 0.11 of
+// margin and the grain took all three under AA.
+//
+// A drop is not a failure and a small drop is not a small risk. What matters is
+// the ratio after the wash, so that is what is measured — and the model is the
+// composite the browser actually performs, with the mask's own numbers read out
+// of `--paper-grain` rather than restated.
+// ---------------------------------------------------------------------------
+
+/** `feColorMatrix` row 4 of `--paper-grain`: how much noise reaches alpha. */
+const GRAIN_AMPLITUDE = ((): number => {
+  const values = /values='([^']+)'/.exec(light.get('--paper-grain') ?? '')?.[1] ?? ''
+  return Number(values.split('%20')[15])
+})()
+
+/**
+ * `fractalNoise` centres each channel on 0.5, so the mean mask alpha is half the
+ * amplitude — and the peak is a fixed fraction of it too.
+ *
+ * Both are **derived from `--paper-grain`**, not written down. The peak used to
+ * be the literal `29 / 255`, read off one Chrome render at the shipped
+ * amplitude, and a literal is the wrong shape for this number: raise the
+ * amplitude to 0.3 and a fixed 0.114 is *below* the mean alpha (0.150), so the
+ * peak figure silently becomes the weaker of the two and every statement made
+ * about it goes vacuous while staying green.
+ *
+ * 0.913 is the measured ratio of peak to amplitude — 0.11504 against the 0.126
+ * the matrix declares, from a 1.26 M-pixel census of the mask over a white
+ * board. The 29/255 literal was 1.2 % optimistic against that same census.
+ */
+const GRAIN_MEAN_ALPHA = GRAIN_AMPLITUDE * 0.5
+const GRAIN_PEAK_ALPHA = GRAIN_AMPLITUDE * 0.913
+
+/**
+ * The three tones the grain is ever painted in — app light, app dark, viewer.
+ * Every pair is held to the *worst* of them rather than to the one its scope
+ * happens to use today: the scope of a token is a fact about components, this
+ * file measures tokens, and a floor fitted to today's call sites is a floor that
+ * moves when a component does.
+ */
+const GRAIN_TONES: Rgba[] = [
+  resolveToken(light, '--paper-tone'),
+  // The dark tone is a ramp step and the dark block does not re-declare the
+  // ramps, so it only resolves through the layered cascade — the same hole
+  // `DARK_CASCADE` closes for the component scanner further down. That constant
+  // is declared after this one, so the layering is spelled out here.
+  resolveToken(new Map([...light, ...dark]), '--paper-tone'),
+  resolveToken(light, '--paper-tone-viewer'),
+].map(parseColour)
+
+/** One colour after the grain has been composited over it. */
+function washed(colour: Rgba, tone: Rgba, alpha: number): Rgba {
+  const a = Number(light.get('--paper-intensity')) * alpha
+  return {
+    r: colour.r * (1 - a) + tone.r * a,
+    g: colour.g * (1 - a) + tone.g * a,
+    b: colour.b * (1 - a) + tone.b * a,
+    a: 1,
+  }
+}
+
+/**
+ * Contrast of `token` on `ground` **as the reader sees it**: the ink composites
+ * onto its ground first (a translucent ink is not washed on its own — it is part
+ * of what the grain lands on), then the grain washes the result and the ground
+ * alike. Reported at the worst of the three tones.
+ */
+function washedRatio(
+  map: Map<string, string>,
+  token: string,
+  ground: string,
+  alpha: number = GRAIN_MEAN_ALPHA,
+): number {
+  const bg = parseColour(resolveToken(map, ground))
+  const fg = over(parseColour(resolveToken(map, token)), bg)
+  return Math.min(
+    ...GRAIN_TONES.map((tone) => contrast(washed(fg, tone, alpha), washed(bg, tone, alpha))),
+  )
+}
+
 const themes: [string, Map<string, string>][] = [
   ['light', light],
   ['dark', dark],
@@ -214,6 +301,33 @@ describe('tokens.css — light ground (ui-spec §1.2, E-32 §1)', () => {
     }
     expect(light.get('--shadow-inset')).toContain('inset')
   })
+
+  it('gives the sidebar an elevation with no vertical lobe (open item p)', () => {
+    // The prototype's `4px 0 18px rgba(150,128,96,.16)`, which is why it is not
+    // on the sm/md/lg scale: it is horizontal only. `--shadow-md` stood in for
+    // it, and that token's 6px *downward* offset drew a shadow under the top
+    // edge of a panel that runs the full height of the viewport and therefore
+    // casts nothing there.
+    expect(light.get('--shadow-sidebar')).toBe('4px 0 18px rgb(150 128 96 / 0.16)')
+    // The middle `0` is the whole difference from `--shadow-md`. A y-offset
+    // here is the approximation coming back.
+    expect(light.get('--shadow-sidebar')).toMatch(/^\d+px 0 /)
+    expect(light.get('--shadow-sidebar')).not.toBe(light.get('--shadow-md'))
+  })
+
+  it('names all three stops of the cover gradient (open item p)', () => {
+    // .92 at the bottom, .55 at 62 %, .15 at the top — the prototype's numbers.
+    // They were approximated with the three tokens that happened to exist
+    // (.72 / .50 / .07), so the buttons at the bottom of a hovered card sat on
+    // two thirds of their ground and the top of the card had almost no wash.
+    expect(light.get('--scrim-cover-base')).toBe('rgb(38 59 56 / 0.92)')
+    expect(light.get('--scrim-cover-mid')).toBe('rgb(38 59 56 / 0.55)')
+    expect(light.get('--scrim-cover-top')).toBe('rgb(38 59 56 / 0.15)')
+    // Each must differ from the token it replaced, or nothing changed.
+    expect(light.get('--scrim-cover-base')).not.toBe(light.get('--scrim-cover'))
+    expect(light.get('--scrim-cover-mid')).not.toBe(light.get('--scrim-modal'))
+    expect(light.get('--scrim-cover-top')).not.toBe(light.get('--hover-tint'))
+  })
 })
 
 describe('tokens.css — dark ramp (ui-spec §1.4, NFR-CMP-003, E-32 §3)', () => {
@@ -319,6 +433,9 @@ describe('tokens.css — dark ramp (ui-spec §1.4, NFR-CMP-003, E-32 §3)', () =
       '--nav-active',
       '--scrim-cover',
       '--scrim-modal',
+      '--scrim-cover-base',
+      '--scrim-cover-mid',
+      '--scrim-cover-top',
       '--accent-hover',
       '--accent-press',
       '--accent-text',
@@ -339,7 +456,16 @@ describe('tokens.css — dark ramp (ui-spec §1.4, NFR-CMP-003, E-32 §3)', () =
     // The viewer ground is #263B38 in both app themes, and the accent and the
     // hot marker are theme-invariant, so their foregrounds are too. Flipping
     // any of these would repaint the viewer's scrims when the app theme changed.
-    for (const token of ['--scrim-volume-end', '--scrim-broken', '--on-accent', '--on-hot']) {
+    for (const token of [
+      '--scrim-volume-end',
+      '--scrim-broken',
+      '--on-accent',
+      '--on-hot',
+      // The grain's viewer tone belongs to the same family: the reading screen
+      // is dark in both app themes, so a tone that flipped with the app would
+      // repaint the viewer's texture when the library's theme changed.
+      '--paper-tone-viewer',
+    ]) {
       expect(light.has(token), `${token} missing from the light block`).toBe(true)
       expect(dark.has(token), `${token} must not flip with the theme`).toBe(false)
     }
@@ -365,12 +491,39 @@ describe('tokens.css — dark ramp (ui-spec §1.4, NFR-CMP-003, E-32 §3)', () =
     // The light block's highlight lobe is rgb(255 253 246 / .9). Painted on a
     // dark ground that is a white outline around every card, not a highlight —
     // E-32 §3.3 names this specifically.
-    for (const step of ['--shadow-sm', '--shadow-md', '--shadow-lg', '--shadow-inset']) {
+    for (const step of [
+      '--shadow-sm',
+      '--shadow-md',
+      '--shadow-lg',
+      '--shadow-inset',
+      '--shadow-sidebar',
+    ]) {
       expect(dark.get(step), `${step} kept the cream highlight lobe`).not.toContain('255 253 246')
     }
     expect(dark.get('--shadow-lg')).toContain('#3E5B57')
     expect(dark.get('--shadow-lg')).toContain('rgb(0 0 0 / 0.6)')
     expect(dark.get('--shadow-inset')).toContain('inset')
+    // The sidebar's dark form keeps the hairline the other three use, but only
+    // on the side that shows: `1px 0 0` is the right edge of a full-height
+    // panel, where `0 0 0 1px` would ring three edges that are off-screen. The
+    // ochre lobe is gone for the reason the whole dark block exists — it is a
+    // light-ground device.
+    expect(dark.get('--shadow-sidebar')).toContain('1px 0 0 #3E5B57')
+    expect(dark.get('--shadow-sidebar')).not.toContain('150 128 96')
+  })
+
+  it('turns the grain to the cool end of the ramp on a teal ground', () => {
+    // Worth <1/255 at today's intensity — a dark ground is already most of the
+    // way to a near-black tone — and declared anyway, because the tone is the
+    // one part of the texture that is paint. The failure it forecloses is the
+    // one this whole block is about: a value that is right in one theme because
+    // nobody ever asked what it does in the other.
+    // `DARK_CASCADE`, not `dark`: the dark block does not re-declare the ramps,
+    // so the step this points at is reached by inheritance — the same hole the
+    // scanner further down exists to close.
+    expect(resolveToken(light, '--paper-tone')).toBe('#23211D') // neutral-900
+    expect(resolveToken(DARK_CASCADE, '--paper-tone')).toBe('#082325') // accent-900
+    expect(dark.get('--paper-tone')).not.toBe(light.get('--paper-tone'))
   })
 })
 
@@ -398,6 +551,113 @@ describe('contrast floors (E-32 §4)', () => {
         }
       }
     }
+  })
+
+  it('still clears AA once the paper grain is on it — the floor that matters', () => {
+    // The assertion above measures two tokens. The reader sees them through a
+    // full-viewport texture, and the texture is not free: it took three pairs
+    // from a pass to a fail while every test in this file stayed green, because
+    // nothing here knew the grain existed.
+    //
+    // The failure message carries the peak-alpha ratio as well as the mean one.
+    // The floor is the mean — that is what almost every pixel of a glyph sits
+    // under — but a pair that only clears at the mean is a pair whose darkest
+    // grain speckles are already below AA, and that is worth seeing when this
+    // fails.
+    const offenders: string[] = []
+    for (const [name, theme] of themes) {
+      for (const token of INK_TOKENS) {
+        for (const ground of ['--color-bg', '--color-surface']) {
+          const wet = washedRatio(theme, token, ground)
+          if (wet < 4.5) {
+            const peak = washedRatio(theme, token, ground, GRAIN_PEAK_ALPHA)
+            offenders.push(
+              `${name} ${token} on ${ground}: dry ${ratio(theme, token, ground).toFixed(3)} → washed ${wet.toFixed(3)} (peak ${peak.toFixed(3)})`,
+            )
+          }
+        }
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  /** The three tokens the grain took under AA, and the pairs they were taken on. */
+  const REPAIRED: [string, Map<string, string>, string, string][] = [
+    ['the override chip', light, '--on-hot', '--color-hot'],
+    ['light meta text on the ground', light, '--ink-faint', '--color-bg'],
+    ['dark card meta on the surface', dark, '--ink-meta', '--color-surface'],
+  ]
+
+  it('re-derives the three pairs the grain took under AA', () => {
+    // Named individually because each was a *specific* token that had to move,
+    // and a floor test alone would let the next author fix a failure by lowering
+    // `--paper-intensity` instead — which is the one repair that is not
+    // available here. `--on-hot` needs intensity ≤ 0.12 to survive at its old
+    // value, and 0.12 is the design erased rather than implemented.
+    for (const [what, theme, token, ground] of REPAIRED) {
+      const wet = washedRatio(theme, token, ground)
+      expect(wet, `${what}: ${token} on ${ground} washed`).toBeGreaterThanOrEqual(4.5)
+    }
+  })
+
+  it('reports the peak-grain margin, and holds nothing to it', () => {
+    // **Why the peak is not a floor.** It was one, and it should not have been.
+    //
+    //  * WCAG is defined on the *specified* colours. The mean wash is already a
+    //    generous reading of it; the peak is the darkest speckle of a random
+    //    field, present on a small minority of pixels and never on all of a
+    //    glyph at once.
+    //  * The number is not stable enough to gate on. `--on-hot` on the hot
+    //    marker comes out at 4.51, 4.508, 4.490 or 4.464 depending only on
+    //    whether the peak alpha is the old literal, a measured point estimate,
+    //    that estimate's 8-bit upper bound, or the amplitude the matrix
+    //    declares. Two of those four fail. A gate whose verdict flips on the
+    //    definition of its own input is not measuring the palette.
+    //  * And the render does not have that precision anyway: the chip is 9px
+    //    uppercase, where antialiasing dominates and the *effective* ratio is
+    //    about 3.68 before any grain is applied. The argument was being had
+    //    below the resolution of the thing being argued about.
+    //
+    // **What that leaves open.** `--on-hot` is `#000000` — the absolute ceiling
+    // of this palette, 4.9988 against `#EC3013`, with no darker ink available.
+    // Buying real margin back means raising the relative luminance of
+    // `--color-hot` by ~4 %, and that is a change to the retired brand red that
+    // E-32 §1 pinned: a ruling of its own, not a side effect of a texture.
+    //
+    // Today, at the shipped amplitude: chip 4.725 / 4.508, ink-faint
+    // 4.740 / 4.631, ink-meta 4.853 / 4.709 (mean / peak).
+    const report = REPAIRED.map(([what, theme, token, ground]) => ({
+      what,
+      mean: washedRatio(theme, token, ground),
+      peak: washedRatio(theme, token, ground, GRAIN_PEAK_ALPHA),
+    }))
+    const table = report
+      .map((r) => `${r.what}: mean ${r.mean.toFixed(3)}, peak ${r.peak.toFixed(3)}`)
+      .join(' | ')
+
+    // The assertions are on the *model*, so the report cannot quietly become a
+    // report about nothing: a peak alpha that stopped exceeding the mean would
+    // make every peak figure above the mean figure and the table meaningless.
+    expect(GRAIN_PEAK_ALPHA, table).toBeGreaterThan(GRAIN_MEAN_ALPHA)
+    expect(report.every((r) => r.peak < r.mean), table).toBe(true)
+    // Derived, not written down — the literal is what went vacuous at
+    // amplitude 0.3.
+    expect(GRAIN_PEAK_ALPHA / GRAIN_AMPLITUDE).toBeCloseTo(0.913, 6)
+  })
+
+  it('reads the mask its own numbers rather than restating them', () => {
+    // Calibration for the model. If the amplitude ever stops parsing, every
+    // washed ratio above collapses to the dry one and the block goes green
+    // while checking nothing — the exact failure this whole section exists to
+    // stop happening twice.
+    expect(GRAIN_AMPLITUDE).toBeCloseTo(0.126, 4)
+    expect(GRAIN_MEAN_ALPHA).toBeCloseTo(0.063, 4)
+    expect(GRAIN_TONES).toHaveLength(3)
+    // Three genuinely different tones, or "the worst of them" is one of them.
+    expect(new Set(GRAIN_TONES.map((t) => [t.r, t.g, t.b].join(','))).size).toBe(3)
+    // And the wash has to actually move a ratio, or the floor is the dry floor
+    // wearing a different name.
+    expect(washedRatio(light, '--ink', '--color-bg')).toBeLessThan(ratio(light, '--ink', '--color-bg'))
   })
 
   it('keeps --ink-dim off the prototype AA failure (3.31 on the cream ground)', () => {
@@ -482,9 +742,23 @@ describe('contrast floors (E-32 §4)', () => {
 //     is two literals and is invisible here. Joining them would mean resolving
 //     `cn` statically, which is a different tool; the honest fix is to keep the
 //     ground and its ink in one string, which every site in this repo does.
-//  2. **`bg-bg` and `bg-surface`.** The page grounds, not fills — every ink token
-//     is already measured against both of them by `INK_TOKENS` above, and letting
-//     them in here would duplicate that at lower fidelity.
+//  2. **Text whose ground comes from an ancestor.** This is the big one, it is
+//     structural, and widening `FILL` did nothing for it: the scan pairs a fill
+//     and an ink **inside one class list**. A `<span className="text-…">` whose
+//     ground is painted three elements up matches no fill at all and is skipped
+//     in silence.
+//
+//     Two shipped defects are the evidence, both found by hand and both fixed in
+//     the same change that wrote this paragraph. `ViewerTopBar` set the volume
+//     name to `text-neutral-500` and `ViewerBottomBar` set the pressed thumbnail
+//     button to `text-accent-400`; the ground for both is the bar's `bg-bg`,
+//     inside `data-theme="dark"`, on an element neither string mentions. The
+//     ramps do not flip, so the two were 4.34 and 3.76 — and 4.19 and 3.64 once
+//     the bars started carrying the paper grain. Nothing here could see either.
+//
+//     Closing it needs the *rendered* tree, not a source string: a real browser
+//     with `getComputedStyle`, i.e. the e2e tier. Until then this list is the
+//     honest statement of what a green run here does not mean.
 //  3. **Translucent tokens** (`--hover-tint`, the scrims, `--fill-subtle`). They
 //     composite over whatever is underneath and this scanner does not know the
 //     stack, so they are excluded rather than measured against a guess.
@@ -554,7 +828,16 @@ const COLOUR_UTILITIES = ((): Map<string, string> => {
  * chooses *instead of* the page's own, and therefore the ones whose foreground
  * nothing else has already checked.
  */
-const FILL = /^(accent|accent-2|accent-hover|accent-press|accent-fill|ink|hot)$|^(accent|accent-2|neutral)-\d00$/
+const FILL = /^(bg|surface|accent|accent-2|accent-hover|accent-press|accent-fill|ink|hot)$|^(accent|accent-2|neutral)-\d00$/
+
+// `bg` and `surface` are in that list, and used not to be. The argument for
+// leaving them out was that `INK_TOKENS` already measures every ink against both
+// grounds — which is true, and which is exactly why it was the wrong argument:
+// what lands on those grounds is not always an ink token. `FormatBadge`'s corner
+// pill painted `bg-surface text-accent-800`, a raw ramp step on a semantic
+// ground, and the ramps do not flip: 11.62:1 on the cream surface, **1.40:1** on
+// the dark one. The pair was skipped entirely, so the scanner was green about a
+// badge that is a smudge in half the product.
 
 /**
  * The dark theme **as the cascade actually resolves it**, not as the dark block
@@ -674,20 +957,32 @@ describe('the pairs components actually paint (E-32 §1)', () => {
     // `--color-bg` on `--color-ink`: the two are inverses in both themes, so
     // this is the correct pairing and the scanner must not call it a defect.
     expect(seen).toContain(join('features', 'overlays', 'ShortcutsDialog.tsx') + ' bg-ink text-bg')
+    // The two the semantic grounds bought. Neither was visible to this scan
+    // before `bg`/`surface` joined `FILL`, and one of them was a real defect.
+    expect(seen).toContain(join('components', 'ds', 'FormatBadge.tsx') + ' bg-surface text-accent-text')
+    expect(seen).toContain(join('features', 'viewer', 'ViewerPage.tsx') + ' bg-bg text-neutral-400')
     expect(PAINTED.length).toBeGreaterThanOrEqual(6)
   })
 
-  it('reads at AA on every solid fill it paints', () => {
+  it('reads at AA on every solid fill it paints — under the paper grain', () => {
+    // Washed, not dry, and for the same reason the ink floor above is: these
+    // pairs are painted under the texture too. `bg-hot text-on-hot` is the
+    // override chip, which is the pair the grain took furthest under AA, and a
+    // dry scan here would have gone on calling it a pass.
     const offenders: string[] = []
     for (const pair of PAINTED) {
       for (const [name, theme] of themesFor(pair.file)) {
         const ground = opaque(theme, COLOUR_UTILITIES.get(pair.bg) ?? '')
         const ink = opaque(theme, COLOUR_UTILITIES.get(pair.fg) ?? '')
         if (ground === null || ink === null) continue
-        const value = contrast(ink, ground)
+        const value = Math.min(
+          ...GRAIN_TONES.map((tone) =>
+            contrast(washed(ink, tone, GRAIN_MEAN_ALPHA), washed(ground, tone, GRAIN_MEAN_ALPHA)),
+          ),
+        )
         if (value < 4.5) {
           offenders.push(
-            `${pair.file}:${String(pair.line)} — text-${pair.fg} on bg-${pair.bg} is ${value.toFixed(2)}:1 in ${name}`,
+            `${pair.file}:${String(pair.line)} — text-${pair.fg} on bg-${pair.bg} is ${value.toFixed(2)}:1 washed, in ${name}`,
           )
         }
       }
@@ -760,6 +1055,23 @@ describe('the style layer holds every colour literal', () => {
   it('keeps base.css free of hex — it may only reference tokens', () => {
     const hex = BASE.match(/#[0-9a-fA-F]{3,8}\b/g) ?? []
     expect(hex).toEqual([])
+  })
+
+  it('draws the cover gradient from its own three stops (open item p)', () => {
+    // The approximation is gone, and the three tokens it borrowed must not come
+    // back: `--scrim-cover` is still the flat chip wash on the thumbnail strip,
+    // `--scrim-modal` is still the dialog backdrop, and `--hover-tint` is a
+    // pointer state. Any of them appearing here again is the same reach for
+    // "whatever token is nearest" that produced .72 / .50 / .07.
+    const scrim = exactRule('.cover-scrim')?.body ?? ''
+    expect(scrim).toContain('var(--scrim-cover-base)')
+    expect(scrim).toContain('var(--scrim-cover-mid) 62%')
+    expect(scrim).toContain('var(--scrim-cover-top)')
+    expect(scrim).not.toMatch(/var\(--scrim-cover\)|var\(--scrim-modal\)|var\(--hover-tint\)/)
+  })
+
+  it('hangs the sidebar edge on its own token, not the card shadow', () => {
+    expect(exactRule('.sidebar')?.body).toMatch(/box-shadow:\s*var\(--shadow-sidebar\)/)
   })
 
   it('states the flush-left rule for block buttons', () => {
@@ -840,6 +1152,392 @@ describe('the style layer holds every colour literal', () => {
       expect(body, thumb).toMatch(/height:\s*18px/)
       expect(body, thumb).toMatch(/border-radius:\s*50%/)
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The paper grain
+//
+// A full-viewport comic-paper texture, added from the Claude Design prototype.
+// What is asserted here is not "it looks like paper" — it is the four properties
+// that made the prototype's implementation unusable in this product, each of
+// which is invisible from a screenshot:
+//
+//  1. it is deterministic (the prototype re-rolls `Math.random()` every load and
+//     changes 89.1 % of the pixels, which makes `docs/ui-shots/` worthless),
+//  2. it fetches nothing (NFR-OPS-001: one binary, no CDN — the font is
+//     vendored for the same reason),
+//  3. it carries no colour of its own, so the tone is a token and re-themes,
+//  4. the viewer's tone is genuinely a different colour from the app's, because
+//     a switch that resolves to the same value is a switch nobody can see —
+//     which is exactly what the prototype ships.
+// ---------------------------------------------------------------------------
+
+describe('the paper grain (tokens.css)', () => {
+  const grain = light.get('--paper-grain') ?? ''
+  /** The 20 numbers of the grain's `feColorMatrix`, in row order. */
+  const matrix = (/values='([^']+)'/.exec(grain)?.[1] ?? '').split('%20').map(Number)
+
+  it('is an inline SVG data URI — nothing is fetched to draw it', () => {
+    expect(grain.startsWith('url("data:image/svg+xml,')).toBe(true)
+    // The single `http://` in the value is the SVG namespace, which is an
+    // identifier and not a URL any browser resolves. A *second* one would be a
+    // real request, and the prototype makes two of them.
+    expect(grain.match(/https?:\/\/[^'"\s]*/g)).toEqual(['http://www.w3.org/2000/svg'])
+  })
+
+  it('pins the seed and stitches the tile, so two loads are the same bytes', () => {
+    // The SVG filter PRNG is specified, so `seed` is reproducible across runs
+    // and engines. The prototype declares `seed="4"` too — and then never reads
+    // it, because its fallback tile calls `Math.random()` directly.
+    expect(grain).toContain("type='fractalNoise'")
+    expect(grain).toContain("seed='4'")
+    // Without `stitch` the 200px tile does not wrap and the repeat seams.
+    expect(grain).toContain("stitchTiles='stitch'")
+  })
+
+  it('writes alpha and nothing else, which is what keeps the tone a token', () => {
+    // Rows 1–3 zero the RGB, row 4 scales the noise's red channel into alpha.
+    // The moment any RGB coefficient is non-zero the SVG carries a colour, and
+    // a colour inside a data URI is a colour no theme can reach.
+    expect(matrix).toHaveLength(20)
+    expect(matrix.slice(0, 15)).toEqual(new Array(15).fill(0))
+    expect(matrix[15]).toBeCloseTo(0.126, 4)
+    expect(matrix.slice(16)).toEqual([0, 0, 0, 0])
+  })
+
+  it('has no colour literal buried in the data URI', () => {
+    expect(grain).not.toMatch(/%23[0-9a-fA-F]{3}/) // an encoded hex
+    expect(grain).not.toMatch(/(fill|stroke|flood-color|stop-color)=/)
+  })
+
+  it('takes the app tone off the ramp and the intensity from the prototype', () => {
+    // `--color-neutral-900` is #23211D against the prototype's #201E1D: three
+    // units on two channels, which at ≤0.114 alpha and half intensity is
+    // 0.16/255 of difference. Same colour, one fewer literal in the file.
+    expect(resolveToken(light, '--paper-tone')).toBe('#23211D')
+    expect(light.get('--paper-intensity')).toBe('0.5')
+  })
+
+  it('gives the viewer a tone that is a different colour, not a different name', () => {
+    // The prototype specifies #0D0C0C here and never applies it. A token that
+    // resolved to the app's own tone would reproduce that bug with a passing
+    // test, so the assertion is on the *values* being different.
+    expect(light.get('--paper-tone-viewer')).toBe('#0D0C0C')
+    expect(light.get('--paper-tone-viewer')).not.toBe(resolveToken(light, '--paper-tone'))
+    expect(light.get('--paper-tone-viewer')).not.toBe(resolveToken(DARK_CASCADE, '--paper-tone'))
+  })
+
+  it('keeps the mask and the intensity out of the theme blocks', () => {
+    // Geometry, not paint: the grain is the same noise in both themes and only
+    // what it washes in changes. Re-declaring either in the dark block is
+    // how a texture starts having two sources of truth.
+    for (const token of ['--paper-grain', '--paper-intensity']) {
+      expect(light.has(token), `${token} missing from the base block`).toBe(true)
+      expect(dark.has(token), `${token} must not flip with the theme`).toBe(false)
+    }
+  })
+
+  it('lands the −6~7/255 the prototype was measured at on the cream ground', () => {
+    // The one number a reviewer can check against the prototype without a
+    // browser. `fractalNoise` centres each channel on 0.5, so the mean mask
+    // alpha is half the matrix coefficient — 0.063, i.e. 16.1/255, which is
+    // also what the prototype's own fallback tile averages
+    // (`(Math.random()*0.5 + fiber*0.12) * 52`). Derived from the matrix rather
+    // than restated, so tuning the grain moves this with it.
+    const ground = parseColour(resolveToken(light, '--color-bg'))
+    const tone = parseColour(resolveToken(light, '--paper-tone'))
+    const meanAlpha = (matrix[15] ?? 0) * 0.5
+    const intensity = Number(light.get('--paper-intensity'))
+    const delta = intensity * meanAlpha * (ground.r - (ground.r * tone.r) / 255)
+    expect(delta).toBeGreaterThan(5.5)
+    expect(delta).toBeLessThan(7.5)
+  })
+})
+
+describe('the z ladder is closed, and stated in both files (ui-spec §3)', () => {
+  it('rises content < sticky < viewer < overlay < texture', () => {
+    const z = (name: string): number => Number(light.get(`--z-${name}`))
+    expect([z('content'), z('sticky'), z('viewer'), z('overlay'), z('texture')]).toEqual([
+      0, 2, 60, 80, 90,
+    ])
+  })
+
+  it('agrees with tailwind.config.ts, the other half of the same ladder', () => {
+    // Two files, one ladder. `chrome: 3` is the one rung with no token: it
+    // orders two elements inside the viewer's own subtree and never competes
+    // with anything here.
+    const z = tailwindConfig.theme.extend.zIndex
+    expect(z.content).toBe(light.get('--z-content'))
+    expect(z.sticky).toBe(light.get('--z-sticky'))
+    expect(z.viewer).toBe(light.get('--z-viewer'))
+    expect(z.overlay).toBe(light.get('--z-overlay'))
+    expect(z.texture).toBe(light.get('--z-texture'))
+  })
+
+  it('leaves the texture at the top — nothing in base.css outranks it', () => {
+    // A rule that punched through the grain would be a rectangle of un-papered
+    // screen, which is what a bare `z-index: 900` in a sheet with a closed
+    // ladder eventually produces.
+    const ceiling = Number(light.get('--z-texture'))
+    const offenders = allRules(BASE)
+      .flatMap((r) =>
+        [...r.body.matchAll(/z-index:\s*(\d+)\s*;/g)].map((m) => `${r.selector}: ${m[1] ?? ''}`),
+      )
+      .filter((hit) => Number(hit.split(': ')[1]) > ceiling)
+    expect(offenders).toEqual([])
+  })
+})
+
+describe('the paper grain layer (base.css)', () => {
+  /** A rule in the sheet proper, i.e. not the one inside a media query. */
+  const plain = (selector: string): string =>
+    allRules(BASE).find(
+      (r) => r.selector === selector && !r.context.some((c) => c.startsWith('@media')),
+    )?.body ?? ''
+
+  const layer = plain('body::after')
+
+  it('is one fixed, inert layer at the top of the ladder', () => {
+    // `body::after` and not a component: no route can forget to mount it and
+    // nothing has to be imported to get it. Fixed rather than absolute so it
+    // does not scroll with the shell, and inert because it covers every control
+    // in the product — including the dialogs, which is the point of `--z-texture`.
+    expect(layer).toMatch(/position:\s*fixed/)
+    expect(layer).toMatch(/inset:\s*0/)
+    expect(layer).toMatch(/pointer-events:\s*none/)
+    expect(layer).toMatch(/z-index:\s*var\(--z-texture\)/)
+  })
+
+  it('paints a token through the mask rather than a colour through the SVG', () => {
+    expect(layer).toMatch(/background-color:\s*var\(--paper-tone\)/)
+    expect(layer).toMatch(/-webkit-mask-image:\s*var\(--paper-grain\)/)
+    expect(layer).toMatch(/[^-]mask-image:\s*var\(--paper-grain\)/)
+    expect(layer).toMatch(/opacity:\s*var\(--paper-intensity\)/)
+  })
+
+  it('does not blend — the prototype does, and it is the whole cost', () => {
+    // Measured in Chrome on real page turns (base.css carries the table):
+    // `mix-blend-mode: multiply` does not make a frame slower — the median frame
+    // is 16.7 ms either way — it makes 38 % of frames not arrive, taking 60 fps
+    // to 28. Dropping the mask instead changes nothing. And it buys ≤2/255 at
+    // this tone and amplitude.
+    //
+    // This is the assertion that stops it coming back by looking correct: the
+    // prototype writes multiply, and copying it in is a one-word change that no
+    // screenshot could ever fail.
+    expect(layer).not.toMatch(/mix-blend-mode/)
+  })
+
+  it('takes the whole layer off the viewer through :has(), not through the theme', () => {
+    // The layer is a sibling of #root and the viewer re-scopes `data-theme` on a
+    // div *inside* it, so inheritance cannot reach here. `[data-theme]` would be
+    // the wrong key anyway: the viewer is dark in both app themes, so the
+    // attribute cannot tell "the reading screen" from "a dark library".
+    //
+    // `display: none`, not a different tone: the reading stage is not paper to
+    // print on (measured — the grain moved 100 % of the artwork's pixels), one
+    // `body::after` cannot have a hole cut in it, and the stage's rectangle is
+    // `flex: 1` between two bars that wrap and un-wrap. The chrome puts the
+    // texture back on its own boxes below.
+    expect(plain("body:has([data-role='viewer'])::after")).toMatch(/display:\s*none/)
+    // ...and the hook has to be the attribute the viewer actually writes.
+    expect(read(join('src', 'features', 'viewer', 'ViewerPage.tsx'))).toContain(
+      'data-role="viewer"',
+    )
+  })
+
+  /** Every viewer surface the texture is declared on, in selector order. */
+  const CHROME_SURFACES = [
+    "[data-role='viewer-top-bar']",
+    "[data-role='viewer-bottom-bar']",
+    "[data-role='viewer-chrome-hint']",
+    "[data-role='stale-progress'] > span",
+    "[data-role='page-error']",
+    "[data-role='next-volume-card']",
+  ]
+
+  it('re-grains every opaque viewer surface, one box at a time', () => {
+    // The rule is "an opaque UI surface gets paper, the drawing does not", and
+    // the first cut of it only covered the two bars and the end card. Three
+    // opaque grounds sat outside those and shipped bare: the chrome hint, the
+    // stale-progress notice and the page-error panel. `page-error` is the
+    // interesting one — it occupies the stage, but it *replaces* the artwork
+    // with a failure message, so by the rule it is a surface, not a drawing.
+    const chrome = plain(CHROME_SURFACES.map((s) => `${s}::after`).join(',\n  '))
+    expect(chrome).toMatch(/background-color:\s*var\(--paper-tone-viewer\)/)
+    expect(chrome).toMatch(/mask-image:\s*var\(--paper-grain\)/)
+    expect(chrome).toMatch(/opacity:\s*var\(--paper-intensity\)/)
+    expect(chrome).toMatch(/position:\s*absolute/)
+    expect(chrome).toMatch(/inset:\s*0/)
+    expect(chrome).toMatch(/pointer-events:\s*none/)
+    expect(chrome).not.toMatch(/mix-blend-mode/)
+
+    const selectors = allRules(BASE).map((r) => r.selector)
+    // `next-volume-scrim` is a scrim *over* the drawing, not a ground of its
+    // own; papering it would paper the artwork underneath.
+    expect(selectors.join('\n')).not.toContain("[data-role='next-volume-scrim']::after")
+    // ...and the stale notice is matched at its span, because its wrapper is a
+    // full-width transparent row: a rule there lays the wash over the drawing.
+    expect(selectors.join('\n')).not.toContain("[data-role='stale-progress']::after")
+  })
+
+  it('contains the texture on the surfaces that are not stacking contexts', () => {
+    // Without this the `::after` escapes to the viewer root and paints at
+    // `--z-texture` over everything, the stage included — a silent, total
+    // reversal of the ruling from two missing lines. The two bars need nothing:
+    // `z-chrome` already makes each one a stacking context.
+    const contained = plain(
+      "[data-role='next-volume-card'],\n  [data-role='stale-progress'] > span,\n  [data-role='viewer-chrome-hint'],\n  [data-role='page-error']",
+    )
+    expect(contained).toMatch(/position:\s*relative/)
+    expect(contained).toMatch(/z-index:\s*var\(--z-content\)/)
+  })
+
+  it('names only roles the viewer really writes', () => {
+    // Seven `data-role` values are load-bearing across a file boundary now. A
+    // renamed attribute would not break a test on either side — it would just
+    // stop the texture appearing, in a build nobody screenshots.
+    const sources: [string, string[]][] = [
+      ['ViewerPage.tsx', ['viewer', 'viewer-chrome-hint', 'stale-progress']],
+      ['ViewerTopBar.tsx', ['viewer-top-bar']],
+      ['ViewerBottomBar.tsx', ['viewer-bottom-bar']],
+      ['NextVolumeCard.tsx', ['next-volume-card']],
+      ['PageError.tsx', ['page-error']],
+    ]
+    for (const [file, roles] of sources) {
+      const source = read(join('src', 'features', 'viewer', file))
+      for (const role of roles) {
+        expect(source, `${file} no longer writes data-role="${role}"`).toContain(
+          `data-role="${role}"`,
+        )
+      }
+    }
+    // The strip is inside the bottom bar, which is why it needs no rule of its
+    // own — and if it ever moves out, it loses its texture silently.
+    expect(read(join('src', 'features', 'viewer', 'ViewerBottomBar.tsx'))).toContain(
+      '<ThumbnailStrip',
+    )
+    // `stale-progress` is papered at its span, so the span has to stay the
+    // element that carries the ground.
+    expect(read(join('src', 'features', 'viewer', 'ViewerPage.tsx'))).toMatch(
+      /data-role="stale-progress"[\s\S]{0,600}?<span className="bg-accent/,
+    )
+  })
+
+  it('turns every layer off under prefers-contrast: more', () => {
+    // The grain costs up to 0.284 of ratio, and three pairs in this palette are
+    // re-derived in tokens.css because of it. Everything clears AA with the
+    // paper on, so this is a preference rather than a repair — but it has to
+    // cover all four layers. Switching off the global one alone would leave the
+    // viewer chrome as the only papered surface in the product, for the reader
+    // least able to spare the contrast.
+    const off = allRules(BASE).find(
+      (r) =>
+        r.selector.includes('body::after') &&
+        r.context.some((c) => c.includes('prefers-contrast')),
+    )
+    expect(off?.context.some((c) => c.includes('more'))).toBe(true)
+    expect(off?.body).toMatch(/display:\s*none/)
+    // Every surface the texture is declared on, or the ones left out are the
+    // only paper in the product for the reader least able to spare it.
+    for (const surface of CHROME_SURFACES) {
+      expect(off?.selector, `${surface} keeps its texture`).toContain(`${surface}::after`)
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Raw ramp steps painted by a CSS class
+//
+// The ramps are a theme-invariant absolute lightness scale (ui-spec §1.4), so a
+// class that paints one paints the *same* colour in a dark scope as in a light
+// one. `.row-chip:hover` was given a dark override for exactly that reason and
+// says so in its comment; `.tag-accent`, `.tag-accent-2` and `.tag-neutral` were
+// not, and shipped a near-white chip on the dark ground — 10.05:1 and 10.74:1
+// against it.
+//
+// Nothing caught them. The scanner further up reads Tailwind class lists out of
+// `.tsx` and never opens a stylesheet, and the token tests read tokens and never
+// look at a class. This is the stylesheet's half of the same question, and it is
+// deliberately blunt: **every** base.css rule that paints a ramp step must have a
+// `[data-theme='dark']` counterpart. No exemption list — a ramp step that
+// genuinely must not flip is one semantic token away, and that is the fix.
+// ---------------------------------------------------------------------------
+
+describe('a ramp step painted by a class flips with the theme (ui-spec §1.4)', () => {
+  const RAMP_PAINT = /(background|background-color|color)\s*:\s*var\((--color-(?:neutral|accent(?:-2)?)-\d00)\)/g
+
+  const rampRules = allRules(BASE)
+    .filter((r) => !r.selector.startsWith('@'))
+    .map((r) => ({
+      selector: r.selector,
+      paint: new Map(
+        [...r.body.matchAll(RAMP_PAINT)].map((m) => [m[1] === 'color' ? 'fg' : 'bg', m[2] ?? '']),
+      ),
+    }))
+    .filter((r) => r.paint.size > 0)
+
+  const isDark = (selector: string): boolean => selector.startsWith("[data-theme='dark']")
+
+  it('found the ramp users it is meant to police', () => {
+    // Calibration, and it names them: a regex that quietly stopped matching
+    // would leave every assertion below iterating over an empty list and the
+    // whole block green while checking nothing.
+    expect(rampRules.map((r) => r.selector).sort()).toEqual([
+      '.row-chip:hover',
+      '.tag-accent',
+      '.tag-accent-2',
+      '.tag-neutral',
+      "[data-theme='dark'] .tag-accent",
+      "[data-theme='dark'] .tag-accent-2",
+      "[data-theme='dark'] .tag-neutral",
+    ])
+  })
+
+  it('gives every one of them a dark counterpart', () => {
+    const selectors = allRules(BASE).map((r) => r.selector)
+    const offenders = rampRules
+      .map((r) => r.selector)
+      .filter((s) => !isDark(s))
+      .filter((s) => !selectors.includes(`[data-theme='dark'] ${s}`))
+    expect(offenders).toEqual([])
+  })
+
+  it('reads at AA inside every chip, in the theme that paints it', () => {
+    const offenders: string[] = []
+    for (const rule of rampRules) {
+      const bg = rule.paint.get('bg')
+      const fg = rule.paint.get('fg')
+      if (bg === undefined || fg === undefined) continue
+      const theme = isDark(rule.selector) ? DARK_CASCADE : light
+      const value = contrast(
+        parseColour(resolveToken(theme, fg)),
+        parseColour(resolveToken(theme, bg)),
+      )
+      if (value < 4.5) offenders.push(`${rule.selector}: ${fg} on ${bg} is ${value.toFixed(2)}:1`)
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('keeps the chip near its ground — the defect this block exists for', () => {
+    // Not a floor but a ceiling, and it is the assertion that would have caught
+    // the bug: a tag is a label printed on the page, not a second page. Every
+    // chip in the sheet sits between 1.01 and 1.15 against the ground of the
+    // theme that paints it. The three broken ones were at 10.05 and 10.74 —
+    // white slabs — so 2.0 is a wide margin that still fails them decisively.
+    const offenders: string[] = []
+    for (const rule of rampRules) {
+      const bg = rule.paint.get('bg')
+      if (bg === undefined) continue
+      const theme = isDark(rule.selector) ? DARK_CASCADE : light
+      const value = contrast(
+        parseColour(resolveToken(theme, bg)),
+        parseColour(resolveToken(theme, '--color-bg')),
+      )
+      if (value > 2) offenders.push(`${rule.selector}: ${bg} is ${value.toFixed(2)}:1 on the ground`)
+    }
+    expect(offenders).toEqual([])
   })
 })
 

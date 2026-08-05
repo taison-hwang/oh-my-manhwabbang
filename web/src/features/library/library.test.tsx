@@ -305,21 +305,51 @@ const server = setupServer(
 interface FakeMql {
   matches: boolean
   media: string
-  addEventListener: () => void
-  removeEventListener: () => void
+  addEventListener: (type: string, cb: () => void) => void
+  removeEventListener: (type: string, cb: () => void) => void
 }
 
+let viewportWidth = 0
+let viewportListeners: (() => void)[] = []
+
+/**
+ * Fixes the viewport width the `useMediaQuery` layer reports.
+ *
+ * The listeners are kept rather than dropped so `resizeViewport` below can move
+ * the tier the way a real window resize does: `useBreakpoint` reads through
+ * `useSyncExternalStore`, so a stub whose `addEventListener` is a no-op can be
+ * *set* to a new width but can never *change* to one — React is never told.
+ */
 function stubViewport(width: number): void {
+  viewportWidth = width
+  viewportListeners = []
   const impl = (query: string): FakeMql => {
     const m = /min-width:\s*(\d+)px/.exec(query)
+    const min = m?.[1] === undefined ? null : Number(m[1])
     return {
-      matches: m?.[1] === undefined ? false : width >= Number(m[1]),
+      get matches(): boolean {
+        return min !== null && viewportWidth >= min
+      },
       media: query,
-      addEventListener: () => undefined,
-      removeEventListener: () => undefined,
+      addEventListener: (_: string, cb: () => void) => viewportListeners.push(cb),
+      removeEventListener: (_: string, cb: () => void) => {
+        viewportListeners = viewportListeners.filter((x) => x !== cb)
+      },
     }
   }
   Object.defineProperty(window, 'matchMedia', { writable: true, configurable: true, value: impl })
+}
+
+/**
+ * Moves the stubbed viewport and tells every `useMediaQuery` about it, then
+ * fires the `resize` event `useElementWidth` falls back to when — as in jsdom —
+ * there is no `ResizeObserver` (`useLibrary.ts`). One call, because a real
+ * resize moves both at once and the two halves of the layout have to agree.
+ */
+function resizeViewport(width: number): void {
+  viewportWidth = width
+  for (const cb of [...viewportListeners]) cb()
+  window.dispatchEvent(new Event('resize'))
 }
 
 /**
@@ -329,13 +359,17 @@ function stubViewport(width: number): void {
  * reports 32px more than the box its child grid is actually laid out in, so a
  * component that measures the wrapper instead of the grid gets caught here
  * rather than in a screenshot.
+ *
+ * A thunk may be passed instead of a number when the test needs the measured
+ * width to *move*, which is what a resize does.
  */
-function stubContentWidth(contentWidth: number): () => void {
+function stubContentWidth(contentWidth: number | (() => number)): () => void {
   const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth')
   Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
     configurable: true,
     get(this: HTMLElement): number {
-      return contentWidth + (this.classList.contains('p-4') ? 32 : 0)
+      const w = typeof contentWidth === 'function' ? contentWidth() : contentWidth
+      return w + (this.classList.contains('p-4') ? 32 : 0)
     },
   })
   return () => {
@@ -357,6 +391,66 @@ function stubScrollbarGutter(px: number): () => void {
     if (original === undefined) Reflect.deleteProperty(HTMLElement.prototype, 'offsetWidth')
     else Object.defineProperty(HTMLElement.prototype, 'offsetWidth', original)
   }
+}
+
+/** Every offset `virtual-core` asked the scroller to move to, in order. */
+let scrollCalls: number[] = []
+
+/**
+ * The browser's half of a virtualised scroll, which jsdom simply does not have.
+ *
+ * The same two stubs the viewer's reveal tests already needed
+ * (`features/viewer/ViewerPage.test.tsx`), for the same two reasons:
+ *
+ *  1. `getOffsetForAlignment` clamps every scroll to `scrollHeight - size`, and
+ *     jsdom reports `scrollHeight === 0` for everything — so the clamp is
+ *     negative, **every** scroll resolves to 0, and a test cannot fail. The
+ *     virtualiser sizes exactly one child to the whole content height, so that
+ *     inline height is the honest answer.
+ *  2. jsdom has no `Element.prototype.scrollTo` at all and `virtual-core`'s
+ *     `elementScroll` calls it optionally, so without it the scroll silently
+ *     does nothing and the only observable left would be "`scrollToIndex` was
+ *     called" — one step short of the claim.
+ */
+function stubScrolling(): () => void {
+  const scrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight')
+  Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+    configurable: true,
+    get(this: HTMLElement): number {
+      const sizer = this.querySelector<HTMLElement>('div[style*="height:"]')
+      const px = sizer === null ? 0 : Number.parseFloat(sizer.style.height)
+      return Number.isFinite(px) ? px : 0
+    },
+  })
+  const scrollTo = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollTo')
+  Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+    configurable: true,
+    writable: true,
+    value(this: HTMLElement, options: ScrollToOptions) {
+      const top = Math.round(options.top ?? 0)
+      scrollCalls.push(top)
+      this.scrollTop = top
+      this.dispatchEvent(new Event('scroll'))
+    },
+  })
+  return () => {
+    if (scrollHeight === undefined) Reflect.deleteProperty(HTMLElement.prototype, 'scrollHeight')
+    else Object.defineProperty(HTMLElement.prototype, 'scrollHeight', scrollHeight)
+    if (scrollTo === undefined) Reflect.deleteProperty(HTMLElement.prototype, 'scrollTo')
+    else Object.defineProperty(HTMLElement.prototype, 'scrollTo', scrollTo)
+  }
+}
+
+/** Puts the reader `top` px down the scroller, the way a wheel would. */
+function scrollTo(scroller: HTMLElement, top: number): void {
+  scroller.scrollTop = top
+  scroller.dispatchEvent(new Event('scroll'))
+}
+
+/** The `translateY` a virtualised row is positioned at, in px. */
+function rowOffset(row: HTMLElement | null | undefined): number {
+  const m = /translateY\((-?[\d.]+)px\)/.exec(row?.style.transform ?? '')
+  return m?.[1] === undefined ? Number.NaN : Number.parseFloat(m[1])
 }
 
 /** jsdom measures everything as 0×0; the virtualiser needs a real window. */
@@ -449,6 +543,7 @@ beforeEach(() => {
   seriesRequests = []
   settingsUpdates = []
   settingsReads = 0
+  scrollCalls = []
   coverRequests = []
   rootPosts = []
   seriesGate = new Promise<void>((resolve) => {
@@ -576,6 +671,643 @@ describe('grid mode (FR-LIB-001, FR-LIB-008)', () => {
       expect(rows[0]?.parentElement?.style.height).toBe('674px')
     } finally {
       restore()
+    }
+  })
+
+  it('re-lays out the rows when a resize moves the card height (open item m)', async () => {
+    // `virtual-core` memoises `getMeasurements` on
+    // `[count, paddingStart, scrollMargin, getItemKey, enabled]` + the item-size
+    // cache — **not** on `estimateSize`, and not on `gap` either. Handing it a
+    // taller row therefore changes nothing on its own; only `measure()`, which
+    // swaps the size cache for a fresh Map, does. Same disease as the thumbnail
+    // strip's (E-28), and `SeriesGrid` had no `measure()` at all.
+    //
+    // A grid box of 1100 → 1156 is the *hard* case on purpose. Both widths are
+    // six columns and both stay in the `desktop` tier, so `count` — the one
+    // memo-key entry this grid ever moves — stays at 2 and nothing invalidates
+    // the cache by accident. Only the pitch changes: a 170px column is a 315px
+    // card, a 179.33px column is a 329px one. It grows, which is the direction
+    // that overlaps rather than the one that gaps them.
+    //
+    // Measured in Chrome on the shipped build (60 synthetic series) before the
+    // fix, at the two widths this stands in for: 1280 → 1440 left the pitch at
+    // 305.5px while the cards grew to 329.5px, so every row overlapped the one
+    // above it by 24px, and the track stayed 3 039px against 3 439px. jsdom
+    // does no layout, but the pitch and the track are pure `estimateSize`
+    // arithmetic, so neither assertion below is weakened by that.
+    let contentWidth = 1_100
+    const restore = stubContentWidth(() => contentWidth)
+    try {
+      scenario.series = Array.from({ length: 12 }, (_, i) =>
+        makeSeries({ id: makeId(3_000 + i), name: `[만화] 시리즈 ${(i + 1).toString()}` }),
+      )
+      renderLibrary()
+      await waitForLibrary()
+      await screen.findByRole('button', { name: '[만화] 시리즈 1' })
+
+      const rowsNow = (): NodeListOf<HTMLElement> =>
+        screen.getByTestId('library-scroller').querySelectorAll<HTMLElement>('[data-index]')
+
+      expect(rowsNow()[1]?.style.transform).toBe('translateY(331px)')
+      expect(rowsNow()[0]?.parentElement?.style.height).toBe('646px')
+
+      contentWidth = 1_156
+      act(() => {
+        resizeViewport(1_600)
+      })
+
+      // Still six columns, still two rows and still `desktop` — the column
+      // count and the tier are *not* what moved, which is why keying the
+      // re-measure on the breakpoint or on `columns` would not have caught it.
+      expect(rowsNow()).toHaveLength(2)
+      expect(rowsNow()[0]?.style.gridTemplateColumns).toBe('repeat(6, minmax(0, 1fr))')
+      const cardH = ((1_156 - 16 * 5) / 6) * 1.5 + 60
+      expect(cardH).toBe(329)
+      expect(rowsNow()[1]?.style.transform).toBe('translateY(345px)')
+      expect(rowsNow()[0]?.parentElement?.style.height).toBe('674px')
+    } finally {
+      restore()
+    }
+  })
+
+  it('re-lays out the rows when only `--grid-gap` moves (open item m)', async () => {
+    // `gap` is the *other* `useVirtualizer` option `virtual-core` reads inside
+    // the memo body and leaves out of the memo key, so it goes stale in exactly
+    // the same way `estimateSize` does, and `SeriesGrid` depends on it for that
+    // reason.
+    //
+    // **This transition is manufactured, and the honest reading of this test is
+    // "the `metrics.gap` dependency is wired up", not "the product would break
+    // without it".** `--grid-gap` only changes at 768, and across that boundary
+    // the real layout moves the column count 2 → 4 and the card 550.5 → 318.4px
+    // (measured), so `rowHeight` moves 232px at the same instant and the
+    // `rowHeight` dependency alone would already have re-measured. To isolate
+    // the gap at all, the grid box has to be driven to widths the layout never
+    // produces: a 464px box at `tablet` and a 460px one at `mobile` both come
+    // out at two columns of exactly 224px — the same column count, so `count`
+    // (6 rows of 12 series) cannot invalidate the cache by accident, and the
+    // same 396px card, so `rowHeight` does not move. Only the pitch does:
+    // 412px → 408px.
+    let contentWidth = 464
+    const restore = stubContentWidth(() => contentWidth)
+    try {
+      stubViewport(800)
+      scenario.series = Array.from({ length: 12 }, (_, i) =>
+        makeSeries({ id: makeId(3_500 + i), name: `[만화] 시리즈 ${(i + 1).toString()}` }),
+      )
+      renderLibrary()
+      await waitForLibrary()
+      await screen.findByRole('button', { name: '[만화] 시리즈 1' })
+
+      const rowsNow = (): NodeListOf<HTMLElement> =>
+        screen.getByTestId('library-scroller').querySelectorAll<HTMLElement>('[data-index]')
+
+      // Only a window is mounted, so the row *count* is read off the track:
+      // 6 × 396 + 5 gaps.
+      expect(rowsNow()[0]?.style.gridTemplateColumns).toBe('repeat(2, minmax(0, 1fr))')
+      expect(rowsNow()[0]?.style.gap).toBe('16px')
+      expect(rowsNow()[1]?.style.transform).toBe('translateY(412px)')
+      expect(rowsNow()[0]?.parentElement?.style.height).toBe('2456px')
+
+      contentWidth = 460
+      act(() => {
+        resizeViewport(700)
+      })
+
+      expect(rowsNow()[0]?.style.gridTemplateColumns).toBe('repeat(2, minmax(0, 1fr))')
+      expect(rowsNow()[0]?.style.gap).toBe('12px')
+      expect(rowsNow()[1]?.style.transform).toBe('translateY(408px)')
+      expect(rowsNow()[0]?.parentElement?.style.height).toBe('2436px')
+    } finally {
+      restore()
+    }
+  })
+
+  it('keeps the reader on the row they were on across that re-measure', async () => {
+    // The re-measure moves every row's `start` and leaves `scrollTop` where it
+    // was, so on its own it displaces the reader by `topRowIndex × Δpitch` —
+    // **linear in scroll depth**, which is what makes it worse than a wobble.
+    // Measured in Chrome on the shipped build: 1440 → 1280 at `scrollTop` 1500
+    // moved the anchor card 160px, 1280 → 1440 on row 6 moved it 200px, and a
+    // 10 000-series library 500 rows down with a 40px Δpitch would move 20 000.
+    // The strip has paired `measure()` with a `scrollToIndex` since E-28; this
+    // pins that the grid does too.
+    //
+    // **The grid box is driven to two columns to buy scroll depth, and the
+    // depth is the point.** 60 series in two columns is 30 rows; a six-column
+    // grid of the same 60 is ten rows, and ten rows is not deep enough to tell
+    // a correct anchor from a plausible-looking wrong one — at row 4 the row
+    // picked from the stale offsets and the row picked from the fresh ones are
+    // the same row, so the test would pass on code that reads the anchor at the
+    // wrong moment. At row 20 they are 7 rows apart.
+    //
+    // 480px box → 2 columns of 232px → 408px cards → 424px pitch.
+    // 320px box → 2 columns of 152px → 288px cards → 304px pitch.
+    // Same column count, so `count` stays 30 and cannot invalidate the memo by
+    // accident. Parked on row 20 at scrollTop 8480; row 20's new start is 6080.
+    //
+    // It shrinks rather than grows because `getOffsetForAlignment` clamps to
+    // `scrollHeight − size` read off the **DOM**, and at the instant this effect
+    // runs the DOM still carries the pre-measure track height. Shrinking makes
+    // that clamp the looser of the two, so the assertion is about the anchor
+    // and not about the clamp. (Growing is bounded by the same clamp in the
+    // product; see the note in `SeriesGrid`.)
+    let contentWidth = 480
+    const restoreWidth = stubContentWidth(() => contentWidth)
+    const restoreScroll = stubScrolling()
+    try {
+      scenario.series = Array.from({ length: 60 }, (_, i) =>
+        makeSeries({ id: makeId(3_800 + i), name: `[만화] 시리즈 ${(i + 1).toString()}` }),
+      )
+      renderLibrary()
+      await waitForLibrary()
+      await screen.findByRole('button', { name: '[만화] 시리즈 1' })
+
+      const scroller = screen.getByTestId('library-scroller')
+      const rowAt = (index: number): HTMLElement | null =>
+        scroller.querySelector<HTMLElement>(`[data-index="${index.toString()}"]`)
+
+      act(() => {
+        scrollTo(scroller, 20 * 424)
+      })
+      expect(rowOffset(rowAt(20))).toBe(8_480)
+      expect(scroller.scrollTop).toBe(8_480)
+
+      contentWidth = 320
+      act(() => {
+        resizeViewport(1_600)
+      })
+
+      // The re-anchor waits a frame, because a `scrollToIndex` in this commit
+      // would read the offsets `measure()` has just invalidated. Until it
+      // lands, the window is drawn around the *old* scrollTop against the new
+      // pitch, so rows 20–21 are not even mounted yet.
+      await waitFor(() => {
+        expect(scroller.scrollTop).toBe(6_080)
+      })
+
+      // Row 20 — the row the reader was on — is the row flush with the top of
+      // the scroller. Reading the anchor after the re-measure would name row 27
+      // here, and not re-anchoring at all would leave 8480.
+      expect(rowOffset(rowAt(20))).toBe(6_080)
+      // …and the pitch really did move, so this cannot pass on a grid that
+      // never re-measured at all.
+      expect(rowOffset(rowAt(21)) - rowOffset(rowAt(20))).toBe(304)
+    } finally {
+      restoreScroll()
+      restoreWidth()
+    }
+  })
+
+  it('keeps the reader on the same series when the column count changes', async () => {
+    // **Every other guard in this file holds the column count fixed**, which was
+    // deliberate — a constant `count` is what stops the `getMeasurements` memo
+    // invalidating by accident — and it is exactly why they all passed over a
+    // re-anchor that threw the reader to the top of the library.
+    //
+    // The first version of this effect read the anchor from
+    // `getVirtualItems().find((row) => row.end > scrollTop)` before calling
+    // `measure()`, on the theory that the offsets were still the old ones there.
+    // `count` *is* in the memo key, so a render that changes the row count has
+    // already recomputed them: `end > scrollTop` then measures the old scroll
+    // position against the new layout and names a row far too early. Measured in
+    // Chrome on the shipped build, 12 series at 871 → 800: row 0's new span is
+    // [0, 574.5], it contains the old scrollTop of 447, the anchor came out as
+    // row 0 and `scrollTop` went to 0 — worse than the defect, which left it at
+    // 447.
+    //
+    // 773px box at `tablet`: 3 columns of 247px → 430.5px cards → 446.5 pitch.
+    // 702px box at `tablet`: 2 columns of 343px → 574.5px cards → 590.5 pitch.
+    //
+    // Parked on **row 2**, not row 1, and the difference matters: row 2 of a
+    // three-column grid starts at series 6, and series 6 is row *3* of a
+    // two-column one. Anchoring on the row index, or dividing by the old column
+    // count instead of the new one, both land on row 2 — so a shallower park
+    // cannot tell a correct re-anchor from either of those.
+    let contentWidth = 773
+    const restoreWidth = stubContentWidth(() => contentWidth)
+    const restoreScroll = stubScrolling()
+    try {
+      stubViewport(800)
+      scenario.series = Array.from({ length: 12 }, (_, i) =>
+        makeSeries({ id: makeId(3_700 + i), name: `[만화] 시리즈 ${(i + 1).toString()}` }),
+      )
+      renderLibrary()
+      await waitForLibrary()
+      await screen.findByRole('button', { name: '[만화] 시리즈 1' })
+
+      const scroller = screen.getByTestId('library-scroller')
+      const rowAt = (index: number): HTMLElement | null =>
+        scroller.querySelector<HTMLElement>(`[data-index="${index.toString()}"]`)
+
+      expect(rowAt(0)?.children).toHaveLength(3)
+      act(() => {
+        scrollTo(scroller, 893)
+      })
+      expect(rowOffset(rowAt(2))).toBe(893)
+      // Whatever the sort put first in the row the reader is on. Read from the
+      // DOM rather than named: `/api/series` sorts by name as a string, so the
+      // twelfth series is not the twelfth row.
+      const anchorLabel = rowAt(2)?.querySelector('[aria-label]')?.getAttribute('aria-label')
+      expect(anchorLabel).toBeTruthy()
+
+      contentWidth = 702
+      act(() => {
+        resizeViewport(800)
+      })
+
+      // The premise: the column count really did move, so the row the reader was
+      // on is not the row they end up on by index alone.
+      expect(
+        [...scroller.querySelectorAll('[data-index]')][0]?.children,
+      ).toHaveLength(2)
+
+      // 1772, not 1771.5: `stubScrolling` rounds the way the viewer's equivalent
+      // does, because that is what a `scrollTo` reports back in jsdom. The
+      // virtualiser's own offset below is the unrounded number.
+      await waitFor(() => {
+        expect(scroller.scrollTop).toBe(1_772)
+      })
+      expect(rowOffset(rowAt(3))).toBe(1_771.5)
+
+      // …and the series the reader was looking at is in that row. `toContain`
+      // rather than "is first", and that is the honest claim: this anchor is
+      // row-granular, so a series that led the old row can land mid-row when the
+      // columns change. What it may never do is leave the screen, which is what
+      // the version that asked the virtualiser did.
+      const labels = [...(rowAt(3)?.querySelectorAll('[aria-label]') ?? [])].map((el) =>
+        el.getAttribute('aria-label'),
+      )
+      expect(labels).toContain(anchorLabel)
+    } finally {
+      restoreScroll()
+      restoreWidth()
+    }
+  })
+
+  it('re-derives the anchor when the reader moved, not us, between two resizes', async () => {
+    // **`lastWrittenRef` is a question, not a flag: "is the scroller where *we*
+    // put it?"** Every other anchor test here is `scroll once → resize`, which
+    // never asks that question — the scroller is always where the reader left
+    // it. So this one resizes, lets the *reader* scroll, and resizes again.
+    //
+    // Two mutants live in the gap this closes, and both are silent bugs rather
+    // than crashes: `ours = lastWrittenRef.current !== null` (the ref's
+    // existence, not the position) and a loose tolerance. Both make the second
+    // resize drag the reader back to the series they were on before they
+    // scrolled away.
+    //
+    // 60 series in a 480px box: 2 columns of 232px → 408px cards → 424 pitch,
+    // 30 rows. Parked on row 20 → anchored to row 20 of the 304 pitch = 6080.
+    // The reader then scrolls to row 22 (6688) — 608px, which is far enough to
+    // change the answer but well inside a sloppy tolerance.
+    let contentWidth = 480
+    const restoreWidth = stubContentWidth(() => contentWidth)
+    const restoreScroll = stubScrolling()
+    try {
+      scenario.series = Array.from({ length: 60 }, (_, i) =>
+        makeSeries({ id: makeId(4_400 + i), name: `[만화] 시리즈 ${(i + 1).toString()}` }),
+      )
+      renderLibrary()
+      await waitForLibrary()
+      await screen.findByRole('button', { name: '[만화] 시리즈 1' })
+
+      const scroller = screen.getByTestId('library-scroller')
+      const rowAt = (index: number): HTMLElement | null =>
+        scroller.querySelector<HTMLElement>(`[data-index="${index.toString()}"]`)
+
+      act(() => {
+        scrollTo(scroller, 20 * 424)
+      })
+      contentWidth = 320
+      act(() => {
+        resizeViewport(1_600)
+      })
+      await waitFor(() => {
+        expect(scroller.scrollTop).toBe(6_080)
+      })
+
+      // The reader moves themselves, two rows on.
+      act(() => {
+        scrollTo(scroller, 22 * 304)
+      })
+      expect(scroller.scrollTop).toBe(6_688)
+
+      contentWidth = 480
+      act(() => {
+        resizeViewport(1_600)
+      })
+
+      // Row 22, where the reader went — not row 20, where we last put them.
+      await waitFor(() => {
+        expect(scroller.scrollTop).toBe(22 * 424)
+      })
+      expect(rowOffset(rowAt(22))).toBe(9_328)
+    } finally {
+      restoreScroll()
+      restoreWidth()
+    }
+  })
+
+  it('forgets what it wrote once there is no anchor to keep', async () => {
+    // A five-step path, and every step is ordinary on its own:
+    //
+    //  1. a resize deep in the library writes `lastWrittenRef = 6080`;
+    //  2. the reader goes back to the top;
+    //  3. a resize there finds no anchor (`scrollTop === 0`) and writes nothing,
+    //     so without clearing it, `lastWrittenRef` is still 6080 — a number from
+    //     a layout two resizes ago;
+    //  4. the reader scrolls to exactly 6080, which is now an ordinary position
+    //     they chose;
+    //  5. the next resize asks "is the scroller where we put it?", gets `true`
+    //     off that stale number, reaches for a remembered series that was
+    //     cleared in step 3, and **skips the re-anchor entirely**.
+    //
+    // The 1px window in step 4 makes this rare, not impossible, and it is one
+    // line to close.
+    let contentWidth = 480
+    const restoreWidth = stubContentWidth(() => contentWidth)
+    const restoreScroll = stubScrolling()
+    try {
+      scenario.series = Array.from({ length: 60 }, (_, i) =>
+        makeSeries({ id: makeId(4_600 + i), name: `[만화] 시리즈 ${(i + 1).toString()}` }),
+      )
+      renderLibrary()
+      await waitForLibrary()
+      await screen.findByRole('button', { name: '[만화] 시리즈 1' })
+
+      const scroller = screen.getByTestId('library-scroller')
+
+      act(() => {
+        scrollTo(scroller, 20 * 424)
+      })
+      contentWidth = 320
+      act(() => {
+        resizeViewport(1_600)
+      })
+      await waitFor(() => {
+        expect(scroller.scrollTop).toBe(6_080)
+      })
+
+      act(() => {
+        scrollTo(scroller, 0)
+      })
+      contentWidth = 480
+      act(() => {
+        resizeViewport(1_600)
+      })
+      expect(scroller.scrollTop).toBe(0)
+
+      // The reader lands back on the old written offset of their own accord.
+      act(() => {
+        scrollTo(scroller, 6_080)
+      })
+      contentWidth = 320
+      act(() => {
+        resizeViewport(1_600)
+      })
+
+      // 6080 in a 424 pitch is row 14, which is series 28, which is row 14 of a
+      // 304 pitch. Leaving `lastWrittenRef` set would skip this entirely and
+      // strand the reader at 6080.
+      await waitFor(() => {
+        expect(scroller.scrollTop).toBe(14 * 304)
+      })
+    } finally {
+      restoreScroll()
+      restoreWidth()
+    }
+  })
+
+  it('anchors from a park in the middle of a row, not only from row boundaries', async () => {
+    // Every other anchor test parks on an exact row boundary, so `floor()` is
+    // never asked an ambiguous question and the residual the browser shows —
+    // `align: 'start'` dropping however far into a row the reader was — has no
+    // unit expression at all. This adds both.
+    //
+    // 480px box, 424 pitch. Row 20 starts at 8480; park 200px into it. The
+    // anchor is still row 20 (`floor(8680 / 424) = 20`), and after the resize
+    // the reader is flush with row 20 at 6080 — 200px of their position inside
+    // the card is gone, which is the cost written up in `SeriesGrid`.
+    let contentWidth = 480
+    const restoreWidth = stubContentWidth(() => contentWidth)
+    const restoreScroll = stubScrolling()
+    try {
+      scenario.series = Array.from({ length: 60 }, (_, i) =>
+        makeSeries({ id: makeId(4_500 + i), name: `[만화] 시리즈 ${(i + 1).toString()}` }),
+      )
+      renderLibrary()
+      await waitForLibrary()
+      await screen.findByRole('button', { name: '[만화] 시리즈 1' })
+
+      const scroller = screen.getByTestId('library-scroller')
+      const rowAt = (index: number): HTMLElement | null =>
+        scroller.querySelector<HTMLElement>(`[data-index="${index.toString()}"]`)
+
+      act(() => {
+        scrollTo(scroller, 20 * 424 + 200)
+      })
+      expect(scroller.scrollTop).toBe(8_680)
+      // 200px into row 20, and row 21 has not been reached.
+      expect(rowOffset(rowAt(20))).toBe(8_480)
+
+      contentWidth = 320
+      act(() => {
+        resizeViewport(1_600)
+      })
+
+      await waitFor(() => {
+        expect(scroller.scrollTop).toBe(6_080)
+      })
+      expect(rowOffset(rowAt(20))).toBe(6_080)
+      // The 200px is the residual, and it is bounded by the card height rather
+      // than by the pitch: it is `scrollTop − anchorRow.start`, nothing more.
+      expect(8_680 - 8_480).toBe(200)
+    } finally {
+      restoreScroll()
+      restoreWidth()
+    }
+  })
+
+  it('survives the intermediate commit a tier crossing renders', async () => {
+    // **One resize is not one commit.** `useBreakpoint` reads matchMedia and
+    // `useElementWidth` reads a ResizeObserver, and they answer on different
+    // ticks — measured at 31–49ms apart in Chrome — so a resize across a tier
+    // renders an intermediate layout built from the *new* metrics and the *old*
+    // measured width. This test is that sequence, in that order, which is the
+    // only reason it can reproduce it: `stubViewport` and `stubContentWidth` are
+    // separate knobs here, exactly as the two hooks are in the product.
+    //
+    // 773px box at `tablet`  → 3 columns, 430.5px cards, 446.5 pitch.
+    // 773px box at `mobile`  → 4 columns (`--grid-min` drops to 150), 184.25px
+    //                          columns, 336.375px cards — the intermediate.
+    // 312px box at `mobile`  → 2 columns, 285px cards, 297 pitch — settled.
+    //
+    // The reader is on row 1, i.e. series 3. In the intermediate, series 3 is
+    // `floor(3 / 4) = 0` — the top of the library. Anchoring to that and then
+    // re-deriving from `scrollTop` on the settled commit loses the reader
+    // entirely, which is what the shipped build did: 447 → 0.
+    let contentWidth = 773
+    const restoreWidth = stubContentWidth(() => contentWidth)
+    const restoreScroll = stubScrolling()
+    try {
+      stubViewport(800)
+      scenario.series = Array.from({ length: 12 }, (_, i) =>
+        makeSeries({ id: makeId(3_650 + i), name: `[만화] 시리즈 ${(i + 1).toString()}` }),
+      )
+      renderLibrary()
+      await waitForLibrary()
+      await screen.findByRole('button', { name: '[만화] 시리즈 1' })
+
+      const scroller = screen.getByTestId('library-scroller')
+      const rowAt = (index: number): HTMLElement | null =>
+        scroller.querySelector<HTMLElement>(`[data-index="${index.toString()}"]`)
+
+      act(() => {
+        scrollTo(scroller, 447)
+      })
+      expect(rowOffset(rowAt(1))).toBe(446.5)
+
+      // The tier moves first, and the measured width has not caught up.
+      act(() => {
+        resizeViewport(354)
+      })
+      expect(
+        [...scroller.querySelectorAll('[data-index]')][0]?.children,
+      ).toHaveLength(4)
+      await waitFor(() => {
+        expect(scroller.scrollTop).toBe(0)
+      })
+
+      // …and now the ResizeObserver lands.
+      contentWidth = 312
+      act(() => {
+        resizeViewport(354)
+      })
+
+      // Series 3 is row 1 of a two-column grid. Re-deriving from `scrollTop`
+      // here would see 0 and keep the reader at the top forever.
+      await waitFor(() => {
+        expect(scroller.scrollTop).toBe(297)
+      })
+      expect(rowOffset(rowAt(1))).toBe(297)
+    } finally {
+      restoreScroll()
+      restoreWidth()
+    }
+  })
+
+  it('re-anchors even when the re-measure leaves the total size unchanged', async () => {
+    // The second layout effect is gated on `getTotalSize()`, which fires it only
+    // when the total *changed*. A re-measure can move the pitch and leave the
+    // total exactly where it was, and then the pending anchor would sit there
+    // undischarged until some later, unrelated size change — a pagination
+    // append — fired it against a layout two generations old. `anchorGeneration`
+    // is what closes that, and this is the transition that reaches it.
+    //
+    // 12 series, 773px box at `tablet`: 3 columns of 247px → 430.5px cards →
+    //   4 rows → 4 × (430.5 + 16) − 16 = 1770.
+    // 12 series, 312px box at `mobile`: 2 columns of 150px → 285px cards →
+    //   6 rows → 6 × (285 + 12) − 12 = 1770.
+    // The wider `--grid-gap` and coarser `--grid-min` above 768 trade against
+    // the extra row exactly. Sweeping all four tiers at quarter-pixel resolution
+    // turns up thousands of these pairs at every library size, so this is a
+    // reachable state and not a contrived one — it is only *hard to stumble on*,
+    // which is what makes it worth pinning.
+    let contentWidth = 773
+    const restoreWidth = stubContentWidth(() => contentWidth)
+    const restoreScroll = stubScrolling()
+    try {
+      stubViewport(800)
+      scenario.series = Array.from({ length: 12 }, (_, i) =>
+        makeSeries({ id: makeId(3_600 + i), name: `[만화] 시리즈 ${(i + 1).toString()}` }),
+      )
+      renderLibrary()
+      await waitForLibrary()
+      await screen.findByRole('button', { name: '[만화] 시리즈 1' })
+
+      const scroller = screen.getByTestId('library-scroller')
+      const rowAt = (index: number): HTMLElement | null =>
+        scroller.querySelector<HTMLElement>(`[data-index="${index.toString()}"]`)
+      const track = (): HTMLElement | null | undefined => rowAt(1)?.parentElement
+
+      act(() => {
+        scrollTo(scroller, 446.5)
+      })
+      expect(rowOffset(rowAt(1))).toBe(446.5)
+      expect(track()?.style.height).toBe('1770px')
+
+      contentWidth = 312
+      act(() => {
+        resizeViewport(700)
+      })
+
+      // The premise of the test, asserted rather than assumed: the pitch moved
+      // and the total did not, so `getTotalSize()` on its own would never fire
+      // the re-anchor.
+      expect(track()?.style.height).toBe('1770px')
+      expect(rowOffset(rowAt(2)) - rowOffset(rowAt(1))).toBe(297)
+
+      await waitFor(() => {
+        expect(scroller.scrollTop).toBe(297)
+      })
+      expect(rowOffset(rowAt(1))).toBe(297)
+    } finally {
+      restoreScroll()
+      restoreWidth()
+    }
+  })
+
+  it('re-anchors nothing when the reader is already at the top', async () => {
+    // Resizing at the top of the library is the common case, and there is
+    // nothing to preserve there — row 0 is flush whatever the pitch is. So the
+    // anchor must not fire at all: a `scrollTo` from the top is a jump from the
+    // top, which is the one thing worse than a jump.
+    let contentWidth = 1_156
+    const restoreWidth = stubContentWidth(() => contentWidth)
+    const restoreScroll = stubScrolling()
+    try {
+      scenario.series = Array.from({ length: 60 }, (_, i) =>
+        makeSeries({ id: makeId(3_900 + i), name: `[만화] 시리즈 ${(i + 1).toString()}` }),
+      )
+      renderLibrary()
+      await waitForLibrary()
+      await screen.findByRole('button', { name: '[만화] 시리즈 1' })
+
+      const scroller = screen.getByTestId('library-scroller')
+      expect(scroller.scrollTop).toBe(0)
+      scrollCalls = []
+
+      contentWidth = 1_100
+      act(() => {
+        resizeViewport(1_600)
+      })
+
+      await act(async () => {
+        await new Promise((resolve) => requestAnimationFrame(() => {
+          resolve(undefined)
+        }))
+      })
+      expect(scrollCalls).toEqual([])
+      expect(scroller.scrollTop).toBe(0)
+      // The re-measure still happened; only the re-anchor was skipped.
+      expect(
+        rowOffset(scroller.querySelector<HTMLElement>('[data-index="1"]')),
+      ).toBe(331)
+
+      // …and row 0 starts at 0. That is not a restatement of the line above: it
+      // pins `paddingStart === 0` and `scrollMargin === 0`, the two
+      // `useVirtualizer` options the components' `start_i = i × pitch`
+      // arithmetic silently assumes. Adding either — a sticky header inside the
+      // scroller is the obvious future reason — shifts every row without
+      // changing the pitch, and every other assertion in this file would still
+      // pass while the re-anchor landed one padding out.
+      expect(
+        rowOffset(scroller.querySelector<HTMLElement>('[data-index="0"]')),
+      ).toBe(0)
+    } finally {
+      restoreScroll()
+      restoreWidth()
     }
   })
 
@@ -847,6 +1579,117 @@ describe('list mode (FR-LIB-003)', () => {
     const row = await screen.findByRole('button', { name: MONSTER.name })
     for (const text of ['18권', '4.0 GB', '2017-02-11', '34%']) {
       expect(within(row).getByText(text)).toHaveClass('tabular-nums')
+    }
+  })
+
+  it('re-lays out the rows when the row height crosses 768 (open item m)', async () => {
+    // The same `virtual-core` memo as the grid's — `estimateSize` is not in the
+    // key, so only `measure()` makes a new row height take effect. The list
+    // *looks* immune because `rowHeight` is one of two constants rather than a
+    // function of the measured width, but 768 moves it: 45px above, 60px below
+    // (`LIST_ROW_HEIGHT` / `LIST_ROW_HEIGHT_STACKED`, ui-spec §7).
+    //
+    // Measured in Chrome on the shipped build (60 synthetic series) before the
+    // fix: 1440 → 700 stacked the rows to their two-line shape while the pitch
+    // stayed at 45px, so consecutive rows overlapped by 8.7px, and the track
+    // stayed 2 700px where a reload at 700 gave 3 600px.
+    scenario.series = Array.from({ length: 12 }, (_, i) =>
+      makeSeries({ id: makeId(4_000 + i), name: `[만화] 시리즈 ${(i + 1).toString()}` }),
+    )
+    renderLibrary()
+    await waitForLibrary()
+    await screen.findByRole('button', { name: '[만화] 시리즈 1' })
+
+    const rowsNow = (): NodeListOf<HTMLElement> =>
+      screen.getByTestId('library-scroller').querySelectorAll<HTMLElement>('[data-index]')
+
+    expect(rowsNow()[1]?.style.transform).toBe('translateY(45px)')
+    expect(rowsNow()[0]?.parentElement?.style.height).toBe('540px')
+
+    act(() => {
+      resizeViewport(700)
+    })
+
+    // The row count cannot have invalidated the memo: it is one row per series
+    // here, so it is 12 at both widths.
+    expect(rowsNow()).toHaveLength(12)
+    expect(rowsNow()[1]?.style.transform).toBe('translateY(60px)')
+    expect(rowsNow()[0]?.parentElement?.style.height).toBe('720px')
+  })
+
+  it('keeps the reader on the row they were on across that re-measure', async () => {
+    // The grid's twin, and for the same reason written out there: `measure()`
+    // moves every offset and leaves `scrollTop` alone, so without the paired
+    // `scrollToIndex` the reader is displaced by `topRowIndex × Δpitch`.
+    // 60 rows of 45px, parked on row 10 (scrollTop 450); below 768 the rows are
+    // 60px, so row 10 moves to 600.
+    const restoreScroll = stubScrolling()
+    try {
+      scenario.series = Array.from({ length: 60 }, (_, i) =>
+        makeSeries({ id: makeId(4_100 + i), name: `[만화] 시리즈 ${(i + 1).toString()}` }),
+      )
+      renderLibrary()
+      await waitForLibrary()
+      await screen.findByRole('button', { name: '[만화] 시리즈 1' })
+
+      const scroller = screen.getByTestId('library-scroller')
+      const rowAt = (index: number): HTMLElement | null =>
+        scroller.querySelector<HTMLElement>(`[data-index="${index.toString()}"]`)
+
+      act(() => {
+        scrollTo(scroller, 10 * 45)
+      })
+      expect(rowOffset(rowAt(10))).toBe(450)
+      expect(scroller.scrollTop).toBe(450)
+
+      act(() => {
+        resizeViewport(700)
+      })
+
+      await waitFor(() => {
+        expect(scroller.scrollTop).toBe(600)
+      })
+      expect(rowOffset(rowAt(10))).toBe(600)
+      expect(rowOffset(rowAt(11)) - rowOffset(rowAt(10))).toBe(60)
+    } finally {
+      restoreScroll()
+    }
+  })
+
+  it('re-anchors nothing when the reader is already at the top', async () => {
+    const restoreScroll = stubScrolling()
+    try {
+      scenario.series = Array.from({ length: 60 }, (_, i) =>
+        makeSeries({ id: makeId(4_200 + i), name: `[만화] 시리즈 ${(i + 1).toString()}` }),
+      )
+      renderLibrary()
+      await waitForLibrary()
+      await screen.findByRole('button', { name: '[만화] 시리즈 1' })
+
+      const scroller = screen.getByTestId('library-scroller')
+      expect(scroller.scrollTop).toBe(0)
+      scrollCalls = []
+
+      act(() => {
+        resizeViewport(700)
+      })
+
+      await act(async () => {
+        await new Promise((resolve) => requestAnimationFrame(() => {
+          resolve(undefined)
+        }))
+      })
+      expect(scrollCalls).toEqual([])
+      expect(scroller.scrollTop).toBe(0)
+      expect(
+        rowOffset(scroller.querySelector<HTMLElement>('[data-index="1"]')),
+      ).toBe(60)
+      // `paddingStart`/`scrollMargin` are 0 here too — see the grid's twin.
+      expect(
+        rowOffset(scroller.querySelector<HTMLElement>('[data-index="0"]')),
+      ).toBe(0)
+    } finally {
+      restoreScroll()
     }
   })
 })

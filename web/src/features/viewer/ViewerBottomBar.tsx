@@ -103,7 +103,12 @@ export function ViewerBottomBar({
         <Button
           variant="secondary"
           aria-pressed={stripOpen}
-          className={cn('gap-[7px] border-neutral-700 text-sm', stripOpen && 'text-accent-400')}
+          // `--accent-text` for the pressed state, not `--color-accent-400`: the
+          // ramp does not flip and this bar is `--color-bg` inside
+          // `data-theme="dark"`, where accent-400 is 3.76 — 3.64 with the paper
+          // grain on the bar. `--accent-text` *is* the accent as ink and does
+          // flip: 6.22 dry, 5.97 washed.
+          className={cn('gap-[7px] border-neutral-700 text-sm', stripOpen && 'text-accent-text')}
           onClick={onToggleStrip}
         >
           <PanelTop size={13} aria-hidden={true} />

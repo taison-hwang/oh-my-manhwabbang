@@ -258,6 +258,177 @@
       transition-duration: 0.01ms !important;
     }
   }
+
+  /* The comic-paper grain — one fixed layer over the whole viewport.
+     `--paper-grain` in tokens.css carries the whole derivation.
+
+     `body::after` and not a component: no route can forget to mount it, no
+     screen can render without it, and the app never has to think about it. It
+     is also why the tone switch below is `:has()` — the viewer re-scopes
+     `data-theme` on a div *inside* #root, and this layer is a sibling of #root,
+     so nothing it declares is inherited here.
+
+     A masked flat fill is what keeps the tone in the token layer: the SVG is
+     alpha only, `--paper-tone` is the paint, and together they are what a
+     pre-tinted tile would be — with no colour buried in a data URI where no
+     theme could reach it. `pointer-events: none` because this sits above every
+     control in the product.
+
+     THE ONE DEPARTURE FROM THE PROTOTYPE: it is a plain alpha wash, not
+     `mix-blend-mode: multiply`. Multiply is the right model for ink on paper and
+     it is what the prototype writes. It is also, measured here, the entire cost
+     of the effect. Page turns in the viewer with the layer forced over the
+     stage — the configuration this table is the reason we no longer ship —
+     unthrottled, 2 400 ms of turns per run, four interleaved rounds:
+
+       layer off                            60.0 fps   median 16.7 ms   p95 16.8 ms    0.0 % missed
+       layer on, plain alpha                59.9 fps   median 16.7 ms   p95 16.7 ms    0.2 % missed
+       layer on, mix-blend-mode: multiply   28.4 fps   median 16.7 ms   p95 70.9 ms   38.4 % missed
+       layer on, multiply, no mask          28.3 fps   median 16.7 ms   p95 72.3 ms   37.2 % missed
+
+     IF YOU RE-MEASURE THIS, ASSERT THAT THE PAGES TURNED. An independent
+     re-run found "no difference at all" because the book still carried
+     `reading_direction: rtl` from an earlier step, so ArrowRight was trying to
+     go *back* from page 1 and nothing moved. Confirming the layer is painted is
+     not enough — that run would have concluded multiply is free. What caught it
+     was reading the page counter before and after the burst.
+
+     Read the median before the rate: multiply does not make a frame slower, it
+     makes **38 % of frames not arrive**, because it forces the compositor to
+     read the backdrop back on every frame the backdrop changes. Dropping the
+     mask changes nothing, so the mask is free and the blend mode is the whole
+     bill. (An earlier version of this table quoted a *mean* frame time of
+     36.3 ms, which is the same finding stated by a biased estimator — the mean
+     of the frames that survived. An independent re-measurement got 21.5 ms mean
+     and 29 % missed; the magnitude moves with the machine, the shape does not.)
+
+     And it buys nothing at this amplitude. The two composites differ by exactly
+     `opacity × maskAlpha × tone × (1 − backdrop/255)`, so with a near-black tone
+     and a mask that peaks at 29/255 the difference cannot exceed 2/255 anywhere
+     in the range, and goes to zero on white — where one unit of 8-bit rounding
+     survives. Measured on real screens: max channel delta 2 on the library, 1 in
+     the viewer. If the tone is ever moved off near-black that arithmetic changes
+     and the blend mode is worth revisiting. */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-texture);
+    pointer-events: none;
+    background-color: var(--paper-tone);
+    -webkit-mask-image: var(--paper-grain);
+    mask-image: var(--paper-grain);
+    opacity: var(--paper-intensity);
+  }
+
+  /* The reading stage is the one surface the texture does not touch.
+     Measured on the shipped grain: it moved **100 %** of the comic artwork's
+     pixels, −3.0/255 on average and −5.0 across the light midtones an inked
+     page is mostly made of. The user's ruling is that the drawing is not paper
+     to print on. Everything else keeps it, the viewer's own chrome included.
+
+     `data-role="viewer"` is the viewer's root (ViewerPage) and `:has()` on the
+     body is the only way an element outside the viewer can know it is open.
+     Reading `[data-theme]` would not do: the viewer is dark in both app themes,
+     so the attribute cannot tell "the reading screen" from "a dark library".
+
+     One `body::after` cannot have a hole cut in it, and the stage's rectangle is
+     not knowable to CSS — it is `flex: 1` between two bars that wrap to three
+     rows and become overlays when they sleep. So the global layer switches
+     **off** here and the chrome re-declares it below, over its own boxes. That
+     is also the only version that survives the bars moving. */
+  body:has([data-role='viewer'])::after {
+    display: none;
+  }
+
+  /* The viewer's chrome, re-grained one box at a time.
+
+     The rule the list below implements is **an opaque UI surface gets paper; the
+     drawing does not**. Six selectors cover it, and the count is not obvious
+     because the surfaces are not all bars:
+
+       viewer-top-bar      the top bar
+       viewer-bottom-bar   the bottom bar *and* the thumbnail strip, which is a
+                           child of it — a rule on the strip itself would scroll
+                           with its own content and only paper the first screenful
+       viewer-chrome-hint  the "press H" pill, a sibling of the bars
+       stale-progress      the FR-VWR-009 notice, outside the bars in both states
+       page-error          the failure panel, which *replaces* the artwork rather
+                           than being artwork
+       next-volume-card    the end-of-volume card
+
+     `next-volume-scrim` is deliberately absent: it is a scrim over the drawing,
+     not a surface of its own. Every `data-role` here is E-30's and is read-only
+     from this file.
+
+     Both bars are positioned in both of their states — `relative` awake,
+     `absolute` asleep (E-27) — so `inset: 0` lands on the bar either way, and
+     `z-chrome` makes each a stacking context that keeps `--z-texture` local.
+     Their `opacity` transition carries the grain with them, which is why a
+     sleeping bar's paper sleeps too and artwork scrolled into the bar's place is
+     clean. The global layer could never have done that.
+
+     `stale-progress` is matched at its **span**, not its wrapper. The wrapper is
+     a full-width transparent flex row and only the span inside it has a ground;
+     papering the wrapper would lay the wash straight over the drawing behind it,
+     which is the one thing this whole arrangement exists to prevent. */
+  [data-role='next-volume-card'],
+  [data-role='stale-progress'] > span,
+  [data-role='viewer-chrome-hint'],
+  [data-role='page-error'] {
+    /* Containment, not layout. These four are the surfaces that are not already
+       a stacking context, so without this their `::after` escapes to the viewer
+       root and paints at `--z-texture` over everything — including the stage.
+       The two that carry Tailwind's `absolute` keep it: utilities are emitted
+       after this layer at the same specificity, so `position: relative` here
+       only ever reaches the elements that had no position at all. */
+    position: relative;
+    z-index: var(--z-content);
+  }
+
+  [data-role='viewer-top-bar']::after,
+  [data-role='viewer-bottom-bar']::after,
+  [data-role='viewer-chrome-hint']::after,
+  [data-role='stale-progress'] > span::after,
+  [data-role='page-error']::after,
+  [data-role='next-volume-card']::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: var(--z-texture);
+    pointer-events: none;
+    background-color: var(--paper-tone-viewer);
+    -webkit-mask-image: var(--paper-grain);
+    mask-image: var(--paper-grain);
+    opacity: var(--paper-intensity);
+  }
+
+  /* The grain is not free of contrast, and the first version of this comment
+     said it was. It costs up to 0.284 of ratio on the pair that falls furthest —
+     but the pair that falls furthest is not the pair that matters. Three pairs
+     in this palette had less than 0.11 of margin over AA and the texture took
+     all three under it: `--on-hot` on the hot marker 4.55 → 4.34, light
+     `--ink-faint` on the ground 4.58 → 4.47, dark `--ink-meta` on the surface
+     4.61 → 4.45. They are re-derived against the *washed* ground in tokens.css
+     and the floor in tokens.test.ts now models the wash, so this rule is a
+     preference and not a repair.
+
+     Which is the point of it: everything above still clears AA with the paper
+     on, and a reader who has asked the OS for more contrast has said they want
+     the margin anyway. A decorative texture is the first thing that should go
+     when they do — all four layers of it, or the ones left behind would be the
+     only paper in the product. */
+  @media (prefers-contrast: more) {
+    body::after,
+    [data-role='viewer-top-bar']::after,
+    [data-role='viewer-bottom-bar']::after,
+    [data-role='viewer-chrome-hint']::after,
+    [data-role='stale-progress'] > span::after,
+    [data-role='page-error']::after,
+    [data-role='next-volume-card']::after {
+      display: none;
+    }
+  }
 }
 
 @layer components {
@@ -365,6 +536,32 @@
   .tag-outline {
     border-color: var(--accent-text);
     color: var(--accent-text);
+  }
+
+  /* The three filled tags above are painted from raw ramp steps, and the ramps
+     are a theme-invariant absolute lightness scale (ui-spec §1.4) — so in a dark
+     scope they draw the *same* near-white chip they draw on cream, a bright slab
+     on a dark ground. The row-chip hover state further down is the same defect,
+     found earlier; nothing caught these because the contrast scanner in
+     tokens.test.ts reads Tailwind class lists and never looks at a CSS class.
+
+     The pair is not re-chosen here, its ends are swapped: the 800 step becomes
+     the fill and the 100 step becomes the ink. The chip therefore keeps exactly
+     the contrast it has on light (accent 11.36, neutral 10.68 — the same two
+     colours, reversed), and separates from the dark surface at 1.40 / 1.23,
+     which is the same order of separation the light chip has from the cream
+     surface (1.08 / 1.04). A tag is a label, not a boundary. */
+  [data-theme='dark'] .tag-accent {
+    background: var(--color-accent-800);
+    color: var(--color-accent-100);
+  }
+  [data-theme='dark'] .tag-accent-2 {
+    background: var(--color-accent-2-800);
+    color: var(--color-accent-2-100);
+  }
+  [data-theme='dark'] .tag-neutral {
+    background: var(--color-neutral-800);
+    color: var(--color-neutral-100);
   }
 
   /* ----------------------------------------------------------------- fields */
@@ -628,18 +825,20 @@
     min-height: 0;
   }
 
-  /* E-32: the 2px right rule becomes an elevation. The prototype spells it
+  /* E-32: the 2px right rule becomes an elevation — the prototype's
      `4px 0 18px rgba(150,128,96,.16)`, which is `--shadow-md`'s ochre lobe with
-     the vertical offset taken out; there is no token for that exact triple and
-     tokens.css is not this change's to extend, so the shadow token nearest it is
-     used instead. `position:relative` + `--z-sticky` is what lets the shadow
-     fall *over* the content column — an unpositioned sibling's box-shadow is
-     painted before the next sibling's background. */
+     the vertical offset taken out and the alpha lowered. `--shadow-sidebar` is
+     that triple exactly; `--shadow-md` stood in for it while the token did not
+     exist, and its 6px downward offset drew a shadow under the panel's top edge,
+     where a full-height panel has nothing to cast one.
+     `position:relative` + `--z-sticky` is what lets the shadow fall *over* the
+     content column — an unpositioned sibling's box-shadow is painted before the
+     next sibling's background. */
   .sidebar {
     width: var(--sidebar-w);
     flex: 0 0 var(--sidebar-w);
     background: var(--color-surface);
-    box-shadow: var(--shadow-md);
+    box-shadow: var(--shadow-sidebar);
     position: relative;
     z-index: var(--z-sticky);
     display: flex;
@@ -772,16 +971,18 @@
 
   /* E-32: the cover hover overlay stops being a flat 72% wash and becomes a
      vertical gradient, so the title under it stays readable while the two
-     buttons at the bottom get a solid ground. The prototype's stops are
-     .15 → .55 @62% → .92; these are the nearest scrims tokens.css already
-     defines (7% → 50% @62% → 72%), because a gradient is not a colour and
-     adding three more scrim tokens is not this change's call. */
+     buttons at the bottom get a solid ground. The three stops are the
+     prototype's own — .92 at the bottom, .55 at 62%, .15 at the top — and each
+     is a token of its own now. They used to borrow `--scrim-cover` /
+     `--scrim-modal` / `--hover-tint`, which are .72 / .50 / .07: the bottom
+     buttons sat on two thirds of the ground the design gives them and the top of
+     the card had almost no wash at all. */
   .cover-scrim {
     background-image: linear-gradient(
       to top,
-      var(--scrim-cover),
-      var(--scrim-modal) 62%,
-      var(--hover-tint)
+      var(--scrim-cover-base),
+      var(--scrim-cover-mid) 62%,
+      var(--scrim-cover-top)
     );
   }
 

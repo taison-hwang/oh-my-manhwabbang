@@ -15,13 +15,58 @@ listed below was driven directly through the prototype's own state controller an
 
 ## 0. Five things an implementer must not get wrong
 
-1. **Zero corner radius. Everywhere.** `--radius-sm/md/lg` are all `0px` *on purpose*. The only two curved
+1. ~~**Zero corner radius. Everywhere.** `--radius-sm/md/lg` are all `0px` *on purpose*. The only two curved
    things in the entire product are the radio `.dot` and the viewer's loading spinner (both true circles).
-   No rounded cards, no rounded buttons, no rounded badges, no rounded inputs.
-2. **Structure is drawn with rules, not with whitespace or shadows.** Major section boundaries are
-   **2px** `--color-divider`; row boundaries are **1px**. Never soften them to hairlines and never replace
-   a rule with padding. Only three things carry a shadow: `.dialog`, the viewer's next-volume card, and the
-   `.elev-*` utilities.
+   No rounded cards, no rounded buttons, no rounded badges, no rounded inputs.~~
+
+   > **Superseded — E-32 §2 retired D-40.** The radii are now `sm 3 / md 4 / lg 6 / pill 7 / full 999`
+   > (`tokens.css`). What survived is the *enforcement*, not the zero: the ban on arbitrary radius still
+   > stands and the whitelist is bound to the values the `--radius-*` tokens produce, plus `50%` /
+   > `9999px`. Struck rather than deleted, because this sentence and the shadow rule in item 2 outlived
+   > E-32 together and that is the lesson (E-36 §2).
+2. **Structure is drawn with rules *and* with elevation — never with whitespace alone.** Major section
+   boundaries are **2px** (`--rule-strong`); hairlines are **1px** (`--rule`). Never soften a structural
+   rule to a hairline and never replace a rule with padding. *(Row separation is the one exception E-32
+   made: a list row is no longer a hairline but a rounded `.row-chip` that appears under the pointer —
+   `web/src/styles/base.css`, the `.row-chip` block.)*
+
+   **Shadows carry the other half of the structure, and they are a language, not decoration.** Every box
+   in the product answers exactly one of five questions, and its `box-shadow` follows from the answer:
+
+   | What the box is | Shadow | Examples |
+   |---|---|---|
+   | **Flat on the ground** — type, rules, icons; anything that is neither a surface nor a control | *none* | headings, `.hr`, `.card-meta`, `.btn-ghost` |
+   | **A control the reader presses** — *a control is a raised surface, not an outlined box* | `--shadow-sm` | `.btn-primary`, `.btn-secondary`, `.tag-neutral`, `.tag-outline`, the checked `.seg-opt`, the active sidebar row, the slider thumb, `.elev-sm` |
+   | **A recessed surface** — something sits *inside* it: a well, a trough, a field you type into | `--shadow-inset` | `.input`, the `.seg` track (not its options), progress troughs, cover wells, skeletons |
+   | **A card lifted off the page** | `--shadow-md` | `.card`, `.elev-md`; the sidebar takes `--shadow-sidebar`, the horizontal-only variant of the same lobe |
+   | **A dialog over everything** | `--shadow-lg` | `.dialog`, the viewer's next-volume card, `.elev-lg` |
+
+   The rule is written this way so it can be **checked**, in either direction:
+
+   - **No control may be defined by a `1px solid` boundary alone.** A rule that gives something the reader
+     clicks, types into, or reads as a chip a `border: 1px solid var(--control-border)` and nothing else
+     is wrong: on this skin the boundary *is* the shadow. (A border still appears where it is a *marker* —
+     the `--color-hot` inset ring, the focus outline — and on the `.radio .dot`.)
+   - **No box may carry `--shadow-sm` unless it can be pressed**, and none may carry `--shadow-inset`
+     unless something is inside it. A raised badge that is not a control reads as a dead button.
+   - `--shadow-inset` must be **used**. It is defined in `tokens.css` in both themes; if a grep of the
+     stylesheet layer finds zero `var(--shadow-inset)`, the skin has not been applied.
+
+   > **This replaces the sentence that used to stand here:** *"Only three things carry a shadow:
+   > `.dialog`, the viewer's next-volume card, and the `.elev-*` utilities."* That sentence was true of the
+   > **Modernist** skin, and it **survived E-32 by accident.** E-32 adopted the soft-UI skin *wholesale*
+   > (전면 채택), and "a control is a raised surface, not an outlined box" is that skin's defining move —
+   > but nobody amended this line, so it went on contradicting the ruling that had superseded it, in the
+   > one document an implementer reads first. **The old sentence is wrong, not an alternative reading.**
+   > Do not restore it and do not cite it. `web/src/components/ds/Card.tsx:6-8` quotes it verbatim as its
+   > reason for refusing a shadow; that comment is a pre-E-32 justification and retires with the sentence.
+   >
+   > **This item, and the eight contracts in §2.3 amended with it, describe the target — the shipped code
+   > has not caught up.** As of session 10 `--shadow-inset` is used **zero** times in
+   > `web/src/styles/base.css`, and `.btn-secondary`, `.tag-outline` and `.seg` are still the bordered
+   > Modernist forms. Ruling **E-36** (`docs/decisions.md`) records the gap, what "applied" means, and the
+   > order the next session must work in. Until E-36 is executed, read §0.2 and §2.3 as the specification
+   > and the stylesheet as behind it — **not** the other way round.
 3. **Button labels are flush left, never centered** — including inside wide buttons (`.btn-block`
    sets `justify-content: flex-start`). Headings and body copy are flush left too. See the grid card hover
    overlay ([`library-grid-card-hover-1440.png`](./ui-shots/library-grid-card-hover-1440.png)): both stacked
@@ -389,29 +434,53 @@ Every interactive element gets a `:hover` tint and a pressed state one step past
 Verified live: [`focus-visible-ring-1440.png`](./ui-shots/focus-visible-ring-1440.png) — the 2px accent ring
 with 2px offset on the sidebar `?` button.
 
-### 2.3 Component class contracts (verbatim from the DS)
+### 2.3 Component class contracts
 
 Rebuild these as React components, but keep the *exact* geometry.
+
+> **Amended by E-36 — eight rows below are no longer the Modernist forms, and this section's heading is no
+> longer "verbatim from the DS".** E-32 replaced the skin wholesale; the rows for `.btn-secondary`,
+> `.tag`/`.tag-neutral`/`.tag-outline`, `.input`, `.seg`, `.seg-opt` and `.card` were never amended with it, so an
+> implementer who read E-32, fixed the tokens and the radii, and then came here to build the components
+> found the **superseded** contract still stated as current — and built it. That is why ~30 component rules
+> of the soft-UI skin are unapplied. Every amended row below is now quoted from the prototype's
+> `soft-ui.css`, marked ⟳, and every untouched row is still the DS's.
+>
+> **These rows describe the target; the shipped `base.css` has not caught up** (E-36 §3 says what
+> "applied" means and §5 gives the order). Two standing constraints override anything quoted here:
+>
+> - **No raw ramp step and no literal hex may be shipped.** E-32 §3 ruled that the prototype has no
+>   semantic layer — it inlines ramp steps, and the ramps are a theme-invariant absolute lightness scale
+>   (§1.4), so an inlined step draws the *same* colour in a dark scope and the contrast collapses. Where a
+>   row below quotes `var(--color-neutral-N00)` or a hex, **a semantic token is to be derived** (light and
+>   dark, and after the paper grain — E-35 §4). The rows say so at each site.
+> - **No arbitrary radius.** E-32 §2 kept D-40's enforcement and bound the whitelist to what the
+>   `--radius-*` tokens produce, plus `50%` / `9999px`. The prototype's literal `5px` (`.tag`), `6px`
+>   (`.seg-opt`) and `8px` (`.seg`, `.dialog`) are **not** token values — `sm 3 / md 4 / lg 6 / pill 7`.
+>   `6px` is `--radius-lg`; `5px` and `8px` must be resolved to a token, not shipped as written.
+>
+> Nothing E-32 §4 or E-35 §7 refused is reversed here. In particular `.btn { justify-content: center }`
+> stays refused — `.btn-block`'s flush-left rule (§0.3) is untouched by any row below.
 
 | Class | Contract |
 |---|---|
 | `.btn` | `inline-flex; align-items:center; justify-content:center; gap:6px; font-family:var(--font-heading); font-weight:800; font-size:14px; line-height:1.2; color:var(--color-text); background:transparent; border:1px solid transparent; padding: var(--space-2) calc(var(--space-3) * 1.2)` → **8px 14.4px**; `border-radius:0`. `.btn svg{display:block}`. `:disabled{opacity:.45;cursor:not-allowed}` |
 | `.btn-primary` | `background:var(--color-accent); color:var(--color-bg)`; hover `--accent-hover`; active `--accent-press` |
-| `.btn-secondary` | `border-color:var(--color-divider)`; hover `--hover-tint`; active `--press-tint` |
+| `.btn-secondary` ⟳ | **A raised cream pill, not a bordered ghost.** `soft-ui.css`: `background: var(--color-surface); color: var(--color-accent-800); box-shadow: var(--shadow-sm)`; `:hover{ background:#F8F4EC; color:var(--color-accent) }`; `:active{ box-shadow: var(--shadow-inset); transform: translateY(1px) }`. The `border-color` line goes, and with it `.btn`'s `border:1px solid transparent` for this variant. **Three values need work before this ships:** `--color-surface` **flips with the theme** and the viewer is `data-theme="dark"` under both app themes (§1.4, NFR-CMP-003), so the fill must come from an **absolute** token — see E-36 §4, which rules the viewer's controls cream on a dark ground and cites the session-9 measurement of the prototype's `뒤로` button (`bg #F3EEE3`, `color` accent-800 `#0D3436`; that pair is 11.62:1, and the cream separates from the `#263B38` bar at 10.28:1). `--color-accent-800` is a raw ramp step → derive `--on-` ink for that fill. **`#F8F4EC` (the hover) has no token at all** — nothing in `tokens.css` resolves to it; derive one (accent on it is 7.32:1, accent-800 12.26:1) |
 | `.btn-ghost` | `color:var(--color-accent); padding-inline:var(--space-1)`; hover accent@10%; active accent@18% |
 | `.btn-icon` | `width:36px; height:36px; padding:0` |
 | `.btn-block` | `width:100%; margin-top:var(--space-2); justify-content:flex-start; text-align:left` ← **the flush-left rule** |
-| `.tag` | `inline-flex; align-items:center; font-size:11px; letter-spacing:.02em; padding:3px 10px; border-radius:0` |
-| `.tag-accent` | `bg accent-100 / fg accent-800` |
-| `.tag-accent-2` | `bg accent-2-100 / fg accent-2-800` |
-| `.tag-neutral` | `bg neutral-100 / fg neutral-800` |
-| `.tag-outline` | `border:1px solid var(--color-accent); color:var(--color-accent)` |
+| `.tag` ⟳ | `inline-flex; align-items:center; font-size:11px; letter-spacing:.02em; padding:3px 10px`. `soft-ui.css` adds `border:0; font-weight:600` and sets `border-radius:5px` — **`5px` is not a `--radius-*` value**; resolve it to a token (`--radius-sm` 3 / `--radius-md` 4) rather than shipping the literal |
+| `.tag-accent` | `bg accent-100 / fg accent-800`. **Needs a `[data-theme='dark']` counterpart** with the ends swapped — the ramps do not flip, so one declaration paints a near-white slab on the dark ground |
+| `.tag-accent-2` | `bg accent-2-100 / fg accent-2-800`. Same dark counterpart. (E-32 collapsed accent-2 into the accent; the tokens survive only because this class and the Tailwind map still name them) |
+| `.tag-neutral` ⟳ | `soft-ui.css`: `background: var(--color-neutral-200); color: var(--color-neutral-700); box-shadow: var(--shadow-sm)`. **It is the shadow that is missing today, not the fill.** Both colours are raw ramp steps → semantic tokens, each with a dark counterpart; note that `--color-neutral-700` on `--color-neutral-200` is the *shipped* pair only by coincidence of the light theme |
+| `.tag-outline` ⟳ | **Not outlined any more — the name is now historical.** `soft-ui.css`: `background: var(--color-surface); color: var(--color-accent-700); box-shadow: var(--shadow-sm)`. The `1px solid` accent border goes. `--color-accent-700` is a raw ramp step → semantic (`--accent-text` is that step on light and accent-300 on dark, which is the shape wanted) |
 | `.field > label` | `display:block; font-size:12px; margin-bottom:5px; color:text@70%` |
-| `.input` | `width:100%; min-height:36px; padding:6px 10px; font-size:14px; color:var(--color-text); caret-color:var(--color-accent); background:var(--color-surface); border:1px solid var(--color-divider); border-radius:0`. hover `border-color: text@45%`. `:focus-visible{border-color:var(--color-accent); outline-offset:0}` |
+| `.input` ⟳ | **A recessed well, not a bordered box.** Geometry is unchanged: `width:100%; min-height:36px; padding:6px 10px; font-size:14px; color:var(--color-text); caret-color` accent. `soft-ui.css` replaces the boundary: `border: 0; border-radius: var(--radius-md); background: var(--color-surface); box-shadow: var(--shadow-inset)`, and focus is `box-shadow: var(--shadow-inset), 0 0 0 2px var(--color-hot); outline: none` — i.e. the hot ring is **inside** the well, not an outline beside it. The `border-color` hover state has nothing left to move and goes. `::placeholder` is `var(--color-neutral-500)` in the prototype — **do not ship that**: neutral-500 is **2.37:1 on the surface** (`tokens.css`, `--ink-faint`), an AA fail of exactly the kind E-32 §4 already refused for neutral-600; keep a semantic dim ink. Below 768 `min-height` stays `var(--touch-min)` (NFR-CMP-002) |
 | `.radio` | `inline-flex; align-items:center; gap:8px; font-size:14px`. `.dot` = `16×16; border-radius:50%; border:1.5px solid var(--color-divider)`. checked → `border+bg accent; box-shadow: inset 0 0 0 4px var(--color-bg)` |
-| `.seg` | `inline-flex; overflow:hidden; border:1px solid var(--color-divider); border-radius:0` |
-| `.seg-opt` | `inline-flex; align-items:center; gap:6px; padding:7px 12px; font-size:13px; cursor:pointer`. `+ .seg-opt { border-left:1px solid var(--color-divider) }`. **checked → `background:var(--color-accent); color:var(--color-bg)`**. unchecked hover → `--hover-tint`. focus-visible → `outline:2px solid accent; outline-offset:-2px` |
-| `.card` | `flex column; gap:var(--space-2); padding:var(--space-3); background:var(--color-surface); border-radius:0` |
+| `.seg` ⟳ | **A recessed track that the options sit in**, not a box with dividers. `soft-ui.css`: `border: 0; border-radius: 8px; background: var(--color-neutral-200); box-shadow: var(--shadow-inset); padding: 3px; gap: 2px`. `overflow:hidden` goes with `padding`+`gap` — the options no longer reach the edge. **`8px` is not a `--radius-*` value** (`lg` is 6) → resolve to a token. `--color-neutral-200` is a raw ramp step → semantic well-fill with a dark counterpart |
+| `.seg-opt` ⟳ | `inline-flex; align-items:center; gap:6px; font-size:13px; cursor:pointer`. `soft-ui.css`: `border: 0 !important; border-radius: 6px` (= `--radius-lg`); `padding: 5px 12px`; `color: var(--color-neutral-700)`; `font-weight: 600`; `transition: background .14s, color .14s, box-shadow .14s`; `:hover{ color: var(--color-accent) }`. **The `+ .seg-opt` left divider is deleted** — that is what `border:0 !important` does, and it is deliberate: separation now comes from the `gap` and the recessed track. Checked stays as shipped: `background:var(--color-accent); color:var(--on-accent); box-shadow: var(--shadow-sm), inset 0 0 0 2px var(--color-hot)` (E-32 §1 — the hot inset ring is load-bearing, not decoration). Keep the product's `7px 12px` padding unless the 5px version is measured to still clear the target, and keep `min-height: var(--touch-min)` below 768. `--color-neutral-700` → semantic |
+| `.card` ⟳ | `flex column; gap:var(--space-2); padding:var(--space-3); background:var(--color-surface)`. `soft-ui.css`: `border: 0; border-radius: var(--radius-lg); box-shadow: var(--shadow-md)`. **A card is lifted, per §0.2.** This row is the one `web/src/components/ds/Card.tsx:6-8` was built against, and that component still refuses a shadow citing the retired §0.2 sentence — see E-36 §2 |
 | `.card-kicker` | `10px; ls .1em; uppercase; color:var(--color-accent)` |
 | `.card-title` | Archivo 800 17px / 1.2 |
 | `.card-body` | `13px; opacity:.8; flex:1` |

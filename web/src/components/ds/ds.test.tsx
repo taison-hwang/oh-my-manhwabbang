@@ -9,6 +9,7 @@ import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { formatLabel } from '../../lib/format'
+import { stripComments } from '../../styles/cssRules'
 import { Button } from './Button'
 import { Dialog } from './Dialog'
 import { EmptyState } from './EmptyState'
@@ -158,7 +159,19 @@ describe('Seg (ui-spec §2.3)', () => {
  * merely different, which is why they are pinned at all.
  */
 describe('E-32 markers in the component stylesheet', () => {
-  const BASE_CSS = readFileSync(resolve(process.cwd(), 'src/styles/base.css'), 'utf8')
+  /**
+   * **Comments stripped first**, and that is not tidiness.
+   *
+   * `block()` searches raw text for a selector. Until this line existed it found
+   * selectors *inside comments*: writing `.sidebar { box-shadow:
+   * var(--shadow-sidebar) }` in a comment and reverting the real rule to
+   * `--shadow-md` left all six assertions below green. Every guard in this
+   * describe was defeatable by a sentence — and the sentence is exactly what an
+   * author explaining the rule would write. `stripComments` replaces each
+   * comment with the same number of spaces, so offsets are unchanged and only
+   * the hiding places go away.
+   */
+  const BASE_CSS = stripComments(readFileSync(resolve(process.cwd(), 'src/styles/base.css'), 'utf8'))
 
   /**
    * The declarations of the first rule whose selector list contains `selector`,
@@ -173,6 +186,18 @@ describe('E-32 markers in the component stylesheet', () => {
     const close = BASE_CSS.indexOf('}', open)
     return BASE_CSS.slice(open + 1, close)
   }
+
+  it('reads the sheet with its comments removed', () => {
+    // The calibration for the line above: base.css is heavily commented and
+    // several of those comments quote the very selectors and declarations these
+    // assertions look for. If stripping ever stops happening, this fails before
+    // the six guards below start passing for the wrong reason.
+    expect(BASE_CSS).not.toContain('E-32:')
+    expect(BASE_CSS).toContain('.sidebar {')
+    expect(BASE_CSS).toHaveLength(
+      readFileSync(resolve(process.cwd(), 'src/styles/base.css'), 'utf8').length,
+    )
+  })
 
   it('rings the checked segment in --color-hot — without it dark has no selection', () => {
     // The fill is `--color-accent`, a deep teal, and the viewer ground it sits
@@ -192,8 +217,12 @@ describe('E-32 markers in the component stylesheet', () => {
   })
 
   it('turns the sidebar edge and the top bar rule into elevation', () => {
+    // `--shadow-sidebar`, not `--shadow-md`: the panel's elevation is horizontal
+    // only (`4px 0 18px`), and the card token that stood in for it while no such
+    // token existed carries a 6px downward offset — a shadow under the top edge
+    // of a panel that runs the full height of the viewport (open item p).
     const sidebar = block('.sidebar {')
-    expect(sidebar).toContain('box-shadow: var(--shadow-md)')
+    expect(sidebar).toContain('box-shadow: var(--shadow-sidebar)')
     expect(sidebar).not.toContain('border-right')
   })
 

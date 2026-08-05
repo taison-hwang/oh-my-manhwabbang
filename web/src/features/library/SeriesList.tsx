@@ -1,5 +1,5 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import type { ID, SeriesSummary } from '../../api/types'
 import { cn } from '../../lib/cn'
@@ -83,6 +83,88 @@ export function SeriesList({
 
   const rows = virtualizer.getVirtualItems()
   const lastIndex = rows.at(-1)?.index ?? -1
+
+  /**
+   * Re-lay-out when the row height changes — the same E-28 disease as the grid
+   * next door and the thumbnail strip, whose comment
+   * (`features/viewer/ThumbnailStrip.tsx`) carries the derivation: `virtual-core`
+   * memoises `getMeasurements` on a key that does **not** contain
+   * `estimateSize`, and only `measure()` — which swaps the item-size cache for a
+   * fresh Map — invalidates it.
+   *
+   * The trigger here is coarser than the grid's, because `rowHeight` is one of
+   * two constants rather than a function of the measured width: it is
+   * `LIST_ROW_HEIGHT_STACKED` below 768 and `LIST_ROW_HEIGHT` above it. That
+   * makes the list *look* immune — most resizes really do leave it alone — but
+   * it is not, and the 768 crossing was measured on the shipped build with 60
+   * synthetic series: 1440 → 700, the rows stacked to their two-line shape while
+   * the pitch stayed 45px, so consecutive rows overlapped by 8.7px, and the
+   * track stayed 2 700px where a reload at 700 gave 3 600px.
+   *
+   * The re-anchor is not decoration and it is not a second concern: a
+   * re-measure moves every row's `start` while `scrollTop` stays where it was,
+   * so without it the reader is displaced by `topRowIndex × Δpitch` — linear in
+   * scroll depth, so a long library is displaced further than a short one. It
+   * is the pairing the strip already established
+   * (`features/viewer/ThumbnailStrip.tsx`), on the same dependencies, and the
+   * grid next door carries the measurements and the full reasoning: the anchor
+   * is derived from the *previous* row height held in a ref rather than read out
+   * of `getVirtualItems()`, because a render that changes the row count has
+   * already recomputed every offset (`count` is in the memo key) and the "stale
+   * offsets" that read depends on are not reliably stale — the grid measured a
+   * reader thrown to the top that way; `scrollTop === 0` re-anchors nothing
+   * because row 0 is already flush
+   * and a resize at the top of the library is the common case; the target is
+   * computed rather than asked for, because `scrollToIndex` reads a measurement
+   * cache `measure()` invalidates without refreshing; the scroll is split into a
+   * second **layout** effect so that it lands on the commit the re-measure
+   * actually produced — before that commit paints, and against a DOM that
+   * already carries the new track height; and the cost of `align: 'start'` is up
+   * to one row height of movement for a reader parked inside a row, which unlike
+   * the defect does not grow with depth.
+   *
+   * `anchorGeneration` is the *only* thing that fires the second effect, here as
+   * in the grid — the guard fails without it. `getTotalSize()` was tried as the
+   * trigger and removed from both components, because a re-measure can move the
+   * pitch and leave the total exactly where it was; the grid's comment carries
+   * the pair that does it. This list very nearly cannot: its total is
+   * `items.length × rowHeight` with `rowHeight` either 45 or 60, so a resize on
+   * a *fixed* list always moves it. But "very nearly" is not "cannot" — 12 rows
+   * of 45px and 9 rows of 60px are both 540px, so a 768 crossing that lands in
+   * the same tick as `items` going 12 → 9 collides, which needs the search or
+   * the scope to change on that same tick. Rare enough that no test here reaches
+   * it, and exactly the kind of "surely not" this file should not be built on.
+   *
+   * This list has **no `gap` option**, so its rows are `start_i = i × rowHeight`
+   * — the grid's expression with the gap term absent, not a different rule. It
+   * carries the same unstated premises as the grid's: no `paddingStart`, no
+   * `scrollMargin`, one lane, and no `measureElement`. Row 0's
+   * `translateY(0px)` is pinned in the guard.
+   */
+  const { measure, scrollToOffset } = virtualizer
+  const pendingAnchorRef = useRef<number | null>(null)
+  const [anchorGeneration, setAnchorGeneration] = useState(0)
+  /** The row height the layout on screen was built from. */
+  const laidOutRef = useRef(rowHeight)
+
+  useLayoutEffect(() => {
+    const previous = laidOutRef.current
+    laidOutRef.current = rowHeight
+
+    const top = scrollRef.current?.scrollTop ?? 0
+    const row = top > 0 && previous > 0 ? Math.floor(top / previous) : null
+
+    pendingAnchorRef.current = row === null ? null : row * rowHeight
+    measure()
+    if (row !== null) setAnchorGeneration((generation) => generation + 1)
+  }, [measure, rowHeight])
+
+  useLayoutEffect(() => {
+    const target = pendingAnchorRef.current
+    if (target === null) return
+    pendingAnchorRef.current = null
+    scrollToOffset(target, { align: 'start' })
+  }, [anchorGeneration, scrollToOffset])
 
   useEffect(() => {
     if (items.length > 0 && lastIndex >= items.length - 1) onEndReached()

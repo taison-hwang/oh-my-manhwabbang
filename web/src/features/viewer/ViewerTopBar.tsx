@@ -200,7 +200,13 @@ export function ViewerTopBar({
         <span className="truncate font-heading text-base font-bold text-ink">
           {seriesName}
         </span>
-        <span className="truncate text-xs text-neutral-500">{bookName}</span>
+        {/* `--ink-faint`, not `--color-neutral-500`. The ramps are a
+            theme-invariant absolute lightness scale (ui-spec §1.4), and this bar
+            is `--color-bg` inside `data-theme="dark"`: neutral-500 is 4.34 there
+            and 4.19 once the bar carries the paper grain, on the volume's own
+            name at 12px. `--ink-faint` is the same lightness band as a semantic
+            token — 5.88 dry, 5.66 washed. */}
+        <span className="truncate text-xs text-ink-faint">{bookName}</span>
       </div>
 
       <div className="flex-1" />

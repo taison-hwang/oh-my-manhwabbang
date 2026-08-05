@@ -71,9 +71,13 @@
   --ink-dim: #5F5849; /* neutral-700 — 5.52 / 6.09. The prototype's
                          neutral-600 is 3.31 on this ground: an AA fail at the
                          10–12px this token is used at (E-32 §4). */
-  --ink-faint: #6C6453; /* 4.58 / 5.06 — neutral-600 lifted toward 700 until it
+  --ink-faint: #68604F; /* 4.87 / 5.23 — neutral-600 lifted toward 700 until it
                            clears AA on the *bg*, the harder of the two grounds.
-                           neutral-500 is 2.37 on surface (E-32 §4). */
+                           neutral-500 is 2.37 on surface (E-32 §4).
+                           Lifted a second time for the paper grain: #6C6453 was
+                           4.58 dry and **4.47 washed**, i.e. the texture put an
+                           AA pass into an AA fail. Now 4.74 washed at mean grain
+                           and 4.63 at the mask's peak. */
   --ink-label: rgb(38 59 56 / 0.78); /* .field > label — 5.18 / 5.52 */
   --ink-meta: rgb(38 59 56 / 0.75); /* .card-meta, 11px — 4.79 / 5.07 */
   --ink-th: rgb(38 59 56 / 0.76); /* .table th, 11px — 4.92 / 5.22 */
@@ -94,6 +98,14 @@
   --nav-active: rgb(23 89 91 / 0.1);
   --scrim-cover: rgb(38 59 56 / 0.72);
   --scrim-modal: rgb(38 59 56 / 0.5);
+  /* The three stops of `.cover-scrim`'s hover gradient, bottom to top. A
+     gradient is not a colour, so these were approximated out of the two scrims
+     above plus `--hover-tint` — .72 / .50 / .07 against the prototype's
+     .92 / .55 / .15, i.e. the top of the card carried half the wash it should
+     and the bottom two thirds of it. Three tokens is what makes it exact. */
+  --scrim-cover-base: rgb(38 59 56 / 0.92);
+  --scrim-cover-mid: rgb(38 59 56 / 0.55);
+  --scrim-cover-top: rgb(38 59 56 / 0.15);
   --accent-hover: #135052; /* accent-600 — one step past base on light */
   --accent-press: #114547; /* accent-700 */
   --accent-text: #114547; /* accent-700 — the accent at paragraph size, 8.36 */
@@ -142,9 +154,26 @@
   --scrim-volume-end: rgb(38 59 56 / 0.92);
   --scrim-broken: rgb(8 35 37 / 0.82); /* accent-900 @ 82% */
   --on-accent: #F6F2E9; /* 7.18 on the accent, 8.18 on accent-600 */
-  --on-hot: #1B0B07; /* 4.55 on --color-hot. Light ink cannot get there:
-                        #F6F2E9 is 3.76 (E-32 §4) and even pure white is 4.20,
-                        so anything on the hot marker has to be dark. */
+  --on-hot: #000000; /* 4.9988 on --color-hot, and it has to be *pure* black.
+                        Light ink cannot get there at all: #F6F2E9 is 3.76
+                        (E-32 §4) and even pure white is 4.20. Dark ink can, but
+                        barely — black is this palette's absolute ceiling here,
+                        so the hot marker only ever had 0.50 of headroom over AA
+                        and the paper grain costs 0.27 of it. The shipped
+                        #1B0B07 was 4.55 dry and **4.33 washed**: a fail the
+                        contrast tests could not see because they did not model
+                        the texture. Black is 4.73 washed, which clears AA with
+                        0.23 to spare.
+
+                        At the mask's *peak* alpha it is 4.46–4.51 depending on
+                        how the peak is defined, i.e. on the wrong side of 4.5
+                        under two of the four definitions. tokens.test.ts
+                        reports that number and does not gate on it, and says
+                        why. The honest reading is that this token has run out
+                        of room: the next 0.04 of margin has to come from
+                        **`--color-hot`** — about +4 % relative luminance — and
+                        changing the retired brand red E-32 §1 pinned is a
+                        ruling, not a side effect of adding a texture. */
 
   /* ---- type ------------------------------------------------------------ */
   /* Archivo is vendored latin-only (C-14 / decisions E-7); it has no Hangul
@@ -188,12 +217,64 @@
   --shadow-inset:
     inset 3px 3px 7px rgb(150 128 96 / 0.28),
     inset -3px -3px 7px rgb(255 253 246 / 0.85);
+  /* The sidebar's right edge, and the one elevation that is not on the sm/md/lg
+     scale: it is horizontal only. `--shadow-md` stood in for it, but that lobe
+     is `6px 6px 16px … / 0.26` — a 6px *downward* offset on a full-height panel
+     puts a shadow under its top edge, where there is nothing to cast one, and
+     at an alpha meant for a card that floats rather than an edge that abuts. */
+  --shadow-sidebar: 4px 0 18px rgb(150 128 96 / 0.16);
+
+  /* ---- paper grain ------------------------------------------------------ */
+  /* A full-viewport comic-paper texture; `body::after` in base.css paints it.
+     Re-derived from the prototype rather than ported, for reasons that were all
+     measured on it: it loads @paper-design/shaders from esm.sh at runtime (two
+     network requests, which NFR-OPS-001 forbids outright — this product ships as
+     one binary and even the font is vendored), its canvas fallback costs 21.7 ms
+     of synchronous main thread and lands as a ~198 KB inline `style` attribute,
+     and it ignores its own `seed` attribute in favour of `Math.random()`, so a
+     plain reload changes 89.1 % of the pixels. `docs/ui-shots/` is a human
+     review-reference set; a grain that is different every load makes it useless.
+
+     `feTurbulence` is the deterministic route: the SVG spec pins the generator,
+     so a fixed `seed` gives the same bytes on every load and in every engine,
+     and `stitchTiles` is what lets the 200px tile repeat without a seam.
+
+     The filter writes **alpha and nothing else** — the colour matrix zeroes RGB
+     and scales the noise's red channel into the alpha channel. That is what
+     keeps the tone a token: the image is a mask, `--paper-tone` is the fill, and
+     no colour is buried inside the data URI where nothing could re-theme it.
+
+     0.126 is the prototype's own amplitude, read off its fallback tile
+     (`(Math.random()*0.5 + fiber*0.12) * 52` into alpha, i.e. 0…32/255).
+     Measured here: mean 16.05/255, max 29/255, which over the cream ground at
+     `--paper-intensity` moves the average pixel 6.2/255 darker — the −6~7 that
+     was measured on the prototype. */
+  --paper-grain: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='200'%20height='200'%3E%3Cfilter%20id='grain'%20x='0'%20y='0'%20width='100%25'%20height='100%25'%20color-interpolation-filters='sRGB'%3E%3CfeTurbulence%20type='fractalNoise'%20baseFrequency='.9'%20numOctaves='3'%20seed='4'%20stitchTiles='stitch'/%3E%3CfeColorMatrix%20type='matrix'%20values='0%200%200%200%200%200%200%200%200%200%200%200%200%200%200%20.126%200%200%200%200'/%3E%3C/filter%3E%3Crect%20width='200'%20height='200'%20filter='url(%23grain)'/%3E%3C/svg%3E");
+  /* The tone the grain washes in. The prototype's is #201E1D;
+     `--color-neutral-900` is #23211D, three units away on two channels — at half
+     intensity through a mask that peaks at 0.114 alpha that is 0.17/255 of
+     difference, so the ramp step *is* the prototype's colour and does not add a
+     literal to this file. */
+  --paper-tone: var(--color-neutral-900);
+  --paper-intensity: 0.5;
+  /* An absolute, like the two viewer scrims above: the viewer ground is #263B38
+     in **both** app themes (NFR-CMP-003), so its grain cannot flip with the
+     app's. This is the one paper value that is a literal, because no ramp step
+     is anywhere near it — `--color-accent-900` is as dark as the palette goes
+     and its relative luminance is still 3.7× this. The reading screen's grain is
+     soot, not more of the ground's own green. */
+  --paper-tone-viewer: #0D0C0C;
 
   /* ---- z-index ladder (ui-spec §3) ------------------------------------- */
   --z-content: 0;
   --z-sticky: 2;
   --z-viewer: 60;
   --z-overlay: 80;
+  /* One step above the overlay, and deliberately the top of the ladder: the
+     paper grain is a property of the screen, so a dialog is printed on it too.
+     The prototype writes a bare `z-index: 900`, which is the same intent with
+     the ladder abandoned. Mirrored in tailwind.config.ts. */
+  --z-texture: 90;
 
   /* ---- misc ------------------------------------------------------------ */
   --disabled-opacity: 0.45;
@@ -221,7 +302,12 @@
   --ink-faint: #A9BAB6; /* 5.88 / 4.75 — on dark the *surface* is the harder
                            ground, and the shipped dark faint was 3.27 on it */
   --ink-label: rgb(234 227 212 / 0.75); /* 6.01 / 5.03 */
-  --ink-meta: rgb(234 227 212 / 0.7); /* 5.46 / 4.61 */
+  /* Was 0.7 — 4.61 on the surface dry and **4.45 washed**. On dark the surface
+     is the harder ground (the note on --ink-faint above says why), and this is
+     the token that sits on it most: `.card-meta` at 11px. 0.75 puts it level
+     with --ink-label rather than one step under it, which is the price of
+     clearing AA with the paper on: 4.85 washed, 4.71 at peak. */
+  --ink-meta: rgb(234 227 212 / 0.75); /* 5.76 / 5.03 */
   --ink-th: rgb(234 227 212 / 0.72); /* 5.67 / 4.77 */
   --rule: #3E5B57;
   --rule-strong: #4A6B66;
@@ -241,6 +327,9 @@
   --nav-active: rgb(155 195 193 / 0.16);
   --scrim-cover: rgb(0 0 0 / 0.72);
   --scrim-modal: rgb(0 0 0 / 0.6);
+  --scrim-cover-base: rgb(0 0 0 / 0.92);
+  --scrim-cover-mid: rgb(0 0 0 / 0.55);
+  --scrim-cover-top: rgb(0 0 0 / 0.15);
   /* Up the ramp, but only as far as the cream label on the fill still clears
      AA: accent-400 would take #F6F2E9 down to 2.6. */
   --accent-hover: #256668; /* label 5.91 */
@@ -270,6 +359,25 @@
   --shadow-inset:
     inset 3px 3px 7px rgb(0 0 0 / 0.5),
     inset -3px -3px 7px rgb(155 195 193 / 0.12);
+  /* Same derivation as the three above, and for the same reason the sidebar
+     needs one at all: the panel is `--color-surface` on `--color-bg`, which is
+     1.24:1 here. The ochre lobe is a light-ground device and vanishes on this
+     ground, so the edge is stated as a hairline — `1px 0 0`, the right side
+     only, because that is the only side of a full-height panel that shows. */
+  --shadow-sidebar:
+    1px 0 0 #3E5B57,
+    4px 0 18px rgb(0 0 0 / 0.5);
+
+  /* The grain's tone follows the ground it washes over: the warm near-black on
+     cream, the ramp's cool end on teal. Stated plainly, on today's numbers this
+     is worth under 1/255 — a dark ground is already most of the way to the tone,
+     so both washes land in nearly the same place, and the measured max channel
+     delta between the two in the viewer is 1. It is declared anyway because the
+     tone is the one part of this texture that is *paint*: raise
+     `--paper-intensity`, or move the tone off near-black, and a warm wash over a
+     teal ground is immediately a brown cast. Paint that does not flip with the
+     theme is how a token quietly stops being one. */
+  --paper-tone: var(--color-accent-900);
 }
 
 /*

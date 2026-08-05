@@ -62,9 +62,13 @@ export function NextVolumeCard({
 
           {nextBook !== null && (
             <>
-              <span className="font-heading text-h4 font-extrabold leading-[1.15]">
-                {nextBook.name}
-              </span>
+              {/* 700, not 800 (open item `o`). The Claude Design v2 prototype
+                  paints this one `font-weight:700;font-size:20px;
+                  line-height:1.15` — the only 헤딩 in the app that is not
+                  extrabold, because the card is a 380px surface where the
+                  volume name is a *label* for the primary action beneath it
+                  rather than a title the eye has to find on a busy page. */}
+              <span className="font-heading text-h4 font-bold leading-[1.15]">{nextBook.name}</span>
               <span className="text-sm tabular-nums text-ink-muted">
                 {`${formatPageCount(nextBook.page_count)} · ${formatLabel(nextBook.kind)}`}
               </span>

@@ -1,5 +1,5 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import type { ID, SeriesSummary } from '../../api/types'
 import { useBreakpoint } from '../../lib/useMediaQuery'
@@ -79,6 +79,303 @@ export function SeriesGrid({
 
   const rows = virtualizer.getVirtualItems()
   const lastIndex = rows.at(-1)?.index ?? -1
+
+  /**
+   * Re-lay-out when the row pitch changes — `estimateSize` and `gap` alone do
+   * not. This is the E-28 disease, and the derivation is written out once, in
+   * `features/viewer/ThumbnailStrip.tsx`: `virtual-core` memoises
+   * `getMeasurements` on `[count, paddingStart, scrollMargin, getItemKey,
+   * enabled]` plus the item-size cache, **neither `estimateSize` nor `gap` is
+   * in that key**, and `measure()` swaps the size cache for a fresh Map, which
+   * *is*. Handing the virtualiser new numbers therefore changes nothing on its
+   * own; only `measure()` makes it look at them.
+   *
+   * **What re-lays this grid out is not a breakpoint**, which is what makes it
+   * worse here than in the strip. `rowHeight` is `cardHeight(columnWidth(…))` —
+   * `measuredWidth → columnWidth → ×1.5 + 60` — so it is a *continuous*
+   * function of the grid box's width, and **every** resize moves it, including
+   * the ones that keep the same tier and the same column count. Both were
+   * measured on the shipped build against 60 synthetic series:
+   *
+   *  - 1280 → 1440 (open item `m`): six columns throughout, the grid box 998 →
+   *    1158px and the cards 289.5 → 329.5px tall, while the pitch stayed at the
+   *    1280 value of 305.5px — 24px of card overlapping card on every row — and
+   *    the track stayed 3 039px against the 3 439px ten rows then needed. A
+   *    reload at 1440 gave 345.5px.
+   *  - 1100 → 1200, five columns, `laptop` on both sides so nothing about the
+   *    tier changes: cards 286.2 → 316.2px, pitch stuck at 302.2px against the
+   *    332.2px a reload gives, i.e. 14px of overlap. Keying this effect on the
+   *    breakpoint instead of on the pitch would miss exactly this case.
+   *
+   * `metrics.gap` is a dependency because it is subject to the same rule: it is
+   * `useVirtualizer`'s `gap` option, read inside the memo body and absent from
+   * the memo key exactly like `estimateSize`, so a `gap` that moved on its own
+   * would go stale on its own. In *this* layout it never does move on its own —
+   * `--grid-gap` only changes at 768, and measured across that boundary the
+   * column count goes 2 → 4 and the card 550.5 → 318.4px, so `rowHeight` moves
+   * 232px at the same instant. The dependency is therefore belt-and-braces, and
+   * the test that pins it has to manufacture a transition the real layout does
+   * not produce. It stays because the memo-key rule, not the current geometry,
+   * is what makes it correct.
+   *
+   * **The re-measure moves every offset, so the reader has to be put back.**
+   * `measure()` recomputes each row's `start`, but `scrollTop` is untouched, so
+   * whatever was under the reader's eyes slides by `topRowIndex × Δpitch` —
+   * *linear in scroll depth*, which is the part that matters: measured here at
+   * 1440 → 1280 with `scrollTop` at 1500 the anchor card jumped 160px, and at
+   * 1280 → 1440 on row 6 it jumped 200px (the browser's own scroll anchoring
+   * absorbed 40px of 240), and a 10 000-series library 500 rows down with a
+   * 40px Δpitch would jump 20 000px.
+   *
+   * `scrollTop === 0` re-anchors nothing at all: sitting at the top of the
+   * library is the common case for a resize, row 0 is already flush whatever the
+   * pitch is, and the one thing worse than a jump is a jump at the top.
+   *
+   * **What this effect costs, stated as the property it actually has.**
+   * `align: 'start'` snaps the anchor row flush to the top, so a reader parked
+   * *inside* a row is moved by exactly how far into it they were —
+   * `scrollTop − anchorRow.start`. That is bounded by **the card height**
+   * (289.5px at 1280, 329.5px at 1440), not by anything smaller: 118px is only
+   * what the 1440 → 1280 sample below happens to produce, and parking 150px
+   * into row 0 across 1280 → 1440 measures a 150px move.
+   *
+   * The property worth defending is that it **does not grow with scroll depth**,
+   * and that is exactly the defect being fixed. The trade is real, so: a shallow
+   * reader can be moved *further* than they were before this effect existed
+   * (150px into row 0 — before: −54px, after: +150px), while a deep one is moved
+   * far less (list rows 20 and 30 — before: +300px and +450px, after: 0 and 0).
+   * The "before" numbers are displacements across a **broken** layout, with the
+   * pitch stuck and the cards overlapping by 24px, so they are not a baseline
+   * anyone should want to preserve.
+   *
+   * **The new offset is computed here, not asked for — and that is forced.**
+   * The obvious shape, and the one the strip has carried since E-28, is
+   * `measure()` then `scrollToIndex`. It is a **no-op that reads as working**:
+   * `getOffsetForIndex` takes its offset from `measurementsCache`, a plain
+   * array refreshed only as a side effect *inside the `getMeasurements` memo
+   * body*, and `measure()` invalidates that memo without running it. So the
+   * offset comes from the very numbers this effect has just thrown away —
+   * measured, `scrollToIndex(4)` right after `measure()` scrolled to row 4's
+   * *old* start, i.e. it "corrected" the reader by exactly the jump it was
+   * supposed to cancel. (The viewer has since measured the same no-op in the
+   * strip, where the recentre distance came out 0.)
+   *
+   * Deferring a frame does not fix it either, and that was measured too: the
+   * re-render `measure()` notifies is scheduled, not synchronous, and in the
+   * *growing* direction it landed a frame **after** the `requestAnimationFrame`
+   * callback — 1280 → 1440 on row 6 still re-anchored to the stale 1833. The
+   * accessor that would settle it, `getMeasurements`, is `private`.
+   *
+   * So this is two layout effects, and the split is the design:
+   *
+   *  0. **A note on this dependency list, because it has now been wrong three
+   *     times.** `getTotalSize()` was here and was removed — its stated reason,
+   *     that a changing total picks out the re-measured commit, is false.
+   *     `columns` is here and **cannot** trigger a run that `rowHeight` would
+   *     miss: `columnWidth = (W − gap(c−1))/c` is equal at two column counts
+   *     only when `(c₂ − c₁)(W + gap) = 0`, i.e. only when `c₁ = c₂`, so a
+   *     column change always moves `rowHeight` too. It stays because the effect
+   *     *reads* it and the exhaustive-deps rule is right to insist, **not**
+   *     because it is a second trigger. The list's `anchorGeneration` was
+   *     described as symmetric and turned out to be load-bearing. The pattern
+   *     worth carrying forward: a dependency list is a claim about *when* an
+   *     effect runs, and that claim needs the same evidence as any other — the
+   *     mutation that removes it must go red, or the reason written next to it
+   *     must be the real one.
+   *  1. **Work out which series is at the top, and where it is going.** Both
+   *     halves are arithmetic on values this component owns — the virtualiser is
+   *     not asked anything, and that is the second lesson of this effect.
+   *
+   *     The first version *did* ask it, reading `getVirtualItems().find((row) =>
+   *     row.end > scrollTop)` before calling `measure()` on the theory that the
+   *     offsets are still stale at that point and stale is the coordinate system
+   *     `scrollTop` is in. **That theory is false whenever the column count
+   *     changes**, and the column count changing is the commonest grid resize
+   *     there is: `count` — the row count — *is* in the `getMeasurements` memo
+   *     key, so a render that changes it has already recomputed every offset
+   *     with the new pitch. `end > scrollTop` then names a row in the new layout
+   *     while `scrollTop` still means the old one, and it names one far too
+   *     early. Measured on the shipped build, 12 series at 871 → 800 (3 columns
+   *     of 430.5px → 2 of 574.5px), parked on row 1: row 0's *new* span is
+   *     [0, 574.5], it contains the old scrollTop of 447, so the anchor came out
+   *     as row 0 and the reader was thrown to the very top. It was worse than
+   *     the defect. Every scenario measured before that one happened to hold the
+   *     column count fixed, and so did every guard here — they had been written
+   *     to keep `count` constant *on purpose*, so that nothing could invalidate
+   *     the memo by accident, which excluded precisely the case that broke.
+   *
+   *     So the previous pitch and column count are carried forward in a ref
+   *     instead, and the anchor is the **series** at the top rather than the row
+   *     index. Across a column-count change a row index is not an identity at
+   *     all: row 1 of a 3-column grid holds series 3–5, row 1 of a 2-column grid
+   *     holds series 2–3. Series 3 is what the reader is looking at, so series 3
+   *     is what is kept on screen — `floor(scrollTop / prevPitch) × prevColumns`
+   *     to find it, `floor(series / columns)` to place it.
+   *
+   *     The target offset is the same rule the virtualiser will apply: these
+   *     rows are uniform by construction (the promise at the top of this file is
+   *     that no card is ever measured), so `getMeasurements` can only ever
+   *     produce `start_i = i × (rowHeight + gap)`. The test cross-checks that
+   *     against the virtualiser's own rendered `translateY`, so a divergence
+   *     fails the guard rather than reaching a reader.
+   *
+   *     **`anchorSeriesRef` exists because one resize is not one commit.**
+   *     `useBreakpoint` (matchMedia) and `useElementWidth` (ResizeObserver)
+   *     answer on different ticks, so a resize that crosses a tier renders an
+   *     intermediate commit built from the *new* metrics and the *old* measured
+   *     width — 31–49ms of it, measured. That commit is a real layout as far as
+   *     this effect can tell, and anchoring to it is not merely cosmetic: at
+   *     871 → 354 the intermediate is 4 columns (773px box against `mobile`'s
+   *     150px `--grid-min`), the reader's series 3 lands in `floor(3 / 4) = 0`,
+   *     and the scroll goes to the top. The settled commit that follows then
+   *     reads `scrollTop === 0` and concludes there is nothing to preserve — the
+   *     reader's place is gone, which is worse than the jump this effect exists
+   *     to prevent. Measured on the shipped build before this ref: 447 → 0.
+   *
+   *     So the anchor is *remembered* rather than re-derived each time. The test
+   *     for "did the reader move, or did we move them" is `lastWrittenRef`: if
+   *     the scroller is within a pixel of the offset effect 2 last wrote, then
+   *     `scrollTop` carries no reader intent and the remembered series stands.
+   *     Any other position is the reader's and re-derives it. That needs no
+   *     scroll listener and no suppression flag, and it degrades correctly — a
+   *     write the browser clamped does not match, so the next run re-derives
+   *     from where the scroller actually is.
+   *
+   *     **One transition this cannot rescue, because the loss happens before any
+   *     of it runs.** When the intermediate layout is much shorter than the
+   *     settled one — 871 → 354 renders 4 columns, a 1 033px track against the
+   *     1 770px it settles at — the browser clamps `scrollTop` to the
+   *     intermediate's maximum *during layout*, before this effect is called.
+   *     Instrumented in Chrome: a reader parked at 447 is already at 337 when
+   *     effect 1 first sees it, and 337 in the three-column layout genuinely is
+   *     row 0, so row 0 is faithfully anchored and the reader ends a row above
+   *     themselves.
+   *
+   *     **The loss is `scrollTop − intermediateMaxScroll`, so it grows with
+   *     depth.** The clamp target is a fixed property of the intermediate
+   *     layout; the reader's position is not. Measured with 13 series at
+   *     `scrollTop` 1400, the clamp is 686 and the reader's series ends
+   *     1 235.5px below the top of the viewport. The shallow 447 above is the
+   *     benign end of that range, and there the remembered anchor does recover —
+   *     it is only once the clamp bites that there is nothing left to remember.
+   *     (An earlier version of this comment called the loss "bounded at one
+   *     row". That was measured at one shallow point, which is the same
+   *     measurement bias that hid the column-count defect above; the reviewer's
+   *     deep sample corrected it.)
+   *
+   *     Recovering it would mean recording the anchor from user-initiated
+   *     scrolls only, telling wheel and keyboard apart from the clamp's own
+   *     scroll event. The intermediate commit is an open item upstream in
+   *     `useElementWidth`, and fixing it there removes this case entirely, which
+   *     is the cheaper repair.
+   *
+   *     **That expression re-implements `virtual-core`'s layout rule, so it
+   *     inherits that rule's premises**, and they are premises about the options
+   *     object above rather than about anything visible here: `paddingStart` and
+   *     `scrollMargin` are both absent, so they default to 0 and row 0 starts at
+   *     0; `lanes` is absent, so it defaults to 1 and each row follows the one
+   *     before it; and nothing calls `measureElement`, so every `size` is the
+   *     `estimateSize` above rather than a measured one. Add any of those to the
+   *     `useVirtualizer` call and this arithmetic goes quietly wrong. The
+   *     `paddingStart`/`scrollMargin` half is pinned in the guard below —
+   *     `translateY(0px)` on row 0 — because it is the one a future edit is
+   *     most likely to reach for.
+   *  2. **Scroll on the commit where the re-measure actually landed**, which is
+   *     what `anchorGeneration` selects. Effect 1 bumps it in the same layout
+   *     phase in which it calls `measure()`, and React flushes an update
+   *     scheduled from a layout effect synchronously before paint — so the
+   *     commit this effect runs on is the one that has already re-read
+   *     `getMeasurements` and written the new track height into the DOM. That is
+   *     what makes `getOffsetForAlignment`'s clamp, which reads `scrollHeight`
+   *     off the **DOM**, the new one rather than the old, shorter one.
+   *
+   *     **`getTotalSize()` used to be in this list and has been removed, because
+   *     the reason given for it was not true.** The claim was that the total
+   *     changing is what picks out the re-measured commit. It is not: a
+   *     re-measure can move the pitch and leave the total exactly where it was,
+   *     and that state is reachable rather than theoretical — 12 series in a
+   *     773px box at `tablet` is 4 rows of 430.5px, 12 series in a 312px box at
+   *     `mobile` is 6 rows of 285px, and **both total 1 770px**, because the
+   *     wider gap and coarser `--grid-min` above 768 trade against the extra row
+   *     exactly. Those are viewports 871 and 354, both ordinary. `items` is the
+   *     *filtered* list, so a twelve-result search is an everyday way to be
+   *     there. On that transition `getTotalSize()` never fires this effect at
+   *     all, and the generation is doing the whole job; keeping it as a "second
+   *     signal" would have left a dependency whose stated purpose was fiction.
+   *     The guard below is built on the 773 → 312 pair.
+   *
+   *     The generation only advances when there is an anchor to hand over, so
+   *     the ordinary top-of-library resize costs no extra render. **That last
+   *     sentence is undefended**: dropping the `anchor !== null` condition
+   *     leaves every test green, because the only consequence is one wasted
+   *     render — effect 2 still finds an empty ref and returns. It is a
+   *     performance property with no observable in jsdom, recorded here rather
+   *     than pretended about.
+   *
+   * That split is what removes the visible frame. Sampled every frame in Chrome
+   * across each of the resizes below, no frame is ever painted with the rows
+   * re-measured and the scroll not yet corrected; the shape this replaced —
+   * scroll immediately, then repair in a `requestAnimationFrame` — painted
+   * exactly that frame, 300px out on the list.
+   *
+   * **`useLayoutEffect` rather than `useEffect` is a rule, not a measurement,
+   * and that is worth saying plainly.** Both effects read and write scroll
+   * geometry, which is what layout effects are for. But a passive variant of
+   * the second one was built and measured on all five scenarios and came out
+   * *identical* — React 18 flushed the passive effect inside the same task
+   * anyway — and jsdom cannot see the difference either, so the guard below
+   * stays green with it swapped. It is kept because the ordering guarantee is
+   * the thing being relied on, not because a browser was caught misbehaving
+   * without it.
+   *
+   * `scrollToOffset` rather than a bare `scrollTop =`: it is the public entry
+   * point, applies the clamp the browser would apply anyway, and keeps the
+   * scroll visible to the virtualiser's own plumbing.
+   */
+  const { measure, scrollToOffset } = virtualizer
+  const pendingAnchorRef = useRef<number | null>(null)
+  const [anchorGeneration, setAnchorGeneration] = useState(0)
+  /** The pitch and column count the layout on screen was built from. */
+  const laidOutRef = useRef({ pitch: rowHeight + metrics.gap, columns })
+  /** The series the reader is being kept on, and the offset we last put it at. */
+  const anchorSeriesRef = useRef<number | null>(null)
+  const lastWrittenRef = useRef<number | null>(null)
+
+  useLayoutEffect(() => {
+    const previous = laidOutRef.current
+    laidOutRef.current = { pitch: rowHeight + metrics.gap, columns }
+
+    const top = scrollRef.current?.scrollTop ?? 0
+    // Is the scroller where *we* last put it, rather than where the reader put
+    // it? Then `top` carries no new information and the remembered series is
+    // the better answer — see the comment above.
+    const ours = lastWrittenRef.current !== null && Math.abs(top - lastWrittenRef.current) < 1
+    const series = ours
+      ? anchorSeriesRef.current
+      : top > 0 && previous.pitch > 0
+        ? Math.floor(top / previous.pitch) * previous.columns
+        : null
+
+    anchorSeriesRef.current = series
+    // Nothing to hand over means nothing to have written, and a `lastWrittenRef`
+    // left over from an earlier resize would make `ours` true for a position the
+    // reader chose for themselves — the reader scrolls to the top, a resize
+    // finds no anchor and writes nothing, the reader later lands back on that
+    // stale offset, and the next resize believes it put them there.
+    if (series === null) lastWrittenRef.current = null
+    pendingAnchorRef.current =
+      series === null ? null : Math.floor(series / columns) * (rowHeight + metrics.gap)
+    measure()
+    if (series !== null) setAnchorGeneration((generation) => generation + 1)
+  }, [measure, rowHeight, metrics.gap, columns])
+
+  useLayoutEffect(() => {
+    const target = pendingAnchorRef.current
+    if (target === null) return
+    pendingAnchorRef.current = null
+    lastWrittenRef.current = target
+    scrollToOffset(target, { align: 'start' })
+  }, [anchorGeneration, scrollToOffset])
 
   useEffect(() => {
     if (rowCount > 0 && lastIndex >= rowCount - 1) onEndReached()
