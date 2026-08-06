@@ -45,6 +45,11 @@ web/.playwright/
 # shelf.example.yaml is committed; the operator's real config is not.
 /shelf.yaml
 /shelf.*.yaml
+# The `.bak` the config writer takes before every POST/DELETE /api/roots (§7.4).
+# `/shelf.*.yaml` does not cover it — that pattern has to end in `.yaml`. Left
+# untracked it makes `git status` permanently dirty, which blunts the "should be
+# clean" check §6 opens every session with.
+/shelf.yaml.bak
 !/shelf.example.yaml
 /test/shelf.e2e.yaml
 
