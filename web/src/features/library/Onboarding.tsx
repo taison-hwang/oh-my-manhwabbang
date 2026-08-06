@@ -124,6 +124,12 @@ export function Onboarding({ configPath, rootEditingEnabled, onOpenSettings }: O
 
         {adding && (
           <AddRootForm
+            // A-12: the picker's gate is the same capability that put this form
+            // on screen, so reaching this line already implies it. It is passed
+            // explicitly rather than defaulted inside the form — the defect E-25
+            // was written about was a prop that worked and a caller that never
+            // supplied it.
+            canBrowse={rootEditingEnabled}
             onDone={() => {
               setAdding(false)
             }}

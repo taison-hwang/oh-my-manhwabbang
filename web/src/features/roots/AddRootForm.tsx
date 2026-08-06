@@ -1,23 +1,31 @@
+import { FolderOpen } from 'lucide-react'
 import { useId, useState, type FormEvent } from 'react'
 
 import { useCreateRoot } from '../../api/queries'
 import type { RootCreate } from '../../api/types'
 import { Button } from '../../components/ds/Button'
 import { Input } from '../../components/ds/Input'
+import { FolderPicker } from './FolderPicker'
 import { rootErrorMessage } from './rootErrors'
 
 /**
  * `POST /api/roots` — the one thing the design did not answer: **how the user
- * supplies a path** (amendment **A-11**, ruling **E-26**).
+ * supplies a path** (amendment **A-11**, ruling **E-26**; picker and hot add by
+ * **A-12**, ruling **E-40**).
  *
  * A text field for an absolute path plus an optional label, validated by the
- * server. There is deliberately **no filesystem browser and no
- * directory-listing endpoint** — E-26 kept that part of E-3's cost estimate
- * unbought, because a browse API would hand the whole readable directory tree
- * of the host to what ruling E-8 makes an unauthenticated LAN listener by
- * default, and it would be reachable *before* anyone granted the privilege,
- * since browsing is a read. So the path is typed or pasted, and every rule it
- * has to satisfy is checked on the server, where the filesystem is.
+ * server — and, since E-40, a 찾아보기 button beside it.
+ *
+ * **The comment here used to say there was deliberately no browser.** That was
+ * a ruling and not an omission: E-26 priced a browse API and left it unbought,
+ * because it would hand the host's readable tree to what ruling E-8 makes an
+ * unauthenticated LAN listener by default, and because browsing is a *read* and
+ * would therefore be reachable before anyone granted the write privilege. E-40
+ * overturns it under two limits that answer both halves — the endpoint sits
+ * behind the same gate as the write, and it lists nothing outside
+ * `server.browse_bases`. **The typed field stays**, and stays primary: it is
+ * the only way to reach a directory outside the configured bases, and the
+ * picker is an accelerator over it rather than a replacement for it.
  *
  * `name` is not a field. It is server-generated (§7.4) because it is hashed
  * into every `series_id` and `book_id`, so a client that picked it could
@@ -32,14 +40,26 @@ export interface AddRootFormProps {
   /** Called once the server accepted the entry **and** the list has been re-read. */
   onDone: () => void
   onCancel: () => void
+  /**
+   * `Settings.server.root_editing_enabled` — the picker's gate.
+   *
+   * The browse endpoint refuses with `403` unless root editing is on *and*
+   * `server.browse_bases` is set, and only the first of those is visible to the
+   * client. So the button is rendered whenever editing is on, and a server with
+   * no bases answers `no_browse_bases`, which the picker prints as the sentence
+   * naming the key to set. Hiding the button on that server instead would leave
+   * the operator with no way to discover the feature exists.
+   */
+  canBrowse?: boolean
 }
 
-export function AddRootForm({ onDone, onCancel }: AddRootFormProps) {
+export function AddRootForm({ onDone, onCancel, canBrowse = false }: AddRootFormProps) {
   const pathId = useId()
   const labelId = useId()
   const create = useCreateRoot()
   const [path, setPath] = useState('')
   const [label, setLabel] = useState('')
+  const [browsing, setBrowsing] = useState(false)
 
   const trimmedPath = path.trim()
 
@@ -84,9 +104,36 @@ export function AddRootForm({ onDone, onCancel }: AddRootFormProps) {
           }}
         />
       </div>
-      <p className="text-xs text-ink-dim">
-        서버에서 보이는 절대 경로를 입력하세요. 폴더 찾아보기는 제공하지 않습니다.
-      </p>
+      <div className="flex items-center gap-2">
+        <p className="flex-1 text-xs text-ink-dim">서버에서 보이는 절대 경로를 입력하세요.</p>
+        {canBrowse && !browsing && (
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setBrowsing(true)
+            }}
+            data-testid="browse-folders"
+          >
+            <FolderOpen size={13} aria-hidden={true} />
+            찾아보기
+          </Button>
+        )}
+      </div>
+
+      {/* Picking fills the field rather than submitting: the label is still to
+          be typed, and a picker that added the root on click would make the one
+          irreversible-looking control in this form the one with no confirm. */}
+      {browsing && (
+        <FolderPicker
+          onPick={(picked) => {
+            setPath(picked)
+            setBrowsing(false)
+          }}
+          onCancel={() => {
+            setBrowsing(false)
+          }}
+        />
+      )}
       <div className="w-full">
         <Input
           id={labelId}
@@ -105,10 +152,15 @@ export function AddRootForm({ onDone, onCancel }: AddRootFormProps) {
         </p>
       )}
 
-      {/* The one thing this screen can promise before the server answers, and
-          the reason the row that appears will say 재시작 후 적용: roots are
-          opened once at startup (arch §7.4), so nothing is scanned until then. */}
-      <p className="text-xs text-ink-dim">추가한 루트는 서버를 다시 시작한 뒤 읽힙니다.</p>
+      {/* E-40 replaced this sentence, and the replacement is deliberately weaker
+          than the promise it could make. The server now opens the root and
+          starts scanning it — but the adoption can fail after the file write
+          (an unmounted path, a directory that stopped being readable between
+          the stat and the open), and then the row falls back to A-11's
+          재시작 후 적용. The row itself is the truthful answer, because it is
+          computed from what the server actually did; this line must not
+          contradict it in advance. */}
+      <p className="text-xs text-ink-dim">추가하면 바로 읽기 시작합니다.</p>
 
       <div className="flex gap-2">
         {/* Disabled only while there is genuinely nothing to send, or while the

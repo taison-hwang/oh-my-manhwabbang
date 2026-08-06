@@ -239,6 +239,22 @@ func (c *Config) validate() error {
 	if c.Server.ShutdownGrace < 0 {
 		add(s.errValue("server.shutdown_grace", c.Server.ShutdownGrace, "must not be negative"))
 	}
+	// A-12 / ruling E-40. The rules are a root path's, minus "must exist": these
+	// directories are browsed on demand, not opened at startup, so an unmounted
+	// one is reported unavailable by the endpoint rather than kept from booting.
+	// Cleaning in place matters — `GET /api/browse` compares against these
+	// strings, and an uncleaned `/mnt/x/` would fail to contain `/mnt/x/y`.
+	for i, base := range c.Server.BrowseBases {
+		key := fmt.Sprintf("server.browse_bases[%d]", i)
+		switch {
+		case strings.TrimSpace(base) == "":
+			add(s.errf(key, "must not be empty; remove the entry instead"))
+		case !filepath.IsAbs(base):
+			add(s.errValue(key, base, "must be an absolute path"))
+		default:
+			c.Server.BrowseBases[i] = filepath.Clean(base)
+		}
+	}
 
 	// ---- roots (FR-CFG-001) ----------------------------------------------
 	if len(c.Roots) == 0 {

@@ -24,8 +24,11 @@ import { scanStartErrorMessage } from '../roots/scanErrors'
  * E-26 reversed that in part: the owner of the requirement extended the
  * requirement, and the screen may now add and remove entries in the `roots:`
  * list. Everything else D-33 and E-3 decided still stands — this is not a
- * general configuration editor, `enabled`/`name`/`path`/`label` of an existing
- * root stay file-only, and there is no filesystem browser.
+ * general configuration editor and `enabled`/`name`/`path`/`label` of an
+ * existing root stay file-only. **The "and there is no filesystem browser"
+ * this sentence used to end with was overturned by ruling E-40** — there is
+ * one now, bounded by `server.browse_bases` and behind the same gate; see
+ * `roots/FolderPicker.tsx` for why it was refused before and what pays for it.
  *
  * Three facts shape every line below, and all three come off the wire:
  *
@@ -36,11 +39,13 @@ import { scanStartErrorMessage } from '../roots/scanErrors'
  *    lifts a refusal that lives in a YAML key on the server. When the gate is
  *    shut this panel is exactly what C-5 and E-3 have always described.
  *  * **A `pending` row is a root the file has and the server has not** (R2).
- *    Roots are opened once at startup, so `POST` cannot make one servable; the
- *    row says 재시작 후 적용, carries no counts (§7.3 fixes them at zero, and
- *    zero is not a count) and offers no 재스캔. 제거 stays, because a root added
- *    with the wrong path must be removable before the restart — and `DELETE`
- *    answers on it, since it *is* in the file on disk.
+ *    Since **E-40** an ordinary `POST` is *not* pending — the server opens the
+ *    root and scans it — so what reaches this row is an addition the server
+ *    could not adopt, or a hand-edit. The row says 재시작 후 적용, carries no
+ *    counts (§7.3 fixes them at zero, and zero is not a count) and offers no
+ *    재스캔. 제거 stays, because a root added with the wrong path must be
+ *    removable before the restart — and `DELETE` answers on it, since it *is*
+ *    in the file on disk.
  *  * **A removal takes effect now** (R1). The YAML entry goes and so do that
  *    root's `index.db` rows, so the row and its series disappear at once;
  *    `user.db` is untouched, so the reading progress survives and reattaches if
@@ -299,6 +304,7 @@ export function RootsPanel() {
       {editable &&
         (adding ? (
           <AddRootForm
+            canBrowse={editable}
             onDone={() => {
               setAdding(false)
             }}

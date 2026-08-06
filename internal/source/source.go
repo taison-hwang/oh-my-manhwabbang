@@ -531,6 +531,62 @@ func (s *RootSet) PoolOpener() openpool.OpenFunc {
 	}
 }
 
+// ErrRootExists is Add's refusal when the name is already in the set.
+var ErrRootExists = errors.New("root already open")
+
+// Add opens one more root into a live set — amendment A-12, ruling E-40.
+//
+// # Why this exists, given that OpenRoots was deliberately called once
+//
+// Ruling E-26's amendment A-11 made `POST /api/roots` restart-based, and the
+// comment on `OpenRoots` above said so: the pool, the source factory and the
+// scanner are all built over one `*RootSet` that startup produced. E-40
+// overturns that for **addition only**, and this method is the whole mechanism.
+// It works because those three collaborators hold a *pointer* to this set, not
+// a copy of its contents — so a name inserted here is reachable from every one
+// of them the moment the write lock is released, with no re-wiring anywhere.
+//
+// Removal is NOT the mirror of this and is not offered. Closing a handle that
+// an in-flight page request is streaming through is a different problem with a
+// different answer (reference counting the entries), and E-40 §4 explicitly
+// keeps removal on A-11's revision R1 — the removed-set — where it already
+// works without touching this map.
+//
+// The failure of `os.OpenRoot` is returned rather than recorded. That is the
+// opposite of what `OpenRoots` does with the same error, and the asymmetry is
+// deliberate: at startup an unreachable root must not stop the server booting
+// (arch §4.9), but here a caller is asking for one specific directory and can
+// be told, so `POST /api/roots` answers `400 not_readable` instead of adding a
+// row that exists only to look broken.
+func (s *RootSet) Add(name, path string) error {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	abs = filepath.Clean(abs)
+
+	// Opened before the lock is taken: os.OpenRoot touches the filesystem, and
+	// holding the write lock across a syscall on a possibly-dead mount would
+	// stall every page request in the process. The name is re-checked after.
+	root, err := os.OpenRoot(abs)
+	if err != nil {
+		return fmt.Errorf("opening root %q: %w", name, err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.entries[name]; exists {
+		// Two concurrent adds of the same name, or an add of a name startup
+		// already opened. Closing our handle here is what keeps the loser of the
+		// race from leaking a descriptor.
+		_ = root.Close()
+		return fmt.Errorf("%w: %q", ErrRootExists, name)
+	}
+	s.entries[name] = &rootEntry{name: name, path: abs, root: root}
+	s.log.Info("a root was opened into the running server", "root", name, "path", abs)
+	return nil
+}
+
 // Close releases every root handle.
 func (s *RootSet) Close() error {
 	s.mu.Lock()

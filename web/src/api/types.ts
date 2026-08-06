@@ -314,6 +314,56 @@ export interface RootEntry {
   enabled: boolean
 }
 
+/**
+ * One directory offered by the picker — `GET /api/browse`, AMENDMENT **A-12**
+ * (ruling **E-40**).
+ */
+export interface BrowseEntry {
+  name: string
+  /**
+   * Absolute and cleaned — exactly what `POST /api/roots` wants. The client
+   * never assembles a filesystem path itself; it sends back what it was given.
+   */
+  path: string
+  /**
+   * `false` when `POST /api/roots` would reject this directory. The server
+   * computes it from §7.4's own rules, so the picker cannot grey out a folder
+   * the endpoint would have accepted, or offer one it would refuse.
+   */
+  selectable: boolean
+  /**
+   * §7.4's vocabulary — `duplicate`, `overlaps`, `contains_storage`,
+   * `does_not_exist` — and `null` exactly when `selectable` is `true`.
+   */
+  reason: string | null
+}
+
+/**
+ * One level of the picker's tree — `GET /api/browse[?path=…]` (A-12).
+ *
+ * The tree's roots are `server.browse_bases`; there is nothing above them, which
+ * is why `path` is `''` and `parent` is `null` at the top rather than naming
+ * `/`.
+ */
+export interface BrowseResponse {
+  /** The directory listed. `''` is the synthetic top level of configured bases. */
+  path: string
+  /** The next level up, or `null` at a base and at the top level. */
+  parent: string | null
+  /**
+   * `path` itself as an add candidate — the picker's "choose this folder".
+   * `null` at the top level, where there is no single directory to choose.
+   */
+  self: BrowseEntry | null
+  /** Immediate sub-directories, natural-sorted. Files and symlinks are absent. */
+  entries: BrowseEntry[]
+  /**
+   * The listing hit the server's per-directory cap. The UI must say so rather
+   * than present a partial list as complete.
+   */
+  truncated: boolean
+}
+
 // ---------------------------------------------------------------------------
 // §7.5 Series
 // ---------------------------------------------------------------------------

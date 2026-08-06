@@ -637,3 +637,121 @@ func TestRootSet_poolOpener_prefersTheDeepestMatchingRoot(t *testing.T) {
 		}
 	}
 }
+
+// TestRootSet_add_opensARootIntoALiveSet is amendment A-12 (ruling E-40).
+//
+// # What this replaces
+//
+// `OpenRoots` is called exactly once, at startup, and A-11 limit (1) made that
+// load-bearing: the pool, the source factory and the scanner are all built over
+// that one set, so a root added to `shelf.yaml` needed a restart. E-40 overturns
+// that for addition, and `Add` is the whole mechanism. The reason it works with
+// no re-wiring is asserted here through `PoolOpener`: those collaborators hold a
+// pointer to this set, so a name inserted under the write lock is reachable from
+// an opener that was created before the insert.
+func TestRootSet_add_opensARootIntoALiveSet(t *testing.T) {
+	t.Parallel()
+	base := t.TempDir()
+	zipBytes := testutil.BuildZIP(t, testutil.ZIPSpec{Entries: []testutil.Entry{
+		{Name: "1.jpg", Data: testutil.TinyJPEG(t, 8, 8)},
+	}})
+	testutil.BuildTreeAt(t, base, map[string]any{
+		"first":  map[string]any{"a.zip": zipBytes},
+		"second": map[string]any{"b.zip": zipBytes},
+	})
+	first := filepath.Join(base, "first")
+	second := filepath.Join(base, "second")
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	roots, err := source.NewRootSet(t.Context(), map[string]string{"first": first}, log)
+	if err != nil {
+		t.Fatalf("NewRootSet: %v", err)
+	}
+	t.Cleanup(func() { _ = roots.Close() })
+
+	// Taken BEFORE the add. This is the point: the opener the pool was built
+	// with must see the new root without being rebuilt.
+	open := roots.PoolOpener()
+	if _, err := open(filepath.Join(second, "b.zip")); err == nil {
+		t.Fatal("the opener reached an unconfigured root before Add; the rest of this test would prove nothing")
+	}
+
+	if err := roots.Add("second", second); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	if _, ok := roots.Root("second"); !ok {
+		t.Error("Root(\"second\") is not resolvable after Add")
+	}
+	if got, ok := roots.Path("second"); !ok || got != second {
+		t.Errorf("Path(\"second\") = (%q, %v), want (%q, true)", got, ok, second)
+	}
+	f, err := open(filepath.Join(second, "b.zip"))
+	if err != nil {
+		t.Fatalf("the pre-existing opener cannot reach the added root: %v", err)
+	}
+	_ = f.Close()
+
+	// The first root is untouched — an add is additive, and a set that lost a
+	// root while gaining one would take the library down with it.
+	if _, err := open(filepath.Join(first, "a.zip")); err != nil {
+		t.Errorf("the original root stopped resolving after Add: %v", err)
+	}
+}
+
+// TestRootSet_add_refusesADuplicateNameAndLeaksNothing pins the collision.
+//
+// The name is the identity every `series_id` hashes (arch §3.4), so a second
+// entry under one name would make which directory a book resolves in depend on
+// map order. The handle opened before the lock is taken must be closed on the
+// losing path — that is the only descriptor leak this method can have, and a
+// leak is invisible to every other assertion.
+func TestRootSet_add_refusesADuplicateNameAndLeaksNothing(t *testing.T) {
+	t.Parallel()
+	base := t.TempDir()
+	testutil.BuildTreeAt(t, base, map[string]any{
+		"one": map[string]any{}, "two": map[string]any{},
+	})
+	one := filepath.Join(base, "one")
+	two := filepath.Join(base, "two")
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	roots, err := source.NewRootSet(t.Context(), map[string]string{"dup": one}, log)
+	if err != nil {
+		t.Fatalf("NewRootSet: %v", err)
+	}
+	t.Cleanup(func() { _ = roots.Close() })
+
+	if err := roots.Add("dup", two); !errors.Is(err, source.ErrRootExists) {
+		t.Fatalf("Add over an existing name = %v, want ErrRootExists", err)
+	}
+	// The original mapping survives the refusal.
+	if got, _ := roots.Path("dup"); got != one {
+		t.Errorf("Path(\"dup\") = %q, want the original %q — a refused Add must change nothing", got, one)
+	}
+}
+
+// TestRootSet_add_reportsAnUnopenableDirectory is the asymmetry with OpenRoots,
+// and it is deliberate.
+//
+// At startup an unreachable root is recorded rather than fatal (arch §4.9): the
+// rest of the library must still come up. Here a caller is asking for one
+// specific directory and can be told, so `POST /api/roots` answers `400` instead
+// of adding a row that exists only to look broken.
+func TestRootSet_add_reportsAnUnopenableDirectory(t *testing.T) {
+	t.Parallel()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	roots, err := source.NewRootSet(t.Context(), map[string]string{}, log)
+	if err != nil {
+		t.Fatalf("NewRootSet: %v", err)
+	}
+	t.Cleanup(func() { _ = roots.Close() })
+
+	missing := filepath.Join(t.TempDir(), "not-mounted")
+	if err := roots.Add("gone", missing); err == nil {
+		t.Fatal("Add of a non-existent directory returned nil")
+	}
+	if _, ok := roots.Root("gone"); ok {
+		t.Error("a failed Add left the name resolvable")
+	}
+}

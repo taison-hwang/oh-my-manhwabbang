@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	"shelf/internal/config"
 	"shelf/internal/index"
+	"shelf/internal/scanner"
 )
 
 // Roots over HTTP — arch §7.4, FR-CFG-001/-002, AMENDMENT A-11 (ruling E-26).
@@ -29,14 +31,20 @@ import (
 //
 // # The two rules that shape every handler here
 //
-//  1. **These endpoints edit `shelf.yaml`; they do not open or close a root in
-//     the running server.** Roots are opened exactly once, at startup
+//  1. **These endpoints edit `shelf.yaml`. A `POST` also opens the root it
+//     wrote; a `DELETE` does not close one.** Startup opens the whole set once
 //     (`internal/app/app.go` step 6, `source.OpenRoots`), and the open-file
-//     pool, the source factory and the scanner are all built over that one set.
-//     There is no reload path and A-11 did not buy one. A `POST` therefore
-//     produces a *pending* row (revision R2) and a `DELETE` a removed one
-//     (revision R1) — neither adopts anything until the restart that
-//     `Settings.server.config_changed_on_disk` tells the user to perform.
+//     pool, the source factory and the scanner are built over that one set —
+//     which is why a hot add needs no re-wiring anywhere: they all hold a
+//     *pointer* to it, so `source.RootSet.Add` is enough (AMENDMENT A-12,
+//     ruling E-40, `adoptRoot` below).
+//
+//     Removal stays where A-11 put it. Closing a handle an in-flight page
+//     request is streaming through needs per-entry reference counting, and
+//     revision R1's removed-set already makes a removal take effect at once
+//     without touching the open set. An addition this process cannot adopt
+//     falls back to A-11 exactly: a *pending* row (revision R2) and the restart
+//     that `Settings.server.config_changed_on_disk` tells the user to perform.
 //
 //  2. **Only `internal/config` writes.** This package never opens a file for
 //     writing, never renames one and never removes one; it calls
@@ -169,7 +177,7 @@ func (s *Server) toRoot(row index.Root) Root {
 	label := row.Label
 	path := row.Path
 	enabled := row.Enabled
-	if cfgRoot, ok := s.cfg.RootByName(row.Name); ok {
+	if cfgRoot, ok := s.rootByName(row.Name); ok {
 		label = cfgRoot.DisplayName()
 		path = cfgRoot.Path
 		enabled = cfgRoot.Enabled
@@ -261,7 +269,7 @@ func (s *Server) rootEditingReason() string {
 		// configuration with no file has nothing to edit.
 		return reasonNoConfigFile
 	}
-	for _, root := range s.cfg.Roots {
+	for _, root := range s.configuredRoots() {
 		if config.IsInside(path, root.Path) {
 			// Writing under a media volume is precisely what FR-CFG-005 /
 			// NFR-DAT-002 forbid, and `internal/config/validate.go` already
@@ -332,8 +340,14 @@ func (s *Server) handleCreateRoot(w http.ResponseWriter, r *http.Request) error 
 	}); err != nil {
 		return configFileError(err)
 	}
+
+	// Ruling E-40 overturns A-11 limit (1) for addition: the file write above is
+	// no longer the end of the request. `state.Digest` is the file as it was
+	// **before** this write — adoptRoot needs it to decide whether moving the
+	// adopted digest forward would silence somebody else's edit.
+	adopted := s.adoptRoot(r.Context(), entry, state.Digest)
 	s.log.InfoContext(r.Context(), "a root was added to the configuration file",
-		"root", entry.Name, "restart_required", true)
+		"root", entry.Name, "adopted", adopted, "restart_required", !adopted)
 
 	// `Location` is the only way the client learns the generated name without
 	// re-reading the file, and 201 rather than 200 because a new addressable
@@ -648,6 +662,120 @@ func configFileError(err error) error {
 		// `Settings.server.config_path`.
 		return internalErr(err)
 	}
+}
+
+// --- the added-set (amendment A-12, ruling E-40) ----------------------------
+
+// configuredRoots is `roots:` as **this process** now understands it: the list
+// startup loaded, plus everything a hot add has adopted since.
+//
+// Every reader of the roots list inside this package goes through here. Reading
+// `s.cfg.Roots` directly is the defect this helper exists to prevent — that
+// slice is frozen at startup and is shared, unlocked, with `internal/app`.
+func (s *Server) configuredRoots() []config.Root {
+	s.adoptMu.RLock()
+	defer s.adoptMu.RUnlock()
+	if len(s.addedRoots) == 0 {
+		return s.cfg.Roots
+	}
+	out := make([]config.Root, 0, len(s.cfg.Roots)+len(s.addedRoots))
+	out = append(out, s.cfg.Roots...)
+	out = append(out, s.addedRoots...)
+	return out
+}
+
+// rootByName is `config.Config.RootByName` widened to the adopted roots.
+func (s *Server) rootByName(name string) (config.Root, bool) {
+	if r, ok := s.cfg.RootByName(name); ok {
+		return r, true
+	}
+	s.adoptMu.RLock()
+	defer s.adoptMu.RUnlock()
+	for _, r := range s.addedRoots {
+		if r.Name == name {
+			return r, true
+		}
+	}
+	return config.Root{}, false
+}
+
+// adoptRoot opens a just-added root into the running server — the whole of
+// ruling E-40's overturning of A-11 limit (1).
+//
+// # Order matters, and it is the reverse of DELETE's
+//
+// `DELETE` purges the index first so that a failure leaves the root configured
+// and re-indexable. An add has the opposite failure shape: every step here is
+// additive, and the one that can genuinely fail — opening the handle — must
+// fail **before** anything claims the root is live. So the handle comes first,
+// then the scanner's name table, then the index row, then the scan.
+//
+// # What a failure means, and why it is not the request's failure
+//
+// `config.AddRoot` has already written the file by the time this runs, and that
+// write is what the user asked for. If the adoption then fails, the correct
+// answer is still `201` — the root *is* configured — with the pre-E-40
+// behaviour as the fallback: a `pending` row and a restart notice. Returning
+// `500` would be a lie about the file, and rolling the file write back would
+// discard the user's edit to work around our own inability to open a directory
+// we just successfully stat-ed. So this returns nothing and logs instead.
+//
+// The scan is started but not waited on. It reports through the same
+// `GET /api/scan/status` poll the settings dialog already renders (E-38), which
+// is why adding a root now shows progress rather than a silent pending row.
+func (s *Server) adoptRoot(ctx context.Context, entry RootEntry, priorDigest string) bool {
+	root := config.Root{Name: entry.Name, Path: entry.Path, Label: entry.Label, Enabled: true}
+
+	if s.roots == nil || s.scan == nil {
+		return false
+	}
+	if err := s.roots.Add(root.Name, root.Path); err != nil {
+		s.log.WarnContext(ctx, "the root was written to the configuration file but could not be opened; "+
+			"it stays pending until a restart",
+			"root", root.Name, "err", err)
+		return false
+	}
+
+	s.adoptMu.Lock()
+	s.addedRoots = append(s.addedRoots, root)
+	// The digest moves forward only when the file we just wrote was the file we
+	// had already adopted. If the two differed, something *else* had edited the
+	// file since startup and `config_changed_on_disk` is telling the truth about
+	// that other change — adopting our own write must not silence it.
+	if priorDigest != "" && priorDigest == s.configDigest {
+		if state, err := config.ReadFileState(s.cfg.AbsFilePath()); err == nil {
+			s.configDigest = state.Digest
+		}
+	}
+	s.adoptMu.Unlock()
+
+	s.scan.AddConfigRoot(root)
+
+	// Written before the scan so that the very next `GET /api/roots` — which the
+	// client fires on the 201 — renders a real row rather than R2's pending one.
+	if s.idx != nil {
+		if err := s.idx.UpsertRoot(ctx, index.Root{
+			Name: root.Name, Path: root.Path, Label: root.Label, Enabled: true,
+		}); err != nil {
+			s.log.WarnContext(ctx, "the root was opened but its index row could not be written",
+				"root", root.Name, "err", err)
+		}
+	}
+
+	// A scan already running is the ordinary case, not an error: this root is in
+	// the scanner's table now, so the *next* run covers it, and the user has a
+	// 재스캔 button for sooner. Any other refusal is logged and no more — the
+	// root is added either way.
+	if runID, err := s.scan.Start(context.WithoutCancel(ctx), scanner.Request{
+		Roots: []string{root.Name},
+	}); err != nil {
+		s.log.InfoContext(ctx, "the root was opened but no scan could be started for it now",
+			"root", root.Name, "err", err)
+	} else {
+		s.log.InfoContext(ctx, "a root was opened into the running server and a scan started",
+			"root", root.Name, "run_id", runID)
+	}
+	return true
 }
 
 // --- the removed-set (revision R1) -----------------------------------------

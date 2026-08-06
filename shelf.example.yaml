@@ -57,10 +57,36 @@ server:
   #
   # Removing a root deletes that root's rows from index.db, which is derived
   # and disposable; it never touches user.db, so reading progress survives and
-  # reattaches if the same directory is added again.  Adding a root writes the
-  # line below but does not open it: a change here needs a restart, like every
-  # other key in this file.
+  # reattaches if the same directory is added again.
+  #
+  # ADDING a root no longer needs a restart (AMENDMENT A-12, ruling E-40): the
+  # server opens it and starts scanning it as soon as the line is written.
+  # REMOVING one still does — the entry leaves the file and that root's series
+  # leave the library at once, but the open handle is released at shutdown.
   allow_root_editing: false
+
+  # Where 폴더 찾아보기 may look (AMENDMENT A-12, ruling E-40).
+  #
+  # With `allow_root_editing` on, the settings screen can offer a directory
+  # picker instead of a text field.  This list bounds it: the picker lists these
+  # directories and anything beneath them, and refuses everything else —
+  # including their parents.  A path outside the list can still be TYPED; only
+  # the browser is bounded.
+  #
+  # Empty — the default — means no picker at all.  It is a separate key from
+  # `allow_root_editing` on purpose.  Editing already grants the power to mount
+  # any readable directory, so a browse list adds no authority where editing is
+  # on; but it would where editing is off, and nothing here should make you
+  # reason about that coupling.
+  #
+  # Entries must be absolute.  They are NOT required to exist at startup: an
+  # unmounted drive is listed and greyed out rather than keeping the server
+  # from booting.
+  #
+  # browse_bases:
+  #   - "/mnt/media"
+  #   - "/srv/comics"
+  browse_bases: []
 
 
 # ---------------------------------------------------------------------------

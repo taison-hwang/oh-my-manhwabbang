@@ -98,8 +98,22 @@ type Server struct {
 	logHTTP    bool
 	trustProxy bool
 
-	// configDigest is the configuration file as this process loaded it (§7.8).
+	// configDigest is the configuration file as this process has adopted it
+	// (§7.8). It starts as the bytes startup loaded and, since amendment A-12,
+	// moves forward when a hot add makes this process's state match the file
+	// again. Guarded by adoptMu: `GET /api/settings` reads it on every poll.
 	configDigest string
+
+	// addedRoots is amendment A-12's mirror of removedRoots below: the roots
+	// this process has opened since startup, in the order it opened them.
+	//
+	// It exists for the same reason the removed-set does — so the running server
+	// can honour a configuration edit without anything hot-swapping the shared
+	// `*config.Config`, which `internal/app` also holds and which has no lock.
+	// Every reader of "the roots this process has" goes through
+	// `configuredRoots()`; reading `s.cfg.Roots` directly now sees a stale list.
+	adoptMu    sync.RWMutex
+	addedRoots []config.Root
 
 	// rootEdit serialises the two write handlers of arch §7.4. Each of them
 	// re-reads the file inside this lock, so two concurrent adds cannot both
@@ -302,6 +316,12 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("/api/roots/{name}", s.methods(map[string]handlerFunc{
 		http.MethodDelete: s.handleDeleteRoot,
 	}))
+	// The directory picker is amendment A-12 (ruling E-40). It is `/api/browse`
+	// and NOT `/api/roots/browse`, which would have read better: `browse` is a
+	// legal root name (§3.2's alphabet admits it), and the more specific literal
+	// pattern beats `/api/roots/{name}`, so a user with a root called `browse`
+	// would find it undeletable — a silent, data-dependent 405.
+	mux.Handle("/api/browse", s.get(s.handleBrowse))
 
 	mux.Handle("/api/series", s.get(s.handleSeriesList))
 	mux.Handle("/api/series/{sid}", s.get(s.handleSeriesDetail))

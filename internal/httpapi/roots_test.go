@@ -12,7 +12,7 @@ import (
 
 	"shelf/internal/config"
 	"shelf/internal/index"
-	"shelf/internal/scanner"
+	"shelf/internal/source"
 	"shelf/internal/userdata"
 )
 
@@ -148,10 +148,21 @@ func TestRootEditing_capabilityAndTheEndpointsAgree(t *testing.T) {
 
 // --- POST ------------------------------------------------------------------
 
-// TestCreateRoot_writesTheFileAndReportsPending is the happy path, asserted on
-// the written file rather than on the response, plus revision R2: the new root
-// appears in `GET /api/roots` at once, marked pending, with nothing invented.
-func TestCreateRoot_writesTheFileAndReportsPending(t *testing.T) {
+// TestCreateRoot_writesTheFileAndAdoptsIt is the happy path, asserted on the
+// written file rather than on the response, plus amendment **A-12** (ruling
+// **E-40**): the server opens the root and starts a scan of it, so the row is
+// live rather than pending and no restart is required.
+//
+// # What this test replaced, and why the replacement had to be as strong
+//
+// It used to be `…_writesTheFileAndReportsPending` and asserted the exact
+// opposite of the three flags below: `pending: true`, `available: false`, and
+// `config_changed_on_disk: true`. Those were A-11 limit (1) — "restart-based,
+// not hot-reload" — and they were correct until E-40 overturned it for
+// addition. Deleting them and asserting nothing would have left the new
+// behaviour unpinned; the *fallback* they described still exists and is pinned
+// separately by `TestCreateRoot_fallsBackToPendingWhenTheRootCannotBeOpened`.
+func TestCreateRoot_writesTheFileAndAdoptsIt(t *testing.T) {
 	e := newEnv(t, withRootEditing())
 	dir := filepath.Join(t.TempDir(), "만화 2")
 	mustMkdir(t, dir)
@@ -189,30 +200,125 @@ func TestCreateRoot_writesTheFileAndReportsPending(t *testing.T) {
 		t.Error("`enabled` was written as false; the key must not be written at all")
 	}
 
-	// R2: the row is there, and it is honest about not being loaded.
+	// A-12: the row is live. Not pending, because this process has opened it;
+	// available, because the handle stats; and still carrying no counts, because
+	// the scan that fills them has only just been asked to start.
 	list := decodeBody[RootsResponse](t, e.get("/api/roots"), http.StatusOK)
-	pending := findRoot(t, list.Items, entry.Name)
-	if !pending.Pending {
-		t.Error("the new root is listed but not marked pending; the server has not opened it")
+	added := findRoot(t, list.Items, entry.Name)
+	if added.Pending {
+		t.Error("the adopted root is marked pending; E-40 opened it into this server")
 	}
-	if pending.Available {
-		t.Error("a pending root reports available: true; nothing has opened it")
+	if !added.Available {
+		t.Error("the adopted root reports available: false; its os.Root was opened and stats")
 	}
-	if pending.SeriesCount != 0 || pending.BookCount != 0 || pending.PageCount != 0 || pending.TotalBytes != 0 {
-		t.Errorf("a pending root carries counts: %+v", pending)
+	if added.Path != dir || added.Label != "두 번째" {
+		t.Errorf("the adopted row lost the path or the label: %+v", added)
 	}
-	if pending.LastScanStart != nil || pending.LastScanEnd != nil {
-		t.Error("a pending root carries scan timestamps; it has never been scanned")
+	if added.SeriesCount != 0 || added.BookCount != 0 || added.PageCount != 0 || added.TotalBytes != 0 {
+		t.Errorf("the adopted root carries counts before its first scan finished: %+v", added)
 	}
 	if existing := findRoot(t, list.Items, rootName); existing.Pending {
 		t.Error("the indexed root was marked pending")
 	}
 
-	// And the restart notice the UI needs is now true, because the file this
-	// process loaded is no longer the file on disk.
+	// The scanner learned the name **before** it was asked to scan it. The other
+	// order answers ErrUnknownRoot and is logged as an ordinary "no scan could be
+	// started", so nothing but this assertion distinguishes the two.
+	if len(e.scan.added) != 1 || e.scan.added[0].Name != entry.Name {
+		t.Fatalf("AddConfigRoot calls = %+v, want exactly the new root", e.scan.added)
+	}
+	if e.scan.addedBeforeStart[0] != 0 {
+		t.Error("the scan was started before the scanner was told the root exists")
+	}
+	if e.scan.starts != 1 {
+		t.Fatalf("the scanner was started %d times, want 1", e.scan.starts)
+	}
+	if got := e.scan.lastReq.Roots; len(got) != 1 || got[0] != entry.Name {
+		t.Errorf("the scan targeted %v; an empty list means EVERY root to internal/scanner, "+
+			"which would re-walk the whole library for one added directory", got)
+	}
+
+	// And the restart notice is **false**: this process and the file agree again,
+	// which is the whole point of E-40. Under A-11 this assertion was inverted.
+	s := decodeBody[Settings](t, e.get("/api/settings"), http.StatusOK)
+	if s.Server.ConfigChangedOnDisk {
+		t.Error("config_changed_on_disk is true after an adopted write; " +
+			"the server would be telling the user to restart for a change it has already applied")
+	}
+}
+
+// TestCreateRoot_fallsBackToPendingWhenTheRootCannotBeOpened pins A-11's
+// behaviour as **the fallback** it became under ruling E-40.
+//
+// The adoption is the one part of `POST /api/roots` that can fail after the file
+// has been written, and the ruling is explicit that a failure there is still a
+// `201`: the entry *is* configured, and rolling the write back would discard the
+// user's edit to work around the server's own inability to open a directory it
+// had just stat-ed successfully. What the user gets instead is exactly the
+// pre-E-40 experience — a pending row and a restart notice — which is why that
+// path must stay tested rather than merely documented.
+//
+// # The failure is reached without a test-only seam, and the route is a real one
+//
+// Remove a root, then add its directory back before restarting. `DELETE` takes
+// the entry out of the file and marks the name removed, but it deliberately does
+// **not** close the handle — A-11 revision R1 is explicit that removal is
+// honoured through the removed-set rather than by hot-swapping the open set. So
+// the name is free in the file and still taken in the `RootSet`, `§7.4`'s
+// generator hands out the same slug again (which it does on purpose, so reading
+// progress reattaches), and `source.RootSet.Add` refuses with `ErrRootExists`.
+//
+// That makes this test two things at once: the fallback's pin, and the answer to
+// "what happens if I undo a removal before restarting". The answer is A-11's,
+// unchanged — a pending row — and it is honest, because `removedRoots` still
+// shadows that name for the scanner.
+func TestCreateRoot_fallsBackToPendingWhenTheRootCannotBeOpened(t *testing.T) {
+	e := newEnv(t, withRootEditing(), withSecondRoot())
+
+	dir, ok := e.srv.roots.(*source.RootSet).Path(rootName)
+	if !ok {
+		t.Fatalf("the harness root %q is not open; this test would prove nothing", rootName)
+	}
+	if w := e.do(http.MethodDelete, "/api/roots/"+rootName, nil); w.Code != http.StatusNoContent {
+		t.Fatalf("DELETE = %d: %s", w.Code, w.Body.String())
+	}
+
+	// The label is what makes the generated name collide. §7.4 slugifies the
+	// label when there is one and the directory's base name otherwise, and the
+	// harness root's directory is not called `manga` — so re-adding the folder
+	// alone would get a fresh name and adopt cleanly. Supplying the label the
+	// root had is both the realistic gesture (undoing a removal, name and all)
+	// and the one that reproduces the collision.
+	entry := decodeBody[RootEntry](t,
+		e.jsonBody(http.MethodPost, "/api/roots",
+			`{"path":`+quoteJSON(dir)+`,"label":`+quoteJSON(rootName)+`}`),
+		http.StatusCreated)
+	if entry.Name != rootName {
+		t.Fatalf("the generated name is %q, want %q re-issued — §7.4 uniquifies against the "+
+			"configuration file, where the removal freed it", entry.Name, rootName)
+	}
+
+	// The write stands. The endpoint's contract is about the file.
+	if roots := e.configFileRoots(); len(roots) != 2 || roots[1].Name != entry.Name {
+		t.Fatalf("the configuration file holds %+v; a failed adoption must not roll the write back", roots)
+	}
+
+	list := decodeBody[RootsResponse](t, e.get("/api/roots"), http.StatusOK)
+	row := findRoot(t, list.Items, entry.Name)
+	if !row.Pending {
+		t.Error("the row is not pending; nothing opened this root, so a restart is what loads it")
+	}
+	if row.Available {
+		t.Error("available: true for a root whose directory does not exist")
+	}
+	if e.scan.starts != 0 {
+		t.Error("a scan was started for a root that could not be opened")
+	}
+
+	// And the restart notice is true again — because it is true.
 	s := decodeBody[Settings](t, e.get("/api/settings"), http.StatusOK)
 	if !s.Server.ConfigChangedOnDisk {
-		t.Error("config_changed_on_disk is false after a successful write")
+		t.Error("config_changed_on_disk is false, but the file on disk gained a root this process never opened")
 	}
 }
 
@@ -766,31 +872,37 @@ func TestDeleteRoot_takesEffectBeforeTheRestart(t *testing.T) {
 // says "all of them" — and re-index precisely the roots the operator just
 // deleted, into an index the `DELETE` went out of its way to purge.
 //
-// Reaching the state takes three steps because §7.4 refuses to remove the last
-// entry in the file: add a root (which writes the file and opens nothing), then
-// remove both of the roots this process actually loaded. `s.cfg.Roots` is still
-// what startup parsed, so every name in it is now in the removed set while the
-// file on disk is not empty.
-func TestStartScan_refusesWhenEveryRootThisProcessLoadedWasRemoved(t *testing.T) {
+// # Ruling E-40 moved this test's subject, and the move is recorded rather than
+// # papered over
+//
+// It used to reach `len(out) == 0` by adding a root — "which writes the file and
+// opens nothing" — and then removing the two the process had loaded. E-40 makes
+// the add *open* the root, so that state is no longer reachable that way and the
+// request is now a correct `202`. What the test protects is unchanged and is
+// asserted below: the full scan must run over **the named survivor**, never over
+// an empty list, because an empty list means "every enabled configured root" to
+// `internal/scanner.selectRoots` and would re-index exactly what was removed.
+//
+// The `409` itself is still reachable — every configured *and* adopted root
+// removed — and is pinned directly by `TestScanRoots_refusesWhenNothingIsLeft`
+// below, where the state can be built without three HTTP round trips.
+func TestStartScan_runsOverTheAdoptedRootWhenTheLoadedOnesWereRemoved(t *testing.T) {
 	e := newEnv(t, withRootEditing(), withSecondRoot())
 
 	third := t.TempDir()
 	created := decodeBody[RootEntry](t,
 		e.jsonBody(http.MethodPost, "/api/roots", `{"path":`+quoteJSON(third)+`}`),
 		http.StatusCreated)
+	// The premise E-40 changed, measured rather than assumed.
+	if len(e.scan.added) != 1 || e.scan.added[0].Name != created.Name {
+		t.Fatalf("the added root was not adopted (%+v); the rest of this test assumes it was", e.scan.added)
+	}
+	startsAfterAdd := e.scan.starts
 
 	for _, name := range []string{rootName, secondRootName} {
 		if w := e.do(http.MethodDelete, "/api/roots/"+name, nil); w.Code != http.StatusNoContent {
 			t.Fatalf("DELETE %s = %d: %s", name, w.Code, w.Body.String())
 		}
-	}
-
-	// The premise, measured rather than assumed. The file is *not* empty — it
-	// holds the root added above — so a `409` here cannot be coming from an
-	// empty configuration file, and the running server still lists that root, as
-	// pending, on the settings screen the 전체 재스캔 button lives on.
-	if roots := e.configFileRoots(); len(roots) != 1 || roots[0].Name != created.Name {
-		t.Fatalf("the configuration file holds %+v, want only the added root", roots)
 	}
 	for _, name := range []string{rootName, secondRootName} {
 		if !e.srv.rootIsRemoved(name) {
@@ -799,22 +911,59 @@ func TestStartScan_refusesWhenEveryRootThisProcessLoadedWasRemoved(t *testing.T)
 	}
 
 	w := e.jsonBody(http.MethodPost, "/api/scan", `{}`)
-	errorBody(t, w, http.StatusConflict, CodeConflict)
-
-	if e.scan.starts != 0 {
-		t.Errorf("the scanner was started with roots=%v. An empty list means \"every enabled root\" to "+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("POST /api/scan = %d: %s", w.Code, w.Body.String())
+	}
+	if e.scan.starts != startsAfterAdd+1 {
+		t.Fatalf("the scanner ran %d times, want one more than the adoption's %d",
+			e.scan.starts, startsAfterAdd)
+	}
+	if got := e.scan.lastReq.Roots; !slices.Equal(got, []string{created.Name}) {
+		t.Errorf("the full scan ran over %v, want only %v. An empty list means \"every enabled root\" to "+
 			"internal/scanner.selectRoots, so that run re-indexes exactly the roots the operator removed — "+
 			"the defect R1 exists to remove, arriving through POST /api/scan instead of GET /api/roots",
-			e.scan.lastReq.Roots)
+			got, []string{created.Name})
+	}
+}
+
+// TestScanRoots_refusesWhenNothingIsLeft is §7.10's second `409` row, pinned on
+// the function that decides it.
+//
+// It is a unit test rather than a request because the state — every configured
+// and every adopted root removed — costs three HTTP round trips to build through
+// the API and is one line to build here, and because what is being pinned is one
+// branch of one function. `scanRoots` is the whole of the rule: an empty result
+// must become a refusal and must never be passed on as `roots: []`, which the
+// scanner reads as "all of them".
+func TestScanRoots_refusesWhenNothingIsLeft(t *testing.T) {
+	t.Parallel()
+	s := &Server{cfg: &config.Config{Roots: []config.Root{
+		{Name: "a", Path: "/a", Enabled: true},
+		{Name: "b", Path: "/b", Enabled: true},
+	}}}
+	// Adopted since startup (A-12), and removed like the rest.
+	s.addedRoots = []config.Root{{Name: "c", Path: "/c", Enabled: true}}
+	for _, name := range []string{"a", "b", "c"} {
+		s.markRootRemoved(name)
 	}
 
-	// And the refusal is specific to "there is nothing left to scan": naming the
-	// root that *is* still in the file is a different answer, not a blanket 409.
-	// (It is `400`, from the scanner, because this process never opened it —
-	// which is the honest report for a root that needs the restart.)
-	e.scan.startErr = scanner.ErrUnknownRoot
-	named := e.jsonBody(http.MethodPost, "/api/scan", `{"roots":["`+created.Name+`"]}`)
-	errorBody(t, named, http.StatusBadRequest, CodeBadRequest)
+	out, err := s.scanRoots(nil)
+	if err == nil {
+		t.Fatalf("scanRoots returned %v and no error; an empty list means EVERY root to the scanner", out)
+	}
+	var apiErr *apiError
+	if !errors.As(err, &apiErr) || apiErr.status != http.StatusConflict {
+		t.Fatalf("scanRoots error = %v, want a 409", err)
+	}
+
+	// And the adopted root alone is enough to keep it out of the refusal.
+	s.removedMu.Lock()
+	delete(s.removedRoots, "c")
+	s.removedMu.Unlock()
+	if out, err := s.scanRoots(nil); err != nil || !slices.Equal(out, []string{"c"}) {
+		t.Errorf("scanRoots = (%v, %v), want the adopted root alone. An adopted root is a root this "+
+			"process opened, so leaving it out would refuse a scan the server can run", out, err)
+	}
 }
 
 // TestDeleteRoot_purgesTheIndexBeforeItWritesTheFile pins the *order* of the

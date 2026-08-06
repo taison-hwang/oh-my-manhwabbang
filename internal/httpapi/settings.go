@@ -259,9 +259,15 @@ func (s *Server) serverSettings(r *http.Request) ServerSettings {
 // a byte comparison, which is why it flips on a comment edit as readily as on a
 // new root — the UI must therefore say "the configuration file changed —
 // restart to apply it", never "you must restart".
+// Since amendment A-12 the baseline it compares against is not fixed: a hot add
+// moves it forward, because after one this process and the file agree again and
+// a notice telling the user to restart would be false.
 func (s *Server) configChangedOnDisk(r *http.Request) bool {
 	path := s.cfg.AbsFilePath()
-	if path == "" || s.configDigest == "" {
+	s.adoptMu.RLock()
+	baseline := s.configDigest
+	s.adoptMu.RUnlock()
+	if path == "" || baseline == "" {
 		return false
 	}
 	state, err := config.ReadFileState(path)
@@ -269,7 +275,7 @@ func (s *Server) configChangedOnDisk(r *http.Request) bool {
 		s.log.DebugContext(r.Context(), "the configuration file could not be re-read", "err", err)
 		return true
 	}
-	return state.Digest != s.configDigest
+	return state.Digest != baseline
 }
 
 // configFileStateOrZero reads the configuration file for the callers that want

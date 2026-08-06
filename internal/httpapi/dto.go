@@ -112,9 +112,16 @@ type Root struct {
 	LastScanEnd   *int64  `json:"last_scan_end"`
 	LastScanError *string `json:"last_scan_error"`
 	// Pending is true for a root that is in the configuration FILE ON DISK and
-	// has no index row: `POST /api/roots` wrote it, and roots are opened exactly
-	// once at startup, so this server cannot serve it until it restarts.
+	// has no index row — a root this process has not opened.
 	// AMENDMENT A-11 / revision R2 (ruling E-26).
+	//
+	// **A-12 (ruling E-40) made this the exception rather than the rule.** A
+	// successful `POST /api/roots` now opens the root and writes its index row,
+	// so the ordinary add is `pending: false`. What still reaches this flag is
+	// an addition the server could not adopt — an unmounted path, a name whose
+	// handle this process already holds — and a root hand-edited into the file
+	// since startup. Both are the same fact and both need the same restart, so
+	// they keep the same flag.
 	//
 	// It exists because the alternatives are both worse. Leaving the row out
 	// until the restart — which is what §7.4 originally said — makes a
@@ -126,8 +133,7 @@ type Root struct {
 	// 재스캔 button off this one boolean.
 	//
 	// A pending row carries zero counts, null scan timestamps and
-	// `available: false`. It is not a hot-add: nothing is opened and nothing is
-	// scanned.
+	// `available: false`: nothing was opened and nothing was scanned.
 	Pending bool `json:"pending"`
 }
 
@@ -161,6 +167,49 @@ type RootEntry struct {
 	Label string `json:"label"`
 	// Enabled is always true: the key is not written, so §3.2's default applies.
 	Enabled bool `json:"enabled"`
+}
+
+// BrowseResponse is `GET /api/browse` (amendment A-12, ruling E-40).
+//
+// It describes one level of a tree whose roots are `server.browse_bases`, and
+// the shape is the same at every level including the synthetic top — one list
+// of directories, plus enough context to render a breadcrumb and a back button
+// without the client reconstructing paths by string surgery.
+type BrowseResponse struct {
+	// Path is the directory listed. "" is the synthetic top level, whose entries
+	// are the configured bases themselves. It is empty rather than "/" because
+	// there is no node above the bases: "/" would name a directory this endpoint
+	// refuses to list.
+	Path string `json:"path"`
+	// Parent is the next level up, or null at a base and at the top level. It
+	// never leaves the allowlist, so following it is always a request that
+	// succeeds.
+	Parent *string `json:"parent"`
+	// Self describes Path itself as an add candidate — the picker's "choose this
+	// folder" — and is null at the top level, where there is no single directory
+	// to choose.
+	Self *BrowseEntry `json:"self"`
+	// Entries are the immediate sub-directories, natural-sorted. Files are not
+	// listed and neither are symlinks (see readSubdirs).
+	Entries []BrowseEntry `json:"entries"`
+	// Truncated says the listing hit the server's per-directory cap. A client
+	// must say so rather than present a partial list as complete.
+	Truncated bool `json:"truncated"`
+}
+
+// BrowseEntry is one directory offered by the picker.
+type BrowseEntry struct {
+	Name string `json:"name"`
+	// Path is absolute and cleaned — exactly what `POST /api/roots` wants, so
+	// the client never assembles a path itself.
+	Path string `json:"path"`
+	// Selectable is false when `POST /api/roots` would reject this directory.
+	// It is computed from §7.4's own rules so that the picker and the endpoint
+	// cannot disagree.
+	Selectable bool `json:"selectable"`
+	// Reason is §7.4's vocabulary — `duplicate`, `overlaps`, `contains_storage`,
+	// `does_not_exist` — and is null exactly when Selectable is true.
+	Reason *string `json:"reason"`
 }
 
 // --- §7.3 shared types -----------------------------------------------------

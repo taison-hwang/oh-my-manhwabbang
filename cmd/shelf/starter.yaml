@@ -38,8 +38,20 @@ server:
   # every interface and there is no `auth:` block by default, so turning this
   # on would let anyone on the LAN make this server open any directory it can
   # read.  It grants no authority that editing this file does not already give.
-  # A root added or removed here needs a restart, like every other key.
+  #
+  # Adding a root through the screen takes effect at once (ruling E-40); a
+  # removal takes its series out of the library at once too, but the directory
+  # stays open until the next restart.
   allow_root_editing: false
+
+  # Where the settings screen's folder picker may look (ruling E-40).  Empty —
+  # the default — means no picker, and the path is typed.  The picker lists
+  # these directories and anything under them and refuses everything else; a
+  # path outside the list can still be typed.
+  #
+  # browse_bases:
+  #   - "/mnt/media"
+  browse_bases: []
 
 # ---------------------------------------------------------------------------
 #  roots — the directories to scan.  At least one is required.

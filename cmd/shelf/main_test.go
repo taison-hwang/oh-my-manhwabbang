@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -129,7 +130,10 @@ func TestStarterConfig_parsesAndStatesTheBuiltInDefaults(t *testing.T) {
 	// different (the starter shows one) and FilePath is not a setting.
 	fromStarter.FilePath, fromDefaults.FilePath = "", ""
 	fromStarter.Roots[0].Label = ""
-	if fromStarter.Server != fromDefaults.Server {
+	// reflect.DeepEqual rather than `!=` since amendment A-12 gave `server:` its
+	// first slice field (`browse_bases`), which makes the struct incomparable.
+	// The check is the same one: every value the starter writes is the default.
+	if !reflect.DeepEqual(fromStarter.Server, fromDefaults.Server) {
 		t.Errorf("server block drifted:\n starter:  %+v\n defaults: %+v", fromStarter.Server, fromDefaults.Server)
 	}
 	if fromStarter.Reader != fromDefaults.Reader {

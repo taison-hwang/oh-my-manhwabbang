@@ -6,6 +6,7 @@ import (
 	"flag"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -375,4 +376,33 @@ func seedCacheFile(t *testing.T, e *env, rel string, size int) {
 	if err := os.WriteFile(path, bytes.Repeat([]byte{0x5a}, size), 0o644); err != nil {
 		t.Fatalf("seeding %s: %v", path, err)
 	}
+}
+
+// TestGolden_browse pins `GET /api/browse` — amendment A-12, ruling E-40.
+//
+// The listing is taken one level down rather than at the synthetic top, because
+// the top level has `path: ""`, `parent: null` and `self: null` and would leave
+// three of the five fields showing only their empty shapes. One level down every
+// field carries a value, including a `selectable: false` entry — the flag the
+// frontend must not re-derive (E-40 §5), and the one thing a golden of the top
+// level could not show at all.
+func TestGolden_browse(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "media")
+	mustMkdir(t, filepath.Join(base, "만화"))
+	e := newEnv(t, withoutAVIFConfig(), withBrowseBases(base))
+
+	// A directory that is already a root, so the golden carries the refusal
+	// vocabulary as well as the happy shape. It has to be added through the API:
+	// the fixture's own root lives elsewhere, and `browse_bases` is fixed at load.
+	dup := filepath.Join(base, "이미등록")
+	mustMkdir(t, dup)
+	if w := e.jsonBody(http.MethodPost, "/api/roots", `{"path":"`+jsonEscape(dup)+`"}`); w.Code != http.StatusCreated {
+		t.Fatalf("seeding the duplicate root = %d: %s", w.Code, w.Body.String())
+	}
+
+	w := e.get("/api/browse?path=" + url.QueryEscape(base))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	assertGoldenRedacted(t, "browse", w.Body.Bytes(), e)
 }

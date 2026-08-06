@@ -1557,6 +1557,33 @@ Header: `.dialog-title` `flex:1` `설정` + `.btn.btn-secondary` `font-size:12px
    - **스캔 실패 (new)** — `<p role="alert">` `11px; color:var(--accent-text)`, one per panel, carrying
      `POST /api/scan`'s refusal (arch §7.10: `400`, `404`, `409`, `503`).
    - `재스캔` is **disabled for the whole run**, not only while the `POST` is in flight.
+   - **폴더 찾아보기 (new)** — the 루트 추가 form's path field gains a `.btn.btn-secondary` `찾아보기`
+     beside its hint line, present whenever `Settings.server.root_editing_enabled` is true.
+     **AMENDMENT A-12, ruling E-40.** It opens `FolderPicker` inline (not a nested dialog — this dialog
+     already scrolls, and a modal over a modal has no place to put its scrim):
+     `border:1px solid var(--rule); border-radius:4px; padding:8px; gap:8px`, with
+     a crumb row (`11px; color:var(--ink-dim); ellipsis` — the listed path, or 탐색할 수 있는 폴더 at the
+     top level) carrying `.btn.btn-ghost` `상위` and `처음으로`, a `max-height:220px; overflow-y:auto`
+     list of one row per sub-directory (folder icon + name + chevron as one full-width button that
+     **descends**, then `.btn.btn-secondary` `선택` that **picks**), and a footer rule above
+     `.btn.btn-primary` `이 폴더 선택` + `.btn.btn-ghost` `취소`.
+     - **Descending is always allowed; picking is gated.** An unselectable folder may still contain the
+       one the user wants, so refusing to open an existing root would hide every sibling under it.
+     - **The grey-out reason is printed inline, never only as a tooltip** (`11px; color:var(--ink-dim)`
+       → 이미 등록된 루트 · 기존 루트의 상위·하위 폴더 · 앱 데이터·캐시 폴더가 안에 있음). The whole
+       point of the server computing `BrowseEntry.selectable` is that the user learns it before the click.
+     - **Picking fills the path field; it does not submit.** The label is still to be typed, and a picker
+       that added the root on click would make the one irreversible-looking control here the one with no
+       confirm step.
+     - `truncated` renders `<p>` `11px; color:var(--accent-text)` telling the user to type the path.
+       A capped list that does not say it was capped reads as complete (§6.5).
+     - The typed field **stays and stays primary**: it is the only way to reach a directory outside
+       `server.browse_bases`, and the picker is an accelerator over it rather than a replacement.
+   - **추가한 루트는 즉시 읽힌다 (changed)** — the form's closing line is 추가하면 바로 읽기 시작합니다,
+     not the old 서버를 다시 시작한 뒤 읽힙니다 (**E-40**). It is deliberately weaker than the promise it
+     could make: the adoption can fail after the file write, and then the row itself falls back to
+     재시작 후 적용. The row is computed from what the server actually did, so this line must not
+     contradict it in advance.
 2. **Two columns** `display:flex; gap:24px` (stack below 768px):
    - **캐시** — `<h6>` · value row `display:flex; align-items:baseline; gap:8px` with the number in
      **Archivo 800 32px tabular** and the unit in `13px; color:var(--ink-muted)` → `1.84` `GB / 4.00 GB` ·

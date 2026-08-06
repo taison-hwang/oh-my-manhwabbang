@@ -187,6 +187,25 @@ export function rootUrl(name: string): string {
   return apiUrl(`/roots/${encodeURIComponent(name)}`)
 }
 
+/**
+ * `GET /api/browse[?path=…]` — the directory picker, amendment **A-12**
+ * (ruling **E-40**).
+ *
+ * It is `/browse` and **not** `/roots/browse`: `browse` is a legal root name
+ * (arch §3.2's alphabet admits it), and Go's `ServeMux` prefers the literal
+ * pattern over `/api/roots/{name}`, so the nested spelling would have made a
+ * root actually called `browse` undeletable.
+ *
+ * Omitting `path` asks for the synthetic top level — the configured
+ * `server.browse_bases` themselves. The path is a **filesystem** path and the
+ * only one this client ever sends, which is why it goes in the query string
+ * where `apiUrl` encodes it, rather than in a path segment where a `/` would
+ * have to survive round-tripping.
+ */
+export function browseUrl(path?: string): string {
+  return apiUrl('/browse', { path })
+}
+
 export function seriesListUrl(params: SeriesListParams = {}): string {
   return apiUrl('/series', {
     root: params.root,

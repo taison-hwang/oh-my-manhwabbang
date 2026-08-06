@@ -309,7 +309,23 @@ server:
                              #   and §7.4 + §7.5 would then serve the contents.
                              #   Turning it on grants no authority that the person
                              #   editing this file does not already have.
-                             #   A change here needs a restart, like every other key.
+                             #   An ADDED root is opened at once (A-12, ruling
+                             #   E-40); a REMOVED one leaves the library at once
+                             #   but its handle is released at shutdown.
+  browse_bases: []           # AMENDMENT A-12 (ruling E-40).  default [].
+                             #   Bounds the settings screen's folder picker,
+                             #   GET /api/browse: it lists these directories and
+                             #   anything beneath them and refuses everything else,
+                             #   INCLUDING their parents.  Empty means no picker at
+                             #   all and the path is typed, exactly as before E-40.
+                             #   A separate key from allow_root_editing on purpose:
+                             #   editing already grants the power to mount any
+                             #   readable directory, so browsing adds no authority
+                             #   where editing is on — but it would where editing is
+                             #   off, and no operator should have to work that out.
+                             #   Entries must be absolute; they are NOT required to
+                             #   exist at startup (§4.9), and one that does not is
+                             #   listed and greyed out rather than fatal.
 
 roots:                       # FR-CFG-001. At least one required.
   - name: "manga"            # REQUIRED. Stable identity — see §4.1. Changing a
@@ -407,7 +423,7 @@ log:
 
 **Validation at startup (fail fast, exit 2 with a precise message):** duplicate or malformed `roots[].name`; relative `roots[].path`; `path` not an existing directory; `thumbnails.format != "jpeg"`; empty `widths`; unwritable `data_dir`/`cache_dir`; `base_path` containing `..`; `auth.password` and `auth.password_hash` both set; **`library.recently_added_days` outside 1..3650 (A-8)**. A disabled root (`enabled: false`) is **kept in the index** and simply excluded from listings — disabling must not destroy the user's progress.
 
-**A-11 adds nothing to that list, deliberately.** `server.allow_root_editing` is a boolean and strict decoding (`KnownFields(true)`) already rejects a typo in the key. In particular, a configuration file that *lives inside* a `roots[].path` is **not** a startup error: it disables root editing at request time (§7.4's gate, `detail.reason: "config_inside_root"`) and nothing else. Making it fatal would stop an existing installation from booting over a feature it never asked for, which is a worse answer than switching the feature off — and every rule in the list above is one that makes the server *unable to run correctly*, which this one does not.
+**A-11 adds nothing to that list, deliberately.** `server.allow_root_editing` is a boolean and strict decoding (`KnownFields(true)`) already rejects a typo in the key. **A-12 adds two rules and no more**: every `server.browse_bases[i]` must be non-empty and absolute, and each is cleaned in place. Cleaning at load is not cosmetic — `GET /api/browse` decides containment by comparing these strings, and an uncleaned `/mnt/x/` would fail to contain `/mnt/x/y`, refusing everything under a base the operator did configure. Existence is deliberately **not** checked, for the same reason a root's path is not: §4.9 forbids an unmounted drive from keeping the server down. In particular, a configuration file that *lives inside* a `roots[].path` is **not** a startup error: it disables root editing at request time (§7.4's gate, `detail.reason: "config_inside_root"`) and nothing else. Making it fatal would stop an existing installation from booting over a feature it never asked for, which is a worse answer than switching the feature off — and every rule in the list above is one that makes the server *unable to run correctly*, which this one does not.
 
 ### 3.3 FR-CFG-005 / NFR-DAT-002 — never write to media volumes
 
@@ -1649,18 +1665,36 @@ interface PageInfo {
 |---|---|
 | `GET /api/health` | `200 {ok: true, version: string, commit: string, started_at: Unix, uptime_ms: number, pdf_enabled: boolean, avif_enabled: boolean}`. Add `?verbose=1` for pool counters. Never requires auth. |
 | `GET /api/roots` | `200 {items: Root[]}` — from the **index**, so it also lists a root that has left the configuration (`available: false`), minus any root removed by `DELETE` in this process's lifetime. **AMENDMENT A-11 / R2**: plus one `pending: true` row per root that is in the configuration **file on disk** with no index row yet — including one whose name this process removed, if something has since put an entry back (see §7.4). |
-| `POST /api/roots` | `201 RootEntry` — **AMENDMENT A-11** (ruling E-26). Adds an entry to the `roots:` list of the configuration file. |
+| `POST /api/roots` | `201 RootEntry` — **AMENDMENT A-11** (ruling E-26). Adds an entry to the `roots:` list of the configuration file, and — **AMENDMENT A-12** (ruling E-40) — opens it into the running server and scans it. |
 | `DELETE /api/roots/{name}` | `204` — **AMENDMENT A-11**. Removes one entry from that list, and nothing else. |
+| `GET /api/browse` | `200 BrowseResponse` — **AMENDMENT A-12** (ruling E-40). Lists directories under `server.browse_bases`, for the settings screen's folder picker. |
 
 #### Amendment A-11 — writing the `roots:` list (ruling E-26)
 
-**These two endpoints edit `shelf.yaml`. They do not open or close a root in the running server.** Roots are
-opened exactly once, at startup (`internal/app/app.go` step 6, `source.OpenRoots`), and there is no reload
-path: the open-file pool, the source factory and the scanner are all built over that one set. A change
-therefore takes effect at the next restart. This is not a new inconvenience: the settings screen has always
-told the user to edit the file and restart (C-5), and A-11 only does the editing for them.
-`Settings.server.config_changed_on_disk` (§7.8) is how the UI knows to say so, and it is true after any
+**These two endpoints edit `shelf.yaml`.** Roots were opened exactly once, at startup
+(`internal/app/app.go` step 6, `source.OpenRoots`), with no reload path — the open-file pool, the source
+factory and the scanner are all built over that one set — so a change took effect only at the next restart.
+That is what `Settings.server.config_changed_on_disk` (§7.8) tells the UI to say, and it was true after any
 successful write here.
+
+> **AMENDED 2026-08-06 — AMENDMENT A-12 (ruling E-40): `POST` now opens the root it wrote.** The paragraph
+> above stands for `DELETE` and is kept because it is still the shape of this API; what changed is that the
+> sentence *"they do not open or close a root in the running server"* is now true of removal only.
+>
+> A successful `POST` opens an `os.Root` into the live set (`source.RootSet.Add`), makes the name selectable
+> (`Scanner.AddConfigRoot`), writes the `roots` row (`index.UpsertRoot`) and starts a scan **of that root
+> alone**. The row is then not `pending`, `available` is true, and `config_changed_on_disk` is **false** —
+> this process and the file agree again. Those four steps run in that order: the one that can genuinely fail
+> is the open, and it must fail before anything claims the root is live.
+>
+> **Removal is deliberately not the mirror of this.** Closing a handle that an in-flight page request is
+> streaming through needs per-entry reference counting, and A-11's revision R1 — the removed-set — already
+> makes a removal take effect at once without touching the open set. E-40 §2 keeps it there.
+>
+> **A failed adoption is still `201`.** The file write is what the user asked for; rolling it back to work
+> around the server's own inability to open a directory it had just stat-ed would discard their edit. The
+> fallback is A-11's behaviour verbatim — a `pending` row and a true `config_changed_on_disk` — which is why
+> that path is pinned by a test rather than merely described here.
 
 > **REVISED 2026-07-30 — R1 and R2 (decisions.md E-26, "REVISION 2026-07-30").** This paragraph originally
 > continued: *"and **`GET /api/roots` is deliberately unchanged until then** — a `POST` that appeared to work
@@ -1677,6 +1711,8 @@ successful write here.
 >   `config_changed_on_disk`, so there is one reader of the file on disk and not two.
 >
 > Neither buys hot-add or hot-remove: the open root set, the pool and the source factory are not touched.
+> *(Superseded for the add by A-12 / ruling E-40 — see the amendment note above. R2's `pending` row survives
+> as the honest report of an addition this process could not open, and is what the fallback renders.)*
 
 Both endpoints sit behind the auth gate of §8.2 like every other `/api/*` route when a password is configured.
 Writes are serialised server-side and each one re-reads the file from disk before editing it, so a root added
@@ -1877,6 +1913,58 @@ this rule load-bearing rather than theoretical**: after R1 the index rows are go
 thing left to reattach to, and it keys on `(root name, root-relative path)` (§3.4). The cost is that a
 *different* directory whose label happens to slug to a retired name inherits that root's rows — a narrow
 mis-attachment whose worst outcome is a wrong 완독 badge, and one that hand-editing the file has always had.
+
+#### `GET /api/browse` → `200 BrowseResponse` — AMENDMENT A-12 (ruling E-40)
+
+The directory picker behind 설정 → 루트 관리 → 찾아보기.
+
+```ts
+// GET /api/browse            → the synthetic top level: the configured bases
+// GET /api/browse?path=/abs  → one directory under a base
+interface BrowseResponse {
+  path: string              // "" at the top level. Never "/".
+  parent: string | null     // null at a base and at the top level
+  self: BrowseEntry | null  // `path` itself as a candidate; null at the top level
+  entries: BrowseEntry[]    // immediate SUB-DIRECTORIES, natural-sorted
+  truncated: boolean        // the per-directory cap was hit
+}
+interface BrowseEntry {
+  name: string
+  path: string              // absolute and cleaned — what POST /api/roots wants
+  selectable: boolean       // false when POST /api/roots would reject it
+  reason: string | null     // §7.4's vocabulary; null exactly when selectable
+}
+```
+
+**This is the only endpoint in the API that takes a filesystem path**, so it replaces NFR-SEC-001 layer 1
+(opaque ids resolved through the index) with two limits that are load-bearing rather than defence in depth:
+
+1. **`server.browse_bases` (§3.2) is an allowlist and an empty one refuses everything.** There is no path
+   that reaches a listing without first matching a configured base. The parents of the bases are outside it.
+2. **The read goes through `os.Root`** opened on the matched base — the same layer-3 handle every media root
+   uses. A `..` in the request, or a symlink inside a base pointing at `/etc`, is refused by the kernel at
+   openat(2) and not by a string comparison. Symlinks are additionally dropped from listings, so one is never
+   offered in the first place.
+
+It is behind the **same gate as the write verbs** (`gateRootEditing()`), because browsing must never be the
+first privilege an installation grants — it is a *read*, and would otherwise be reachable before anyone
+turned on `allow_root_editing`.
+
+| status | when |
+|---|---|
+| `403 forbidden` `disabled` · `no_config_file` · `config_inside_root` | §7.4's gate, unchanged |
+| `403 forbidden` `no_browse_bases` | the gate is open but `server.browse_bases` is empty |
+| `403 forbidden` `outside_browse_bases` | the path is not a base and not under one — **and this is also the answer for a path that does not exist outside the allowlist**, so the error codes cannot be used as a filesystem existence oracle |
+| `400 bad_request` `not_absolute` · `control_characters` | the request's own shape, as in §7.4 |
+| `400 bad_request` `does_not_exist` · `not_a_directory` · `not_readable` | inside a base, but unreadable |
+
+`selectable` and `reason` are computed by the server from `validateRootCreate`'s own rules, from the same
+helpers. The frontend must not re-derive them: a picker that greyed rows out by its own reasoning would drift
+from the endpoint, and the drift would be invisible until a user clicked a folder the server then refused.
+
+**The route is `/api/browse`, not `/api/roots/browse`.** `browse` is a legal root name under §3.2's alphabet,
+and Go's `ServeMux` prefers a literal pattern over `/api/roots/{name}` — the nested spelling would have made
+a root actually called `browse` undeletable, as a silent, data-dependent `405`.
 
 ### 7.5 Series
 

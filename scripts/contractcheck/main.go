@@ -72,6 +72,7 @@ var goldenType = map[string]string{
 	"book_detail":              "BookDetail",
 	"book_detail_broken":       "BookDetail",
 	"book_prefs":               "BookPrefs",
+	"browse":                   "BrowseResponse",
 	"cache_purge":              "CachePurgeResult",
 	"cache_usage":              "CacheUsage",
 	"continue":                 "ContinueResponse",

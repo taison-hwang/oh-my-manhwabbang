@@ -46,6 +46,7 @@ import (
 	"context"
 	"os"
 
+	"shelf/internal/config"
 	"shelf/internal/index"
 	"shelf/internal/openpool"
 	"shelf/internal/scanner"
@@ -64,6 +65,13 @@ type Index interface {
 	// (arch §3.5). It touches nothing in `user.db`, so reading progress survives
 	// the removal and reattaches if the same directory is added again.
 	DeleteRoot(ctx context.Context, name string) error
+	// UpsertRoot writes one `roots` row. It is here for the hot add of amendment
+	// A-12 (ruling E-40): the moment `POST /api/roots` opens a root into the
+	// running server, that root stops being "in the file but not in this
+	// process" and must stop rendering as `pending`. The row it writes carries
+	// zero counts, which is true — nothing has been scanned yet — and the scan
+	// this handler starts fills them in.
+	UpsertRoot(ctx context.Context, r index.Root) error
 	ListSeries(ctx context.Context, f index.SeriesFilter) (index.SeriesList, error)
 	GetSeries(ctx context.Context, id string) (index.SeriesDetail, error)
 	GetBook(ctx context.Context, id string) (index.BookRow, error)
@@ -92,6 +100,11 @@ type Scanner interface {
 	Start(ctx context.Context, req scanner.Request) (string, error)
 	Cancel() bool
 	Status() *scanner.ScanStatus
+	// AddConfigRoot makes a root added since startup selectable by name
+	// (amendment A-12, ruling E-40). Without it the scan this handler starts
+	// immediately after the add answers ErrUnknownRoot, because the scanner's
+	// copy of `roots:` is the one it was constructed with.
+	AddConfigRoot(r config.Root)
 }
 
 // Thumbs is the derived-image cache. *thumbs.Service satisfies it.
@@ -121,10 +134,16 @@ type Sources interface {
 // Roots resolves a configured root name to its *os.Root — path-traversal
 // layer 3 (arch §8.1). *source.RootSet satisfies it.
 //
-// This package uses it for exactly one thing: answering `Root.available` in
-// GET /api/roots without ever handling an absolute path itself.
+// It answers `Root.available` in GET /api/roots without this package ever
+// handling an absolute path itself, and since amendment A-12 it also opens one.
 type Roots interface {
 	Root(name string) (*os.Root, bool)
+	// Add opens one more root into the live set (ruling E-40). This is the one
+	// place the package hands a filesystem path *downwards*, and it is not a
+	// weakening of NFR-SEC-001 layer 1: the path has already been through §7.4's
+	// full validation table, and what comes back is an *os.Root — a handle that
+	// refuses an escape at the openat(2) level exactly like every other root.
+	Add(name, path string) error
 }
 
 // HandlePool is the archive file-handle LRU, for `GET /api/health?verbose=1`.

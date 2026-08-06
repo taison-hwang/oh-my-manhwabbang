@@ -71,8 +71,9 @@ func (s *Server) scanRoots(requested []string) ([]string, error) {
 		}
 		return requested, nil
 	}
-	out := make([]string, 0, len(s.cfg.Roots))
-	for _, root := range s.cfg.Roots {
+	configured := s.configuredRoots()
+	out := make([]string, 0, len(configured))
+	for _, root := range configured {
 		if _, gone := removed[root.Name]; gone || !root.Enabled {
 			continue
 		}

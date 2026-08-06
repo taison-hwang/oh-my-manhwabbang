@@ -140,9 +140,14 @@ type Options struct {
 // Scanner runs scans. One value serves the process; at most one scan runs at a
 // time.
 type Scanner struct {
-	index         *index.DB
-	books         BookLister
-	roots         *source.RootSet
+	index *index.DB
+	books BookLister
+	roots *source.RootSet
+	// cfgRoots is `roots:` as this process understands it, and since ruling E-40
+	// it can grow while the server runs — `POST /api/roots` adopts an addition
+	// without a restart. Every read goes through configRoots(); reading the
+	// field directly is the race this mutex exists to stop.
+	cfgMu         sync.RWMutex
 	cfgRoots      []config.Root
 	covers        CoverQueue
 	seen          SeriesSeenWriter
@@ -502,7 +507,7 @@ func (s *Scanner) run(ctx context.Context, req Request, runID string, begun *beg
 	// The roots table mirrors the configuration on every run, disabled entries
 	// included: FR-CFG-002 says disabling hides a root from listings, never
 	// destroys what it points at.
-	for _, r := range s.cfgRoots {
+	for _, r := range s.configRoots() {
 		p, _ := s.roots.Path(r.Name)
 		if p == "" {
 			p = r.Path
@@ -555,15 +560,49 @@ func (s *Scanner) run(ctx context.Context, req Request, runID string, begun *beg
 	return res, nil
 }
 
+// configRoots is the snapshot every reader of `roots:` takes.
+//
+// A copy rather than the slice: callers range over it while a scan runs, and
+// since E-40 an `AddConfigRoot` can append during exactly that window. Handing
+// out the backing array would make the append visible mid-range on some paths
+// and not others.
+func (s *Scanner) configRoots() []config.Root {
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+	return append([]config.Root(nil), s.cfgRoots...)
+}
+
+// AddConfigRoot adopts a root added to the configuration file while this server
+// runs — amendment A-12, ruling E-40.
+//
+// It is the scanner's half of the hot add. `source.RootSet.Add` opens the
+// handle; this makes the root *selectable*, which is what lets the very next
+// `POST /api/scan {roots:[name]}` find it instead of answering
+// `ErrUnknownRoot`. Both are needed and neither implies the other.
+//
+// A name already present is a no-op rather than an error: the caller's job is
+// to make the configuration true here, and it already is.
+func (s *Scanner) AddConfigRoot(r config.Root) {
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
+	for _, existing := range s.cfgRoots {
+		if existing.Name == r.Name {
+			return
+		}
+	}
+	s.cfgRoots = append(s.cfgRoots, r)
+}
+
 // selectRoots resolves Request.Roots against the configuration.
 func (s *Scanner) selectRoots(req Request) ([]config.Root, error) {
-	byName := make(map[string]config.Root, len(s.cfgRoots))
-	for _, r := range s.cfgRoots {
+	cfgRoots := s.configRoots()
+	byName := make(map[string]config.Root, len(cfgRoots))
+	for _, r := range cfgRoots {
 		byName[r.Name] = r
 	}
 	if len(req.Roots) == 0 {
-		out := make([]config.Root, 0, len(s.cfgRoots))
-		for _, r := range s.cfgRoots {
+		out := make([]config.Root, 0, len(cfgRoots))
+		for _, r := range cfgRoots {
 			if r.Enabled {
 				out = append(out, r)
 			}

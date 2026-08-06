@@ -13,6 +13,7 @@ import type {
   BookDetail,
   BookPrefs,
   BookPrefsUpdate,
+  BrowseResponse,
   CachePurgeResult,
   CacheUsage,
   ContinueResponse,
@@ -45,6 +46,7 @@ import {
   bookPrefsUrl,
   bookProgressUrl,
   bookUrl,
+  browseUrl,
   cachePurgeUrl,
   cacheUsageUrl,
   continueUrl,
@@ -290,16 +292,39 @@ export function getRoots(options?: RequestOptions): Promise<RootsResponse> {
 }
 
 /**
- * `POST /api/roots` → `201 RootEntry` — amendment A-11 (ruling E-26).
+ * `POST /api/roots` → `201 RootEntry` — amendment A-11 (ruling E-26), as
+ * amended for adoption by **A-12** (ruling **E-40**).
  *
- * It writes the `roots:` list of `shelf.yaml` and **does not open the root**:
- * roots are opened once at startup, so the new entry is a `pending` row until
- * the server restarts. `name` is server-generated and is not in the request.
- * `403 forbidden` when `server.allow_root_editing` is off, `400` naming the
- * validation rule that failed.
+ * It writes the `roots:` list of `shelf.yaml` **and, when it can, opens the root
+ * into the running server and starts a scan of it.** The restart A-11 required
+ * is gone for addition — but only for addition, and only when the adoption
+ * succeeds. If the directory cannot be opened after the write the entry is
+ * still created and falls back to A-11's behaviour: a `pending` row and a
+ * restart notice. Either way the `201` body is the same `RootEntry`, so the
+ * client learns which happened by re-reading `GET /api/roots` — which is what
+ * `useCreateRoot` invalidates.
+ *
+ * `name` is server-generated and is not in the request. `403 forbidden` when
+ * `server.allow_root_editing` is off, `400` naming the validation rule that
+ * failed.
  */
 export function createRoot(body: RootCreate, options?: RequestOptions): Promise<RootEntry> {
   return requestJson<RootEntry>(rootsUrl(), { ...options, method: 'POST', body })
+}
+
+/**
+ * `GET /api/browse[?path=…]` → `200 BrowseResponse` — amendment **A-12**
+ * (ruling **E-40**).
+ *
+ * Omit `path` for the synthetic top level: the `server.browse_bases` allowlist.
+ * `403 forbidden` when root editing is off (`disabled`) or when no bases are
+ * configured (`no_browse_bases`), and `403 outside_browse_bases` for a path the
+ * allowlist does not cover — deliberately the same answer as for a path that
+ * does not exist, so the error codes cannot be used to probe the host's
+ * filesystem.
+ */
+export function getBrowse(path?: string, options?: RequestOptions): Promise<BrowseResponse> {
+  return requestJson<BrowseResponse>(browseUrl(path), options)
 }
 
 /**

@@ -143,6 +143,12 @@ type envConfig struct {
 	// no index row, which is revision R2's pending case arrived at by hand
 	// editing rather than by `POST`.
 	secondRoot bool
+	// browseBases sets `server.browse_bases` (amendment A-12, ruling E-40). The
+	// key defaults to EMPTY, so the harness's normal env is the picker refusing
+	// every request — which is the case E-40's security argument rests on, and
+	// the one every other test in this package therefore exercises for free,
+	// exactly as `rootEditing` does for the write gate.
+	browseBases []string
 }
 
 // secondRootName is the fixture's second configured root (see envConfig).
@@ -157,6 +163,16 @@ func withRootEditing() envOption      { return func(c *envConfig) { c.rootEditin
 func withSecondRoot() envOption       { return func(c *envConfig) { c.secondRoot = true } }
 func withConfigInsideRoot() envOption {
 	return func(c *envConfig) { c.rootEditing, c.configInsideRoot = true, true }
+}
+
+// withBrowseBases turns the directory picker on (A-12). It implies
+// `rootEditing`, because the endpoint is behind that gate too and a fixture with
+// bases and no write privilege would only ever produce `403 disabled`.
+func withBrowseBases(dirs ...string) envOption {
+	return func(c *envConfig) {
+		c.rootEditing = true
+		c.browseBases = dirs
+	}
 }
 
 // newEnv builds the harness.
@@ -464,6 +480,12 @@ func (e *env) loadConfig(ec envConfig) *config.Config {
 	}
 	if ec.rootEditing {
 		fmt.Fprintf(&b, "  allow_root_editing: true\n")
+	}
+	if len(ec.browseBases) > 0 {
+		fmt.Fprintf(&b, "  browse_bases:\n")
+		for _, dir := range ec.browseBases {
+			fmt.Fprintf(&b, "    - %q\n", dir)
+		}
 	}
 	fmt.Fprintf(&b, "roots:\n  - name: %q\n    label: \"만화\"\n    path: %q\n", rootName, e.media)
 	if ec.secondRoot {
@@ -822,6 +844,11 @@ type fakeScanner struct {
 	cancels   int
 	runID     string
 	cancelled bool
+
+	// added records amendment A-12's AddConfigRoot calls, and
+	// addedBeforeStart the value of `starts` at each one — see the method.
+	added            []config.Root
+	addedBeforeStart []int
 }
 
 func newFakeScanner() *fakeScanner {
@@ -868,6 +895,16 @@ func (f *fakeScanner) Cancel() bool {
 }
 
 func (f *fakeScanner) Status() *scanner.ScanStatus { return f.status }
+
+// AddConfigRoot is amendment A-12's half of the hot add (ruling E-40). The fake
+// records it rather than ignoring it: `POST /api/roots` must make the root
+// selectable *before* it starts the scan, and recording the order is the only
+// way a test can tell that from the opposite one — which would answer
+// `unknown root` and log it as an ordinary "no scan could be started".
+func (f *fakeScanner) AddConfigRoot(r config.Root) {
+	f.added = append(f.added, r)
+	f.addedBeforeStart = append(f.addedBeforeStart, f.starts)
+}
 
 // --- small helpers ---------------------------------------------------------
 

@@ -60,6 +60,13 @@ func defaults() *Config {
 			// zero value so that the one security-relevant default in this block
 			// is visible next to the others.
 			AllowRootEditing: false,
+			// Amendment A-12 / ruling E-40, and the same reasoning: an empty list
+			// means the directory picker refuses every request, so an operator
+			// who never heard of this key is served exactly the pre-E-40
+			// product. Empty and non-nil, like `scan.exclude_globs` below —
+			// shelf.example.yaml prints every default verbatim, and `[]` there
+			// must equal what this line produces.
+			BrowseBases: []string{},
 		},
 		Scan: Scan{
 			OnStart:             true,

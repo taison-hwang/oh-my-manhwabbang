@@ -958,6 +958,17 @@ func TestValidate_rejections(t *testing.T) {
 		yaml: withRoots("server:\n  listen: \"\" " + hereMarker),
 		want: []string{"server.listen", "must not be empty"},
 	}, {
+		// Amendment A-12 (ruling E-40). A browse base is validated like a root
+		// path minus "must exist": the picker opens it on demand, so an
+		// unmounted one must not stop the server booting (arch §4.9).
+		name: "relative browse base",
+		yaml: withRoots("server:\n  browse_bases: [\"mnt/media\"] " + hereMarker),
+		want: []string{"server.browse_bases[0]", `"mnt/media"`, "absolute"},
+	}, {
+		name: "empty browse base",
+		yaml: withRoots("server:\n  browse_bases: [\"\"] " + hereMarker),
+		want: []string{"server.browse_bases[0]", "must not be empty"},
+	}, {
 		name: "base_path with ..",
 		yaml: withRoots("server:\n  base_path: \"/reader/../admin\" " + hereMarker),
 		want: []string{"server.base_path", `"/reader/../admin"`, `".."`},
@@ -1521,5 +1532,47 @@ func TestError_message(t *testing.T) {
 	}
 	if got, want := (&Error{Key: "roots", Msg: "x"}).Error(), "roots: x"; got != want {
 		t.Errorf("Error() without a file = %q, want %q", got, want)
+	}
+}
+
+// TestBrowseBases_areCleanedInPlace is amendment A-12 (ruling E-40).
+//
+// `GET /api/browse` decides whether a requested path is inside a base by
+// comparing cleaned strings, so an uncleaned base is a bug with a security
+// shape rather than a cosmetic one: `/mnt/x/` does not contain `/mnt/x/y` under
+// that comparison, and the endpoint would refuse everything under a base the
+// operator did configure. Cleaning here — once, at load — is what keeps the
+// endpoint from having to remember to.
+func TestBrowseBases_areCleanedInPlace(t *testing.T) {
+	t.Parallel()
+	cfg, err := Parse([]byte(
+		"server:\n  browse_bases:\n    - \"/mnt/media/\"\n    - \"/mnt/other/../media2\"\n"+
+			"roots:\n  - {name: manga, path: /a}\n"), "t.yaml")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	want := []string{"/mnt/media", "/mnt/media2"}
+	if len(cfg.Server.BrowseBases) != len(want) {
+		t.Fatalf("browse_bases = %v, want %v", cfg.Server.BrowseBases, want)
+	}
+	for i := range want {
+		if cfg.Server.BrowseBases[i] != want[i] {
+			t.Errorf("browse_bases[%d] = %q, want %q", i, cfg.Server.BrowseBases[i], want[i])
+		}
+	}
+}
+
+// TestBrowseBases_defaultToNone pins the default, which is the whole of E-40's
+// second limit: an operator who never heard of this key gets the pre-E-40
+// product, where the picker refuses every request.
+func TestBrowseBases_defaultToNone(t *testing.T) {
+	t.Parallel()
+	cfg, err := Parse([]byte("roots:\n  - {name: manga, path: /a}\n"), "t.yaml")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(cfg.Server.BrowseBases) != 0 {
+		t.Errorf("browse_bases defaults to %v, want empty — the picker must be opt-in",
+			cfg.Server.BrowseBases)
 	}
 }

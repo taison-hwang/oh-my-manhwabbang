@@ -1413,3 +1413,84 @@ func TestScan_bookOrder_isNaturalAndMaterialisedIntoOrd(t *testing.T) {
 		t.Errorf("page order = %v; mixed zero-padding must still sort naturally (FR-IDX-007)", pages)
 	}
 }
+
+// TestAddConfigRoot_makesARootSelectable is amendment A-12 (ruling E-40).
+//
+// The scanner's copy of `roots:` used to be frozen at construction, and A-11
+// limit (1) made that correct: nothing could add a root to a running server. Now
+// `POST /api/roots` can, and this is the half that makes the addition
+// *selectable* — without it the scan that handler starts one line later answers
+// ErrUnknownRoot, which it would then log as an ordinary "no scan could be
+// started" and nobody would see.
+//
+// Constructed directly rather than through New: what is under test is the name
+// table, and New requires an index, a lister and an open root set to reach it.
+func TestAddConfigRoot_makesARootSelectable(t *testing.T) {
+	t.Parallel()
+	s := &Scanner{cfgRoots: []config.Root{{Name: "manga", Path: "/a", Enabled: true}}}
+
+	if _, err := s.selectRoots(Request{Roots: []string{"added"}}); !errors.Is(err, ErrUnknownRoot) {
+		t.Fatalf("selectRoots before the add = %v, want ErrUnknownRoot; this test would prove nothing", err)
+	}
+
+	s.AddConfigRoot(config.Root{Name: "added", Path: "/b", Enabled: true})
+
+	got, err := s.selectRoots(Request{Roots: []string{"added"}})
+	if err != nil {
+		t.Fatalf("selectRoots after the add: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "added" || got[0].Path != "/b" {
+		t.Errorf("selectRoots = %+v, want the added root", got)
+	}
+
+	// And it joins "every enabled root", which is what an empty Request.Roots
+	// means — a full scan must cover a root added since startup.
+	all, err := s.selectRoots(Request{})
+	if err != nil {
+		t.Fatalf("selectRoots(all): %v", err)
+	}
+	if len(all) != 2 {
+		t.Errorf("a full scan covers %+v, want both roots", all)
+	}
+}
+
+// TestAddConfigRoot_isANoOpForANameAlreadyThere: the caller's job is to make the
+// configuration true here, and a name already present means it already is.
+// Appending a second entry would give `selectRoots` two answers for one name and
+// make which one it returns depend on iteration order.
+func TestAddConfigRoot_isANoOpForANameAlreadyThere(t *testing.T) {
+	t.Parallel()
+	s := &Scanner{cfgRoots: []config.Root{{Name: "manga", Path: "/a", Enabled: true}}}
+
+	s.AddConfigRoot(config.Root{Name: "manga", Path: "/somewhere/else", Enabled: true})
+
+	if len(s.cfgRoots) != 1 {
+		t.Fatalf("cfgRoots = %+v, want the one entry unchanged", s.cfgRoots)
+	}
+	if s.cfgRoots[0].Path != "/a" {
+		t.Errorf("the existing entry was overwritten: %+v", s.cfgRoots[0])
+	}
+}
+
+// TestConfigRoots_handsOutACopy is the reason the accessor exists at all.
+//
+// Callers range over the result while a scan runs, and since E-40 an
+// AddConfigRoot can append during exactly that window. Handing out the backing
+// array would make the append visible mid-range on some paths and not others —
+// the kind of defect that reproduces once a week in production and never in a
+// test.
+func TestConfigRoots_handsOutACopy(t *testing.T) {
+	t.Parallel()
+	s := &Scanner{cfgRoots: []config.Root{{Name: "manga", Path: "/a", Enabled: true}}}
+
+	snapshot := s.configRoots()
+	s.AddConfigRoot(config.Root{Name: "added", Path: "/b", Enabled: true})
+
+	if len(snapshot) != 1 {
+		t.Errorf("the snapshot grew to %+v after an add; it is not a copy", snapshot)
+	}
+	snapshot[0].Path = "/mutated"
+	if s.cfgRoots[0].Path != "/a" {
+		t.Error("mutating the snapshot reached the scanner's own slice")
+	}
+}

@@ -34,6 +34,7 @@ import {
   getAuthStatus,
   getBook,
   getBookPrefs,
+  getBrowse,
   getCacheUsage,
   getContinue,
   getHealth,
@@ -60,6 +61,7 @@ import type {
   BookDetail,
   BookPrefs,
   BookPrefsUpdate,
+  BrowseResponse,
   CachePurgeResult,
   CacheUsage,
   ContinueResponse,
@@ -131,6 +133,12 @@ export function createQueryClient(): QueryClient {
 export const queryKeys = {
   health: ['health'] as const,
   roots: ['roots'] as const,
+  /**
+   * The directory picker (A-12). Keyed by the path so that walking back up a
+   * breadcrumb is a cache hit rather than a refetch — `undefined` is the
+   * synthetic top level and is a distinct key from any real directory.
+   */
+  browse: (path?: string) => ['browse', path ?? null] as const,
   series: {
     all: ['series'] as const,
     list: (params: SeriesListParams) => ['series', 'list', params] as const,
@@ -222,12 +230,52 @@ function invalidateRootState(queryClient: QueryClient): Promise<void> {
   ]).then(() => undefined)
 }
 
-/** `POST /api/roots` (amendment A-11). The new root is `pending` until a restart. */
+/**
+ * `GET /api/browse` — the directory picker of amendment **A-12** (ruling E-40).
+ *
+ * `enabled` matters here more than on the other read hooks: the endpoint is
+ * `403` unless the operator turned on both `server.allow_root_editing` and
+ * `server.browse_bases`, so mounting the picker unconditionally would fire a
+ * request that fails on every server that has not opted in. The caller passes
+ * the gate it already reads from `Settings`.
+ *
+ * `retry: false` rather than `retryQuery`: every failure this endpoint has is a
+ * refusal about configuration, and retrying a `403` three times delays the
+ * message that tells the user which key to set.
+ */
+export function useBrowse(
+  path: string | undefined,
+  options: EnabledOption = {},
+): UseQueryResult<BrowseResponse> {
+  return useQuery({
+    queryKey: queryKeys.browse(path),
+    queryFn: ({ signal }) => getBrowse(path, { signal }),
+    enabled: options.enabled ?? true,
+    retry: false,
+  })
+}
+
+/**
+ * `POST /api/roots` (amendment A-11, adoption by A-12).
+ *
+ * Since ruling E-40 a successful add is usually *live* — the server opens the
+ * root and starts scanning it — so this invalidates the scan status too. Without
+ * that the settings dialog's progress block (E-38) would not appear until its
+ * own 1 s poll came round, and the first thing the user sees after pressing 추가
+ * is the second in which nothing has happened yet.
+ */
 export function useCreateRoot(): UseMutationResult<RootEntry, Error, RootCreate> {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (body: RootCreate) => createRoot(body),
-    onSuccess: () => invalidateRootState(queryClient),
+    onSuccess: () =>
+      Promise.all([
+        invalidateRootState(queryClient),
+        // Only on the add. A `DELETE` starts nothing, and invalidating the scan
+        // status there would be a request made to observe a change that cannot
+        // have happened.
+        queryClient.invalidateQueries({ queryKey: queryKeys.scan.status }),
+      ]).then(() => undefined),
   })
 }
 

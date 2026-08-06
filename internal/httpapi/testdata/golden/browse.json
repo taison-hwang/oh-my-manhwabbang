@@ -1,0 +1,25 @@
+{
+  "path": "/tmp/shelf-golden/001/media",
+  "parent": null,
+  "self": {
+    "name": "media",
+    "path": "/tmp/shelf-golden/001/media",
+    "selectable": false,
+    "reason": "overlaps"
+  },
+  "entries": [
+    {
+      "name": "만화",
+      "path": "/tmp/shelf-golden/001/media/만화",
+      "selectable": true,
+      "reason": null
+    },
+    {
+      "name": "이미등록",
+      "path": "/tmp/shelf-golden/001/media/이미등록",
+      "selectable": false,
+      "reason": "duplicate"
+    }
+  ],
+  "truncated": false
+}

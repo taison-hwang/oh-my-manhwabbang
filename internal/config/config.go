@@ -128,6 +128,27 @@ type Server struct {
 	// There is nothing to validate about a bool, and `KnownFields(true)` already
 	// rejects a typo in the key, so §3.2's startup-validation list is unchanged.
 	AllowRootEditing bool `yaml:"allow_root_editing"`
+
+	// BrowseBases bounds `GET /api/browse` — the directory picker of
+	// amendment A-12, ruling E-40. Each entry is an absolute directory the
+	// picker may start from; the endpoint refuses to list anything that is not
+	// one of them or underneath one of them, and refuses everything when the
+	// list is empty.
+	//
+	// It is a **separate** key from AllowRootEditing on purpose, and the
+	// separation is the whole of E-40 §3. Root editing grants the authority to
+	// mount any readable directory and serve its contents; browsing grants only
+	// the authority to learn directory *names*. The first strictly contains the
+	// second, so a browse list is not a new privilege where editing is already
+	// on — but it is one where editing is off, and nothing in this file should
+	// make an operator reason about that coupling. Empty is the default and
+	// means "no picker": the operator types the path, exactly as before E-40.
+	//
+	// Entries are validated like a root's `path` — absolute and free of control
+	// characters — but, like a root, they are NOT required to exist at startup.
+	// An unmounted drive must not stop the server booting (arch §4.9), and the
+	// endpoint reports a base it cannot open as unavailable rather than 500.
+	BrowseBases []string `yaml:"browse_bases"`
 }
 
 // Root is one entry of the `roots:` list (FR-CFG-001).

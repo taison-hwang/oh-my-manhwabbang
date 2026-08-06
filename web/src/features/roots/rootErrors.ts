@@ -49,6 +49,13 @@ const FORBIDDEN_REASONS: Readonly<Record<string, string>> = {
   no_config_file: '이 서버는 설정 파일 없이 실행 중이라 루트 목록을 편집할 수 없습니다.',
   config_inside_root:
     '설정 파일이 루트 폴더 안에 있어 편집할 수 없습니다. 설정 파일을 루트 밖으로 옮기고 다시 시작하세요.',
+  // A-12 / ruling E-40. Both come from `GET /api/browse` and neither is a
+  // failure of the add — the path can still be typed, which is what the picker
+  // falls back to.
+  no_browse_bases:
+    '폴더 찾아보기를 쓰려면 설정 파일의 server.browse_bases에 탐색할 폴더를 지정해야 합니다. 경로를 직접 입력할 수는 있습니다.',
+  outside_browse_bases:
+    '그 폴더는 이 서버가 탐색하도록 지정된 범위 밖입니다. server.browse_bases를 확인하세요.',
 }
 
 /**
@@ -84,6 +91,35 @@ const CONFLICT_REASONS: Readonly<Record<string, string>> = {
     '마지막 루트는 제거할 수 없습니다. 서버가 시작하려면 루트가 하나 이상 필요하니, 새 루트를 먼저 추가하세요.',
   duplicate:
     '같은 이름의 루트가 그 사이에 추가되었습니다. 목록을 다시 읽은 뒤 시도하세요.',
+}
+
+/**
+ * Why the picker cannot offer a directory — `BrowseEntry.reason` (amendment
+ * **A-12**, ruling **E-40**).
+ *
+ * The server computes `selectable` from §7.4's own rules, so these are the same
+ * refusals `POST /api/roots` would have given, arriving *before* the click
+ * instead of after it. They are shorter than the `400` sentences above on
+ * purpose: this text sits inline on a row the user has not chosen yet, where the
+ * remedy is "pick a different folder" and is already obvious from the context.
+ * The long form still belongs to the alert that follows a real failure.
+ *
+ * `conflicts_with` is not available here — a listing would have to carry a root
+ * name per row — so `duplicate` and `overlaps` name no root, which is why they
+ * do not go through `conflictMessage`.
+ */
+const BROWSE_REASONS: Readonly<Record<string, string>> = {
+  duplicate: '이미 등록된 루트',
+  overlaps: '기존 루트의 상위·하위 폴더',
+  contains_storage: '앱 데이터·캐시 폴더가 안에 있음',
+  does_not_exist: '지금 접근할 수 없음',
+  not_readable: '읽을 수 없음',
+}
+
+/** `null` for a selectable entry, else the short inline reason. */
+export function browseReasonLabel(reason: string | null): string | null {
+  if (reason === null) return null
+  return BROWSE_REASONS[reason] ?? '선택할 수 없음'
 }
 
 function conflictMessage(reason: string, conflictsWith: string | null): string | null {
