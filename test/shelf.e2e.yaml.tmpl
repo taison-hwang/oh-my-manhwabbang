@@ -39,6 +39,24 @@ server:
   #              then be the one inside the repository, and step 9 would — quite
   #              correctly — fail the run for writing there.
   allow_root_editing: @@ALLOW_ROOT_EDITING@@
+  # Amendment A-12 / ruling E-40 — the allowlist `GET /api/browse` lists under,
+  # and the folder picker behind 설정 → 루트 관리 → 찾아보기. Emitted by
+  # scripts/e2e-config.sh and derived from the round for the same reason the key
+  # above is, plus one of its own:
+  #
+  #   real       []    — the SHIPPED DEFAULT, and an empty allowlist refuses
+  #                      every path (§7.4a). The gate above is already off in
+  #                      that round, so browsing is refused twice over.
+  #   synthetic  the run's own /tmp state directory. Everything the picker can
+  #              reach is then something this run created: the fixture tree (a
+  #              configured root, so `duplicate`), the directory step 8b adds,
+  #              and data_dir/cache_dir. Pointing it anywhere else would make
+  #              the assertions depend on the host's filesystem.
+  #
+  # The base is the state directory rather than $FIXTURE because a base is never
+  # walked out of — `parent` stops there — so a base *inside* the media root
+  # would leave the picker with nothing to descend into but the root itself.
+  browse_bases: @@BROWSE_BASES@@
 
 roots:
   - name: "mangga"

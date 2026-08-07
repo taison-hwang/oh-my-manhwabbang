@@ -620,6 +620,7 @@ func (s *Server) handleDeleteRoot(w http.ResponseWriter, r *http.Request) error 
 		return configFileError(err)
 	}
 	s.markRootRemoved(name)
+	s.releaseRoot(name, state.Digest)
 	s.log.InfoContext(r.Context(), "a root was removed from the configuration file and purged from the index",
 		"root", name, "user_data_kept", true)
 
@@ -776,6 +777,47 @@ func (s *Server) adoptRoot(ctx context.Context, entry RootEntry, priorDigest str
 			"root", root.Name, "run_id", runID)
 	}
 	return true
+}
+
+// releaseRoot is `adoptRoot`'s mirror on the delete side — AMENDMENT A-13
+// (ruling E-41). It closes no handle: hot remove is still unbought (E-40 §2, and
+// R1's removed-set is what makes a removal take effect at once). What it undoes
+// is the *bookkeeping* A-12 added, and leaving that undone was a defect in two
+// visible ways:
+//
+//  1. `configuredRoots()` kept reporting a removed root as configured, so
+//     `GET /api/browse` marked its directory `duplicate` — and its parent
+//     `overlaps` — for the rest of the process's life, while `POST /api/roots`
+//     would have accepted either. The picker exists precisely so the client does
+//     not re-derive §7.4's rules; a server that answers them from a stale list
+//     is the same drift wearing the server's badge.
+//
+//  2. `configDigest` stayed at the digest a hot add moved it to, so after
+//     add-then-remove the file on disk was byte-identical to the one this
+//     process loaded and `config_changed_on_disk` still said it was not. That
+//     contradicts §7.8's own definition, and the restart notice it raised asked
+//     the user to restart for a change that had already taken effect.
+//
+// The digest guard is `adoptRoot`'s, for `adoptRoot`'s reason: the baseline may
+// only move when the file we just wrote was the file we had already adopted. If
+// they differed, something else edited the file since startup and
+// `config_changed_on_disk` is telling the truth about *that* — our own write
+// must not silence it.
+func (s *Server) releaseRoot(name, priorDigest string) {
+	s.adoptMu.Lock()
+	defer s.adoptMu.Unlock()
+
+	// A root that was in the file at startup is not in this slice at all, and
+	// deleting nothing from it is correct: `s.cfg.Roots` is frozen and shared
+	// with `internal/app`, so the removed-set is what hides that one.
+	s.addedRoots = slices.DeleteFunc(s.addedRoots, func(r config.Root) bool { return r.Name == name })
+
+	if priorDigest == "" || priorDigest != s.configDigest {
+		return
+	}
+	if state, err := config.ReadFileState(s.cfg.AbsFilePath()); err == nil {
+		s.configDigest = state.Digest
+	}
 }
 
 // --- the removed-set (revision R1) -----------------------------------------

@@ -622,7 +622,7 @@ if ! python3 scripts/e2e-assert.py --base "$BASE" --mode "$mode" --phase rescan;
 fi
 
 # ---------------------------------------------------------------------------
-step "8b · A-11 — POST /api/roots writes the configuration file"
+step "8b · A-12 — POST /api/roots writes the file AND opens the root"
 # ---------------------------------------------------------------------------
 # Deliberately placed BEFORE step 9. Everything this step writes goes to $STATE
 # in /tmp, and step 9 is the check that proves it: if the configuration ever
@@ -819,13 +819,16 @@ if wait_for_idle 180; then
 fi
 
 # ---------------------------------------------------------------------------
-step "10b · A-11 — the restart adopted the root added in step 8b"
+step "10b · A-12 — the root added in step 8b survived the restart"
 # ---------------------------------------------------------------------------
 # This reuses the restart step 10 already performs rather than adding one, which
-# is the point: the same stop/start that AC-005 and AC-006 are proved across is
-# the one A-11's "adopted at restart" has to survive. Without this assertion
-# "restart-based" and "never applied" look identical from every other check in
-# this file.
+# is the point twice over. Under A-11 it was the same stop/start that AC-005 and
+# AC-006 are proved across that "adopted at restart" had to survive. AMENDMENT
+# A-12 (ruling E-40) moved adoption to the POST, so what this step grades now is
+# that the addition is DURABLE — and step 10 is what gives that teeth, because
+# it deletes the index database before restarting. A row that is live here
+# cannot have been inherited from step 8b's scan; a process that failed to
+# re-read the spliced entry would report the root `pending` instead.
 if [ "$synthetic" -eq 1 ]; then
   if ! python3 scripts/e2e-assert.py --base "$BASE" --mode "$mode" --phase roots-post \
       --state-file "$A11_STATE"; then

@@ -413,7 +413,12 @@ type ServerSettings struct {
 	// decides whether the 추가/제거 controls are rendered at all.
 	RootEditingEnabled bool `json:"root_editing_enabled"`
 	// ConfigChangedOnDisk reports that the file at ConfigPath is no longer
-	// byte-identical to the one this process loaded. AMENDMENT A-11.
+	// byte-identical to the one this process has ADOPTED. AMENDMENT A-11, as
+	// amended by A-12 and A-13 (rulings E-40 and E-41): "adopted" is not
+	// "loaded at startup" any more, because both §7.4 write verbs now apply
+	// what they wrote and move the baseline with it. A notice that outlived the
+	// change it described is the defect those two amendments closed, once on
+	// each verb.
 	//
 	// It is NOT "a write happened". It is equally true when the user hand-edited
 	// the file, which is the workflow C-5 has been telling them to use all along

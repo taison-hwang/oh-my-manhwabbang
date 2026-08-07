@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -1290,6 +1291,120 @@ func TestSettings_configChangedOnDiskIsFalseUntilSomethingChanges(t *testing.T) 
 	if !s.Server.ConfigChangedOnDisk {
 		t.Error("config_changed_on_disk is false after the bytes changed")
 	}
+}
+
+// AMENDMENT A-13 (ruling E-41) — `DELETE` moves the adopted digest back, so an
+// add followed by its own removal leaves no restart notice behind.
+//
+// # Why this needs its own test, and why neither half's test caught it
+//
+// A-12 taught the `POST` to move `configDigest` forward, and
+// `TestCreateRoot_writesTheFileAndAdoptsIt` pins that. `DELETE` had no matching
+// step, and `TestSettings_configChangedOnDiskIsFalseUntilSomethingChanges` pins
+// the flag only against a hand-edited file. Both were green while the *sequence*
+// was broken: the digest sat at a version that no longer existed on disk, so
+// `config_changed_on_disk` reported "the file is not the one this process
+// loaded" about a file that was byte-for-byte the one it loaded.
+//
+// That is docs/HANDOFF.md §6.5 in one line — two checks either side of the seam,
+// each watching its own half, and the defect living in the join. `make
+// e2e-synthetic` is what found it, and it found it as a cascade: four viewport
+// projects share one server, so the first project's add-then-remove left a false
+// restart notice on the settings screen for the other three.
+func TestDeleteRoot_movesTheAdoptedDigestBackAfterAnAddIsUndone(t *testing.T) {
+	e := newEnv(t, withRootEditing())
+	before, err := os.ReadFile(e.cfg.AbsFilePath())
+	if err != nil {
+		t.Fatalf("reading the fixture config: %v", err)
+	}
+
+	dir := filepath.Join(t.TempDir(), "잠깐 있었던 루트")
+	mustMkdir(t, dir)
+	entry := decodeBody[RootEntry](t,
+		e.jsonBody(http.MethodPost, "/api/roots", `{"path":`+quoteJSON(dir)+`}`),
+		http.StatusCreated)
+
+	// A-12's half, restated here because it is this test's premise: if the add
+	// did not move the digest, the assertion after the removal would pass for the
+	// wrong reason.
+	if s := decodeBody[Settings](t, e.get("/api/settings"), http.StatusOK); s.Server.ConfigChangedOnDisk {
+		t.Fatal("config_changed_on_disk is true after a hot add; A-12 moves the baseline forward")
+	}
+
+	if w := e.do(http.MethodDelete, "/api/roots/"+entry.Name, nil); w.Code != http.StatusNoContent {
+		t.Fatalf("DELETE = %d: %s", w.Code, w.Body.String())
+	}
+
+	// The premise of the flag, asserted rather than assumed: `RemoveRoot` splices
+	// raw lines instead of re-emitting the document, so undoing an add returns
+	// the file byte for byte. Without this, a false `config_changed_on_disk` and
+	// a config writer that reformats are indistinguishable from here.
+	after, err := os.ReadFile(e.cfg.AbsFilePath())
+	if err != nil {
+		t.Fatalf("reading the config after the removal: %v", err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatalf("add-then-remove did not restore the file:\nbefore %q\nafter  %q", before, after)
+	}
+	if s := decodeBody[Settings](t, e.get("/api/settings"), http.StatusOK); s.Server.ConfigChangedOnDisk {
+		t.Error("config_changed_on_disk is true while the file is the one this process loaded; " +
+			"the DELETE left the baseline at the digest the add moved it to")
+	}
+}
+
+// AMENDMENT A-13 (ruling E-41) — `DELETE` drops the root from A-12's added set,
+// so `GET /api/browse` stops calling its directory `duplicate`.
+//
+// The picker exists so the client never re-derives §7.4's table (arch §7.4a).
+// A server answering `selectable` from a list that still holds a removed root
+// produces exactly the drift that design forbids, only with the server's
+// authority behind it: the row is greyed out with "이미 등록된 루트" while
+// `POST /api/roots` would accept the very same path.
+func TestDeleteRoot_stopsCallingTheRemovedDirectoryDuplicate(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "돌려줄 폴더")
+	mustMkdir(t, dir)
+	e := newEnv(t, withBrowseBases(base))
+
+	entry := decodeBody[RootEntry](t,
+		e.jsonBody(http.MethodPost, "/api/roots", `{"path":`+quoteJSON(dir)+`}`),
+		http.StatusCreated)
+
+	// The premise: while it IS a root, the endpoint refuses it. An assertion that
+	// only looked at the state after the removal would pass against an endpoint
+	// that called everything selectable.
+	held := browseEntryFor(t, e, base, dir)
+	if held.Selectable || held.Reason == nil || *held.Reason != reasonDuplicate {
+		t.Fatalf("while configured, the directory browsed as %+v, want selectable=false duplicate", held)
+	}
+
+	if w := e.do(http.MethodDelete, "/api/roots/"+entry.Name, nil); w.Code != http.StatusNoContent {
+		t.Fatalf("DELETE = %d: %s", w.Code, w.Body.String())
+	}
+
+	got := browseEntryFor(t, e, base, dir)
+	if !got.Selectable || got.Reason != nil {
+		t.Errorf("after the removal the directory browses as %+v, want selectable with no reason; "+
+			"configuredRoots() is still holding the removed root", got)
+	}
+	// And the two agree, which is the property the picker is built on: the flag
+	// is only worth rendering if `POST` answers the same way.
+	if w := e.jsonBody(http.MethodPost, "/api/roots", `{"path":`+quoteJSON(dir)+`}`); w.Code != http.StatusCreated {
+		t.Errorf("POST for a directory browse called selectable = %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// browseEntryFor is `GET /api/browse?path=base` narrowed to one child.
+func browseEntryFor(t *testing.T, e *env, base, child string) BrowseEntry {
+	t.Helper()
+	body := decodeBody[BrowseResponse](t, browse(e, base), http.StatusOK)
+	for _, entry := range body.Entries {
+		if entry.Path == child {
+			return entry
+		}
+	}
+	t.Fatalf("%q is not among the %d entries browse listed under %q", child, len(body.Entries), base)
+	return BrowseEntry{}
 }
 
 // TestUnprivilegedVerdict pins the opt-in that stops a root CI reporting green

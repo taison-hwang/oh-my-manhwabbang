@@ -1666,7 +1666,7 @@ interface PageInfo {
 | `GET /api/health` | `200 {ok: true, version: string, commit: string, started_at: Unix, uptime_ms: number, pdf_enabled: boolean, avif_enabled: boolean}`. Add `?verbose=1` for pool counters. Never requires auth. |
 | `GET /api/roots` | `200 {items: Root[]}` — from the **index**, so it also lists a root that has left the configuration (`available: false`), minus any root removed by `DELETE` in this process's lifetime. **AMENDMENT A-11 / R2**: plus one `pending: true` row per root that is in the configuration **file on disk** with no index row yet — including one whose name this process removed, if something has since put an entry back (see §7.4). |
 | `POST /api/roots` | `201 RootEntry` — **AMENDMENT A-11** (ruling E-26). Adds an entry to the `roots:` list of the configuration file, and — **AMENDMENT A-12** (ruling E-40) — opens it into the running server and scans it. |
-| `DELETE /api/roots/{name}` | `204` — **AMENDMENT A-11**. Removes one entry from that list, and nothing else. |
+| `DELETE /api/roots/{name}` | `204` — **AMENDMENT A-11**. Removes one entry from that list, purges its index rows (R1), and — **AMENDMENT A-13** (ruling E-41) — drops it from A-12's added set and moves the adopted digest back. It still closes no handle. |
 | `GET /api/browse` | `200 BrowseResponse` — **AMENDMENT A-12** (ruling E-40). Lists directories under `server.browse_bases`, for the settings screen's folder picker. |
 
 #### Amendment A-11 — writing the `roots:` list (ruling E-26)
@@ -1695,6 +1695,28 @@ successful write here.
 > around the server's own inability to open a directory it had just stat-ed would discard their edit. The
 > fallback is A-11's behaviour verbatim — a `pending` row and a true `config_changed_on_disk` — which is why
 > that path is pinned by a test rather than merely described here.
+
+> **AMENDED 2026-08-07 — AMENDMENT A-13 (ruling E-41): `DELETE` moves the adopted digest back.** A-12 taught
+> the `POST` to move `Server.configDigest` forward and gave `DELETE` no matching step, so the two verbs
+> disagreed about what this process had adopted. A successful `DELETE` now does the mirror, under the same
+> guard: it drops the name from A-12's added set, and — **only when the file it just wrote was the file this
+> process had already adopted** — re-reads the file and moves the baseline to it.
+>
+> **What that fixes is two false answers, not one.** After add-then-remove the file is byte-identical to the
+> one startup loaded (`internal/config/rootsfile.go` splices raw lines rather than re-emitting the document),
+> yet `config_changed_on_disk` stayed **true** and the settings screen asked for a restart that had nothing to
+> apply — flatly contradicting the field's own definition in §7.8. And `configuredRoots()` kept the removed
+> root forever, so `GET /api/browse` (§7.4a) went on marking its directory `duplicate` and its parent
+> `overlaps` while `POST /api/roots` would have accepted either — the picker-vs-endpoint drift that section
+> forbids, with the server on the wrong side of it.
+>
+> **This overturns one A-11 sentence and no more.** Under A-11 a removal also left the restart notice up.
+> R1 makes a removal take effect *immediately*, so that notice was always asking the user to restart for a
+> change already applied; E-40 fixed exactly that lie for the add, and E-41 fixes it for the remove.
+>
+> **Hot remove is still not bought.** `releaseRoot` closes no handle. E-40 §2 stands: an `os.Root` that an
+> in-flight page request is streaming through needs per-entry reference counting, and R1's removed-set already
+> makes the removal visible without it. What is undone here is bookkeeping.
 
 > **REVISED 2026-07-30 — R1 and R2 (decisions.md E-26, "REVISION 2026-07-30").** This paragraph originally
 > continued: *"and **`GET /api/roots` is deliberately unchanged until then** — a `POST` that appeared to work
@@ -2334,10 +2356,13 @@ interface Settings {
                                   //   ruling E-3 have always described.
     config_changed_on_disk: boolean; // AMENDMENT A-11 — the file at config_path is no
                                   //   longer byte-identical to the one this process
-                                  //   loaded. The server hashes it at load and compares
-                                  //   on every read of this endpoint. Always true after
-                                  //   a successful §7.4 write, because those endpoints
-                                  //   change the file and not the running server — but
+                                  //   has ADOPTED. The server hashes it at load and
+                                  //   compares on every read of this endpoint.
+                                  //   AMENDMENTS A-12/A-13 (rulings E-40/E-41): the
+                                  //   baseline is no longer the load-time bytes alone —
+                                  //   a successful §7.4 write moves it forward, so
+                                  //   neither verb leaves a restart notice behind for a
+                                  //   change it has already applied — but
                                   //   it is NOT "a write happened": it is equally true
                                   //   when the user hand-edited the file, which is the
                                   //   workflow C-5 has been telling them to use all

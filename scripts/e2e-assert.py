@@ -282,13 +282,23 @@ def wait_for_thumb_quiescence(r: Runner, limit_s: float = THUMB_SETTLE_S) -> Non
 # Three phases, called from three different points of scripts/e2e.sh, because
 # what A-11 promises is a sequence in time:
 #
-#   roots-pre     step 8b, before the restart. `POST` writes the FILE and
-#                 changes nothing else: the root is listed `pending: true` with
-#                 no counts, and two of §7.4's rejections are answered.
+#   roots-pre     step 8b, before the restart. AMENDMENT A-12 (ruling E-40):
+#                 `POST` writes the FILE *and opens the root into the running
+#                 server*, so the row is live at once — not `pending`, with real
+#                 scan timestamps — and `config_changed_on_disk` goes back to
+#                 false. Two of §7.4's rejections are answered here too.
+#                 (Pre-A-12 this phase asserted the opposite of all three. The
+#                 `pending` row it used to expect is now the *fallback* for an
+#                 adoption that failed, which internal/httpapi/roots_test.go
+#                 pins because it is not reachable from a passing round here.)
 #   roots-post    step 10b, after the restart scripts/e2e.sh already performs.
-#                 The root is now open, scanned and no longer pending. This is
-#                 the assertion impl-plan §0.3 calls "the one that stops
-#                 'restart-based' quietly becoming 'never applied'".
+#                 Under A-11 this was the assertion impl-plan §0.3 called "the
+#                 one that stops 'restart-based' quietly becoming 'never
+#                 applied'". A-12 moved adoption to the `POST`, so that is no
+#                 longer this phase's job — what it grades now is DURABILITY,
+#                 and step 10 is what keeps the check from being vacuous: it
+#                 deletes the index database before restarting, so a live row
+#                 here cannot be inherited from the `POST`'s scan.
 #   roots-delete  step 11b. The root has content by now, so `DELETE` can be held
 #                 to R1's exact promise: the row goes, that root's series go with
 #                 it, and `user.db` is untouched — the reading progress written
@@ -338,6 +348,135 @@ def series_ids(r: Runner) -> set[str]:
     return {item["id"] for item in listing["items"]}
 
 
+def browse(r: Runner, path: str | None = None) -> tuple[int, bytes]:
+    """`GET /api/browse`, at the top level when `path` is None."""
+    query = "" if path is None else "?path=" + urllib.parse.quote(path)
+    status, body, _ = r.request("GET", "/api/browse" + query)
+    return status, body
+
+
+def check_browse(r: Runner, media_path: str, fresh_dir: str) -> None:
+    """`GET /api/browse` — AMENDMENT A-12 (ruling E-40), the folder picker's endpoint.
+
+    Called from `roots-pre`, before the `POST`, because that is the only moment
+    `fresh_dir` is a directory the picker should offer: after step 8b adds it,
+    the same row is `duplicate`. Both states are worth having and the second is
+    the golden's (`testdata/golden/browse.json`); this tier is here for what a
+    golden cannot show — the endpoint answering about *this run's* filesystem,
+    through the `os.Root` opened on a base scripts/e2e-config.sh configured.
+    """
+    print("\n-- A-12 · GET /api/browse " + "-" * 45)
+
+    status, body = browse(r)
+    if not r.eq("A-12 · the top level lists the configured bases", status, 200):
+        print(f"          body: {body[:300]!r}")
+        return
+    top = json.loads(body)
+    # Three of the five fields are empty at the top level and that is the
+    # contract, not a degenerate case: there is no directory to name, nothing
+    # above the allowlist, and no single directory to offer as a choice.
+    r.eq("A-12 · the top level names no directory, has no parent and offers no self",
+         (top["path"], top["parent"], top["self"]), ("", None, None))
+    bases = [entry["path"] for entry in top["entries"]]
+    if not r.check("A-12 · scripts/e2e-config.sh configured exactly one base, and it is listed",
+                   len(bases) == 1, f"entries: {bases}"):
+        return
+    base = bases[0]
+
+    status, body = browse(r, base)
+    if not r.eq("A-12 · a base lists one level down", status, 200):
+        print(f"          body: {body[:300]!r}")
+        return
+    listing = json.loads(body)
+    # `parent` stopping at a base is the allowlist holding: the parent of a base
+    # is outside it, so offering one would be the first step out of the sandbox.
+    r.eq("A-12 · a base has no parent — the allowlist is never walked out of",
+         (listing["path"], listing["parent"]), (base, None))
+    # The base contains the configured media root, so `POST /api/roots` would
+    # refuse it. `overlaps` and not `contains_storage`, even though data_dir and
+    # cache_dir are under it too: internal/httpapi/roots.go tests overlap first.
+    r.eq("A-12 · the base offers itself as a choice, and says why it is not one",
+         (listing["self"] or {}).get("selectable"), False)
+    r.eq("A-12 · and the reason is §7.4's own vocabulary, computed by the server",
+         (listing["self"] or {}).get("reason"), "overlaps")
+
+    entries = {entry["name"]: entry for entry in listing["entries"]}
+    media_name = os.path.basename(media_path.rstrip("/"))
+    if r.check(f"A-12 · the configured media root is listed as a directory ({media_name!r})",
+               media_name in entries, f"entries: {sorted(entries)}"):
+        r.eq("A-12 · a configured root is offered but not selectable, and names the rule",
+             (entries[media_name]["selectable"], entries[media_name]["reason"]),
+             (False, "duplicate"))
+        r.eq("A-12 · its path is absolute and cleaned — what POST /api/roots wants",
+             entries[media_name]["path"], media_path)
+
+    fresh_name = os.path.basename(fresh_dir.rstrip("/"))
+    if r.check(f"A-12 · the directory step 8b is about to add is listed ({fresh_name!r})",
+               fresh_name in entries, f"entries: {sorted(entries)}"):
+        # The positive case. Without it every assertion above is satisfied by an
+        # endpoint that refuses everything, which is §6.5's shape exactly.
+        r.eq("A-12 · a directory no root holds IS selectable, with no reason to give",
+             (entries[fresh_name]["selectable"], entries[fresh_name]["reason"]), (True, None))
+
+    # A symlink is dropped from the listing rather than offered and then refused
+    # (open item `ag`). The target is the base's PARENT — the one directory the
+    # allowlist exists to keep out of reach — so this grades the case that
+    # matters: `os.Root` would refuse to follow it at openat(2), and a picker
+    # that listed it would be offering a path the user can never use.
+    #
+    # The link is removed again. This script otherwise only reads the filesystem,
+    # and leaving an artefact inside the very base the endpoint under test lists
+    # would make a re-run with SHELF_E2E_STATE pointed at an existing directory
+    # grade a tree the previous run wrote.
+    link = os.path.join(base, "browse-symlink")
+    try:
+        os.symlink(os.path.dirname(base.rstrip("/")) or "/", link)
+    except OSError as err:
+        r.check("A-12 · a symlink can be created to grade the listing's symlink filter",
+                False, f"os.symlink({link!r}) failed: {err}")
+        return
+    try:
+        status, body = browse(r, base)
+        relisted = ({entry["name"] for entry in json.loads(body)["entries"]}
+                    if status == 200 else set())
+        r.check("A-12 · a symlink pointing OUT of the base is not listed, so it cannot be offered",
+                status == 200 and "browse-symlink" not in relisted,
+                f"status={status}, entries={sorted(relisted)}")
+    finally:
+        os.unlink(link)
+
+    # The two refusals that matter, because they are what keeps this endpoint
+    # from being a filesystem oracle (§7.4a).
+    status, body = browse(r, "/etc")
+    r.eq("A-12 · a path outside the allowlist is 403 outside_browse_bases",
+         rejection(status, body)[:2] + (rejection(status, body)[3],),
+         (403, "forbidden", "outside_browse_bases"))
+    status, body = browse(r, "relative/path")
+    r.eq("A-12 · a relative path is 400 not_absolute",
+         rejection(status, body)[:2] + (rejection(status, body)[3],),
+         (400, "bad_request", "not_absolute"))
+
+
+def wait_for_root_scan(r: Runner, name: str, limit_s: float = 60.0) -> tuple[dict | None, float]:
+    """Poll `GET /api/roots` until `name` carries a finished scan. Returns (row, seconds).
+
+    AMENDMENT A-12 promises the `POST` *starts* a scan of the root it opened.
+    The scan runs asynchronously, so a check written against `last_scan_end`
+    straight after the 201 grades a race and not the contract — it passed once
+    against a real server with `last_scan_start` set and `last_scan_end` still
+    null. Polling for the settled row is what makes the finished state
+    assertable without a `sleep` that is a guess at how long an empty directory
+    takes. Returns whatever it last saw on timeout so the caller can report it.
+    """
+    t0 = time.monotonic()
+    while True:
+        row = roots_by_name(r).get(name)
+        waited = time.monotonic() - t0
+        if (row is not None and row["last_scan_end"] is not None) or waited >= limit_s:
+            return row, waited
+        time.sleep(0.25)
+
+
 def wait_for_idle(r: Runner, limit_s: float = 180.0) -> tuple[str, float]:
     """Poll `/api/scan/status` until the scanner is idle. Returns (state, seconds)."""
     t0 = time.monotonic()
@@ -374,8 +513,8 @@ def load_state(path: str) -> dict:
 
 
 def phase_roots_pre(r: Runner, new_root: str, label: str, state_path: str) -> int:
-    """`POST /api/roots` — the file changes, the running server does not."""
-    print("\n-- A-11 · POST /api/roots, before the restart " + "-" * 25)
+    """`POST /api/roots` — the file changes AND the running server opens the root (A-12)."""
+    print("\n-- A-12 · POST /api/roots, before the restart " + "-" * 25)
 
     server = r.json("/api/settings")["server"]
     # The precondition, asserted and then acted on rather than assumed: with the
@@ -408,6 +547,23 @@ def phase_roots_pre(r: Runner, new_root: str, label: str, state_path: str) -> in
             os.path.isdir(new_root) and os.listdir(new_root) == [],
             f"{new_root}: {os.listdir(new_root) if os.path.isdir(new_root) else 'missing'}")
 
+    # The picker's endpoint, graded here and not in its own phase because it has
+    # exactly one moment to be graded in: `new_root` exists but is not yet a
+    # configured root, so the listing carries a selectable row and an
+    # unselectable one at the same time.
+    check_browse(r, media["path"], new_root)
+    print("\n-- A-12 · POST /api/roots (continued) " + "-" * 33)
+
+    # A-12 promises the POST *starts* a scan of the root it opened, but
+    # `adoptRoot` treats "a scan is already running" as the ordinary case: the
+    # root is in the scanner's table, so the next run covers it, and it logs
+    # rather than failing. So "a scan started and finished" is only the server's
+    # claim to keep when the scanner was idle to begin with — asserted here
+    # rather than assumed, because assuming it is how a green round would come to
+    # mean "the scanner happened to be busy" instead of "the adoption scanned".
+    r.eq("the scanner is idle before the POST, so a scan of the new root can start now",
+         r.json("/api/scan/status")["state"], "idle")
+
     status, body, headers = r.request("POST", "/api/roots", {"path": new_root, "label": label})
     if not r.eq("A-11 · POST /api/roots answers 201", status, 201):
         print(f"          body: {body[:300]!r}")
@@ -435,20 +591,49 @@ def phase_roots_pre(r: Runner, new_root: str, label: str, state_path: str) -> in
             f"{backup}: " + ("absent" if not os.path.exists(backup)
                              else f"{len(read_bytes(backup))} bytes, want the {len(before)} "
                                   f"bytes that were there before the write"))
-    r.eq("§7.8 · config_changed_on_disk sees its own write",
-         r.json("/api/settings")["server"]["config_changed_on_disk"], True)
+    # AMENDMENT A-12: this was `True` under A-11, where the write and the running
+    # process disagreed until a restart. Now the POST adopts what it wrote, so
+    # the process and the file agree again and the UI has no restart to ask for.
+    # arch-backend §7.4: "the row is then not pending, available is true, and
+    # config_changed_on_disk is false — this process and the file agree again."
+    r.eq("§7.8 · A-12 · the POST adopted its own write, so nothing is pending on disk",
+         r.json("/api/settings")["server"]["config_changed_on_disk"], False)
 
     listed = roots_by_name(r)
     row = listed.get(label)
     if not r.check("R2 · the added root is listed at once, before any restart",
                    row is not None, f"GET /api/roots holds {sorted(listed)}"):
         return report(r)
-    r.eq("R2 · it is PENDING, with no counts, no timestamps and not available",
-         (row["pending"], row["available"], row["series_count"], row["book_count"],
-          row["page_count"], row["total_bytes"], row["last_scan_start"], row["last_scan_end"]),
-         (True, False, 0, 0, 0, 0, None, None))
+    # AMENDMENT A-12 (ruling E-40) inverted this check. Under A-11 the row was
+    # `pending: true` with null timestamps because the POST touched the file and
+    # nothing else; now the POST opens the root into this process and scans it,
+    # so the row is live. The pre-A-12 shape is not gone — it is the *fallback*
+    # for an adoption that failed, which is unreachable from a passing round here
+    # and is pinned by internal/httpapi/roots_test.go instead.
+    #
+    # These are graded on the row fetched immediately above, and the order is the
+    # point: "at once" has to be measured at once. Polling first and asserting
+    # afterwards would let a row that took a minute to go live satisfy a check
+    # whose name says it did not — and it would report a failed adoption as a
+    # scan that never finished, hiding the `pending` row that is the diagnosis.
+    r.eq("A-12 · it is LIVE at once, without a restart — not pending, and available",
+         (row["pending"], row["available"], row["enabled"]), (False, True, True))
+    r.eq("A-12 · an empty directory opens with zero counts, which is what keeps the live row honest",
+         (row["series_count"], row["book_count"], row["page_count"], row["total_bytes"]),
+         (0, 0, 0, 0))
     r.eq("R2 · it carries the path and label that were written",
          (row["path"], row["label"], row["enabled"]), (new_root, label, True))
+
+    # Only now the scan, which is asynchronous and therefore cannot be graded in
+    # the same breath as the flags. No early return: `save_state` below is what
+    # steps 10b and 11b need to run at all, and a scan that did not finish is not
+    # a reason to take those two steps away from the operator.
+    scanned, waited = wait_for_root_scan(r, label)
+    r.check(f"A-12 · and the scan the POST started ran to completion ({waited:.1f}s)",
+            scanned is not None and scanned["last_scan_end"] is not None,
+            f"last_scan_end is still null after {waited:.1f}s: {scanned!r}")
+    row = scanned or row
+    r.eq("A-12 · and the adoption reports no error", row["last_scan_error"], None)
     r.eq("the media root is untouched by the addition",
          roots_by_name(r)[media["name"]]["series_count"], media["series_count"])
 
@@ -475,35 +660,56 @@ def phase_roots_pre(r: Runner, new_root: str, label: str, state_path: str) -> in
             read_bytes(cfg_path) == after,
             f"{cfg_path} changed while two requests were being refused")
 
+    # The pre-restart scan timestamps travel with the handover so `roots-post`
+    # can prove the row it sees is the fresh process's own work and not this
+    # one's, which is the only thing that separates "reloaded" from "inherited".
     save_state(state_path, {"name": label, "path": new_root, "label": label,
-                            "config_path": cfg_path, "media_root": media["name"]})
+                            "config_path": cfg_path, "media_root": media["name"],
+                            "last_scan_start": row["last_scan_start"],
+                            "last_scan_end": row["last_scan_end"]})
     return report(r)
 
 
 def phase_roots_post(r: Runner, state_path: str) -> int:
-    """After the restart: the root is open, scanned, and no longer pending."""
-    print("\n-- A-11 · restart adoption " + "-" * 44)
+    """After the restart: a fresh process re-read the spliced entry and scanned it itself."""
+    print("\n-- A-12 · the addition is durable across a restart " + "-" * 20)
     state = load_state(state_path)
     name = state["name"]
 
     listed = roots_by_name(r)
     row = listed.get(name)
-    if not r.check("A-11 · the root added before the restart is still configured",
+    if not r.check("the root added before the restart is still configured",
                    row is not None, f"GET /api/roots holds {sorted(listed)}"):
         return report(r)
-    # THE assertion of this whole file (impl-plan §0.3, A-11 row): a restart is
-    # what A-11 sells instead of a reload path, so a restart that adopts nothing
-    # turns "restart-based" into "never applied" with every other check green.
-    r.eq("A-11 · the restart ADOPTED it — no longer pending, open and available",
+    # Under A-11 this was THE assertion of this whole file (impl-plan §0.3): a
+    # restart was what A-11 sold instead of a reload path, so a restart that
+    # adopted nothing turned "restart-based" into "never applied" with every
+    # other check green. AMENDMENT A-12 moved adoption to the POST, and a check
+    # that keeps its old wording would now pass by inheritance — §6.5's exact
+    # shape. Two things keep it honest instead:
+    #   * step 10 DELETES the index database before this restart, so a live row
+    #     cannot survive from the POST's scan. A fresh process that failed to
+    #     read the spliced entry would report `pending` — in the file, no index
+    #     row (§7.3) — which is what the flags below reject.
+    #   * the timestamps are compared against the pre-restart ones, below.
+    r.eq("A-12 · the fresh process re-read the spliced entry — live, not pending",
          (row["pending"], row["available"], row["enabled"]), (False, True, True))
-    r.check("A-11 · and the scan actually walked it (it has both scan timestamps)",
+    r.check("A-12 · and this scan is THIS process's, not the one the POST started",
+            row["last_scan_start"] is not None
+            and state.get("last_scan_start") is not None
+            and row["last_scan_start"] != state["last_scan_start"],
+            f"last_scan_start={row['last_scan_start']!r} is still the pre-restart value "
+            f"{state.get('last_scan_start')!r}, so nothing here proves the restart re-read "
+            f"the file")
+    r.check("A-12 · and that scan ran to completion (it has both scan timestamps)",
             row["last_scan_start"] is not None and row["last_scan_end"] is not None,
             f"last_scan_start={row['last_scan_start']!r}, last_scan_end={row['last_scan_end']!r}")
     r.eq("the adopted root reports no error", row["last_scan_error"], None)
-    # An empty directory indexes as empty. That is not a detail: it is what
-    # makes the pending row's zeros honest, and it is why adding this root
-    # cannot disturb the AC-005 library comparison in the same step.
-    r.eq("the empty directory indexes as an empty root, exactly as its pending row promised",
+    # An empty directory indexes as empty on both sides of the restart. That is
+    # not a detail: it is what lets step 8b's live row carry zeros without
+    # lying, and it is why adding this root cannot disturb the AC-005 library
+    # comparison in the same step.
+    r.eq("the empty directory indexes as an empty root, on this side of the restart too",
          (row["series_count"], row["book_count"]), (0, 0))
     r.eq("§7.8 · the restarted server loaded the file the POST wrote, so nothing is pending on disk",
          r.json("/api/settings")["server"]["config_changed_on_disk"], False)

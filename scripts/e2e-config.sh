@@ -70,6 +70,20 @@ if [ "$synthetic" -eq 1 ]; then
   allow_root_editing=true
 fi
 
+# `server.browse_bases` (amendment A-12, ruling E-40) — the allowlist behind
+# `GET /api/browse`. Derived from --synthetic for the same safety reason as the
+# key above, and empty by default because an empty allowlist refuses every path:
+# a real-collection round must not offer a picker onto the host's filesystem, and
+# its gate is shut anyway.
+#
+# The synthetic base is the run's state directory, so every path the picker can
+# reach was created by this run — the fixture tree, the directory step 8b adds,
+# and data_dir/cache_dir. It is emitted in flow style because it is one entry.
+browse_bases="[]"
+if [ "$synthetic" -eq 1 ]; then
+  browse_bases="[\"$state\"]"
+fi
+
 globs=("${CURATED[@]}")
 if [ "$synthetic" -eq 1 ]; then
   globs+=("${SYNTHETIC_EXTRA[@]}")
@@ -97,7 +111,7 @@ tmpl="$repo/test/shelf.e2e.yaml.tmpl"
 # can contain a slash.
 awk -v root="$root" -v port="$port" -v data="$state/data" -v cache="$state/cache" \
     -v base="$base_path" -v level="$log_level" -v globs="$include_block" \
-    -v rootedit="$allow_root_editing" '
+    -v rootedit="$allow_root_editing" -v browse="$browse_bases" '
   {
     gsub(/@@ROOT@@/, root)
     gsub(/@@PORT@@/, port)
@@ -106,6 +120,7 @@ awk -v root="$root" -v port="$port" -v data="$state/data" -v cache="$state/cache
     gsub(/@@BASE_PATH@@/, base)
     gsub(/@@LOG_LEVEL@@/, level)
     gsub(/@@ALLOW_ROOT_EDITING@@/, rootedit)
+    gsub(/@@BROWSE_BASES@@/, browse)
     if ($0 ~ /@@INCLUDE_GLOBS@@/) { print globs; next }
     print
   }
