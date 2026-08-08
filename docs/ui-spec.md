@@ -337,8 +337,8 @@ Which box gets which shadow is §0.2 — the five-question table.
 | Token | Value | |
 |---|---|---|
 | `--paper-grain` | `url("data:image/svg+xml,…")` | A 200px `feTurbulence` tile — `fractalNoise`, `baseFrequency .9`, `numOctaves 3`, **`seed 4`**, `stitchTiles stitch`. Re-derived rather than ported (E-35): the prototype loads `@paper-design/shaders` from esm.sh at runtime, which NFR-OPS-001 forbids outright; its canvas fallback costs 21.7 ms of synchronous main thread and lands as a ~198 KB inline `style`; and it ignores its own `seed` in favour of `Math.random()`, so a plain reload changes 89.1 % of the pixels — which would make `docs/ui-shots/` useless as a review reference. The filter writes **alpha and nothing else**: the colour matrix zeroes RGB and scales the noise into alpha, so the image is a *mask* and the tone stays a token instead of being buried in the data URI. Amplitude 0.126 is the prototype's own, read off its fallback tile; measured here mean 16.05/255, max 29/255 |
-| `--paper-tone` | `var(--color-neutral-900)` | The tone the grain washes in. The prototype's `#201E1D` is three units from `#23211D` on two channels — 0.17/255 through this mask — so the ramp step *is* the prototype's colour and adds no literal to the file |
-| `--paper-intensity` | `0.5` | Moves the average pixel 6.2/255 darker over the cream — the −6~7 measured on the prototype |
+| `--paper-tone` | `var(--color-neutral-900)` | The tone the grain washes in. The prototype's `#201E1D` is three units from `#23211D` on two channels — 0.35/255 through this mask at the shipped intensity — so the ramp step *is* the prototype's colour and adds no literal to the file |
+| `--paper-intensity` | `1` | Moves the average pixel **12.7/255** darker over the cream. **Ruling E-43** doubled the prototype's `0.5` after the user compared four intensities rendered on the real screens: at 0.5 the grain was only findable up close. Two dark inks were re-derived for it and the hot marker was exempted from the wash — see `base.css` |
 | `--paper-tone-viewer` | `#0D0C0C` | An absolute, for the same reason the viewer scrims are: the viewer ground does not flip. The one paper value that is a literal, because no ramp step is near it — `--color-accent-900` is as dark as the palette goes and its relative luminance is still 3.7× this. The reading screen's grain is soot, not more of the ground's own green |
 
 #### z-index ladder (5) — §3 owns the ladder
@@ -485,10 +485,10 @@ The `[data-theme='dark']` block redeclares **46** tokens — these and only thes
 | `--ink` | `var(--color-text)` | 9.31 / 7.51 | |
 | `--ink-muted` | `rgb(234 227 212 / 0.78)` | 6.36 / 5.29 | |
 | `--ink-dim` | `#B9C8C4` | 6.87 / 5.54 | |
-| `--ink-faint` | `#A9BAB6` | 5.88 / 4.75 | **On dark the *surface* is the harder ground** — the shipped dark faint was 3.27 on it |
+| `--ink-faint` | `#AFC0BC` | 6.28 / 5.07 | **On dark the *surface* is the harder ground** — the shipped dark faint was 3.27 on it. Lifted two steps at **E-43**: `#A9BAB6` was 4.42 washed once the intensity doubled |
 | `--ink-label` | `rgb(234 227 212 / 0.75)` | 6.01 / 5.03 | |
 | `--ink-meta` | `rgb(234 227 212 / 0.75)` | 5.76 / 5.03 | Was 0.7 — 4.61 on the surface dry and **4.45 washed**, and this is the token that sits on the surface most (`.card-meta` at 11px). 0.75 puts it level with `--ink-label`: 4.85 washed, 4.71 at peak |
-| `--ink-th` | `rgb(234 227 212 / 0.72)` | 5.67 / 4.77 | |
+| `--ink-th` | `rgb(234 227 212 / 0.75)` | 6.01 / 5.03 | Raised from `0.72` at **E-43** (4.45 washed). Level with `--ink-label` and `--ink-meta`, not past them — alphas that mean the same thing in the hierarchy stay equal |
 | `--rule` | `#3E5B57` | | |
 | `--rule-strong` | `#4A6B66` | | |
 | `--control-border` | `#5A7C77` | | The viewer's button/seg borders |
@@ -533,7 +533,7 @@ each *role* points at. The prototype's raw-ramp references map onto semantic tok
 | `neutral-200` / `neutral-300` cover stripes | `--fill-subtle` / `--fill-track` | `#2F4A46` / `#3E5B57` |
 | `neutral-300` progress trough | `--fill-track` | `#3E5B57` |
 | `neutral-400` progress trough over art | `--fill-track-2` | `#5A7C77` |
-| `neutral-500` disabled / idle numerals | `--ink-faint` | `#A9BAB6` |
+| `neutral-500` disabled / idle numerals | `--ink-faint` | `#AFC0BC` |
 | `neutral-600` labels, counts | `--ink-dim` | `#B9C8C4` |
 | `neutral-700` secondary body text | `--ink-muted` | `rgb(234 227 212 / .78)` |
 | `neutral-800` strong body text | `--ink` | `#EAE3D4` |

@@ -211,6 +211,136 @@ function exactRule(selector: string): CssRule | undefined {
   return allRules(BASE).find((r) => r.selector === selector)
 }
 
+/** The selectors of a rule's list, one per entry, whitespace normalised. */
+function selectorList(rule: CssRule): string[] {
+  return rule.selector.split(',').map((s) => s.trim().replace(/\s+/g, ' '))
+}
+
+/**
+ * The at-rule preludes a rule is nested inside, outermost first, each reduced to
+ * its own last line.
+ *
+ * `cssRules` slices a prelude from wherever the previous block ended, so the
+ * outermost one in `base.css` arrives with the sheet's three `@tailwind`
+ * statements glued to the front of it. The prelude proper is the last line.
+ *
+ * Every rule in `base.css` is inside one cascade layer, so `['@layer base']` —
+ * and not the empty list — is what "nested in nothing conditional" looks like
+ * here.
+ */
+function preludes(rule: CssRule | undefined): string[] {
+  return (rule?.context ?? []).map((c) => (c.split('\n').pop() ?? '').trim())
+}
+
+/**
+ * The opening JSX tag containing `at`, comments blanked.
+ *
+ * Reads from the `<` before `at` to the `>` that closes it at brace depth zero,
+ * skipping quoted runs, then blanks block and line comments. base.css taught
+ * that lesson and so did `ds.test.tsx`: prose in this repo quotes class names in
+ * backticks, and `ViewerBottomBar`'s comment names `border-neutral-700` four
+ * lines above the code that no longer has it.
+ *
+ * At module scope because two blocks ask the same question of a class list —
+ * the grain exemption below and the cream-control scan further down.
+ */
+function openingTag(source: string, at: number): string {
+  const start = source.lastIndexOf('<', at)
+  let depth = 0
+  let quote: string | null = null
+  let end = start
+  for (; end < source.length; end++) {
+    const ch = source[end]
+    if (quote !== null) {
+      if (ch === quote) quote = null
+      continue
+    }
+    if (ch === '"' || ch === "'" || ch === '`') quote = ch
+    else if (ch === '{') depth += 1
+    else if (ch === '}') depth -= 1
+    else if (ch === '>' && depth === 0) break
+  }
+  return source
+    .slice(start, end + 1)
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/\/\/[^\n]*/g, ' ')
+}
+
+/**
+ * Tailwind `z-*` utilities in a class list — variants and negation included, so
+ * `md:z-10`, `-z-10` and `z-[3]` all count.
+ *
+ * A `z-` utility is the one thing that can undo a stacking rule in `base.css`
+ * without touching the sheet: base.css is `@layer base`, Tailwind emits
+ * utilities after it, and later layers win regardless of specificity.
+ */
+function zUtilities(text: string): string[] {
+  return [...text.matchAll(/(?:^|[\s"'`])(-?(?:[\w[\]&_.+:-]*:)?z-[\w[\].%/-]+)/g)].map(
+    (m) => m[1] ?? '',
+  )
+}
+
+/**
+ * One `z-index` value from `base.css` as a number, or `null` if this file cannot
+ * read the notation.
+ *
+ * **Three notations reach the same rung, and a scanner that reads one of them
+ * decides by spelling rather than by value.** The ceiling check below used to
+ * match `/z-index:\s*(\d+)\s*;/` — bare integers only — in a sheet that has not
+ * contained a bare integer since the ladder was tokenised. It therefore scanned
+ * *nothing*, and E-43's `calc(var(--z-texture) + 1)` became the first rule in the
+ * sheet to outrank the texture without the check noticing. Writing the identical
+ * value as the literal `91` turned it red. A gate whose verdict depends on how a
+ * number is spelled is not measuring the ladder.
+ *
+ * `null` is returned rather than skipped, and the caller reports it: an
+ * unreadable notation is the failure this function exists to stop, so it has to
+ * be louder than silence.
+ */
+function zValue(raw: string): number | null {
+  const value = raw.trim()
+  if (/^-?\d+$/.test(value)) return Number(value)
+  const rung = (name: string): number | null => {
+    const declared = light.get(name)
+    return declared === undefined || !/^-?\d+$/.test(declared.trim()) ? null : Number(declared)
+  }
+  const token = /^var\((--z-[\w-]+)\)$/.exec(value)
+  if (token !== null) return rung(token[1] ?? '')
+  const shifted = /^calc\(\s*var\((--z-[\w-]+)\)\s*([+-])\s*(\d+)\s*\)$/.exec(value)
+  if (shifted !== null) {
+    const base = rung(shifted[1] ?? '')
+    return base === null ? null : base + (shifted[2] === '-' ? -1 : 1) * Number(shifted[3])
+  }
+  return null
+}
+
+// ---------------------------------------------------------------------------
+// The one element E-43 lifts out of the paper wash
+//
+// `--on-hot` is pure black — the ceiling of this palette — so the pair it makes
+// with `--color-hot` cannot be repaired by moving a token, and E-43 exempts the
+// marker from the wash instead. These three names are the whole surface of that
+// exemption: the rule, the file that carries the only element it applies to, and
+// the grain layer it has to outrank. Two separate blocks below check it, so they
+// are stated once here rather than twice.
+// ---------------------------------------------------------------------------
+
+/** The base.css rule that does the lifting. */
+const GRAIN_EXEMPT_SELECTOR = "[data-role='viewer-override-chip']"
+
+/** The only file allowed to paint the exempt pair — see the scanner note. */
+const GRAIN_EXEMPT_FILE = join('features', 'viewer', 'ViewerTopBar.tsx')
+
+/** The grain layer the lift is measured against: the chip's own bar. */
+const GRAIN_EXEMPT_BAR = "[data-role='viewer-top-bar']::after"
+
+/**
+ * The same role as the attribute a `.tsx` writes, derived from the selector so
+ * the two cannot be renamed apart: a rename in `base.css` alone leaves the rule
+ * matching nothing, and this is what makes that loud rather than silent.
+ */
+const GRAIN_EXEMPT_ATTR = GRAIN_EXEMPT_SELECTOR.slice(1, -1).replace(/'/g, '"')
+
 /** Ink tokens: text at 10–14px, so the floor is AA 4.5 on both grounds. */
 const INK_TOKENS = [
   '--ink',
@@ -632,14 +762,107 @@ describe('contrast floors (E-32 §4)', () => {
     expect(offenders).toEqual([])
   })
 
-  /** The three tokens the grain took under AA, and the pairs they were taken on. */
+  /** The tokens the grain took under AA, and the pairs they were taken on. */
   const REPAIRED: [string, Map<string, string>, string, string][] = [
-    ['the override chip', light, '--on-hot', '--color-hot'],
     ['light meta text on the ground', light, '--ink-faint', '--color-bg'],
     ['dark card meta on the surface', dark, '--ink-meta', '--color-surface'],
+    ['dark faint ink on the surface', dark, '--ink-faint', '--color-surface'],
+    ['dark table headers on the surface', dark, '--ink-th', '--color-surface'],
   ]
 
-  it('re-derives the three pairs the grain took under AA', () => {
+  it('lifts the hot marker out of the wash rather than moving the brand red', () => {
+    // The pair that cannot be repaired by moving a token — `--on-hot` is
+    // `#000000` and there is no darker ink — so E-43 exempts the marker from the
+    // wash instead. Five facts have to hold together, and any one alone is a lie.
+    //
+    // 1. Washed, this pair fails: `--on-hot` on `--color-hot` is 4.46 at the
+    //    shipped intensity. The number is stated here so that a future change to
+    //    `--paper-intensity` cannot make this test vacuous — if the wash ever
+    //    stops taking it under AA, the exemption has stopped being necessary and
+    //    somebody should delete it.
+    // 2. Dry, it passes at 4.9988 — the ceiling — and the *only* thing that
+    //    makes the dry number the true one is the rule in `base.css` that paints
+    //    the chip above its bar's grain layer.
+    expect(washedRatio(light, '--on-hot', '--color-hot')).toBeLessThan(4.5)
+    expect(ratio(light, '--on-hot', '--color-hot')).toBeGreaterThanOrEqual(4.5)
+
+    // 3. The rule exists, **unconditionally and at exactly this selector**.
+    //
+    //    Both halves of that sentence are load-bearing, and the first cut of this
+    //    test had neither. It looked the rule up with `.includes`, so narrowing
+    //    the selector to `.nope [data-role='viewer-override-chip']` — which
+    //    matches no element in the product — still found it; `exactRule` is the
+    //    same fix the corner assertions further down needed. And it never read
+    //    `context`, which `allRules` fills with the enclosing at-rule preludes:
+    //    wrapping the rule in `@media (prefers-contrast: more)` left this green
+    //    while removing the exemption from every screen that has the grain on
+    //    (a perfect inversion — that query is where the grain is switched *off*),
+    //    and `@media print` left it green while the chip washed on screen.
+    //
+    //    The whole sheet is inside `@layer base`, so that one prelude is the
+    //    context a top-level rule is allowed to have, and asserting the list
+    //    exactly is what refuses every other at-rule — media, supports, or a
+    //    nested layer that a later `@layer` statement could reorder.
+    const rule = exactRule(GRAIN_EXEMPT_SELECTOR)
+    expect(rule, `${GRAIN_EXEMPT_SELECTOR} must be lifted above its bar's grain`).toBeDefined()
+    expect(
+      preludes(rule),
+      `${GRAIN_EXEMPT_SELECTOR} must not be inside an at-rule`,
+    ).toEqual(['@layer base'])
+    expect(rule?.body).toMatch(/position:\s*relative/)
+    expect(rule?.body).toMatch(/z-index:\s*calc\(var\(--z-texture\)\s*\+\s*1\)/)
+
+    // 4. The layer it is lifted *over* is still where it was. "One step above
+    //    `--z-texture`" only clears the grain while the grain is at
+    //    `--z-texture`: raising the bar's own `::after` to
+    //    `calc(var(--z-texture) + 5)` puts the chip back under the wash and left
+    //    every assertion above green, because none of them read the bar. The two
+    //    z values are compared as numbers so the pair cannot be re-notated apart,
+    //    and the textual forms are pinned as well so neither side drifts to a
+    //    bare integer that no longer tracks the ladder.
+    const grain = allRules(BASE).find(
+      (r) => selectorList(r).includes(GRAIN_EXEMPT_BAR) && preludes(r).join('|') === '@layer base',
+    )
+    expect(grain, `${GRAIN_EXEMPT_BAR} must carry the bar's grain`).toBeDefined()
+    expect(grain?.body).toMatch(/z-index:\s*var\(--z-texture\)\s*;/)
+    const barZ = zValue(/z-index:\s*([^;]+);/.exec(grain?.body ?? '')?.[1] ?? '')
+    const chipZ = zValue(/z-index:\s*([^;]+);/.exec(rule?.body ?? '')?.[1] ?? '')
+    expect(barZ).toBe(Number(light.get('--z-texture')))
+    expect(chipZ, 'the chip must sit exactly one step above the grain on its bar').toBe(
+      (barZ ?? 0) + 1,
+    )
+
+    // 5. And no `z-` utility on the chip itself. `base.css` is `@layer base` and
+    //    Tailwind emits utilities after it, so later-layer wins: a single `z-10`
+    //    in the class list beats this rule outright and the lift is gone, with
+    //    the whole stylesheet unchanged and everything above still green. Same
+    //    technique as `a cream control carries no colour utility` below — jsdom
+    //    computes no styles here, but the class list itself is real.
+    const chipSource = read(join('src', GRAIN_EXEMPT_FILE))
+    const at = chipSource.indexOf(GRAIN_EXEMPT_ATTR)
+    expect(at, `${GRAIN_EXEMPT_FILE} no longer writes ${GRAIN_EXEMPT_ATTR}`).toBeGreaterThan(-1)
+    const tag = openingTag(chipSource, at)
+    // The positive control for the tag reader: an `openingTag` that stopped at
+    // the first `>` inside a `{…}` expression would hand back a fragment with no
+    // class list at all, and the assertion after it would pass on nothing.
+    expect(tag, 'the override chip carries no className to read').toContain('className=')
+    expect(zUtilities(tag), 'a z- utility on the chip outranks the base rule').toEqual([])
+
+    // 6. And the element the rule lifts is the element that paints the pair.
+    //    The scanner below exempts `bg-hot text-on-hot` **by file**, which is
+    //    right for the reason written there — the lift does not travel to another
+    //    screen — but a file is coarser than an element. This is the other end of
+    //    that key: the lifted tag has to be the one carrying both utilities, so a
+    //    second hot badge elsewhere *in this file* cannot inherit the exemption
+    //    from its neighbour. (`found the fills the screens are known to paint`
+    //    holds the matching half: exactly one such pair exists in the repo.)
+    expect(tag, 'the lifted element is not the one painting bg-hot').toMatch(/(^|\s)bg-hot(?![\w-])/)
+    expect(tag, 'the lifted element is not the one painting text-on-hot').toMatch(
+      /(^|\s)text-on-hot(?![\w-])/,
+    )
+  })
+
+  it('re-derives the pairs the grain took under AA', () => {
     // Named individually because each was a *specific* token that had to move,
     // and a floor test alone would let the next author fix a failure by lowering
     // `--paper-intensity` instead — which is the one repair that is not
@@ -672,11 +895,18 @@ describe('contrast floors (E-32 §4)', () => {
     // **What that leaves open.** `--on-hot` is `#000000` — the absolute ceiling
     // of this palette, 4.9988 against `#EC3013`, with no darker ink available.
     // Buying real margin back means raising the relative luminance of
-    // `--color-hot` by ~4 %, and that is a change to the retired brand red that
-    // E-32 §1 pinned: a ruling of its own, not a side effect of a texture.
+    // `--color-hot` by **+2.0 %** (measured: the washed pair reaches 4.533, and
+    // +1 % is not enough at 4.498), and that is a change to the retired brand red
+    // that E-32 §1 pinned: a ruling of its own, not a side effect of a texture.
+    // The figure used to read "~4 %" here, which was the number at
+    // `--paper-intensity: 0.5`; the argument is unchanged, the price is smaller.
     //
-    // Today, at the shipped amplitude: chip 4.725 / 4.508, ink-faint
-    // 4.740 / 4.631, ink-meta 4.853 / 4.709 (mean / peak).
+    // Today, at the shipped amplitude and `--paper-intensity: 1` (E-43):
+    // light ink-faint 4.61 / 4.39, dark ink-meta 4.68 / 4.39, dark ink-faint
+    // 4.71 / 4.43, dark ink-th 4.68 / 4.39 (mean / peak). **Every peak here is
+    // under 4.5 and that is the price of the intensity the user chose** — the
+    // means clear it and the means are the floor, for the three reasons above.
+    // The override chip is no longer in this table: it does not take the wash.
     const report = REPAIRED.map(([what, theme, token, ground]) => ({
       what,
       mean: washedRatio(theme, token, ground),
@@ -1088,6 +1318,22 @@ describe('the pairs components actually paint (E-32 §1)', () => {
     expect(seen).toContain(
       join('components', 'shell', 'TopBar.tsx') + ' bg-control-well text-on-control',
     )
+    // The pair the scan below exempts from the wash, and the file it is keyed to.
+    // Two failure directions, both silent without this.
+    //
+    //  * The branch goes **dead**: a chip that stopped naming both utilities in
+    //    one literal leaves the exemption unreachable, and an unreachable
+    //    exemption reads exactly like a working one.
+    //  * The branch goes **wide**: `base.css` lifts one element, so a second
+    //    `bg-hot text-on-hot` anywhere — including elsewhere in this same file —
+    //    is under a grain layer and reads 4.46. Keyed on the file, that second
+    //    site inside `ViewerTopBar` would be exempted by its neighbour. Asserting
+    //    the *whole repo* has exactly one such pair is what stops it, and the
+    //    exemption test holds the other end: the lifted tag is the one painting
+    //    it.
+    expect(PAINTED.filter((p) => p.bg === 'hot' && p.fg === 'on-hot').map((p) => p.file)).toEqual([
+      GRAIN_EXEMPT_FILE,
+    ])
     expect(PAINTED.length).toBeGreaterThanOrEqual(7)
   })
 
@@ -1098,6 +1344,35 @@ describe('the pairs components actually paint (E-32 §1)', () => {
     // dry scan here would have gone on calling it a pass.
     const offenders: string[] = []
     for (const pair of PAINTED) {
+      // The override chip is painted above its bar's grain layer (E-43), so the
+      // wash never reaches it and measuring it washed would report a defect the
+      // reader cannot see. The exemption is *not* taken on trust: the test above
+      // fails if `base.css` stops lifting it, and this scan still holds the pair
+      // to AA dry — it is the only pair in this file allowed to be read dry.
+      //
+      // **And it is the only *element*, not the only colour pair.** `base.css`
+      // lifts one selector, `[data-role='viewer-override-chip']`, which exists in
+      // exactly one file. A second `bg-hot text-on-hot` badge anywhere else —
+      // a library card, a series header — is under the global `body::after` and
+      // reads **4.46**, while a pair-keyed exemption would certify it at 4.9988
+      // and never mention it. Worse, the repair does not travel: the lift works
+      // because the bar is a stacking context, so a step above `--z-texture`
+      // lands above the bar's own grain; the global layer is a child of `body` in
+      // the root stacking context, and nothing inside `#root` can be lifted over
+      // it at all. So the exemption is keyed on the file as well, and a new site
+      // shows up here as an offender — which is the correct answer for it.
+      if (pair.bg === 'hot' && pair.fg === 'on-hot' && pair.file === GRAIN_EXEMPT_FILE) {
+        const dry = contrast(
+          opaque(light, COLOUR_UTILITIES.get('on-hot') ?? '') ?? { r: 0, g: 0, b: 0, a: 1 },
+          opaque(light, COLOUR_UTILITIES.get('hot') ?? '') ?? { r: 0, g: 0, b: 0, a: 1 },
+        )
+        if (dry < 4.5) {
+          offenders.push(
+            `${pair.file}:${String(pair.line)} — text-on-hot on bg-hot is ${dry.toFixed(2)}:1 dry`,
+          )
+        }
+        continue
+      }
       for (const [name, theme] of themesFor(pair.file)) {
         const ground = opaque(theme, COLOUR_UTILITIES.get(pair.bg) ?? '')
         const ink = opaque(theme, COLOUR_UTILITIES.get(pair.fg) ?? '')
@@ -1190,28 +1465,8 @@ const CREAM_CONTROL_UTILITIES = [
 ]
 
 describe('a cream control carries no colour utility (E-42 §7)', () => {
-  /** The opening tag containing `at`, comments stripped. */
-  const openingTag = (source: string, at: number): string => {
-    const start = source.lastIndexOf('<', at)
-    let depth = 0
-    let quote: string | null = null
-    let end = start
-    for (; end < source.length; end++) {
-      const ch = source[end]
-      if (quote !== null) {
-        if (ch === quote) quote = null
-        continue
-      }
-      if (ch === '"' || ch === "'" || ch === '`') quote = ch
-      else if (ch === '{') depth += 1
-      else if (ch === '}') depth -= 1
-      else if (ch === '>' && depth === 0) break
-    }
-    return source
-      .slice(start, end + 1)
-      .replace(/\/\*[\s\S]*?\*\//g, ' ')
-      .replace(/\/\/[^\n]*/g, ' ')
-  }
+  // `openingTag` is at module scope: the grain-exemption test asks the same
+  // question of the override chip's class list.
 
   /** Every marker that means "this element is painted by a cream control class". */
   const MARKERS = [/variant="secondary"/g, /<Seg\b/g, /<Input\b/g, /className="input[\s"]/g]
@@ -1477,12 +1732,22 @@ describe('the paper grain (tokens.css)', () => {
     expect(grain).not.toMatch(/(fill|stroke|flood-color|stop-color)=/)
   })
 
-  it('takes the app tone off the ramp and the intensity from the prototype', () => {
+  it('takes the app tone off the ramp, and the intensity from E-43 — not the prototype', () => {
     // `--color-neutral-900` is #23211D against the prototype's #201E1D: three
-    // units on two channels, which at ≤0.114 alpha and half intensity is
-    // 0.16/255 of difference. Same colour, one fewer literal in the file.
+    // units on two channels, which at ≤0.115 alpha and full intensity is
+    // 0.35/255 of difference. Same colour, one fewer literal in the file.
+    //
+    // The intensity is no longer the prototype's either. 0.5 was carried across
+    // untouched and nobody had asked whether it was right for this product;
+    // E-43 rendered four amplitudes on the real screens and the user chose 1.
     expect(resolveToken(light, '--paper-tone')).toBe('#23211D')
-    expect(light.get('--paper-intensity')).toBe('0.5')
+    // Pinned rather than ranged: the value is a user's choice between four
+    // rendered options, so a drift back to 0.5 is a decision being undone, not a
+    // tuning. The **two** tokens re-derived for it — dark `--ink-faint` and dark
+    // `--ink-th` — are in this file, in `REPAIRED`. The third pair E-43 took
+    // under AA is not re-derived at all: `--on-hot` is already pure black, so it
+    // is exempted from the wash instead (`lifts the hot marker out of the wash`).
+    expect(light.get('--paper-intensity')).toBe('1')
   })
 
   it('gives the viewer a tone that is a different colour, not a different name', () => {
@@ -1504,20 +1769,25 @@ describe('the paper grain (tokens.css)', () => {
     }
   })
 
-  it('lands the −6~7/255 the prototype was measured at on the cream ground', () => {
-    // The one number a reviewer can check against the prototype without a
-    // browser. `fractalNoise` centres each channel on 0.5, so the mean mask
-    // alpha is half the matrix coefficient — 0.063, i.e. 16.1/255, which is
-    // also what the prototype's own fallback tile averages
-    // (`(Math.random()*0.5 + fiber*0.12) * 52`). Derived from the matrix rather
-    // than restated, so tuning the grain moves this with it.
+  it('lands −12~13/255 on the cream ground — twice the prototype, on purpose', () => {
+    // The one number a reviewer can check without a browser. `fractalNoise`
+    // centres each channel on 0.5, so the mean mask alpha is half the matrix
+    // coefficient; at `--paper-intensity: 1` that is 0.063 of near-black over
+    // the cream, and the model says 12.7/255.
+    //
+    // **It used to say −6~7 and cite the prototype for it.** That was true of
+    // the prototype's own intensity, 0.5, and E-43 doubled it after the user
+    // compared four intensities rendered on the real screens. The bound moved
+    // with the decision rather than being widened to accommodate it, and the
+    // render agrees: the library ground measured 227.2 → 221.0 across that
+    // change, a delta of 6.2 on top of the 6.5 already there.
     const ground = parseColour(resolveToken(light, '--color-bg'))
     const tone = parseColour(resolveToken(light, '--paper-tone'))
     const meanAlpha = (matrix[15] ?? 0) * 0.5
     const intensity = Number(light.get('--paper-intensity'))
     const delta = intensity * meanAlpha * (ground.r - (ground.r * tone.r) / 255)
-    expect(delta).toBeGreaterThan(5.5)
-    expect(delta).toBeLessThan(7.5)
+    expect(delta).toBeGreaterThan(12.0)
+    expect(delta).toBeLessThan(13.5)
   })
 })
 
@@ -1541,17 +1811,68 @@ describe('the z ladder is closed, and stated in both files (ui-spec §3)', () =>
     expect(z.texture).toBe(light.get('--z-texture'))
   })
 
-  it('leaves the texture at the top — nothing in base.css outranks it', () => {
+  it('leaves the texture at the top — nothing in base.css outranks it, but one', () => {
     // A rule that punched through the grain would be a rectangle of un-papered
     // screen, which is what a bare `z-index: 900` in a sheet with a closed
     // ladder eventually produces.
+    //
+    // **This check read bare integers only, and the sheet has none.** Every
+    // `z-index` in base.css is `var(--z-…)` or a `calc()` on one, so the scan
+    // matched zero declarations and `expect([]).toEqual([])` passed on an empty
+    // hand. E-43 then added the first rule in the sheet to sit *above*
+    // `--z-texture` — the hot marker's lift, 91 against a ceiling of 90 — and
+    // nothing said anything; the same value written as the literal `91` failed.
+    // See `zValue` for why that is the wrong shape for a gate.
+    //
+    // Widened, the exception is explicit rather than accidental, and stated as an
+    // exact list: an entry vanishing is as much a regression as one appearing,
+    // because the entry *is* the AA repair for `--on-hot` on the hot marker.
     const ceiling = Number(light.get('--z-texture'))
-    const offenders = allRules(BASE)
+    const EXPECTED_ABOVE_CEILING = [
+      // The one intended exception (E-43). `--on-hot` is pure black on
+      // `--color-hot` — the palette's ceiling at 4.9988 — and the wash takes it
+      // to 4.464, so the marker is lifted out of the wash instead of the retired
+      // brand red being moved. It punches through its **bar's** grain, not the
+      // global layer: the bar is a stacking context, so this rung is local to it
+      // and the reading stage is untouched. Held to exactly one step so it
+      // clears the grain and nothing else.
+      `${GRAIN_EXEMPT_SELECTOR}: ${String(ceiling + 1)}`,
+    ]
+
+    // At-rule containers are skipped: `allRules` hands back `@layer base` with
+    // the whole layer as its body, so counting its text too would report every
+    // declaration twice, once under a selector that is not a selector.
+    const declared = allRules(BASE)
+      .filter((r) => !r.selector.startsWith('@'))
       .flatMap((r) =>
-        [...r.body.matchAll(/z-index:\s*(\d+)\s*;/g)].map((m) => `${r.selector}: ${m[1] ?? ''}`),
+        [...r.body.matchAll(/z-index:\s*([^;]+);/g)].map((m) => ({
+          selector: r.selector,
+          raw: (m[1] ?? '').trim(),
+          value: zValue(m[1] ?? ''),
+        })),
       )
-      .filter((hit) => Number(hit.split(': ')[1]) > ceiling)
-    expect(offenders).toEqual([])
+
+    // The positive control the old regex did not have. A scan that finds nothing
+    // is not a sheet with a clean ladder, and the two are indistinguishable from
+    // the assertion alone.
+    expect(declared.length, 'the z-index scan found nothing to read').toBeGreaterThanOrEqual(8)
+    expect(
+      declared.some((d) => d.value === ceiling),
+      'no rule sits at --z-texture, so the ceiling is not being exercised',
+    ).toBe(true)
+
+    // A notation this file cannot read is itself an offender. Skipping it is how
+    // the bare-integer scan stayed green through a sheet it could not parse.
+    expect(
+      declared.filter((d) => d.value === null).map((d) => `${d.selector}: ${d.raw}`),
+      'unreadable z-index notation — teach zValue or use the ladder',
+    ).toEqual([])
+
+    const above = declared
+      .filter((d) => d.value !== null && d.value > ceiling)
+      .map((d) => `${d.selector}: ${String(d.value ?? 0)}`)
+      .sort()
+    expect(above).toEqual([...EXPECTED_ABOVE_CEILING].sort())
   })
 })
 
@@ -1692,8 +2013,11 @@ describe('the paper grain layer (base.css)', () => {
   })
 
   it('turns every layer off under prefers-contrast: more', () => {
-    // The grain costs up to 0.284 of ratio, and three pairs in this palette are
-    // re-derived in tokens.css because of it. Everything clears AA with the
+    // The grain costs up to **0.96** of ratio at the shipped intensity — the pair
+    // that falls furthest is light `--ink` on the surface, 10.283 → 9.321 — and
+    // **four** pairs in this palette are re-derived in tokens.css because of it
+    // (`REPAIRED` above), with a fifth exempted from the wash outright because it
+    // had no ink left to move. Everything clears AA with the
     // paper on, so this is a preference rather than a repair — but it has to
     // cover all four layers. Switching off the global one alone would leave the
     // viewer chrome as the only papered surface in the product, for the reader

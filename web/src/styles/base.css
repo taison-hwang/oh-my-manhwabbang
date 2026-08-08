@@ -411,15 +411,47 @@
     opacity: var(--paper-intensity);
   }
 
+  /* **The hot marker is the one surface the wash does not cross.**
+
+     `--on-hot` is pure black — the absolute ceiling of this palette, 4.9988
+     against the hot marker, with no darker ink left anywhere. At the shipped
+     `--paper-intensity` that pair washes to **4.464**, an AA fail on the one
+     element that carries it: the viewer's override chip, 11px uppercase inside
+     the top bar, whose `::after` grain covers its children.
+
+     There were two repairs. Raising the relative luminance of `--color-hot`
+     buys the margin back — measured, +2.0 % is enough for 4.533, and the "~4 %"
+     this repo quotes in a few places is a figure from the old intensity — and
+     that is a change to the retired brand red E-32 §1 pinned, i.e. a ruling of
+     its own and not a side effect of a texture. Or the marker stops taking the wash. E-43 takes the second, on the
+     precedent already in this file: the reading stage is exempt because *the
+     drawing is not paper to print on*, and a marker that is at the palette's
+     ceiling is not paper either. A decorative texture does not get to be the
+     thing that pushes a contrast floor over.
+
+     The mechanism is the bar's own stacking context: the grain is the bar's
+     `::after` at `--z-texture`, so a child painted one step above it is painted
+     after the grain. It costs the chip nothing else — no new colour, no new
+     token, and the exemption is visible to `tokens.test.ts`, which refuses to
+     treat this pair as unwashed unless this rule is here. */
+  [data-role='viewer-override-chip'] {
+    position: relative;
+    z-index: calc(var(--z-texture) + 1);
+  }
+
   /* The grain is not free of contrast, and the first version of this comment
-     said it was. It costs up to 0.284 of ratio on the pair that falls furthest —
-     but the pair that falls furthest is not the pair that matters. Three pairs
-     in this palette had less than 0.11 of margin over AA and the texture took
-     all three under it: `--on-hot` on the hot marker 4.55 → 4.34, light
-     `--ink-faint` on the ground 4.58 → 4.47, dark `--ink-meta` on the surface
-     4.61 → 4.45. They are re-derived against the *washed* ground in tokens.css
-     and the floor in tokens.test.ts now models the wash, so this rule is a
-     preference and not a repair.
+     said it was. At the shipped intensity it costs up to **0.96** of ratio on the
+     pair that falls furthest (light `--ink` on the surface, 10.28 → 9.32) — but
+     the pair that falls furthest is not the pair that matters. What matters is
+     the pairs with least room, and the texture has taken four of them under AA
+     across two rulings: at E-35 `--on-hot` on the hot marker, light
+     `--ink-faint` on the ground and dark `--ink-meta` on the surface; at E-43,
+     when the intensity doubled, dark `--ink-faint` and dark `--ink-th` on the
+     surface as well. All but one are re-derived against the *washed* ground in
+     tokens.css; the exception is the hot marker, which had no ink left to move
+     and is exempted from the wash instead — the rule immediately above.
+     The floor in tokens.test.ts models the wash, so this rule is a preference
+     and not a repair.
 
      Which is the point of it: everything above still clears AA with the paper
      on, and a reader who has asked the OS for more contrast has said they want

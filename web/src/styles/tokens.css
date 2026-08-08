@@ -371,17 +371,31 @@
 
      0.126 is the prototype's own amplitude, read off its fallback tile
      (`(Math.random()*0.5 + fiber*0.12) * 52` into alpha, i.e. 0…32/255).
-     Measured here: mean 16.05/255, max 29/255, which over the cream ground at
-     `--paper-intensity` moves the average pixel 6.2/255 darker — the −6~7 that
-     was measured on the prototype. */
+     Measured here: mean 16.05/255, max 29/255, which over the cream ground moves
+     the average pixel **12.7/255** darker at the shipped `--paper-intensity`.
+     That used to read 6.2 and cite the prototype for it — true while the
+     intensity was the prototype's 0.5, and doubled by E-43. The render agrees:
+     the library ground measured 227.2 → 221.0 across that change. */
   --paper-grain: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='200'%20height='200'%3E%3Cfilter%20id='grain'%20x='0'%20y='0'%20width='100%25'%20height='100%25'%20color-interpolation-filters='sRGB'%3E%3CfeTurbulence%20type='fractalNoise'%20baseFrequency='.9'%20numOctaves='3'%20seed='4'%20stitchTiles='stitch'/%3E%3CfeColorMatrix%20type='matrix'%20values='0%200%200%200%200%200%200%200%200%200%200%200%200%200%200%20.126%200%200%200%200'/%3E%3C/filter%3E%3Crect%20width='200'%20height='200'%20filter='url(%23grain)'/%3E%3C/svg%3E");
   /* The tone the grain washes in. The prototype's is #201E1D;
-     `--color-neutral-900` is #23211D, three units away on two channels — at half
-     intensity through a mask that peaks at 0.114 alpha that is 0.17/255 of
-     difference, so the ramp step *is* the prototype's colour and does not add a
-     literal to this file. */
+     `--color-neutral-900` is #23211D, three units away on two channels — through
+     a mask that peaks at 0.114 alpha that is 0.35/255 of difference at the
+     shipped intensity (0.17 at the 0.5 this was written under), so the ramp step
+     *is* the prototype's colour and does not add a literal to this file. */
   --paper-tone: var(--color-neutral-900);
-  --paper-intensity: 0.5;
+  /* **1, not the prototype's 0.5 (E-43).** The user was shown four intensities
+     rendered on the real screens and chose this one: at 0.5 the cream reads as
+     almost smooth and the grain is only findable up close; at 1 the individual
+     grains resolve and the ground drops a visible tone (measured on the render:
+     mean 227.2 → 221.0, spread 10 → 21 of 255). Two steps were left on the
+     table — 0.75, which is where the texture first becomes visible at all, and
+     an amplitude of .20, which the same render showed tipping from "paper" into
+     "blemish".
+     **What it cost is recorded rather than hidden:** three pairs went under AA
+     and were re-derived here (dark `--ink-faint`, dark `--ink-th`) or exempted
+     from the wash entirely (the hot marker — see `base.css`, and E-43 §2 for
+     why that exemption is the honest repair and moving the brand red is not). */
+  --paper-intensity: 1;
   /* An absolute, like the two viewer scrims above: the viewer ground is #263B38
      in **both** app themes (NFR-CMP-003), so its grain cannot flip with the
      app's. This is the one paper value that is a literal, because no ramp step
@@ -424,16 +438,29 @@
   --ink: var(--color-text); /* 9.31 on bg / 7.51 on surface */
   --ink-muted: rgb(234 227 212 / 0.78); /* 6.36 / 5.29 */
   --ink-dim: #B9C8C4; /* 6.87 / 5.54 */
-  --ink-faint: #A9BAB6; /* 5.88 / 4.75 — on dark the *surface* is the harder
-                           ground, and the shipped dark faint was 3.27 on it */
+  --ink-faint: #AFC0BC; /* 6.28 / 5.07 — on dark the *surface* is the harder
+                           ground, and the shipped dark faint was 3.27 on it.
+                           Lifted two steps at E-43: #A9BAB6 was 4.75 dry and,
+                           once `--paper-intensity` went to 1, **4.42 washed** on
+                           the surface — the texture turned a pass into a fail,
+                           which is the same failure E-35 §4 found and the same
+                           repair. Now 4.71 washed at mean grain, 4.43 at peak. */
   --ink-label: rgb(234 227 212 / 0.75); /* 6.01 / 5.03 */
   /* Was 0.7 — 4.61 on the surface dry and **4.45 washed**. On dark the surface
      is the harder ground (the note on --ink-faint above says why), and this is
      the token that sits on it most: `.card-meta` at 11px. 0.75 puts it level
      with --ink-label rather than one step under it, which is the price of
      clearing AA with the paper on: 4.85 washed, 4.71 at peak. */
-  --ink-meta: rgb(234 227 212 / 0.75); /* 5.76 / 5.03 */
-  --ink-th: rgb(234 227 212 / 0.72); /* 5.67 / 4.77 */
+  --ink-meta: rgb(234 227 212 / 0.75); /* 6.01 / 5.03 — 5.76 was a slip, since E-35 */
+  /* 0.75, not the 0.72 that shipped: at `--paper-intensity: 1` that alpha was
+     **4.45 washed** on the surface (E-43). The wash finds the 11px tokens first,
+     because they had the least room to begin with — the same thing that moved
+     `--ink-meta` at E-35, and 0.75 is where that one landed. **Level with it and
+     with `--ink-label`, not past them**: 0.76 also clears the floor but puts
+     table headers *above* labels in the dark theme while the light theme has
+     them below, and nothing wanted that. Alphas that mean the same thing in the
+     hierarchy stay equal. */
+  --ink-th: rgb(234 227 212 / 0.75); /* 6.01 / 5.03 — 4.68 washed, 4.39 peak */
   --rule: #3E5B57;
   --rule-strong: #4A6B66;
   --control-border: #5A7C77; /* the viewer's button/seg borders */

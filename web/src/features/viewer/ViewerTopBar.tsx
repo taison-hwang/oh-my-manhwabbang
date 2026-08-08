@@ -210,9 +210,11 @@ export function ViewerTopBar({
         {/* `--ink-faint`, not `--color-neutral-500`. The ramps are a
             theme-invariant absolute lightness scale (ui-spec §1.4), and this bar
             is `--color-bg` inside `data-theme="dark"`: neutral-500 is 4.34 there
-            and 4.19 once the bar carries the paper grain, on the volume's own
+            and 4.02 once the bar carries the paper grain, on the volume's own
             name at 12px. `--ink-faint` is the same lightness band as a semantic
-            token — 5.88 dry, 5.66 washed. */}
+            token — 6.28 dry, 5.76 washed. (Both washed figures moved at E-43,
+            which doubled `--paper-intensity`; the token itself was lifted two
+            steps in the same ruling.) */}
         <span className="truncate text-xs text-ink-faint">{bookName}</span>
       </div>
 
@@ -234,7 +236,12 @@ export function ViewerTopBar({
           `--color-hot` on the viewer's ground: **2.83:1**, at 11px uppercase.
           Worse than the 3.76 that E-32 §4 already rejected for this very chip,
           and the ruling's remedy there was "adjust the foreground", which is
-          what `--on-hot` is: **4.55** on the hot marker. Light ink cannot get
+          what `--on-hot` is: **4.9988** on the hot marker — the ceiling, since
+          E-35 moved it to pure black; this line said 4.55 for the shipped ink it
+          replaced. E-43 then lifted this chip out of the paper wash, because at
+          `--paper-intensity: 1` even the ceiling washes to 4.46 and there is no
+          darker ink to reach for (`base.css`, the note above `.dialog-backdrop`
+          in the texture block). Light ink cannot get
           there at all — even pure white is 4.20 on the hot marker, which is
           why the foreground is dark.
 
