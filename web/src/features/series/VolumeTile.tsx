@@ -197,9 +197,18 @@ export function VolumeTile({ book, number, onOpen }: VolumeTileProps) {
           visible already, so nothing below 768 depends on this reveal. */}
       {openable && (
         <div className="pointer-events-none absolute right-0 top-0 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100">
+          {/* No `bg-bg` (E-42). It was here because this control floats over
+              the cover art and `.btn-secondary` used to be a *transparent*
+              bordered pill — the page ground was the only thing making the
+              label readable over a thumbnail. The class is an opaque cream
+              fill now, so the override buys nothing and costs the ink: a
+              Tailwind `bg-*` lands after `@layer components` and replaces the
+              cream, leaving the class's `--on-control` on
+              `--color-bg`, which is **1.13:1** in the dark app theme. Deleting
+              it restores both the opacity and the pairing the class ships. */}
           <Button
             variant="secondary"
-            className="pointer-events-none bg-bg text-2xs group-focus-within:pointer-events-auto group-hover:pointer-events-auto [@media(hover:none)]:pointer-events-auto"
+            className="pointer-events-none text-2xs group-focus-within:pointer-events-auto group-hover:pointer-events-auto [@media(hover:none)]:pointer-events-auto"
             disabled={readToggle.pending}
             onClick={readToggle.toggle}
           >

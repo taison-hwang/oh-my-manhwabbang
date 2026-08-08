@@ -137,6 +137,20 @@ export default {
         'accent-fill': 'var(--accent-fill)',
         // The ink that sits on an accent fill. Constant, because the accent is.
         'on-accent': 'var(--on-accent)',
+
+        // Controls — absolute, like `on-accent` above and for the same reason
+        // (E-36 §4, E-42 §2). A control is a raised cream surface in all three
+        // scopes, app light / app dark / viewer, so neither its fill nor its ink
+        // has a dark counterpart in tokens.css. That is what makes these usable
+        // as *overrides* inside the dark viewer chrome, where the theme-flipping
+        // inks are unreadable on cream: `text-ink` is 1.10 there and
+        // `text-accent-text` is 1.65.
+        'control-fill': 'var(--control-fill)',
+        'control-fill-hover': 'var(--control-fill-hover)',
+        'control-well': 'var(--control-well)',
+        'on-control': 'var(--on-control)',
+        'on-control-accent': 'var(--on-control-accent)',
+        'on-control-dim': 'var(--on-control-dim)',
       },
 
       borderColor: { DEFAULT: 'var(--color-divider)' },
@@ -180,6 +194,13 @@ export default {
         lg: 'var(--shadow-lg)',
         // The pressed/recessed lobe of the dual-light set (E-32).
         inset: 'var(--shadow-inset)',
+        // A shadow follows the surface it falls on, not the theme (E-42 §3).
+        // The four above flip; these three do not, because the surfaces they
+        // fall on — cream control, accent fill — do not flip either. The full
+        // table is in tokens.css beside the tokens.
+        'control-inset': 'var(--shadow-control-inset)',
+        'control-raised': 'var(--shadow-control-raised)',
+        'accent-inset': 'var(--shadow-accent-inset)',
       },
 
       zIndex: {

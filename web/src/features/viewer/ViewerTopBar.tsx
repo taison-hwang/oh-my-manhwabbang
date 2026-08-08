@@ -105,12 +105,21 @@ const FIT_OPTIONS: readonly SegOption<FitMode>[] = [
 ]
 
 /**
- * ui-spec §6.6: viewer chrome borders are neutral-700, not the divider.
  * `flex-none whitespace-nowrap` keeps a group from being squeezed into two
  * lines by the wrapping bar — it moves to the next row whole or not at all.
+ * That is the whole of it now: **no colour**.
+ *
+ * ui-spec §6.6's "viewer chrome borders are neutral-700, not the divider" was
+ * true of a `.seg` that was a bordered box with a 1px rule between options.
+ * E-36 §5.3 / E-42 removed both — the track is a cream well (`--control-well`)
+ * with an inset shadow, and the `.seg-opt + .seg-opt` divider rule is deleted
+ * — so `border-neutral-700` and `[&_.seg-opt+.seg-opt]:border-l-neutral-700`
+ * were colouring borders that no longer exist. A `border-*` utility outlives
+ * its reason silently, because Tailwind's utilities land after
+ * `@layer components` and win: left in place they would have painted a stray
+ * dark hairline on the new cream control.
  */
-const SEG_CLASS =
-  'flex-none whitespace-nowrap border-neutral-700 [&_.seg-opt+.seg-opt]:border-l-neutral-700'
+const SEG_CLASS = 'flex-none whitespace-nowrap'
 
 export function ViewerTopBar({
   visible,
@@ -172,11 +181,9 @@ export function ViewerTopBar({
       )}
       style={{ transitionDuration: 'var(--chrome-fade)' }}
     >
-      <Button
-        variant="secondary"
-        className="gap-[7px] border-neutral-700 text-sm"
-        onClick={onBack}
-      >
+      {/* No `border-*` here (E-42): `.btn-secondary` is a raised cream pill,
+          and a border utility would be painted over it by a later layer. */}
+      <Button variant="secondary" className="gap-[7px] text-sm" onClick={onBack}>
         <ArrowLeft size={13} aria-hidden={true} />
         뒤로
       </Button>
@@ -188,7 +195,7 @@ export function ViewerTopBar({
       <Button
         variant="secondary"
         data-role="viewer-library"
-        className="gap-[7px] border-neutral-700 text-sm"
+        className="gap-[7px] text-sm"
         onClick={onLibrary}
       >
         <Library size={13} aria-hidden={true} />

@@ -13,7 +13,12 @@ listed below was driven directly through the prototype's own state controller an
 
 ---
 
-## 0. Five things an implementer must not get wrong
+## 0. Six things an implementer must not get wrong
+
+> **Item 6 is new (session 14, E-42 §8③).** The list was five for as long as this document has existed;
+> the sixth was added because the skin E-32/E-36 adopted speaks its boundaries, its focus marker *and* its
+> selected state in `box-shadow`, and there is one rendering mode where `box-shadow` does not exist. The
+> numbering of §0.1–§0.5 is unchanged, because other documents and source comments cite it.
 
 1. ~~**Zero corner radius. Everywhere.** `--radius-sm/md/lg` are all `0px` *on purpose*. The only two curved
    things in the entire product are the radio `.dot` and the viewer's loading spinner (both true circles).
@@ -36,21 +41,52 @@ listed below was driven directly through the prototype's own state controller an
    | What the box is | Shadow | Examples |
    |---|---|---|
    | **Flat on the ground** — type, rules, icons; anything that is neither a surface nor a control | *none* | headings, `.hr`, `.card-meta`, `.btn-ghost` |
-   | **A control the reader presses** — *a control is a raised surface, not an outlined box* | `--shadow-sm` | `.btn-primary`, `.btn-secondary`, `.tag-neutral`, `.tag-outline`, the checked `.seg-opt`, the active sidebar row, the slider thumb, `.elev-sm` |
-   | **A recessed surface** — something sits *inside* it: a well, a trough, a field you type into | `--shadow-inset` | `.input`, the `.seg` track (not its options), progress troughs, cover wells, skeletons |
+   | **A control the reader presses** — *a control is a raised surface, not an outlined box* | `--shadow-sm`, or `--shadow-control-raised` where it is lifted **out of a cream control** | `.btn-primary`, `.btn-secondary`, `.tag-neutral`, `.tag-outline`, the active sidebar row, the slider thumb, `.elev-sm`; the checked `.seg-opt` is the cream case |
+   | **A recessed surface** — something sits *inside* it: a well, a trough, a field you type into | `--shadow-control-inset` inside a cream control, `--shadow-accent-inset` inside the accent fill, `--shadow-inset` only where the ground under it flips | `.input`, the `.seg` track (not its options), `.btn-secondary:active`; `.btn-primary:active`; progress troughs, cover wells, skeletons |
    | **A card lifted off the page** | `--shadow-md` | `.card`, `.elev-md`; the sidebar takes `--shadow-sidebar`, the horizontal-only variant of the same lobe |
    | **A dialog over everything** | `--shadow-lg` | `.dialog`, the viewer's next-volume card, `.elev-lg` |
+
+   **Which of those tokens a box actually takes is decided by E-42 §3, and the rule is one sentence:**
+
+   > **A shadow does not follow the theme. It follows the surface it falls on.**
+
+   | Where the shadow falls | Token | Flips with the theme? |
+   |---|---|---|
+   | The page ground, or a page surface | `--shadow-sm` / `-md` / `-lg` / `--shadow-inset` | **yes** — light and dark twins, §1.1 / §1.4 |
+   | **Inside** a cream control | `--shadow-control-inset` | no — the **light** `--shadow-inset`, pinned |
+   | **On top of** a cream control | `--shadow-control-raised` | no — the **light** `--shadow-sm`, pinned |
+   | **Inside** an accent fill | `--shadow-accent-inset` | no — the **dark** `--shadow-inset`, pinned |
+
+   **Those three are absolutes: they have no `[data-theme='dark']` twin, and writing one is how the
+   absolute dies.** They exist because `.btn-secondary`, `.input` and `.seg` are a cream fill in *every*
+   scope — light app, dark app, viewer (E-42 §2) — so the surface under the shadow does not flip while a
+   theme-relative shadow would. The accent row is the mirror image: the accent is a deep teal in both
+   themes, so a recess cut into it is a dark-ground recess even when the app is light. §1.5 carries the
+   values, the measured ratios and what each wrong choice actually draws.
 
    The rule is written this way so it can be **checked**, in either direction:
 
    - **No control may be defined by a `1px solid` boundary alone.** A rule that gives something the reader
      clicks, types into, or reads as a chip a `border: 1px solid var(--control-border)` and nothing else
-     is wrong: on this skin the boundary *is* the shadow. (A border still appears where it is a *marker* —
-     the `--color-hot` inset ring, the focus outline — and on the `.radio .dot`.)
-   - **No box may carry `--shadow-sm` unless it can be pressed**, and none may carry `--shadow-inset`
+     is wrong: on this skin the boundary *is* the shadow. (A border still appears in three places: where it
+     is a *marker* — the `--color-hot` inset ring, the focus outline — on the `.radio .dot`, and inside
+     `@media (forced-colors: active)`, which is §0.6 and where the shadow does not exist at all.)
+   - **No box may carry `--shadow-sm` unless it can be pressed**, and none may carry an inset
      unless something is inside it. A raised badge that is not a control reads as a dead button.
-   - `--shadow-inset` must be **used**. It is defined in `tokens.css` in both themes; if a grep of the
-     stylesheet layer finds zero `var(--shadow-inset)`, the skin has not been applied.
+   - ~~`--shadow-inset` must be **used**. It is defined in `tokens.css` in both themes; if a grep of the
+     stylesheet layer finds zero `var(--shadow-inset)`, the skin has not been applied.~~
+
+     > **Superseded — E-42 §4 renamed the token this check was counting.** `var(--shadow-inset)` in
+     > `base.css` is **zero, and zero is the passing state.** Every recess in that sheet is cut into a
+     > cream control, so it takes `var(--shadow-control-inset)` instead — the light `--shadow-inset` pinned
+     > to a literal. `soft-ui.test.ts` (*"never uses the theme-relative `--shadow-inset` in the sheet"*)
+     > asserts the count is zero against an empty whitelist, so for four sessions the sentence above and
+     > the shipped check returned **opposite verdicts on the same grep**, and the sentence was the one an
+     > implementer reads first. **What replaces it, still greppable:** `.input` and `.seg` both declare
+     > `box-shadow: var(--shadow-control-inset)`; that token's value is byte-identical to the light
+     > `--shadow-inset` and contains no `var(`; and no `box-shadow` in `base.css` names `--shadow-inset`.
+     > `--shadow-inset` itself is still used — through the Tailwind `shadow-inset` utility, on cover wells,
+     > skeletons, progress troughs and the onboarding block, all of which sit on grounds that *do* flip.
 
    > **This replaces the sentence that used to stand here:** *"Only three things carry a shadow:
    > `.dialog`, the viewer's next-volume card, and the `.elev-*` utilities."* That sentence was true of the
@@ -61,19 +97,44 @@ listed below was driven directly through the prototype's own state controller an
    > Do not restore it and do not cite it. `web/src/components/ds/Card.tsx:6-8` quotes it verbatim as its
    > reason for refusing a shadow; that comment is a pre-E-32 justification and retires with the sentence.
    >
-   > **This item, and the eight contracts in §2.3 amended with it, describe the target — the shipped code
+   > ~~**This item, and the eight contracts in §2.3 amended with it, describe the target — the shipped code
    > has not caught up.** As of session 10 `--shadow-inset` is used **zero** times in
    > `web/src/styles/base.css`, and `.btn-secondary`, `.tag-outline` and `.seg` are still the bordered
    > Modernist forms. Ruling **E-36** (`docs/decisions.md`) records the gap, what "applied" means, and the
    > order the next session must work in. Until E-36 is executed, read §0.2 and §2.3 as the specification
-   > and the stylesheet as behind it — **not** the other way round.
+   > and the stylesheet as behind it — **not** the other way round.~~
+   >
+   > **Withdrawn — session 14 executed E-36 (ruling `E-42`), and the instruction is now inverted.**
+   > `base.css` has caught up and in four places **overshot** the prose above: `.seg` keeps its
+   > `overflow: hidden` against §2.3's ⟳ row (E-42 §8①), `.input` gained a load-bearing
+   > `color-scheme: light`, `.btn-primary` gained a lift and an accent-inset press, and the whole sheet
+   > gained a `@media (forced-colors: active)` block (§0.6). **Read `base.css` and `tokens.css` as the
+   > authority and this document as the thing that has to prove it still matches them.** Struck rather
+   > than deleted, because a specification that told an implementer to prefer its own stale prose over
+   > shipped code is *precisely* the disease E-36 §2 diagnosed — and this sentence, written by that same
+   > ruling, went on doing it for four sessions after the ruling landed.
 3. **Button labels are flush left, never centered** — including inside wide buttons (`.btn-block`
    sets `justify-content: flex-start`). Headings and body copy are flush left too. See the grid card hover
    overlay ([`library-grid-card-hover-1440.png`](./ui-shots/library-grid-card-hover-1440.png)): both stacked
    buttons start their text at the left padding edge.
 4. **The viewer is a dark ground built from the same tokens, not a second palette.** Viewer background is
-   literally `var(--color-text)` (#201e1d) and its foreground is `var(--color-bg)` (#f3f2f2). §1.4 turns this
-   into a proper theme. The viewer is dark **regardless of the app theme** (NFR-CMP-003).
+   literally `var(--color-text)` (~~#201e1d~~ **`#263B38`**) and its foreground is `var(--color-bg)`
+   (~~#f3f2f2~~ **`#EAE3D4`**). §1.4 turns this into a proper theme. The viewer is dark **regardless of the
+   app theme** (NFR-CMP-003).
+
+   > **Superseded — E-32 replaced both literals; the mechanism is untouched.** The swap
+   > (`--color-text` ⇄ `--color-bg`) is still exactly how `[data-theme='dark']` is built in `tokens.css`
+   > (`:416` *"was --color-text"*, `:419` *"was --color-bg"*) — only the two colours changed, from the
+   > Modernist near-black/near-white to the teal/cream pair. The struck values stood here for **five
+   > sessions** after E-32, and E-36 §2's own audit is what found them; §1's new preamble then cited
+   > `#f3f2f2` as the canonical example of a stale value outliving its ruling while leaving the identical
+   > literal alive twenty lines above it. That is the third time this list needed a correction E-32 should
+   > have carried (§0.1, §0.2, §0.4).
+   >
+   > **What does *not* re-scope with the ground is the control language** — `.btn-secondary`, `.input` and
+   > `.seg` are the same cream in the light app, the dark app and the viewer, because their fill is an
+   > absolute (E-42 §2, §1.5). "The viewer is not a second palette" survives that ruling intact: an
+   > absolute is not a second palette, it is a token that declines to flip.
 5. **The prototype is desktop-only — the responsive layer does not exist yet and must be built.**
    Below ~1024px the fixed 240px sidebar and the 7-column list grid overflow and clip
    ([`library-list-768.png`](./ui-shots/library-list-768.png),
@@ -81,327 +142,489 @@ listed below was driven directly through the prototype's own state controller an
    [`viewer-overlay-400-broken.png`](./ui-shots/viewer-overlay-400-broken.png)).
    §7 specifies the responsive behaviour that must be added. Do not copy the prototype's fixed widths down
    the breakpoints.
+6. **A skin that speaks in `box-shadow` says nothing in forced colours — restore it with `outline` and
+   system keywords.** This is the mode Windows High Contrast puts the page in, and in it the browser
+   computes **`box-shadow` to `none`**. Item 2 moved every control boundary onto `box-shadow`; E-36 §3 then
+   moved `.input`'s focus marker off the base layer's `outline` onto `box-shadow` as well; E-42 §1 made
+   *selected* a `box-shadow` inset ring on `.radio .dot` and `.seg-opt`. All three vanish together. A
+   review measured it with Playwright `forcedColors: 'active'` (E-42 §8③): controls had no edge, a focused
+   field had **no indicator at all**, and a checked segment rendered **byte-identical** to an unchecked one
+   — so nothing on the screen said which display mode the viewer was in. The repo had never mentioned the
+   mode: a `forced-colors` grep across it returned **zero** hits until that block.
+
+   The fix is the last block of `base.css`, and it is the shape any future control rule must copy —
+   `border` and `outline` survive forced colours, and the system keywords are what the user's own palette
+   is guaranteed to honour:
+
+   ```css
+   @media (forced-colors: active) {
+     .btn-primary, .btn-secondary, .input, .seg, .tag-neutral, .tag-outline, .card {
+       border: 1px solid ButtonBorder;
+     }
+     .input:focus-visible          { outline: 2px solid Highlight; outline-offset: 0; }
+     .seg-opt[data-checked='true'],
+     [aria-pressed='true']         { outline: 2px solid Highlight; outline-offset: -2px; }
+   }
+   ```
+
+   **This is not the bordered box coming back**, and item 2's first check is written to know the
+   difference: a `1px solid` on a control is a defect *outside* this at-rule and the required declaration
+   *inside* it. `soft-ui.test.ts` enforces exactly that — its border whitelist keys every entry with its
+   enclosing `@media` prelude, so moving one of these declarations out of the block changes the key and
+   fails, and it asserts the fallback's *presence* separately so it cannot be deleted quietly. Three
+   consequences to carry:
+
+   - **A normal render is unaffected.** The whole block is inert unless the mode is on, so it can never be
+     "verified" by looking at the app.
+   - **Whatever a new rule says with a shadow, it must also say here.** Boundary, focus *and* state — the
+     selected marker is the one that got missed the first time, because it does not look like a boundary.
+   - **`[aria-pressed='true']` is in the selector on purpose:** the viewer's chrome toggles say "on" the
+     same way a checked segment does, and they are not `.seg-opt`.
 
 ---
 
 ## 1. Design tokens
 
-> **⚠ SUPERSEDED — every value in §1 is pre-E-32 and none of it has been re-derived here.**
-> Ruling **E-32** (2026-08-04) replaced the whole visual system: the ground/surface/ink became
-> `#EAE3D4` / `#F3EEE3` / `#263B38`, the accent became `#17595B`, D-40's `--radius-*: 0px` was retired
-> for a 3/4/6/7/999 scale, and the shadows became dual-light. `--shadow-inset`, `--color-hot` and
-> `--shadow-sidebar` **do not appear in the tables below at all** — they were added after this section
-> was last touched. Session 10 corrected §0.1, §0.2 and §2.3 but **not** §1; closing this is step 1 of
-> open item `y` (HANDOFF §5.7, ruling **E-36**).
+> **This section is hand-kept, not generated.** The authority for every value below is
+> **`web/src/styles/tokens.css`**, and `web/src/styles/tokens.test.ts` is what holds that file to it. §1 is
+> that file rendered for a human — which roles exist, what each one is worth, why it is worth that.
+> **If a number here and a number there disagree, `tokens.css` wins — and the disagreement is itself a
+> defect.** Fix §1; never ship the number you read here over the one the file declares.
 >
-> **Until then, `web/src/styles/tokens.css` is the source of truth for every token value, and
-> `web/src/styles/tokens.test.ts` is what enforces it.** This section is kept for its *structure* —
-> which roles exist, how the dark theme is derived, how Tailwind reaches them — not for its numbers.
-> Reading a colour out of the tables below and putting it in the product would violate E-32.
+> **Why that warning is not boilerplate.** §1 stood pre-E-32 from session 9 to session 13: it printed
+> `#f3f2f2`, `#ec3013` and `--radius-*: 0px` for five sessions after **E-32** (2026-08-04) replaced all
+> three, and
+> `--shadow-inset`, `--color-hot` and `--shadow-sidebar` were not in it at all. This has already cost the
+> product once. **E-36 §2**: an implementer read the equally stale §0.2 and §2.3, built the contracts they
+> stated, and broke E-32 without knowing it — ~30 component rules of the soft-UI skin went unapplied, under
+> five green gates, because a retired contract outlived the ruling that retired it. That is how defects
+> live here (`docs/HANDOFF.md` §6.5). §1 was rewritten from `tokens.css` in session 14, together with
+> ruling **E-42**. Re-reading it against the file before you build from it *is* the job.
 
+### 1.1 Complete token table — light ground, transcribed from `tokens.css`
 
-### 1.1 Complete token table (light ground — verbatim from `styles.css`)
+The `:root, [data-theme='light']` block declares **112** custom properties, and all 112 are below, in the
+file's own order. Contrast figures are the ones computed in that file's comments and re-derived in
+`tokens.test.ts`; where two are given they read **`on --color-bg` / `on --color-surface`**. *Washed* means
+measured through the paper grain, which is the floor that counts (E-35 §4) — a token derived on a dry
+ground can pass and then fail on the ground the reader actually sees.
 
-#### Roles
+#### Roles (7)
 
 | Token | Value | Role |
 |---|---|---|
-| `--color-bg` | `#f3f2f2` | Page ground |
-| `--color-surface` | `#eae9e9` | Cards, inputs, sidebar, dialogs |
-| `--color-text` | `#201e1d` | Ink. **Also the viewer ground.** |
-| `--color-accent` | `#ec3013` | The single accent (red) |
-| `--color-accent-2` | `#e15b47` | Machine-derived stand-in. **Mono scheme — treat as one role with accent.** |
-| `--color-divider` | `color-mix(in srgb, #201e1d 40%, transparent)` → `rgb(32 30 29 / 0.4)` | All rules and control borders |
+| `--color-bg` | `#EAE3D4` | Page ground — warm cream |
+| `--color-surface` | `#F3EEE3` | Cards, inputs, sidebar, dialogs |
+| `--color-text` | `#263B38` | Ink. **Also the viewer ground, in both app themes** (§0.4, §1.4) |
+| `--color-accent` | `#17595B` | The single accent — deep teal |
+| `--color-accent-2` | `var(--color-accent)` | E-32 §1 collapsed the secondary accent into the accent. The token survives only because `.tag-accent-2` and the Tailwind map still name it |
+| `--color-divider` | `#DDD3C0` | The 1px hairline. 1.16:1 on the ground — enough for a rule, **not** enough for a control boundary (see `--control-border`) |
+| `--color-hot` | `#EC3013` | The retired brand red. **Theme-invariant, and a marker only:** "current / selected / focused" and nothing else (E-32 §1). The moment it is used as an accent again, that ruling is undone. E-42 §1 adds one site — the checked `.radio .dot`'s inset ring — in the same grammar as `.seg-opt` |
 
-#### Neutral ramp
+#### Semantic ink and structure — these flip with the theme (34)
 
-| Token | Value | | Token | Value |
-|---|---|---|---|---|
-| `--color-neutral-100` | `#f8f4f4` | | `--color-neutral-600` | `#7d7979` |
-| `--color-neutral-200` | `#eae7e7` | | `--color-neutral-700` | `#605d5d` |
-| `--color-neutral-300` | `#d7d3d3` | | `--color-neutral-800` | `#444141` |
-| `--color-neutral-400` | `#bab6b6` | | `--color-neutral-900` | `#2d2b2b` |
-| `--color-neutral-500` | `#9b9797` | | | |
+| Token | Light value | Contrast | Why this value |
+|---|---|---|---|
+| `--ink` | `var(--color-text)` | 9.31 / 10.28 | |
+| `--ink-muted` | `rgb(38 59 56 / 0.8)` | 5.47 / 5.84 | |
+| `--ink-dim` | `#5F5849` (neutral-700) | 5.52 / 6.09 | The prototype's neutral-600 is **3.31** on this ground — an AA fail at the 10–12px this token is used at (E-32 §4) |
+| `--ink-faint` | `#68604F` | 4.87 / 5.23 | neutral-600 lifted toward 700 until it clears AA on the *bg*, the harder of the two grounds (neutral-500 is 2.37 on surface). Lifted a **second** time for the grain: `#6C6453` was 4.58 dry and **4.47 washed** — the texture turned a pass into a fail. Now 4.74 washed, 4.63 at the mask's peak |
+| `--ink-label` | `rgb(38 59 56 / 0.78)` | 5.18 / 5.52 | `.field > label` |
+| `--ink-meta` | `rgb(38 59 56 / 0.75)` | 4.79 / 5.07 | `.card-meta`, 11px |
+| `--ink-th` | `rgb(38 59 56 / 0.76)` | 4.92 / 5.22 | `.table th`, 11px |
+| `--rule` | `var(--color-divider)` | — | 1px hairlines |
+| `--rule-strong` | `#CFC5B0` (neutral-400) | — | The 2px structural rules (§0.2) |
+| `--control-border` | `#A79B84` (neutral-500) | 2.14 / 2.37 | The soft divider is 1.16 on the ground; a control boundary drawn in it is not a boundary |
+| `--control-border-hover` | `#857A66` (neutral-600) | 3.31 / 3.65 | |
+| `--fill-subtle` | `#EFE9DC` (neutral-200) | — | |
+| `--fill-track` | `#E2DACA` (neutral-300) | — | Progress troughs |
+| `--fill-track-2` | `#CFC5B0` (neutral-400) | — | Troughs sitting over imagery |
+| `--hover-tint` | `rgb(38 59 56 / 0.07)` | — | Secondary button / palette item hover |
+| `--press-tint` | `rgb(38 59 56 / 0.14)` | — | |
+| `--row-hover` | `rgb(38 59 56 / 0.05)` | — | List / volume rows |
+| `--row-hover-table` | `rgb(38 59 56 / 0.04)` | — | Table rows |
+| `--nav-hover` | `rgb(38 59 56 / 0.06)` | — | Sidebar items |
+| `--nav-active` | `rgb(23 89 91 / 0.1)` | — | Selected nav / palette row fill |
+| `--scrim-cover` | `rgb(38 59 56 / 0.72)` | — | Grid-card hover scrim |
+| `--scrim-modal` | `rgb(38 59 56 / 0.5)` | — | Dialog backdrop |
+| `--scrim-cover-base` | `rgb(38 59 56 / 0.92)` | — | The three stops of `.cover-scrim`'s hover gradient, bottom to top. **A gradient is not a colour:** approximating it out of the two scrims plus `--hover-tint` gave .72 / .50 / .07 against the prototype's .92 / .55 / .15 — the top of the card carried half the wash it should and the bottom two thirds of it. Three tokens is what makes it exact |
+| `--scrim-cover-mid` | `rgb(38 59 56 / 0.55)` | — | ″ |
+| `--scrim-cover-top` | `rgb(38 59 56 / 0.15)` | — | ″ |
+| `--accent-hover` | `#135052` (accent-600) | — | One step past base on a light ground |
+| `--accent-press` | `#114547` (accent-700) | — | |
+| `--accent-text` | `#114547` (accent-700) | 8.36 | The accent at paragraph size (§2.5) |
+| `--accent-fill` | `var(--color-accent)` | 5.78 on `--fill-track` | The accent as a *fill* that must read against the ground (floor is 3). On dark it moves up the ramp — §1.4 |
+| `--scrollbar-thumb` | `#A79B84` (neutral-500) | — | The prototype's neutral-400 is 1.34 on the ground, and the thumb is 4px wide once the 3px transparent border is cut |
+| `--scrollbar-thumb-hover` | `#857A66` (neutral-600) | — | |
+| `--ghost-hover` | `rgb(23 89 91 / 0.1)` | — | `.btn-ghost` |
+| `--ghost-press` | `rgb(23 89 91 / 0.18)` | — | |
+| `--selection-bg` | `rgb(23 89 91 / 0.22)` | ink 6.68 on it | `::selection` |
 
-#### Accent ramp
+#### Ramps — constant across themes (27)
 
-| Token | Value | | Token | Value |
-|---|---|---|---|---|
-| `--color-accent-100` | `#fff2ef` | | `--color-accent-600` | `#dd2b0f` |
-| `--color-accent-200` | `#ffe0d9` | | `--color-accent-700` | `#ae1800` |
-| `--color-accent-300` | `#ffc4b8` | | `--color-accent-800` | `#7c1405` |
-| `--color-accent-400` | `#ff9783` | | `--color-accent-900` | `#4d170e` |
-| `--color-accent-500` | `#ff563c` | | | |
+| Token | Value | Token | Value |
+|---|---|---|---|
+| `--color-neutral-100` | `#F7F3EA` | `--color-accent-100` | `#E4EEEC` |
+| `--color-neutral-200` | `#EFE9DC` | `--color-accent-200` | `#C7DCDA` |
+| `--color-neutral-300` | `#E2DACA` | `--color-accent-300` | `#9BC3C1` |
+| `--color-neutral-400` | `#CFC5B0` | `--color-accent-400` | `#5E9B9B` |
+| `--color-neutral-500` | `#A79B84` | `--color-accent-500` | `#17595B` |
+| `--color-neutral-600` | `#857A66` | `--color-accent-600` | `#135052` |
+| `--color-neutral-700` | `#5F5849` | `--color-accent-700` | `#114547` |
+| `--color-neutral-800` | `#3B3730` | `--color-accent-800` | `#0D3436` |
+| `--color-neutral-900` | `#23211D` | `--color-accent-900` | `#082325` |
 
-#### Accent-2 ramp (mono stand-in — kept only so both sets resolve)
+Nine more make the accent-2 ramp, each an alias of the accent step of the same number:
+`--color-accent-2-100` `--color-accent-2-200` `--color-accent-2-300` `--color-accent-2-400`
+`--color-accent-2-500` `--color-accent-2-600` `--color-accent-2-700` `--color-accent-2-800`
+`--color-accent-2-900`. E-32 §1 collapsed the second accent; `tokens.test.ts` asserts the two ramps
+resolve step for step, so a drift there is a failing test rather than a design decision.
 
-| Token | Value | | Token | Value |
-|---|---|---|---|---|
-| `--color-accent-2-100` | `#fff2ef` | | `--color-accent-2-600` | `#c94b39` |
-| `--color-accent-2-200` | `#ffe0da` | | `--color-accent-2-700` | `#9e3526` |
-| `--color-accent-2-300` | `#ffc4b9` | | `--color-accent-2-800` | `#71261b` |
-| `--color-accent-2-400` | `#ff9784` | | `--color-accent-2-900` | `#471d16` |
-| `--color-accent-2-500` | `#ef6853` | | | |
+**The ramps are an absolute lightness scale and do not move when the theme does.** That is the whole reason
+the semantic layer above exists: the prototype has no such layer and inlines ramp steps, and an inlined
+step draws the *same* colour inside a dark scope, where the contrast then collapses (E-32 §3). Never paint
+`bg-neutral-200` for "a subtle fill" — paint `bg-fill-subtle`. §1.4 has the mapping.
 
-#### Type, space, radius, elevation
+#### Absolutes — not theme-relative (13)
+
+The viewer ground is `#263B38` in **both** app themes, so what is painted on top of it cannot flip; the
+same goes for any foreground whose surface does not flip.
+
+| Token | Value | Why it is an absolute |
+|---|---|---|
+| `--scrim-volume-end` | `rgb(38 59 56 / 0.92)` | Painted on the viewer ground |
+| `--scrim-broken` | `rgb(8 35 37 / 0.82)` | accent-900 @ 82%, on the viewer ground |
+| `--on-accent` | `#F6F2E9` | The ink on an accent fill — 7.18 on the accent, 8.18 on accent-600. Constant because the accent is |
+| `--on-hot` | `#000000` | The ink on the hot marker — 4.9988 dry, **4.73 washed**, and it has to be *pure* black. Light ink cannot get there at all (`#F6F2E9` is 3.76, pure white 4.20); dark ink can, barely. The shipped `#1B0B07` was 4.55 dry and **4.33 washed** — a fail the contrast tests could not see because they did not model the texture. At the mask's *peak* alpha this is 4.46–4.51 depending on how "peak" is defined; `tokens.test.ts` reports that number, does not gate on it, and says why. The next 0.04 of margin would have to come from **`--color-hot`**, and changing the red E-32 §1 pinned is a ruling, not a side effect |
+| `--control-fill` `--control-fill-hover` `--control-well` `--on-control` `--on-control-accent` `--on-control-dim` | `#F3EEE3` `#F8F4EC` `#EFE9DC` `#0D3436` `#17595B` `#5F5849` | **E-42.** The cream control surface and the three inks that sit on it — the same cream in the light app, the dark app and the viewer. Values, ratios and the rule that governs them: **§1.5** |
+| `--shadow-control-inset` `--shadow-control-raised` `--shadow-accent-inset` | the light inset, the light `sm`, the **dark** inset — each pinned | **E-42.** A shadow follows the surface it falls on, not the theme — **§1.5** |
+
+#### Type (3)
 
 | Token | Value |
 |---|---|
-| `--font-heading` | `"Archivo", system-ui, sans-serif` |
+| `--font-heading` | `'Archivo', 'Pretendard Variable', Pretendard, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', system-ui, sans-serif` |
 | `--font-heading-weight` | `800` |
-| `--font-body` | `"Archivo", system-ui, sans-serif` |
-| `--space-1` … `--space-8` | `4px · 8px · 12px · 16px · 24px · 32px` (keys 1,2,3,4,6,8 — **no 5 or 7**) |
-| `--radius-sm` / `-md` / `-lg` | `0px` / `0px` / `0px` |
-| `--shadow-sm` | `0 1px 2px color-mix(in srgb, #2d2b2b 14%, transparent)` |
-| `--shadow-md` | `0 3px 10px color-mix(in srgb, #2d2b2b 16%, transparent)` |
-| `--shadow-lg` | `0 12px 32px color-mix(in srgb, #2d2b2b 22%, transparent)` |
+| `--font-body` | `var(--font-heading)` |
 
-#### Base type scale (from the component layer)
+Archivo is vendored latin-only (C-14, decisions E-7) and has **no Hangul coverage**, so the Korean fallback
+stack is explicit and ordered rather than left to `system-ui` (§2.1).
+
+#### Space and radius (11)
+
+| Token | Value | |
+|---|---|---|
+| `--space-1` `--space-2` `--space-3` `--space-4` `--space-6` `--space-8` | `4px · 8px · 12px · 16px · 24px · 32px` | Keys **1, 2, 3, 4, 6, 8** — the DS has no 5 or 7 |
+| `--radius-sm` `--radius-md` `--radius-lg` `--radius-pill` `--radius-full` | `3px` / `4px` / `6px` / `7px` / `999px` | E-32 §2 retired D-40's `0px`. **The ban did not go away with the zero:** the hygiene whitelist is now *bound to these five values* plus `50%` / `9999px`, so an arbitrary px radius is still a build failure (`web/src/lib/hygiene.test.ts`). A new radius is a new token here, not a number at a call site |
+
+#### Elevation — dual light on a warm ground (5)
+
+Down-right lobe = ochre shadow; up-left lobe = cream highlight. **The highlight is what makes the skin read
+as soft, and it is also what makes this set unusable on a dark ground**, where `rgb(255 253 246 / .9)`
+becomes a white outline. §1.4 re-derives all five; §1.5 pins two of them for surfaces that never flip.
+Which box gets which shadow is §0.2 — the five-question table.
+
+| Token | Value |
+|---|---|
+| `--shadow-sm` | `3px 3px 8px rgb(150 128 96 / 0.22), -3px -3px 8px rgb(255 253 246 / 0.9)` |
+| `--shadow-md` | `6px 6px 16px rgb(150 128 96 / 0.26), -5px -5px 14px rgb(255 253 246 / 0.92)` |
+| `--shadow-lg` | `12px 14px 34px rgb(150 128 96 / 0.3), -8px -8px 22px rgb(255 253 246 / 0.9)` |
+| `--shadow-inset` | `inset 3px 3px 7px rgb(150 128 96 / 0.28), inset -3px -3px 7px rgb(255 253 246 / 0.85)` |
+| `--shadow-sidebar` | `4px 0 18px rgb(150 128 96 / 0.16)` — the sidebar's right edge, and the one elevation off the sm/md/lg scale: **horizontal only.** `--shadow-md` stood in for it, but a 6px *downward* offset on a full-height panel puts a shadow under its top edge, where nothing casts one, at an alpha meant for a card that floats rather than an edge that abuts |
+
+#### Paper grain (4)
+
+| Token | Value | |
+|---|---|---|
+| `--paper-grain` | `url("data:image/svg+xml,…")` | A 200px `feTurbulence` tile — `fractalNoise`, `baseFrequency .9`, `numOctaves 3`, **`seed 4`**, `stitchTiles stitch`. Re-derived rather than ported (E-35): the prototype loads `@paper-design/shaders` from esm.sh at runtime, which NFR-OPS-001 forbids outright; its canvas fallback costs 21.7 ms of synchronous main thread and lands as a ~198 KB inline `style`; and it ignores its own `seed` in favour of `Math.random()`, so a plain reload changes 89.1 % of the pixels — which would make `docs/ui-shots/` useless as a review reference. The filter writes **alpha and nothing else**: the colour matrix zeroes RGB and scales the noise into alpha, so the image is a *mask* and the tone stays a token instead of being buried in the data URI. Amplitude 0.126 is the prototype's own, read off its fallback tile; measured here mean 16.05/255, max 29/255 |
+| `--paper-tone` | `var(--color-neutral-900)` | The tone the grain washes in. The prototype's `#201E1D` is three units from `#23211D` on two channels — 0.17/255 through this mask — so the ramp step *is* the prototype's colour and adds no literal to the file |
+| `--paper-intensity` | `0.5` | Moves the average pixel 6.2/255 darker over the cream — the −6~7 measured on the prototype |
+| `--paper-tone-viewer` | `#0D0C0C` | An absolute, for the same reason the viewer scrims are: the viewer ground does not flip. The one paper value that is a literal, because no ramp step is near it — `--color-accent-900` is as dark as the palette goes and its relative luminance is still 3.7× this. The reading screen's grain is soot, not more of the ground's own green |
+
+#### z-index ladder (5) — §3 owns the ladder
+
+| Token | Value | |
+|---|---|---|
+| `--z-content` | `0` | |
+| `--z-sticky` | `2` | |
+| `--z-viewer` | `60` | |
+| `--z-overlay` | `80` | |
+| `--z-texture` | `90` | One step above the overlay and deliberately the top of the ladder: the grain is a property of the screen, so a dialog is printed on it too. The prototype's bare `z-index: 900` is the same intent with the ladder abandoned. Mirrored in `tailwind.config.ts`, and `tokens.test.ts` checks that both files state it |
+
+#### Misc (3)
+
+| Token | Value | |
+|---|---|---|
+| `--disabled-opacity` | `0.45` | Plus `cursor: not-allowed` (§2.2) |
+| `--chrome-fade` | `0.18s` | Viewer chrome show/hide |
+| `--hover-fade` | `0.12s` | |
+
+#### Not part of the 112 — the responsive knobs
+
+`--grid-min`, `--grid-gap`, `--sidebar-w`, `--drawer-w` and `--touch-min` also live in `tokens.css`, but in
+their own ascending `:root` + `@media` blocks at the foot of the file. They are specified in **§7** (D-42),
+not here, and the reason they are one ascending block rather than breakpoint variants sprinkled across the
+grid class is stated there.
+
+#### Element type scale (`base.css`, not tokens)
 
 | Element | Size | Notes |
 |---|---|---|
-| `body` | 15px / 1.55 / 400 | The prototype's app shell overrides to **14px** |
-| `h1` | 42px | Archivo 800, lh 1.12, ls −0.015em |
-| `h2` | 32px | " |
-| `h3` | 25px | " |
-| `h4` | 20px | " |
-| `h5` | 16px | " |
-| `h6` | 13px | " **+ `letter-spacing: .08em; text-transform: uppercase`** — this is the section-label style used all over the app |
-| `figcaption` / `.text-muted` | 11px / — | `color-mix(in srgb, var(--color-text) 55%, transparent)` |
+| `body` | 14px / 1.45 / 400 | 14px, not the DS's 15px: density beats comfort here (design.md #4) |
+| `h1` … `h5` | 42 / 32 / 25 / 20 / 16px | Archivo 800, `line-height: 1.12`, `letter-spacing: -0.015em` |
+| `h6` | 16px, `-0.01em`, mixed case | **E-32 restyled the section label and kept the tag.** It used to be 13px uppercase +0.08em. The prototype reaches the new look by swapping every `<h6>`/`<h4>` for a styled `<div>`, which E-32 §4 refuses: that deletes the document outline, kills screen-reader heading navigation, and breaks `e2e/06-settings.spec.ts`'s `getByRole('heading')`. The *style* moves; the *tag* stays |
+| `.card-meta` / muted copy | 11px | `--ink-meta` |
 
-#### Derived tint values used repeatedly by the prototype (resolve these once as semantic tokens)
+### 1.2 The shape of `tokens.css` — structure here, values in the file
 
-| Purpose | Expression | Resolved |
-|---|---|---|
-| Divider / control border | `text @ 40%` | `rgb(32 30 29 / .40)` |
-| Muted body text | `text @ 55%` | `rgb(32 30 29 / .55)` |
-| Field label | `text @ 70%` | `rgb(32 30 29 / .70)` |
-| Row hover (table) | `text @ 4%` | `rgb(32 30 29 / .04)` |
-| Row hover (list/volume) | `text @ 5%` | `rgb(32 30 29 / .05)` |
-| Sidebar item hover | `text @ 6%` | `rgb(32 30 29 / .06)` |
-| Secondary btn hover / palette item hover | `text @ 7%` | `rgb(32 30 29 / .07)` |
-| Secondary btn pressed | `text @ 14%` | `rgb(32 30 29 / .14)` |
-| Grid-card hover scrim | `text @ 72%` | `rgb(32 30 29 / .72)` |
-| Viewer volume-end scrim | `text @ 92%` | `rgb(32 30 29 / .92)` |
-| Selected nav / palette row fill | `accent @ 8%` | `rgb(236 48 19 / .08)` |
-| Ghost btn hover / pressed | `accent @ 10%` / `@ 18%` | — |
-| Dialog backdrop | `neutral-900 @ 50%` | `rgb(45 43 43 / .50)` |
-| Broken-volume scrim | `accent-900 @ 82%` | `rgb(77 23 14 / .82)` |
-| `::selection` | `accent @ 30%` | — |
-| Disabled control | `opacity: .45` | — |
+**This section explains the file's structure. It does not restate its contents.** A second copy of the CSS
+is a second thing to keep current, and the copy is what goes stale — which is the failure this whole
+section is a correction for. Read the values from `web/src/styles/tokens.css`; §1.1 tabulates the light
+block and §1.4 the dark one. (`tokens.test.ts` cites "§1.2" for the light block and "§1.4" for the dark.)
 
-### 1.2 Theme file (`src/styles/tokens.css`)
-
-Ship the tokens as CSS custom properties in one global file. **Do not hardcode any hex in a component.**
+The file is imported once from `main.tsx`, **before Tailwind's layers**, and it holds every colour literal
+in the product — `hygiene.test.ts` fails the build on a hex anywhere else in the style layer.
 
 ```css
-/* src/styles/tokens.css — imported once from main.tsx, before Tailwind's layers */
-
+/* web/src/styles/tokens.css */
 :root,
-:root[data-theme="light"] {
-  color-scheme: light;
+[data-theme='light'] { color-scheme: light; /* 112 tokens */ }
 
-  /* roles */
-  --color-bg: #f3f2f2;
-  --color-surface: #eae9e9;
-  --color-text: #201e1d;
-  --color-accent: #ec3013;
-  --color-accent-2: #e15b47;
-  --color-divider: rgb(32 30 29 / 0.40);
-
-  /* semantic, theme-flipping (see §1.4) */
-  --ink:            var(--color-text);
-  --ink-muted:      rgb(32 30 29 / 0.55);
-  --ink-dim:        #7d7979;   /* neutral-600 */
-  --ink-faint:      #9b9797;   /* neutral-500 */
-  --rule:           var(--color-divider);      /* 1px hairlines  */
-  --rule-strong:    var(--color-divider);      /* 2px section rules */
-  --control-border: var(--color-divider);
-  --fill-subtle:    #eae7e7;   /* neutral-200 */
-  --fill-track:     #d7d3d3;   /* neutral-300 — progress-bar troughs */
-  --fill-track-2:   #bab6b6;   /* neutral-400 — troughs on top of imagery */
-  --hover-tint:     rgb(32 30 29 / 0.07);
-  --press-tint:     rgb(32 30 29 / 0.14);
-  --row-hover:      rgb(32 30 29 / 0.05);
-  --nav-active:     rgb(236 48 19 / 0.08);
-  --scrim-cover:    rgb(32 30 29 / 0.72);
-  --scrim-modal:    rgb(45 43 43 / 0.50);
-  --accent-hover:   #dd2b0f;   /* accent-600 — one step past base on a LIGHT ground */
-  --accent-press:   #ae1800;   /* accent-700 */
-  --accent-text:    #ae1800;   /* accent-700 — accent at paragraph size (see §2.5) */
-
-  /* ramps — constant across themes */
-  --color-neutral-100:#f8f4f4; --color-neutral-200:#eae7e7; --color-neutral-300:#d7d3d3;
-  --color-neutral-400:#bab6b6; --color-neutral-500:#9b9797; --color-neutral-600:#7d7979;
-  --color-neutral-700:#605d5d; --color-neutral-800:#444141; --color-neutral-900:#2d2b2b;
-  --color-accent-100:#fff2ef; --color-accent-200:#ffe0d9; --color-accent-300:#ffc4b8;
-  --color-accent-400:#ff9783; --color-accent-500:#ff563c; --color-accent-600:#dd2b0f;
-  --color-accent-700:#ae1800; --color-accent-800:#7c1405; --color-accent-900:#4d170e;
-  --color-accent-2-100:#fff2ef; --color-accent-2-200:#ffe0da; --color-accent-2-300:#ffc4b9;
-  --color-accent-2-400:#ff9784; --color-accent-2-500:#ef6853; --color-accent-2-600:#c94b39;
-  --color-accent-2-700:#9e3526; --color-accent-2-800:#71261b; --color-accent-2-900:#471d16;
-
-  /* type */
-  --font-heading: "Archivo", "Pretendard Variable", Pretendard, "Apple SD Gothic Neo",
-                  "Noto Sans KR", system-ui, sans-serif;
-  --font-heading-weight: 800;
-  --font-body: var(--font-heading);
-
-  /* space + radius */
-  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-6:24px; --space-8:32px;
-  --radius-sm:0px; --radius-md:0px; --radius-lg:0px;
-
-  /* elevation — soft ink-tinted shadows on a light ground */
-  --shadow-sm: 0 1px 2px  rgb(45 43 43 / 0.14);
-  --shadow-md: 0 3px 10px rgb(45 43 43 / 0.16);
-  --shadow-lg: 0 12px 32px rgb(45 43 43 / 0.22);
-}
+[data-theme='dark']  { color-scheme: dark;  /*  46 tokens — only what flips */ }
 ```
+
+Four structural facts, each load-bearing:
+
+- **The dark selector is bare, not `:root[data-theme='dark']`.** §1.4 requires `<div data-theme="dark">` to
+  re-scope the same tokens so the viewer is dark in *both* app themes (NFR-CMP-003). `:root[…]` only ever
+  matches `<html>` — so the selector §1.4 used to print could not do what the paragraph three lines under
+  it asked for, and the file has never obeyed it. Written bare, it matches any element. `tokens.test.ts`
+  asserts both halves — that a `<div>` matches it, and that it does **not** start with `:root`.
+- **Light is declared first, dark second, and the order is the mechanism.** Both blocks have specificity
+  (0,1,0), so on `<html data-theme="dark">` the dark block wins only because it comes later. The same works
+  in reverse: `<div data-theme="light">` inside the dark viewer re-scopes back to the light palette, which
+  is exactly what the next-volume card of §6.5 needs. Reordering these two blocks silently breaks the theme.
+- **The dark block redeclares only what flips** — 46 of the 112. The ramps, the absolutes, the type, the
+  space/radius scale, the z ladder and the misc timings are stated once, in the light block, because they
+  are theme-invariant by definition. Adding a dark twin for one of them is not a refinement; it is a claim
+  that the token was never invariant — and for the E-42 group it is the specific mistake §1.5 forbids.
+- **The comments carry the derivation, not just the value.** Every ratio in the file is computed WCAG 2.1
+  relative luminance, and the same numbers are re-derived and asserted in `tokens.test.ts`. When you change
+  a token, the comment and the test move with it — a value whose reason is not written down is a value the
+  next session will "simplify".
 
 ### 1.3 Tailwind mapping
 
-`tailwind.config.ts` — map the CSS variables through `theme.extend` so `bg-surface`, `text-accent`,
-`border-divider`, `p-4`, `gap-6` all resolve to the tokens, and so a theme swap on `:root[data-theme]`
-re-themes every utility with no rebuild.
+`web/tailwind.config.ts` maps the CSS variables through `theme.extend`, so `bg-surface`, `text-accent-text`,
+`border-divider`, `p-4`, `gap-6` all resolve to tokens and a `data-theme` swap re-themes every utility with
+no rebuild. What the config actually contains:
 
-```ts
-import type { Config } from 'tailwindcss';
+| Config key | Maps to | Note |
+|---|---|---|
+| `content` | `./index.html`, `./src/**/*.{ts,tsx}` | |
+| `darkMode` | `['selector', '[data-theme="dark"]']` | Bare attribute selector, matching `tokens.css` — a nested viewer `<div>` re-scopes |
+| `borderRadius` | **override**, not extend | `none 0px` · `DEFAULT var(--radius-md)` · `sm`/`md`/`lg`/`pill` → the four tokens · `full 9999px` |
+| `screens` | `md 768` / `lg 1024` / `xl 1440` | `xl` is moved off Tailwind's 1280 so the desktop tier is the one §7 describes |
+| `colors.bg` `.surface` `.ink` `.divider` | `--color-bg` `--color-surface` `--color-text` `--color-divider` | |
+| `colors.accent.{DEFAULT,100…900}` | the accent ramp | |
+| `colors['accent-2'].{DEFAULT,100…900}` | the accent-2 aliases | Which resolve to the accent (E-32 §1) |
+| `colors.neutral.{100…900}` | the neutral ramp | Raw steps — reach for the semantic names instead (§1.4) |
+| `colors.hot` / `colors['on-hot']` | `--color-hot` / `--on-hot` | Marker only |
+| 27 semantic colour names | `ink-muted`, `ink-dim`, `ink-faint`, `ink-label`, `ink-meta`, `ink-th`, `rule`, `rule-strong`, `control-border`, `fill-subtle`, `fill-track`, `fill-track-2`, `hover-tint`, `press-tint`, `row-hover`, `row-hover-table`, `nav-hover`, `nav-active`, `scrim-cover`, `scrim-modal`, `scrim-volume-end`, `scrim-broken`, `accent-hover`, `accent-press`, `accent-text`, `accent-fill`, `on-accent` | Each `var(--…)` |
+| 6 control colours (E-42) | `control-fill`, `control-fill-hover`, `control-well`, `on-control`, `on-control-accent`, `on-control-dim` | Absolute — see §1.5. These are what make a readable *override* possible inside the dark viewer chrome, where `text-ink` is 1.10 on cream and `text-accent-text` is 1.65 |
+| `borderColor.DEFAULT` | `--color-divider` | |
+| `spacing` `1,2,3,4,6,8` | `--space-*` | An `extend`, so Tailwind's own numeric scale survives for everything else |
+| `fontFamily.sans` / `.heading` | `--font-body` / `--font-heading` | |
+| `fontSize` | literal px | `2xs 9 · 3xs 10 · xs 11 · sm 12 · base 13 · md 14 · lg 15`, plus `h1…h6` |
+| `boxShadow` `sm/md/lg/inset` | `--shadow-*` | These flip with the theme |
+| `boxShadow` `control-inset` / `control-raised` / `accent-inset` (E-42) | `--shadow-control-*`, `--shadow-accent-inset` | These do not — §1.5 |
+| `zIndex` | `content 0 · sticky 2 · chrome 3 · viewer 60 · overlay 80 · texture 90` | `chrome` is viewer-internal (the two bars, above the end-of-volume scrim) and has **no** token; the rest mirror the ladder |
+| `keyframes` / `animation` | `shimmer 1.6s`, `spin .7s` | |
 
-export default {
-  content: ['./index.html', './src/**/*.{ts,tsx}'],
-  darkMode: ['class', ':root[data-theme="dark"]'],
-  theme: {
-    // radius is zero by design — kill the defaults so `rounded-*` cannot creep in
-    borderRadius: { none: '0px', DEFAULT: '0px', full: '9999px' },
-    extend: {
-      colors: {
-        bg:      'var(--color-bg)',
-        surface: 'var(--color-surface)',
-        ink:     'var(--color-text)',
-        accent: {
-          DEFAULT: 'var(--color-accent)',
-          100:'var(--color-accent-100)', 200:'var(--color-accent-200)', 300:'var(--color-accent-300)',
-          400:'var(--color-accent-400)', 500:'var(--color-accent-500)', 600:'var(--color-accent-600)',
-          700:'var(--color-accent-700)', 800:'var(--color-accent-800)', 900:'var(--color-accent-900)',
-        },
-        neutral: {
-          100:'var(--color-neutral-100)', 200:'var(--color-neutral-200)', 300:'var(--color-neutral-300)',
-          400:'var(--color-neutral-400)', 500:'var(--color-neutral-500)', 600:'var(--color-neutral-600)',
-          700:'var(--color-neutral-700)', 800:'var(--color-neutral-800)', 900:'var(--color-neutral-900)',
-        },
-        divider:  'var(--color-divider)',
-        // semantic, theme-flipping
-        'ink-muted':'var(--ink-muted)', 'ink-dim':'var(--ink-dim)', 'ink-faint':'var(--ink-faint)',
-        'fill-subtle':'var(--fill-subtle)', 'fill-track':'var(--fill-track)',
-        'fill-track-2':'var(--fill-track-2)', 'nav-active':'var(--nav-active)',
-        'accent-hover':'var(--accent-hover)', 'accent-press':'var(--accent-press)',
-        'accent-text':'var(--accent-text)',
-      },
-      borderColor: { DEFAULT: 'var(--color-divider)' },
-      spacing: {
-        1:'var(--space-1)', 2:'var(--space-2)', 3:'var(--space-3)',
-        4:'var(--space-4)', 6:'var(--space-6)', 8:'var(--space-8)',
-      },
-      fontFamily: { sans: 'var(--font-body)', heading: 'var(--font-heading)' },
-      fontSize: {
-        // the interface sizes the prototype actually uses
-        '2xs':['9px',{lineHeight:'1.2'}],   '3xs':['10px',{lineHeight:'1.2'}],
-        xs:['11px',{lineHeight:'1.35'}],    sm:['12px',{lineHeight:'1.35'}],
-        base:['13px',{lineHeight:'1.45'}],  md:['14px',{lineHeight:'1.45'}],
-        lg:['15px',{lineHeight:'1.55'}],    h6:['13px',{lineHeight:'1.12'}],
-        h5:['16px',{lineHeight:'1.12'}],    h4:['20px',{lineHeight:'1.12'}],
-        h3:['25px',{lineHeight:'1.12'}],    h2:['32px',{lineHeight:'1.12'}],
-        h1:['42px',{lineHeight:'1.12'}],
-      },
-      boxShadow: { sm:'var(--shadow-sm)', md:'var(--shadow-md)', lg:'var(--shadow-lg)' },
-      keyframes: {
-        shimmer:{ '0%':{opacity:'.3'},'50%':{opacity:'.7'},'100%':{opacity:'.3'} },
-        spin:{ to:{ transform:'rotate(360deg)' } },
-      },
-      animation: { shimmer:'shimmer 1.6s ease-in-out infinite', spin:'spin .7s linear infinite' },
-    },
-  },
-} satisfies Config;
-```
+**Three rules travel with this mapping.**
 
-**Two rules that come with this mapping.**
+- **`borderRadius` is overridden, not extended, and that is D-40 surviving E-32.** D-40's zero-radius rule
+  is retired; its reasoning — *enforcement beats discipline* — is not. After this config the only radius
+  utilities that exist are the five token steps plus `rounded-none` / `rounded-full`: `rounded-xl`,
+  `rounded-2xl` and every arbitrary `rounded-[13px]` cannot be produced at all, and `hygiene.test.ts` reads
+  the token block and fails the build on anything outside it. A new radius is a new token in `tokens.css`,
+  never a number at a call site.
+- **Tailwind opacity modifiers do not work on themed colours.** `bg-ink/50` silently fails, because the
+  values are opaque hexes and pre-composed `rgb(… / α)` strings rather than `<alpha-value>` channel
+  triples. That is intentional and matches the DS: every tint the design needs is already a named semantic
+  token. Add one to `tokens.css` rather than inventing `/40` at the call site.
+- **Not every token needs a utility.** Roughly twenty are painted only from `base.css` —
+  `--control-border-hover`, the three `--scrim-cover-*` stops, `--ghost-*`, `--selection-bg`,
+  `--scrollbar-thumb*`, the paper set, `--shadow-sidebar`, `--disabled-opacity`, the two fade durations.
+  A token absent from this table is not a defect; a *utility* that resolves to a literal is.
 
-- Because the color values are opaque hexes / pre-composed `rgb(… / α)` strings and *not*
-  `<alpha-value>`-aware channel triples, **Tailwind opacity modifiers (`bg-ink/50`) will not work on
-  themed colors.** That is intentional and matches the DS: *"prefer ramp steps over ad-hoc `color-mix()`."*
-  Every tint the design actually needs is already a named semantic token in §1.2. If you need a new one,
-  add it to `tokens.css` — do not invent `/40` at the call site.
-- `borderRadius` is overridden (not extended) so `rounded-lg` etc. simply do not exist. `rounded-full`
-  survives for the radio dot and the spinner.
+> **One stale step, recorded rather than left silent:** `fontSize.h6` is still `13px / 1.12`, the pre-E-32
+> section-label size, while `base.css`'s `h6` element is 16px / `-0.01em` mixed case (E-32). Nothing in
+> `src/` uses `text-h6` today, so the two do not currently collide — but if you reach for that utility,
+> take 16px from the element style, not from this map.
 
-### 1.4 Dark theme (required by NFR-CMP-003)
+### 1.4 Dark ramp (required by NFR-CMP-003)
 
-The Modernist DS ships a light ground only. The prototype's **viewer** already demonstrates the intended
-dark treatment, and the dark ramp below is derived from it so the two are literally the same surface.
-The rule is: **swap `--color-bg` and `--color-text`, take structure from the top of the neutral ramp
-instead of the bottom, keep the accent constant, and move the hover/press step to `accent-400`** (exactly
-what the DS readme prescribes for a dark ground).
+**The dark theme is derived, not copied — the prototype ships a light palette only.** The ground is the
+light theme's ink (`#263B38`) and the ink is the light theme's ground (`#EAE3D4`): the same swap the
+Modernist palette used, carried onto the teal. The accent is held constant, structure is taken from the
+opposite end of the ramps, and the hover/press steps move, because a step that reads as "one past base" on
+cream does not on teal.
 
-```css
-:root[data-theme="dark"] {
-  color-scheme: dark;
+The `[data-theme='dark']` block redeclares **46** tokens — these and only these flip. Contrast reads
+**`on --color-bg` / `on --color-surface`** in the dark theme.
 
-  --color-bg: #201e1d;        /* was --color-text  */
-  --color-surface: #2d2b2b;   /* neutral-900       */
-  --color-text: #f3f2f2;      /* was --color-bg    */
-  --color-accent: #ec3013;    /* brand constant — 3.95:1 on #201e1d, OK for chrome + large text */
-  --color-accent-2: #e15b47;
-  --color-divider: #444141;   /* neutral-800, SOLID — exactly what the viewer chrome uses */
+| Token | Dark value | Contrast | Why |
+|---|---|---|---|
+| `--color-bg` | `#263B38` | | Was `--color-text` |
+| `--color-surface` | `#2F4A46` | 1.24 vs the ground | One step up — the same separation the old `#201e1d` / `#2d2b2b` pair had |
+| `--color-text` | `#EAE3D4` | | Was `--color-bg` |
+| `--color-accent` | `#17595B` | | Brand constant |
+| `--color-accent-2` | `var(--color-accent)` | | |
+| `--color-divider` | `#3E5B57` | | **Solid**, not a tint — the viewer chrome rule |
+| `--ink` | `var(--color-text)` | 9.31 / 7.51 | |
+| `--ink-muted` | `rgb(234 227 212 / 0.78)` | 6.36 / 5.29 | |
+| `--ink-dim` | `#B9C8C4` | 6.87 / 5.54 | |
+| `--ink-faint` | `#A9BAB6` | 5.88 / 4.75 | **On dark the *surface* is the harder ground** — the shipped dark faint was 3.27 on it |
+| `--ink-label` | `rgb(234 227 212 / 0.75)` | 6.01 / 5.03 | |
+| `--ink-meta` | `rgb(234 227 212 / 0.75)` | 5.76 / 5.03 | Was 0.7 — 4.61 on the surface dry and **4.45 washed**, and this is the token that sits on the surface most (`.card-meta` at 11px). 0.75 puts it level with `--ink-label`: 4.85 washed, 4.71 at peak |
+| `--ink-th` | `rgb(234 227 212 / 0.72)` | 5.67 / 4.77 | |
+| `--rule` | `#3E5B57` | | |
+| `--rule-strong` | `#4A6B66` | | |
+| `--control-border` | `#5A7C77` | | The viewer's button/seg borders |
+| `--control-border-hover` | `#79A09A` | | |
+| `--fill-subtle` | `#2F4A46` | | |
+| `--fill-track` | `#3E5B57` | | |
+| `--fill-track-2` | `#5A7C77` | | |
+| `--hover-tint` | `rgb(234 227 212 / 0.08)` | | |
+| `--press-tint` | `rgb(234 227 212 / 0.16)` | | |
+| `--row-hover` | `rgb(234 227 212 / 0.06)` | | |
+| `--row-hover-table` | `rgb(234 227 212 / 0.05)` | | |
+| `--nav-hover` | `rgb(234 227 212 / 0.07)` | | |
+| `--nav-active` | `rgb(155 195 193 / 0.16)` | | **Tinting a teal ground with the teal accent does nothing** — same hue, nearly the same lightness. The active row is washed with accent-300 instead |
+| `--scrim-cover` | `rgb(0 0 0 / 0.72)` | | The scrims go to black on dark |
+| `--scrim-modal` | `rgb(0 0 0 / 0.6)` | | |
+| `--scrim-cover-base` `--scrim-cover-mid` `--scrim-cover-top` | `rgb(0 0 0 / 0.92)` `rgb(0 0 0 / 0.55)` `rgb(0 0 0 / 0.15)` | | |
+| `--accent-hover` | `#256668` | label 5.91 | Up the ramp, but only as far as the cream label on the fill still clears AA — accent-400 would take `#F6F2E9` to 2.6 |
+| `--accent-press` | `#2C6D6E` | label 5.34 | |
+| `--accent-text` | `#9BC3C1` (accent-300) | 6.21 / 5.01 | |
+| `--accent-fill` | `#9BC3C1` | 3.86 on `--fill-track` | `--color-accent` is **1.09** there: `bg-accent` on a dark progress bar is invisible |
+| `--scrollbar-thumb` | `rgb(234 227 212 / 0.4)` | | |
+| `--scrollbar-thumb-hover` | `rgb(234 227 212 / 0.55)` | | |
+| `--ghost-hover` | `rgb(155 195 193 / 0.12)` | | |
+| `--ghost-press` | `rgb(155 195 193 / 0.2)` | | |
+| `--selection-bg` | `rgb(155 195 193 / 0.32)` | | |
+| `--shadow-sm` | `0 0 0 1px #3E5B57, 0 1px 2px rgb(0 0 0 / 0.5)` | | **Elevation on a dark ground is a hairline edge plus ambient darkness.** The light block's up-left lobe is `rgb(255 253 246 / .9)`; painted here it is a white outline around every card, not a highlight |
+| `--shadow-md` | `0 0 0 1px #3E5B57, 0 3px 10px rgb(0 0 0 / 0.55)` | | |
+| `--shadow-lg` | `0 0 0 1px #3E5B57, 0 12px 32px rgb(0 0 0 / 0.6)` | | |
+| `--shadow-inset` | `inset 3px 3px 7px rgb(0 0 0 / 0.5), inset -3px -3px 7px rgb(155 195 193 / 0.12)` | | Keeps the dual-light *shape* — dark down-left, light up-right — at an alpha a dark ground can carry |
+| `--shadow-sidebar` | `1px 0 0 #3E5B57, 4px 0 18px rgb(0 0 0 / 0.5)` | | The panel is `--color-surface` on `--color-bg`, 1.24:1 here, and the ochre lobe is a light-ground device that vanishes. So the edge is stated as a hairline — `1px 0 0`, right side only, the only side of a full-height panel that shows |
+| `--paper-tone` | `var(--color-accent-900)` | | The grain's tone follows the ground it washes. On today's numbers this is worth under 1/255 — the measured max channel delta in the viewer is 1 — and it is declared anyway because the tone is the one part of the texture that is *paint*: raise `--paper-intensity`, or move the tone off near-black, and a warm wash over a teal ground is immediately a brown cast. Paint that does not flip with the theme is how a token quietly stops being one |
 
-  --ink:            #f3f2f2;
-  --ink-muted:      rgb(243 242 242 / 0.62);
-  --ink-dim:        #9b9797;  /* neutral-500 reads as "dim" on a dark ground */
-  --ink-faint:      #7d7979;  /* neutral-600 */
-  --rule:           #444141;  /* neutral-800 */
-  --rule-strong:    #444141;
-  --control-border: #605d5d;  /* neutral-700 — the viewer's button/seg borders */
-  --fill-subtle:    #2d2b2b;  /* neutral-900 */
-  --fill-track:     #444141;  /* neutral-800 */
-  --fill-track-2:   #605d5d;  /* neutral-700 */
-  --hover-tint:     rgb(243 242 242 / 0.08);
-  --press-tint:     rgb(243 242 242 / 0.16);
-  --row-hover:      rgb(243 242 242 / 0.06);
-  --nav-active:     rgb(236 48 19 / 0.14);   /* 8% is invisible on dark — bumped to 14% */
-  --scrim-cover:    rgb(0 0 0 / 0.72);
-  --scrim-modal:    rgb(0 0 0 / 0.60);
-  --accent-hover:   #ff563c;  /* accent-500 */
-  --accent-press:   #ff9783;  /* accent-400 — "one step past base on a dark ground" */
-  --accent-text:    #ff9783;  /* accent-400 — accent at paragraph size on dark */
+**The other 66 do not flip**, and that is a statement, not an omission: `--color-hot` (1), the ramps (27),
+the absolutes (13, nine of them E-42's — §1.5), type (3), space + radius (11), `--paper-grain` /
+`--paper-intensity` / `--paper-tone-viewer` (3), the z ladder (5), misc (3).
 
-  /* elevation on a dark ground = hairline edge + ambient darkness (per the DS readme) */
-  --shadow-sm: 0 0 0 1px #444141, 0 1px 2px  rgb(0 0 0 / 0.50);
-  --shadow-md: 0 0 0 1px #444141, 0 3px 10px rgb(0 0 0 / 0.55);
-  --shadow-lg: 0 0 0 1px #444141, 0 12px 32px rgb(0 0 0 / 0.60);
-}
-```
-
-**Semantics that must be preserved when the theme flips.** The raw ramps (`--color-neutral-*`,
-`--color-accent-*`) do **not** change — they are an absolute lightness scale. What changes is which end of
-the ramp each *role* points at. So: never write `bg-neutral-200` for "a subtle fill"; write
-`bg-fill-subtle`. Never write `text-accent-700` for "accent-coloured text"; write `text-accent-text`.
-The prototype's raw-ramp references map onto semantic tokens like this:
+**Semantics that must be preserved when the theme flips.** What changes is not the ramp but which end of it
+each *role* points at. The prototype's raw-ramp references map onto semantic tokens like this:
 
 | Prototype (light) | Semantic token | Dark resolves to |
 |---|---|---|
-| `neutral-200` / `neutral-300` cover stripes | `--fill-subtle` / `--fill-track` | `#2d2b2b` / `#444141` |
-| `neutral-300` progress trough | `--fill-track` | `#444141` |
-| `neutral-400` progress trough over art | `--fill-track-2` | `#605d5d` |
-| `neutral-500` disabled/idle numerals | `--ink-faint` | `#7d7979` |
-| `neutral-600` labels, counts | `--ink-dim` | `#9b9797` |
-| `neutral-700` secondary body text | `--ink-muted` | `rgb(243 242 242 / .62)` |
-| `neutral-800` strong body text | `--ink` | `#f3f2f2` |
-| `accent-700` accent text | `--accent-text` | `#ff9783` |
+| `neutral-200` / `neutral-300` cover stripes | `--fill-subtle` / `--fill-track` | `#2F4A46` / `#3E5B57` |
+| `neutral-300` progress trough | `--fill-track` | `#3E5B57` |
+| `neutral-400` progress trough over art | `--fill-track-2` | `#5A7C77` |
+| `neutral-500` disabled / idle numerals | `--ink-faint` | `#A9BAB6` |
+| `neutral-600` labels, counts | `--ink-dim` | `#B9C8C4` |
+| `neutral-700` secondary body text | `--ink-muted` | `rgb(234 227 212 / .78)` |
+| `neutral-800` strong body text | `--ink` | `#EAE3D4` |
+| `accent-700` accent text | `--accent-text` | `#9BC3C1` (accent-300) |
 
-**Theme scope.** `data-theme` on `<html>` follows the user setting (light / dark / system, §5.4). The viewer
-root **always** renders in the dark palette regardless — implement it as
+`tokens.test.ts` has a `describe` for exactly this — *"a ramp step painted by a class flips with the
+theme"* — so a class that paints a raw step without a dark twin turns that block red.
+
+**Theme scope.** `data-theme` on `<html>` follows the user setting (light / dark / system, §5.4). The
+viewer root **always** renders dark regardless — implement it as
 `<div data-theme="dark" className="viewer-root">` so it re-scopes the same tokens rather than hardcoding
-colors. That is what makes the light-theme viewer and the dark-theme viewer identical, which is what
-`--theme: 다크 (뷰어 고정)` in the prototype's settings panel is telling you.
+colours. That is what makes the light-theme viewer and the dark-theme viewer identical, which is what
+`--theme: 다크 (뷰어 고정)` in the prototype's settings panel is telling you. The viewer is a dark ground
+built from these tokens, **not a second palette** (§0.4, NFR-CMP-003) — and what does *not* re-scope with
+it is the control language, which is §1.5.
+
+### 1.5 Control surfaces are absolutes, and shadows follow the surface (E-42)
+
+E-36 §4 pinned the viewer's controls cream: the viewer's *ground* stays dark, and what changes against the
+prototype is that a control stops being a border ghost and becomes a **cream fill**. **E-42 §2 raises that
+from the viewer to the product.** `.btn-secondary`, `.input` and `.seg` are the same cream surface in the
+light app, in the dark app and in the viewer.
+
+**Why it could not stay a viewer exception.** The viewer's dark scope and the app's dark theme are the
+*same* token block — `[data-theme='dark']` — and a custom property cannot tell the two apart. There is no
+honest way to write "cream in the viewer, whatever the theme says elsewhere" without a `:root[data-theme]`
+vs `[data-theme]:not(:root)` split, and that split is exactly what §1.2 refuses. So there were two options:
+raise the cream to global, or fork the control language by scope. The user ruled **global** — one control
+language, and E-36 §4's viewer becomes the rule rather than the exception. The price is that controls in
+the app's dark theme visibly change, which is why the ruling went to the user.
+
+**Provenance of the cream.** Session 9 measured the prototype's `뒤로` button directly (full text in
+E-36 §4): its interior is `(235, 230, 220)` against a bar of `(37, 57, 55)`, while the same pixel in the
+product was `(37, 58, 55)` — the bar itself, fill `rgba(0,0,0,0)`. `design-v2/MEASURED.md` records the
+button as `bg #F3EEE3`, `color rgb(13,52,54)` (= accent-800), `border-radius 7px`.
+
+#### The six colours (E-42 §3) — light values, pinned, no dark twin
+
+Ratios below are quoted the way `tokens.css` quotes them: dry → **washed** (at the mask's peak), worst of
+the three tones.
+
+| Token | Value | What it is worth |
+|---|---|---|
+| `--control-fill` | `#F3EEE3` | The raised control surface — the light theme's `--color-surface` pinned to a literal so it cannot flip. `--on-control` on it: 11.62 → **11.02** (10.54). As a *fill* it must also separate from the ground it sits on, and both clear the 3:1 non-text floor with room: 10.28 → **9.80** (9.40) against the viewer ground `#263B38`, 8.29 → **7.96** (7.69) against the dark surface `#2F4A46` |
+| `--control-fill-hover` | `#F8F4EC` | The prototype's hover cream. Until E-42 it had **no token at all** — E-36 §4 counted it zero times across `tokens.css` and `base.css`, which is why `.btn-secondary:hover` had nothing to move to. `--on-control` 12.26 → **11.62** (11.11); `--on-control-accent` 7.32 → **7.06** (6.84) |
+| `--control-well` | `#EFE9DC` | The *recessed* track (`.seg`) — the light theme's `--fill-subtle` pinned. **Not** written as `var(--fill-subtle)`, which flips to `#2F4A46` and would put a teal track inside a cream control; **not** written as `var(--color-neutral-200)` either, because the ramp step is a coincidence of value and what this token *is* is "the light control track, held still". `--on-control` 11.12 → **10.55** (10.09); `--on-control-dim` 5.83 → **5.65** (5.50); separation from the viewer ground 9.83 → **9.37** (9.00) |
+| `--on-control` | `#0D3436` | accent-800 pinned — the ink on cream, the colour read straight off the prototype's `뒤로` label. Absolute because the cream is: `--ink` would flip to `#EAE3D4` here and land at **1.10** |
+| `--on-control-accent` | `#17595B` | The accent when it is ink *on cream* — the hovered `.btn-secondary` label, the viewer bottom bar's strip-open control. `--accent-text` cannot do this job: it flips to accent-300, which is **1.65** on the cream |
+| `--on-control-dim` | `#5F5849` | neutral-700 pinned — placeholders and unselected seg options, the ink that is *meant* to be quiet and therefore has the least room: 6.09 → **5.90** (5.75) on the fill. `--ink-dim` flips to `#B9C8C4`: **1.50**. The prototype's neutral-500 (2.37) was already refused by E-32 §4 |
+
+**"Absolute" means there is no dark twin, and writing one is how the absolute dies.** These six, and the
+three shadows below, sit in the `absolutes` block of `tokens.css` beside `--on-accent`, `--on-hot`, `--scrim-volume-end` and
+`--scrim-broken`, which exist for exactly this reason: *a foreground on a surface that never flips.* The
+cream pill is that surface. The moment a `[data-theme='dark']` block re-declares `--control-fill`, a
+control in the viewer is a deep-teal pill on a deep-teal bar — a dark button on a dark ground, the exact
+defect E-36 §4 was written to stop — and the inks on it stop being letters (1.10, 1.65, 1.50 above).
+
+#### The rule this ruling establishes (E-42 §3)
+
+> **A shadow does not follow the theme. It follows the surface it falls on.**
+
+| Where the shadow falls | Token | Value | Example |
+|---|---|---|---|
+| The page ground or a page surface — **flips** | `--shadow-sm` / `-md` / `-lg` / `--shadow-inset` | §1.1, §1.4 | `.card`, `.dialog`, the sidebar, cover wells, skeletons, progress troughs |
+| **Inside** a cream control — absolute | `--shadow-control-inset` | = the **light** `--shadow-inset`, pinned | `.input`, the `.seg` track, `.btn-secondary:active` |
+| **On top of** a cream control — absolute | `--shadow-control-raised` | = the **light** `--shadow-sm`, pinned | The selected `.seg-opt` lifted out of the cream track |
+| **Inside** an accent fill — absolute | `--shadow-accent-inset` | = the **dark** `--shadow-inset`, pinned | `.btn-primary:active` |
+
+The three are **literal copies, never `var(--shadow-…)`**. A reference resolves in the scope it is *used*
+in, so it would flip with the theme — and not flipping is the only reason these tokens exist.
+
+Read the last row twice: the accent is a dark teal in *both* themes, so a recess cut into it is a
+dark-ground recess even when the app is light. The light inset's up-left lobe is `rgb(255 253 246 / 0.85)`;
+on a `#17595B` fill that is a cream smear across the button, not a recess. Symmetrically, on dark
+`--shadow-sm` leads with a `0 0 0 1px #3E5B57` hairline, and that hairline is 6.19 washed against the cream
+— not a soft lift but a hard teal box drawn around the option.
+
+**The failure the rule prevents** is the one that follows from doing nothing: in the dark theme the cream
+pill gets the dark inset — black plus an accent-300 highlight — painted inside it. The surface did not
+flip and the shadow did. That is the whole error, and it is the same shape as the one §0.2's shadow
+language and §1.4's ramp discipline each guard against: a value flipping for a reason that has nothing to
+do with what it is drawn on.
+
+#### One thing to know before you count
+
+E-36 §3's completion criterion 1 is *"`var(--shadow-inset)` is not zero times in `base.css`"*. Because of
+this ruling, the name `.input` and `.seg` actually use is **`var(--shadow-control-inset)`** — the light
+values pinned. Counted literally, criterion 1 still reads zero. **That is a rename, not a shortfall**, and
+it is written here and in E-42 §4 because the disease E-36 §2 diagnosed is precisely *a difference with no
+record*. `--shadow-inset` itself stays in use through the Tailwind `shadow-inset` utility — cover wells,
+skeletons, progress troughs — and those sit on grounds that do flip.
 
 ---
 
@@ -460,54 +683,67 @@ Rebuild these as React components, but keep the *exact* geometry.
 > of the soft-UI skin are unapplied. Every amended row below is now quoted from the prototype's
 > `soft-ui.css`, marked ⟳, and every untouched row is still the DS's.
 >
-> **These rows describe the target; the shipped `base.css` has not caught up** (E-36 §3 says what
-> "applied" means and §5 gives the order). Two standing constraints override anything quoted here:
+> ~~**These rows describe the target; the shipped `base.css` has not caught up** (E-36 §3 says what
+> "applied" means and §5 gives the order).~~
+>
+> **Superseded — the ⟳ rows are the shipped contract now, not a target.** Session 14 executed E-36 under
+> ruling **E-42**; each ⟳ row below has been rewritten from `web/src/styles/base.css` as it actually ships,
+> and where the row's instruction was **not adopted** the row says so and gives the reason, because
+> *unrecorded non-adoption* is the exact mechanism E-36 §2 was written to stop. Four halves went
+> unadopted and are marked in place: `.seg`'s `overflow: hidden` (kept — E-42 §8①), `.seg-opt`'s
+> `5px 12px` (refused — unmeasured), `.tag-neutral`'s 200/700 ramp pair (refused — only the shadow was
+> missing), and `.dialog-backdrop`'s `.34` scrim alpha (refused — the token is shared with the drawer).
+> **`base.css` remains the authority; this table is what has to prove it still matches.**
+>
+> Two standing constraints override anything quoted here:
 >
 > - **No raw ramp step and no literal hex may be shipped.** E-32 §3 ruled that the prototype has no
 >   semantic layer — it inlines ramp steps, and the ramps are a theme-invariant absolute lightness scale
 >   (§1.4), so an inlined step draws the *same* colour in a dark scope and the contrast collapses. Where a
 >   row below quotes `var(--color-neutral-N00)` or a hex, **a semantic token is to be derived** (light and
->   dark, and after the paper grain — E-35 §4). The rows say so at each site.
+>   dark, and after the paper grain — E-35 §4). The rows below now name the tokens that were derived; the
+>   six absolutes of the cream control set are in §1.5.
 > - **No arbitrary radius.** E-32 §2 kept D-40's enforcement and bound the whitelist to what the
 >   `--radius-*` tokens produce, plus `50%` / `9999px`. The prototype's literal `5px` (`.tag`), `6px`
 >   (`.seg-opt`) and `8px` (`.seg`, `.dialog`) are **not** token values — `sm 3 / md 4 / lg 6 / pill 7`.
->   `6px` is `--radius-lg`; `5px` and `8px` must be resolved to a token, not shipped as written.
+>   `6px` is `--radius-lg`; `5px` and `8px` were resolved rather than shipped — `.tag` ships
+>   `--radius-sm`, `.seg` and `.dialog` ship `--radius-lg`.
 >
 > Nothing E-32 §4 or E-35 §7 refused is reversed here. In particular `.btn { justify-content: center }`
 > stays refused — `.btn-block`'s flush-left rule (§0.3) is untouched by any row below.
 
 | Class | Contract |
 |---|---|
-| `.btn` | `inline-flex; align-items:center; justify-content:center; gap:6px; font-family:var(--font-heading); font-weight:800; font-size:14px; line-height:1.2; color:var(--color-text); background:transparent; border:1px solid transparent; padding: var(--space-2) calc(var(--space-3) * 1.2)` → **8px 14.4px**; `border-radius:0`. `.btn svg{display:block}`. `:disabled{opacity:.45;cursor:not-allowed}` |
-| `.btn-primary` | `background:var(--color-accent); color:var(--color-bg)`; hover `--accent-hover`; active `--accent-press` |
-| `.btn-secondary` ⟳ | **A raised cream pill, not a bordered ghost.** `soft-ui.css`: `background: var(--color-surface); color: var(--color-accent-800); box-shadow: var(--shadow-sm)`; `:hover{ background:#F8F4EC; color:var(--color-accent) }`; `:active{ box-shadow: var(--shadow-inset); transform: translateY(1px) }`. The `border-color` line goes, and with it `.btn`'s `border:1px solid transparent` for this variant. **Three values need work before this ships:** `--color-surface` **flips with the theme** and the viewer is `data-theme="dark"` under both app themes (§1.4, NFR-CMP-003), so the fill must come from an **absolute** token — see E-36 §4, which rules the viewer's controls cream on a dark ground and cites the session-9 measurement of the prototype's `뒤로` button (`bg #F3EEE3`, `color` accent-800 `#0D3436`; that pair is 11.62:1, and the cream separates from the `#263B38` bar at 10.28:1). `--color-accent-800` is a raw ramp step → derive `--on-` ink for that fill. **`#F8F4EC` (the hover) has no token at all** — nothing in `tokens.css` resolves to it; derive one (accent on it is 7.32:1, accent-800 12.26:1) |
-| `.btn-ghost` | `color:var(--color-accent); padding-inline:var(--space-1)`; hover accent@10%; active accent@18% |
+| `.btn` ⟳ | `inline-flex; align-items:center; justify-content:center; gap:6px; font-family:var(--font-heading); font-weight:800; font-size:14px; line-height:1.2; color:var(--color-text); background:transparent; cursor:pointer; padding: var(--space-2) calc(var(--space-3) * 1.2)` → **8px 14.4px**. The boundary and the corner both moved: ~~`border:1px solid transparent`~~ → **`border: 0`**, ~~`border-radius:0`~~ → **`border-radius: var(--radius-pill)`** (7px, E-32 §2). The transition covers **four** properties — `background`, `box-shadow`, `color`, `transform` — because the variants below move all four. **`font-weight` stays 800**: `soft-ui.css`'s 600 is E-42 §5's non-adopted row ▪3 (this row was never ⟳-amended, the label is the heading family, and E-32 kept 800). `.btn svg{display:block}`. `:disabled{opacity:var(--disabled-opacity) /* .45 */;cursor:not-allowed}`. Below 768: `min-height` **and** `min-width` = `var(--touch-min)` |
+| `.btn-primary` ⟳ | `background:var(--color-accent); color:var(--on-accent); box-shadow:var(--shadow-sm)` — a filled control is a *raised* one (§0.2). Not `--color-bg`: the accent is a dark teal in both themes and `--color-bg` on it is 1.48:1 in the dark theme. Hover `--accent-hover`; active `background:var(--accent-press); box-shadow:var(--shadow-accent-inset); transform:translateY(1px)`. **The press inset is the accent absolute, not `--shadow-inset`** — the recess is cut into a fill that does not flip, and the light inset's cream up-left lobe would smear across a teal pill (§0.2, E-42 §3) |
+| `.btn-secondary` ⟳ | **A raised cream pill, not a bordered ghost — in every scope.** Shipped: `background: var(--control-fill); color: var(--on-control); box-shadow: var(--shadow-sm)`; `:hover{ background:var(--control-fill-hover); color:var(--on-control-accent) }`; `:active{ box-shadow: var(--shadow-control-inset); transform: translateY(1px) }`. The three values E-36 flagged were all derived as **absolutes** (§1.5): the prototype's `var(--color-surface)` flips and would have made this a deep-teal pill on the viewer's deep-teal bar, `--color-accent-800` was a raw ramp step, and `#F8F4EC` had no token at all. `--shadow-sm` and **not** `--shadow-control-raised`: this pill sits on the page ground, which does flip. **The old `background: var(--press-tint)` on `:active` is deleted, not kept beside the inset** — a translucent tint *replaces* the fill, so for the length of a press the bar behind would show through the one surface the absolute exists to keep opaque. Two measured notes: on **light** this fill is 1.00 against `--color-surface`, so inside a dialog the only thing making it a button is `--shadow-sm` (E-42 §8); and a disabled one is 1.05 against the light ground, effectively invisible — not a violation, WCAG 1.4.3 exempts disabled components |
+| `.btn-ghost` ⟳ | `color:var(--ink-dim); padding-inline:var(--space-1)`; hover `background:var(--ghost-hover)` (accent@10% light / accent-300@12% dark) **and** `color:var(--accent-text)`; active `background:var(--ghost-press)` (18% / 20%). **Not `--color-accent` at rest** — a ghost has no fill, so it is ink on the page ground and takes the neutral ink that flips; the accent moves to the hover, where the prototype puts it. **No inset and no `translateY`**, unlike the two filled variants: E-36 §3.4 presses *surfaces*, and an inset needs a fill to be cut into. ⚠️ **Open defect `al`: the hover ink is 3.90 washed on the dark `--color-surface`** — an AA fail affecting the sidebar's and the dialogs' ghost buttons. It is 4.70 on the dark *ground*, which passes. Not introduced by E-42 (the hover ink was `--accent-text` before it); fixing it means re-deriving either `--ghost-hover`'s dark alpha or the hover ink, and both need measuring first |
 | `.btn-icon` | `width:36px; height:36px; padding:0` |
 | `.btn-block` | `width:100%; margin-top:var(--space-2); justify-content:flex-start; text-align:left` ← **the flush-left rule** |
-| `.tag` ⟳ | `inline-flex; align-items:center; font-size:11px; letter-spacing:.02em; padding:3px 10px`. `soft-ui.css` adds `border:0; font-weight:600` and sets `border-radius:5px` — **`5px` is not a `--radius-*` value**; resolve it to a token (`--radius-sm` 3 / `--radius-md` 4) rather than shipping the literal |
-| `.tag-accent` | `bg accent-100 / fg accent-800`. **Needs a `[data-theme='dark']` counterpart** with the ends swapped — the ramps do not flip, so one declaration paints a near-white slab on the dark ground |
-| `.tag-accent-2` | `bg accent-2-100 / fg accent-2-800`. Same dark counterpart. (E-32 collapsed accent-2 into the accent; the tokens survive only because this class and the Tailwind map still name them) |
-| `.tag-neutral` ⟳ | `soft-ui.css`: `background: var(--color-neutral-200); color: var(--color-neutral-700); box-shadow: var(--shadow-sm)`. **It is the shadow that is missing today, not the fill.** Both colours are raw ramp steps → semantic tokens, each with a dark counterpart; note that `--color-neutral-700` on `--color-neutral-200` is the *shipped* pair only by coincidence of the light theme |
-| `.tag-outline` ⟳ | **Not outlined any more — the name is now historical.** `soft-ui.css`: `background: var(--color-surface); color: var(--color-accent-700); box-shadow: var(--shadow-sm)`. The `1px solid` accent border goes. `--color-accent-700` is a raw ramp step → semantic (`--accent-text` is that step on light and accent-300 on dark, which is the shape wanted) |
-| `.field > label` | `display:block; font-size:12px; margin-bottom:5px; color:text@70%` |
-| `.input` ⟳ | **A recessed well, not a bordered box.** Geometry is unchanged: `width:100%; min-height:36px; padding:6px 10px; font-size:14px; color:var(--color-text); caret-color` accent. `soft-ui.css` replaces the boundary: `border: 0; border-radius: var(--radius-md); background: var(--color-surface); box-shadow: var(--shadow-inset)`, and focus is `box-shadow: var(--shadow-inset), 0 0 0 2px var(--color-hot); outline: none` — i.e. the hot ring is **inside** the well, not an outline beside it. The `border-color` hover state has nothing left to move and goes. `::placeholder` is `var(--color-neutral-500)` in the prototype — **do not ship that**: neutral-500 is **2.37:1 on the surface** (`tokens.css`, `--ink-faint`), an AA fail of exactly the kind E-32 §4 already refused for neutral-600; keep a semantic dim ink. Below 768 `min-height` stays `var(--touch-min)` (NFR-CMP-002) |
-| `.radio` | `inline-flex; align-items:center; gap:8px; font-size:14px`. `.dot` = `16×16; border-radius:50%; border:1.5px solid var(--color-divider)`. checked → `border+bg accent; box-shadow: inset 0 0 0 4px var(--color-bg)` |
-| `.seg` ⟳ | **A recessed track that the options sit in**, not a box with dividers. `soft-ui.css`: `border: 0; border-radius: 8px; background: var(--color-neutral-200); box-shadow: var(--shadow-inset); padding: 3px; gap: 2px`. `overflow:hidden` goes with `padding`+`gap` — the options no longer reach the edge. **`8px` is not a `--radius-*` value** (`lg` is 6) → resolve to a token. `--color-neutral-200` is a raw ramp step → semantic well-fill with a dark counterpart |
-| `.seg-opt` ⟳ | `inline-flex; align-items:center; gap:6px; font-size:13px; cursor:pointer`. `soft-ui.css`: `border: 0 !important; border-radius: 6px` (= `--radius-lg`); `padding: 5px 12px`; `color: var(--color-neutral-700)`; `font-weight: 600`; `transition: background .14s, color .14s, box-shadow .14s`; `:hover{ color: var(--color-accent) }`. **The `+ .seg-opt` left divider is deleted** — that is what `border:0 !important` does, and it is deliberate: separation now comes from the `gap` and the recessed track. Checked stays as shipped: `background:var(--color-accent); color:var(--on-accent); box-shadow: var(--shadow-sm), inset 0 0 0 2px var(--color-hot)` (E-32 §1 — the hot inset ring is load-bearing, not decoration). Keep the product's `7px 12px` padding unless the 5px version is measured to still clear the target, and keep `min-height: var(--touch-min)` below 768. `--color-neutral-700` → semantic |
-| `.card` ⟳ | `flex column; gap:var(--space-2); padding:var(--space-3); background:var(--color-surface)`. `soft-ui.css`: `border: 0; border-radius: var(--radius-lg); box-shadow: var(--shadow-md)`. **A card is lifted, per §0.2.** This row is the one `web/src/components/ds/Card.tsx:6-8` was built against, and that component still refuses a shadow citing the retired §0.2 sentence — see E-36 §2 |
-| `.card-kicker` | `10px; ls .1em; uppercase; color:var(--color-accent)` |
+| `.tag` ⟳ | `inline-flex; align-items:center; font-size:11px; letter-spacing:.02em; padding:3px 10px; border:0; font-weight:600; border-radius:var(--radius-sm)`. The prototype's `5px` is **not** a `--radius-*` value and was resolved down to `--radius-sm` (3px), not shipped as written. `border:0` costs nothing here — the only consumer of the transparent border was `.tag-outline`, and that variant is a filled chip now |
+| `.tag-accent` ⟳ | `bg accent-100 / fg accent-800`, **plus the `[data-theme='dark']` counterpart with the ends swapped** (`bg accent-800 / fg accent-100`). The ramps are theme-invariant, so a single declaration paints the same near-white slab on the dark ground. Swapping the ends rather than re-choosing the pair keeps the measured 11.36 exactly, and separates from the dark surface at 1.40 — the same order of separation the light chip has from the cream (1.08). A tag is a label, not a boundary |
+| `.tag-accent-2` ⟳ | `bg accent-2-100 / fg accent-2-800`, same swapped dark counterpart. (E-32 collapsed accent-2 into the accent; the tokens survive only because this class and the Tailwind map still name them) |
+| `.tag-neutral` ⟳ | **The shadow was adopted; the ramp pair was not.** Shipped: `background: var(--color-neutral-100); color: var(--color-neutral-800); box-shadow: var(--shadow-sm)`, with the swapped `[data-theme='dark']` counterpart (800 fill / 100 ink). **NOT ADOPTED (E-42 §5, E-36 audit row ⬛18): `soft-ui.css`'s 200/700 pair.** What was missing from this class was the *shadow*, not the fill — the shipped 100/800 pair is measured at 10.68:1 and already has its dark twin, and moving it one step buys nothing while costing two new semantic tokens and a second dark counterpart. A measured pair is not traded for an unmeasured one |
+| `.tag-outline` ⟳ | **Not outlined any more — the name is now historical.** Shipped: `background: var(--color-surface); color: var(--accent-text); box-shadow: var(--shadow-sm)`. The `1px solid` accent border is gone. `--accent-text` is the semantic for the prototype's raw `--color-accent-700` — that step on light, accent-300 on dark. **`--color-surface` and not the cream `--control-fill`:** a tag is a label printed on the page, not a control, so its ground is the page's surface and flips with it |
+| `.field > label` | `display:block; font-size:12px; margin-bottom:5px; color:var(--ink-label)` — text@78% light / @75% dark, 5.18 / 5.52 |
+| `.input` ⟳ | **A recessed well, not a bordered box.** Geometry unchanged: `width:100%; min-height:36px; padding:6px 10px; font-size:14px; font-family:inherit`. The boundary moved: `border: 0; border-radius: var(--radius-md); background: var(--control-fill); box-shadow: var(--shadow-control-inset)`, with the ink set absolute for the same reason the fill is — `color: var(--on-control)`, `caret-color: var(--on-control-accent)`, `::placeholder: var(--on-control-dim)`. The prototype's `::placeholder: neutral-500` stays **refused** (2.37:1, E-32 §4 / E-36 §8). The `border-color` hover state has nothing left to move and is deleted outright. Focus: `box-shadow: var(--shadow-control-inset), 0 0 0 2px var(--color-hot); outline: none`. ~~the hot ring is **inside** the well, not an outline beside it~~ — **a render says otherwise: `0 0 0 2px` carries no `inset`, so it paints the 2px band just *outside* the border box, pixel for pixel where `outline: 2px; outline-offset: 0` was.** What actually changes is that the marker is one declaration with the recess instead of two properties that can be switched off separately — which is also why §0.6 has to restate it for forced colours. `@layer components` beating `@layer base` is what lets the local `outline: none` win; drop only that line and the field draws both rings. **`color-scheme: light` is load-bearing, not tidiness:** a field has parts this sheet does not paint — `::-webkit-search-cancel-button`, the native `<select>` menu, an inner scrollbar — and the UA colours those from the *scheme*. `tokens.css` sets `color-scheme: dark` on the dark theme, which was true while this fill flipped with it and became a lie the moment the fill was pinned to cream: the native clear ✕ was drawn near-white on cream, measured at **1.14:1**. Declaring the scheme here says what the fill says — this surface is light in every theme — and fixes the ✕, the caret and the menu together. (`appearance:none` on the ✕ would have hidden the symptom by deleting the control.) Below 768 `min-height` = `var(--touch-min)` (NFR-CMP-002) |
+| `.radio` ⟳ | `inline-flex; align-items:center; gap:8px; font-size:14px; cursor:pointer`. `.dot` = `16×16; flex:0 0 16px; border-radius:50%; border:1.5px solid var(--control-border); box-sizing:border-box`. **Checked is ruling z (E-42 §1):** `border-color + background: var(--accent-fill)`, then `box-shadow: inset 0 0 0 1.5px var(--color-hot), inset 0 0 0 4px var(--color-bg)`. Not `--color-accent` for the body — it is 1.48:1 on the dark ground, so a checked radio would read as unchecked there; `--accent-fill` is 6.21. The hot ring is the *marker*, not the shape: hot alone is 2.83 on the dark ground and 2.28 on the dark surface, under the 3:1 floor. **The order of the two insets is load-bearing** — in a `box-shadow` list the *first* layer paints on top, so the 1.5px hot ring must precede the 4px `--color-bg` ring; put it second and the bg ring covers the outer 4px of the padding box and the marker silently disappears. The bg donut is 2.5px wide now, not 4px: hot took 1.5px of it, and that is intended. This is deliberately the same grammar as the checked `.seg-opt` — accent fill carries the shape, hot says *selected* |
+| `.seg` ⟳ | **A recessed track that the options sit in**, not a box with dividers. Shipped: `display:inline-flex; border: 0; border-radius: var(--radius-lg); background: var(--control-well); box-shadow: var(--shadow-control-inset); padding: 3px; gap: 2px`. The prototype's `8px` is not on the scale and was resolved to `--radius-lg` (6); its raw `--color-neutral-200` became the absolute `--control-well` (§1.5), because this track is cream on the viewer's dark bar too. **NOT ADOPTED (E-42 §8①): this row's own instruction that `overflow: hidden` "goes with `padding`+`gap`". `overflow: hidden` stays.** That reasoning was half the truth — the declaration was clipping *elevation*, not just corners. The selected option carries `--shadow-control-raised`, whose up-left lobe is `rgb(255 253 246 / 0.9)` reaching **11px** (3px offset + 8px blur) while the track holds it off by **3px** of padding: remove the clip and a near-white halo paints 8px out onto whatever the track sits on. On the viewer's bar a real Chrome render measured **3.29:1** — *above* the 3:1 floor, so not a soft lift but a bright edge, the "white outline around every card" `tokens.css` condemns in its own dark-elevation block. `soft-ui.css` could not have known: it is light-only, and on cream the halo is invisible. This is E-36 §4's warning arriving a second time — a light-only instruction moved into a scope the prototype never had |
+| `.seg-opt` ⟳ | `inline-flex; align-items:center; gap:6px; font-size:13px; cursor:pointer; white-space:nowrap; font-weight:600; border-radius:var(--radius-lg)` (= the prototype's 6px, which *is* a token value); no border at all, so **the `+ .seg-opt` left divider is deleted** — separation comes from the `gap` and the recessed track. Ink is `--on-control-dim`, the absolute: an unselected option sits on cream in every scope. Transition covers `background`, `color`, `box-shadow`. Checked → `background:var(--color-accent); color:var(--on-accent); box-shadow: var(--shadow-control-raised), inset 0 0 0 2px var(--color-hot)` — **`--shadow-control-raised`, not `--shadow-sm`**: this shadow falls on the cream track 3px away, not on the page, and the dark `--shadow-sm` leads with a `0 0 0 1px #3E5B57` hairline that is 6.19 washed against cream, i.e. a hard teal box instead of a lift. The hot ring stays for the reason E-32 §1 gave it — hot means *selected* — not as a crutch: on the cream well the accent fill is 6.41 washed, so the selection is legible without it. Hover (unchecked) is **colour only**, `--on-control-dim` → `--on-control-accent`; the product's `background: var(--hover-tint)` was **deleted**, because a theme-relative tint on a theme-invariant surface computed to **1.00:1** in the dark theme — the background hover did not happen at all (E-42 §8②). Focus: `outline: 2px solid var(--color-hot); outline-offset: -2px` via `:has(input:focus-visible)`. **NOT ADOPTED (E-42 §5, audit row ▪28): `padding: 5px 12px`.** The product keeps **`7px 12px`**, which is what this row itself instructed — "unless the 5px version is measured to still clear the target", and it has not been. Below 768 `min-height: var(--touch-min)` covers a phone either way, but 768–1023 is the tier where `--touch-min` is `0px` and the one most likely to be a tablet; a hit area is not shrunk on a guess |
+| `.card` ⟳ | `flex column; gap:var(--space-2); padding:var(--space-3); background:var(--color-surface); border-radius: var(--radius-lg); box-shadow: var(--shadow-md)`. **A card is lifted, per §0.2** — `--shadow-md` and not a control token, because a card sits on the page ground, which flips. ~~that component still refuses a shadow citing the retired §0.2 sentence~~ — **fixed: `Card.tsx`'s docstring now withdraws the quote and points at `base.css`.** Measured while fixing it (E-42 §7): **`web/src/components/ds/Card.tsx` is imported nowhere in `web/src`** — not by a screen, not by a test. Every surface that looks like a card builds its own box out of utilities (`useLibrary.ts`'s `LIST_CARD_CLASS`, `ContinueCard`, `NextVolumeCard`'s `elev-lg`). So giving `.card` its shadow satisfied the contract without changing a pixel on screen, and this component is the DS's unused reference implementation of it |
+| `.card-kicker` | `10px; ls .1em; uppercase; color:var(--accent-text)` — accent at 10px is paragraph-size, so it takes the readable accent, not `--color-accent` (§2.5) |
 | `.card-title` | Archivo 800 17px / 1.2 |
 | `.card-body` | `13px; opacity:.8; flex:1` |
-| `.card-meta` | `flex; gap:6px; 11px; color: text@50%` |
+| `.card-meta` | `flex; gap:6px; 11px; color: var(--ink-meta)` — text@75% light / @75% dark, 4.79 / 5.07. The DS's `@50%` was an AA fail at 11px |
 | `.elev-sm/md/lg` | `box-shadow: var(--shadow-sm/md/lg)` |
 | `.nav` | `flex; align-items:center; gap:var(--space-4); padding:var(--space-3) var(--space-4); border-bottom:2px solid var(--color-divider)` |
 | `.nav-brand` | Archivo 800 18px; `margin-right:auto` |
-| `.table` | `width:100%; border-collapse:collapse; font-size:14px`. `th` → `text-align:left; 11px; ls .08em; uppercase; color:text@60%; padding:var(--space-2); border-bottom:2px solid divider`. `td` → `padding:var(--space-2); border-bottom:1px solid divider`. `tbody tr:hover` → `text@4%` |
-| `.dialog-backdrop` | `position:fixed; inset:0; display:grid; place-items:center; padding:var(--space-4); background: neutral-900@50%` |
-| `.dialog` | `width:min(440px,100%); flex column; gap:var(--space-3); padding:var(--space-4); background:var(--color-surface); box-shadow:var(--shadow-lg); border-radius:0` |
+| `.table` | `width:100%; border-collapse:collapse; font-size:14px`. `th` → `text-align:left; 11px; font-weight:400; ls .08em; uppercase; color:var(--ink-th)` (text@76% / @72%, 4.92 / 5.22); `padding:var(--space-2); border-bottom:2px solid var(--color-divider)`. `td` → `padding:var(--space-2); border-bottom:1px solid var(--color-divider)`. `tbody tr:hover` → `var(--row-hover-table)` (text@4% light / @5% dark) |
+| `.dialog-backdrop` ⟳ | `position:fixed; inset:0; display:grid; place-items:center; padding:var(--space-4); background: var(--scrim-modal)` (text@50% light / black@60% dark, **not** neutral-900@50%); `z-index: var(--z-overlay)`; **and `backdrop-filter: blur(2px)` + the `-webkit-` spelling**, which is not decoration — without it the effect is simply absent in Safari. **NOT ADOPTED (E-42 §5, audit rows ▪32·33): the other half of the prototype's separation, `--scrim-modal` `.50 → .34`.** The prototype separates a dialog with blur *plus* a lighter wash; only the blur is taken. `--scrim-modal` is not the dialog's own token — `.drawer-backdrop` shares it — so thinning it would thin the drawer's scrim too, and the drawer has no blur to make up the difference (a full-viewport blur is the most expensive thing on a phone frame and was left off deliberately). **The prototype has no drawer at all** — it is desktop-only (§0.5) — so it never answered this question, and porting its alpha would change a screen it never saw. Moving the alpha requires deriving a dialog-only scrim token first |
+| `.dialog` | `width:min(440px,100%); flex column; gap:var(--space-3); padding:var(--space-4); background:var(--color-surface); box-shadow:var(--shadow-lg); border-radius: var(--radius-lg)` — the prototype's `8px` is not on the scale (E-32 §2) |
 | `.dialog-title` / `-body` / `-actions` | Archivo 800 20px / `14px opacity .85` / `flex; justify-content:flex-end; gap:var(--space-2); margin-top:var(--space-2)` |
 | `.hr` | `height:2px; border:0; margin:var(--space-4) 0; background:var(--color-divider)` |
-| `.grayscale` | `filter: grayscale(1) contrast(1.08)` |
+| `.ds-grayscale` | `filter: grayscale(1) contrast(1.08)`. **Renamed from the DS's `.grayscale`**: Tailwind ships a `grayscale` utility in a later layer, so the DS name would lose whenever both were applied |
 
 ### 2.4 App-shell CSS the prototype adds on top of the DS
 
@@ -1473,8 +1709,27 @@ Reference: [`command-palette-recent-1440.png`](./ui-shots/command-palette-recent
 `.dialog-backdrop` with `z-index:80; place-items:start center; padding-top:12vh`.
 `.dialog` `width:min(620px,100%); gap:0; padding:0`.
 
-- **Query input** — `.input` with `border:0; border-bottom:2px solid var(--rule-strong); min-height:52px;
-  font-size:17px; background:transparent`; placeholder `시리즈로 이동…`. Autofocus on open.
+- **Query input** — a bare `<input>`, deliberately **not** `.input` (E-42): `border-bottom:2px solid
+  var(--rule-strong); background:transparent; min-height:56px; font-size:17px; width:100%;
+  padding-left:46px` (a `Search` glyph is absolutely positioned in that gutter) `; padding-right:16px;
+  color:var(--ink); caret-color:var(--accent-text); placeholder:var(--ink-dim)`; placeholder
+  `시리즈로 이동…`. Focus is the base layer's hot `:focus-visible` outline pulled **inside** the field
+  with `outline-offset:-2px` — the field is the full width of a `p-0` panel with square corners, so any
+  outset ring is drawn past the dialog's 6px radius and hangs a square red corner off it. No `autoFocus`
+  attribute: `Dialog` focuses the first focusable itself, and React's `autoFocus` fires during commit,
+  i.e. *before* `Dialog` captures the opener, which would make the palette restore focus to its own
+  field on close.
+
+  > **This bullet used to open "Query input — `.input` with `border:0; border-bottom:2px …;
+  > background:transparent`".** That is the honest reading of what it was asking for — a big underlined
+  > search line, not a field — and `.input` is now the opposite of that: a cream well with an inset shadow
+  > and the absolute cream ink set (§2.3). It had shipped as `.input` plus four overrides that between
+  > them cancelled every declaration of the class, and one of them was a defect: a Tailwind `bg-*` lands
+  > after `@layer components`, so `bg-transparent` removed the well and left `--on-control` — the cream
+  > set's ink — on the dialog's own surface, **1.40:1** in the dark theme (E-42 §7). Spelling the field
+  > out is smaller than fighting a class whose every declaration has to be undone. `min-height` is 56px
+  > rather than 52 because that clears NFR-CMP-002's 44px at *every* width, which `.input` only did below
+  > 768 via a media query that no longer applies here.
 - **Results** — `max-height:52vh; overflow-y:auto`.
   - Group label `padding:12px 16px 4px; font-size:10px; letter-spacing:.12em; uppercase; color:var(--ink-dim)`
     → `최근 항목` when the query is empty, `검색 결과` otherwise.

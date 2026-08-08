@@ -103,12 +103,23 @@ export function ViewerBottomBar({
         <Button
           variant="secondary"
           aria-pressed={stripOpen}
-          // `--accent-text` for the pressed state, not `--color-accent-400`: the
-          // ramp does not flip and this bar is `--color-bg` inside
-          // `data-theme="dark"`, where accent-400 is 3.76 — 3.64 with the paper
-          // grain on the bar. `--accent-text` *is* the accent as ink and does
-          // flip: 6.22 dry, 5.97 washed.
-          className={cn('gap-[7px] border-neutral-700 text-sm', stripOpen && 'text-accent-text')}
+          // `--on-control-accent` for the pressed state, and no border at all.
+          //
+          // The ground moved (E-36 §4 / E-42): this label is no longer ink on
+          // the bar's `--color-bg`, it is ink on the button's own **cream**
+          // fill, which is absolute and stays cream inside `data-theme="dark"`.
+          // The old choice here — `--accent-text` over `--color-accent-400`,
+          // 6.22 vs 3.76 as ink on the dark bar — was decided against a ground
+          // this button no longer has: `--accent-text` is a pale teal in the dark
+          // theme and **1.65:1** on cream, so the pressed state would have
+          // erased its own label. `--on-control-accent` is the absolute accent
+          // ink for that fill — 7.06 washed — and is the same ink
+          // `.btn-secondary:hover` swaps to, so pressed and hovered agree.
+          //
+          // `border-neutral-700` is gone with it: `.btn` has `border: 0` now,
+          // and a colour utility for a border that does not exist is a hairline
+          // waiting to come back the day someone restores the border.
+          className={cn('gap-[7px] text-sm', stripOpen && 'text-on-control-accent')}
           onClick={onToggleStrip}
         >
           <PanelTop size={13} aria-hidden={true} />

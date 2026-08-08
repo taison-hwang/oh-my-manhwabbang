@@ -175,6 +175,131 @@
                         changing the retired brand red E-32 §1 pinned is a
                         ruling, not a side effect of adding a texture. */
 
+  /* ---- controls — absolute (E-36 §4, E-42 §2) --------------------------- */
+  /* A control is a *raised cream surface*, and it is the same cream in all
+     three scopes: app light, app dark, and the viewer. E-36 §4 pinned that for
+     the viewer; E-42 §2 promotes it to a global rule, because a custom property
+     cannot tell scopes apart — there is no honest way to write "cream in the
+     viewer, whatever the theme says elsewhere" without a `:root[data-theme]` vs
+     `[data-theme]:not(:root)` split, and that split is exactly what E-42 rules
+     out. So the control fills and the inks that sit on them join the family
+     above: `--on-accent` and `--on-hot` are foregrounds on a surface that never
+     flips, and a cream pill is the same shape of problem.
+
+     **These nine have no `[data-theme='dark']` counterpart, and adding one is
+     what would stop them being absolutes.** The moment a dark block re-declares
+     `--control-fill`, a control in the viewer is a deep-teal pill on a deep-teal
+     bar — a dark button on a dark ground, which is the exact defect E-36 §4 was
+     written to stop. The same goes for the inks: `--ink` on dark is #EAE3D4,
+     which measures **1.10** on this cream, and `--accent-text` on dark is
+     #9BC3C1, which measures **1.65**. Both letters simply vanish.
+
+     Provenance of the cream itself: 9th session measured the prototype's `뒤로`
+     button directly, and left the reading in two places (full text in E-36 §4).
+     `docs/ui-shots/README.md` §"The viewer's bars are not cream" — the
+     prototype's button interior is (235, 230, 220) while its bar is (37, 57, 55),
+     whereas in the product that same pixel is (37, 58, 55), i.e. the bar itself,
+     with a fill of `rgba(0,0,0,0)`; that file's own delta reads "컨트롤: 테두리
+     고스트 → 크림 채움" and calls it the largest difference in the set, at all
+     four widths. `design-v2/MEASURED.md` records the button as `bg #F3EEE3`,
+     `color rgb(13,52,54)` (= accent-800), `border-radius 7px`, and concludes
+     that the delta is not "the viewer gets brighter" — the ground stays dark and
+     what changes is the control going from a border ghost to a cream fill.
+
+     Every ratio below is worst-of-three-tones after the paper wash, quoted the
+     way the rest of this file quotes them: dry → **washed** (peak). They are
+     E-42 §3's table, re-derived here, not restated from it. */
+  --control-fill: #F3EEE3; /* The raised control surface — the light theme's
+                              `--color-surface` pinned to a literal so it cannot
+                              flip. `--on-control` on it is 11.62 → **11.02**
+                              (10.54). As a *fill* it also has to separate from
+                              the ground it sits on, and both grounds clear the
+                              3:1 non-text floor with room to spare: 10.28 →
+                              **9.80** (9.40) against the viewer ground #263B38,
+                              8.29 → **7.96** (7.69) against the dark surface
+                              #2F4A46. The accent fill reads on it at 6.94 →
+                              **6.69** (6.49) and the hot marker ring at 3.63 →
+                              **3.58** (3.54), over the 3:1 marker floor. */
+  --control-fill-hover: #F8F4EC; /* The prototype's hover cream. Until now it had
+                              no corresponding token at all — E-36 §4 counted it
+                              zero times across tokens.css and base.css, which is
+                              why `.btn-secondary:hover` had nothing to move to.
+                              `--on-control` on it is 12.26 → **11.62** (11.11),
+                              `--on-control-accent` 7.32 → **7.06** (6.84). */
+  --control-well: #EFE9DC; /* The *recessed* track: `.seg`. The value is the
+                              light theme's `--fill-subtle` (= neutral-200)
+                              pinned. Not written as `var(--fill-subtle)` —
+                              that flips to #2F4A46 on dark and the track would
+                              go teal inside a cream control; not written as
+                              `var(--color-neutral-200)` either, because the ramp
+                              step is a coincidence of value, and what this token
+                              *is* is "the light control track, held still".
+                              On it: `--on-control` 11.12 → **10.55** (10.09),
+                              `--on-control-dim` (the unselected seg option)
+                              5.83 → **5.65** (5.50), `--on-control-accent`
+                              (hover) 6.63 → **6.41** (6.22). The selected
+                              option's accent fill separates at 6.63 → **6.41**
+                              (6.22) and its hot ring at 3.47 → **3.43** (3.39),
+                              both over 3:1; the well itself separates from the
+                              viewer ground at 9.83 → **9.37** (9.00). */
+  --on-control: #0D3436; /* accent-800 pinned — the ink on cream, and the colour
+                            9th session read straight off the prototype's `뒤로`
+                            label. 11.62 → **11.02** (10.54) on the fill, 12.26 →
+                            **11.62** (11.11) on the hover cream, 11.12 →
+                            **10.55** (10.09) on the well. Absolute because the
+                            cream is: `--ink` would flip to #EAE3D4 here and land
+                            at 1.10. */
+  --on-control-accent: #17595B; /* The accent when it is ink *on cream* — the
+                            hovered `.btn-secondary` label, the viewer bottom
+                            bar's strip-open control. 7.32 → **7.06** (6.84) on
+                            the hover cream, 6.63 → **6.41** (6.22) on the well.
+                            `--accent-text` cannot do this job: it flips to
+                            accent-300 on dark, which is 1.65 on the cream. */
+  --on-control-dim: #5F5849; /* neutral-700 pinned — placeholders and unselected
+                            seg options, i.e. the ink that is *meant* to be quiet
+                            and therefore has the least room. 6.09 → **5.90**
+                            (5.75) on the fill, 5.83 → **5.65** (5.50) on the
+                            well. `--ink-dim` flips to #B9C8C4 on dark: 1.50. */
+
+  /* The rule this ruling establishes, and the sentence the next person needs:
+     **a shadow does not follow the theme, it follows the surface it falls on.**
+
+       | where the shadow falls                      | token                    |
+       |---------------------------------------------|--------------------------|
+       | the page ground / surface (flips)           | --shadow-sm/-md/-lg      |
+       | *inside* a cream control (absolute)         | --shadow-control-inset   |
+       | *on top of* a cream control (absolute)      | --shadow-control-raised  |
+       | *inside* an accent fill (absolute)          | --shadow-accent-inset    |
+
+     The middle two are the light set's values held still, and the last one is
+     the *dark* set's value held still — which is the whole point: the accent is
+     a dark teal in both themes, so a recess cut into it is a dark-ground recess
+     even when the app is light. Each is a literal copy, never `var(--shadow-…)`;
+     a reference resolves in the scope it is *used* in, so it would flip with the
+     theme, and not flipping is the only reason these three exist. */
+  --shadow-control-inset:
+    inset 3px 3px 7px rgb(150 128 96 / 0.28),
+    inset -3px -3px 7px rgb(255 253 246 / 0.85); /* = light --shadow-inset. The
+      recess cut into cream: `.input`, the `.seg` track, `.btn-secondary:active`.
+      Resolved as `var(--shadow-inset)` in the viewer it would become the dark
+      block's inset — black plus an accent-300 highlight — which is a recess for
+      a teal surface painted onto a cream one. */
+  --shadow-control-raised:
+    3px 3px 8px rgb(150 128 96 / 0.22),
+    -3px -3px 8px rgb(255 253 246 / 0.9); /* = light --shadow-sm. What sits *on*
+      cream: the selected `.seg-opt` lifted out of the cream track. On dark,
+      `--shadow-sm` leads with a `0 0 0 1px #3E5B57` hairline, and that hairline
+      is 6.39 → **6.19** (6.01) against this cream — i.e. not a soft lift at all
+      but a hard teal box drawn around the option. */
+  --shadow-accent-inset:
+    inset 3px 3px 7px rgb(0 0 0 / 0.5),
+    inset -3px -3px 7px rgb(155 195 193 / 0.12); /* = **dark** --shadow-inset, on
+      purpose. The pressed state of an accent-filled control (`.btn-primary:active`).
+      The light inset's up-left lobe is rgb(255 253 246 / 0.85); on a #17595B fill
+      that is a cream smear across the button, not a recess. The accent is the
+      one fill in this palette that is dark in the light theme, so it takes the
+      dark theme's elevation — the table above, read literally. */
+
   /* ---- type ------------------------------------------------------------ */
   /* Archivo is vendored latin-only (C-14 / decisions E-7); it has no Hangul
      coverage, so the Korean fallback stack is explicit and ordered. */

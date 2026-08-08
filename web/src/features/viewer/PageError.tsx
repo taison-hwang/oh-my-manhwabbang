@@ -40,11 +40,14 @@ export function PageError({ name, cause, onRetry }: PageErrorProps) {
         이미지 로드 실패
       </span>
       <span className="text-sm text-ink-faint">{detail}</span>
-      <Button
-        variant="secondary"
-        className="mt-1 border-neutral-700 text-sm text-ink"
-        onClick={onRetry}
-      >
+      {/* Neither a border nor an ink override (E-36 §5.3 / E-42). The retry
+          button is a `.btn-secondary`, i.e. a raised **cream** pill in every
+          scope, and this panel renders inside the viewer's `data-theme="dark"`:
+          there `--color-text` is itself cream, so `text-ink` on the new
+          fill is 1.10:1 — the label would be gone. The class's own
+          `--on-control` (11.02 washed) is the ink that belongs on it, and the
+          border died with `.btn { border: 0 }`. */}
+      <Button variant="secondary" className="mt-1 text-sm" onClick={onRetry}>
         다시 시도
       </Button>
     </div>

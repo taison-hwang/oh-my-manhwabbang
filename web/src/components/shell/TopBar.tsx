@@ -102,11 +102,25 @@ export function TopBar({
       )}
 
       {/* No trailing spacer: the field itself is the elastic element now, so the
-          controls sit against it instead of against the right edge. */}
+          controls sit against it instead of against the right edge.
+
+          ## Both decorations are *inside* the field, so both take cream ink
+
+          The icon and the ⌘K hint are siblings positioned over the `.input`,
+          not children of it, so nothing about the class reaches them — but the
+          reader sees them on the field's surface, and E-42 makes that surface
+          an absolute cream in every theme. `--ink-dim` is a pale teal in the dark
+          theme, i.e. **1.50:1** on that cream: the two marks would vanish in
+          exactly the theme where the field looks most like a control.
+          `--on-control-dim` is the absolute dim ink for it — 5.90 washed on the
+          fill — and it is the same ink the field's own placeholder uses, which
+          is what these two should agree with. The chip below takes the *full*
+          absolute ink instead, for a reason measured on the render rather than
+          on the tokens: see its own note. */}
       <div className="relative min-w-[220px] flex-[1_1_260px] md:max-w-[400px]">
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute left-[11px] top-1/2 -translate-y-1/2 text-ink-dim"
+          className="pointer-events-none absolute left-[11px] top-1/2 -translate-y-1/2 text-on-control-dim"
         >
           <Search size={15} />
         </span>
@@ -121,9 +135,30 @@ export function TopBar({
           aria-label="시리즈 검색 (초성 가능)"
           className="pl-[34px] pr-[52px]"
         />
+        {/* The hint is a **recessed chip**, not an outlined one. `border-rule`
+            was a theme-relative hairline drawn on a fill that no longer flips
+            with it: barely visible in light, a hard dark line in dark, so the
+            same chip read as two different things. `--control-well` is the
+            recess the segmented track uses, and the well is only 1.04:1 against
+            the fill — the *shadow* is what makes it a dent, so the inset comes
+            with the fill or the chip is invisible. Both tokens are absolute, so
+            this now looks identical in both themes, which a hint sitting inside
+            an absolute control should.
+
+            **The ink is `--on-control`, not the dim one, and the reason is that
+            the token pair was the wrong thing to measure.** `--shadow-control-
+            inset` is sized for a 36px control: 3px offset plus 7px blur, so it
+            eats 10px in from each edge. This chip is 14.8px tall, so the lobes
+            meet in the middle and no pixel of it is actually `--control-well` —
+            the top-left is ochre, the bottom-right near-white. Against the real
+            top-left pixels the dim ink measures **4.55 washed and 4.44 at peak
+            grain**, i.e. under AA at 11px, while the declared pair reads 5.65
+            and looks fine. A shadow moved the floor and a pair scanner cannot
+            see shadows. The full ink clears it everywhere on the gradient
+            (10.4 at the darkest pixel), and a keycap is allowed to be a keycap. */}
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute right-[9px] top-1/2 -translate-y-1/2 border border-rule px-[5px] text-xs tracking-[.04em] text-ink-dim"
+          className="pointer-events-none absolute right-[9px] top-1/2 -translate-y-1/2 rounded-sm bg-control-well px-[5px] text-xs tracking-[.04em] text-on-control shadow-control-inset"
         >
           {commandKeyHint()}
         </span>

@@ -176,9 +176,18 @@ export function SeriesCard({
           >
             {started ? '이어 읽기' : '읽기 시작'}
           </Button>
+          {/* E-42: a hand-rolled `bg-bg text-ink` pill used to stand here — a
+              `plain` button painted to look like a secondary one, from a time
+              when `.btn-secondary` was a transparent outline and could not be
+              read over cover art. `.btn-secondary` is now an opaque cream pill
+              (`--control-fill`, ink at 11.02), so the hand-painted pair is both
+              redundant and the one control in the product that would still look
+              like the retired skin — beside a sibling that is already an accent
+              pill. The variant carries it now. */}
           <Button
+            variant="secondary"
             block
-            className="pointer-events-none m-0 bg-bg text-sm text-ink group-focus-within:pointer-events-auto group-hover:pointer-events-auto"
+            className="pointer-events-none m-0 text-sm group-focus-within:pointer-events-auto group-hover:pointer-events-auto"
             onClick={onOpen}
           >
             상세

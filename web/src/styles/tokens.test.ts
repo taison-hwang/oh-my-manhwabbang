@@ -452,6 +452,35 @@ describe('tokens.css — dark ramp (ui-spec §1.4, NFR-CMP-003, E-32 §3)', () =
     }
   })
 
+  /**
+   * E-42's nine, and the reason they are enumerated *here*.
+   *
+   * E-36 §3.7 asks that a newly derived semantic token exist in both blocks.
+   * These nine are the stated exception, and the exception is load-bearing:
+   * "absolute" means **there is no dark counterpart**, so the moment a dark
+   * block re-declares `--control-fill`, a control in the viewer is a deep-teal
+   * pill on a deep-teal bar — the exact defect E-36 §4 was written to stop —
+   * and every other check in this file stays green while it happens.
+   *
+   * Until this list existed the array below enumerated only the older
+   * absolutes, so `dark.has(token) === false` was asserted for `--on-accent` and
+   * `--on-hot` and for nothing E-42 added. `soft-ui.test.ts` holds the other
+   * half of the same contract: that each frozen value is *the light theme's
+   * value, unchanged*, which is what makes freezing it honest rather than
+   * arbitrary.
+   */
+  const CONTROL_ABSOLUTES = [
+    '--control-fill',
+    '--control-fill-hover',
+    '--control-well',
+    '--on-control',
+    '--on-control-accent',
+    '--on-control-dim',
+    '--shadow-control-inset',
+    '--shadow-control-raised',
+    '--shadow-accent-inset',
+  ]
+
   it('leaves the absolutes alone — they paint on a ground that never flips', () => {
     // The viewer ground is #263B38 in both app themes, and the accent and the
     // hot marker are theme-invariant, so their foregrounds are too. Flipping
@@ -465,12 +494,34 @@ describe('tokens.css — dark ramp (ui-spec §1.4, NFR-CMP-003, E-32 §3)', () =
       // is dark in both app themes, so a tone that flipped with the app would
       // repaint the viewer's texture when the library's theme changed.
       '--paper-tone-viewer',
+      // E-42: a cream control is the same cream in all three scopes — app light,
+      // app dark, viewer — so its fills and the three inks that sit on them join
+      // the family, as do the three shadows, which follow the surface they fall
+      // on rather than the theme.
+      ...CONTROL_ABSOLUTES,
     ]) {
       expect(light.has(token), `${token} missing from the light block`).toBe(true)
       expect(dark.has(token), `${token} must not flip with the theme`).toBe(false)
     }
     expect(light.get('--scrim-volume-end')).toBe('rgb(38 59 56 / 0.92)')
     expect(light.get('--scrim-broken')).toBe('rgb(8 35 37 / 0.82)') // accent-900 @ 82 %
+  })
+
+  it('counts nine control absolutes — not eight, and not a family that grew', () => {
+    // The list above can only fail on a token it *names*. This is the assertion
+    // that fires when a tenth cream token arrives with no ruling behind it, or
+    // when one of the nine is renamed and silently drops out of the check above:
+    // it reads the block rather than the list.
+    const declared = [...light.keys()].filter(
+      (k) => /^--(control|on-control)/.test(k) || /^--shadow-(control|accent)-/.test(k),
+    )
+    // `--control-border` and `--control-border-hover` are deliberately *not* in
+    // this family. They are the retired bordered-box tokens, they still flip,
+    // and the radio dot's ring is the one consumer E-36 §3.3 leaves them.
+    expect(declared.sort()).toEqual(
+      [...CONTROL_ABSOLUTES, '--control-border', '--control-border-hover'].sort(),
+    )
+    expect(dark.has('--control-border')).toBe(true)
   })
 
   it('re-derives the accent tints off the new ramp, not the retired red', () => {
@@ -828,7 +879,7 @@ const COLOUR_UTILITIES = ((): Map<string, string> => {
  * chooses *instead of* the page's own, and therefore the ones whose foreground
  * nothing else has already checked.
  */
-const FILL = /^(bg|surface|accent|accent-2|accent-hover|accent-press|accent-fill|ink|hot)$|^(accent|accent-2|neutral)-\d00$/
+const FILL = /^(bg|surface|accent|accent-2|accent-hover|accent-press|accent-fill|ink|hot|control-fill|control-fill-hover|control-well)$|^(accent|accent-2|neutral)-\d00$/
 
 // `bg` and `surface` are in that list, and used not to be. The argument for
 // leaving them out was that `INK_TOKENS` already measures every ink against both
@@ -838,6 +889,48 @@ const FILL = /^(bg|surface|accent|accent-2|accent-hover|accent-press|accent-fill
 // ground, and the ramps do not flip: 11.62:1 on the cream surface, **1.40:1** on
 // the dark one. The pair was skipped entirely, so the scanner was green about a
 // badge that is a smudge in half the product.
+//
+// The three cream control fills joined for the same reason one round later, and
+// it is the sharper case: E-42 made `--control-fill` / `--control-fill-hover` /
+// `--control-well` **absolutes**, so a component painting `bg-control-fill
+// text-on-control` is putting an ink on a ground that does not flip — the one
+// configuration where "the theme will sort it out" is false by construction.
+// Every such pair was skipped whole, i.e. the pairs the ruling had just created
+// were the pairs outside the measurement. `TopBar`'s ⌘K hint chip
+// (`bg-control-well … text-on-control`) is the one this widening picked up.
+//
+// **And the number this comment first carried for it was wrong, in the direction
+// that matters.** It read "passes at 5.65 washed", which is `--on-control-dim` on
+// `--control-well` *as the two tokens are declared*. The chip does not render
+// that pair. It is 14.8px tall and carries `shadow-control-inset`, a recess
+// sized for a 36px control: the two 3px/7px lobes reach ~10px in from each edge,
+// so **no pixel of the chip is the declared `--control-well`** — every one of
+// them is the shadow over it. Measured on the actual top-left pixel, the dim ink
+// came out **4.55 washed / 4.44 peak**, i.e. under the AA floor for 11px text,
+// while this scanner called it 5.65 and passed. The ink is `--on-control` now.
+//
+// ## The limitation that produced that false pass, stated
+//
+// **This scanner cannot see `box-shadow`.** It pairs a fill token with an ink
+// token and measures the two declared colours. When a shadow — inset or
+// otherwise — repaints the ground the ink actually sits on, the floor moves and
+// nothing here knows. That is not a narrow case: every cream control in the
+// product carries `--shadow-control-inset` or `--shadow-control-raised` by
+// construction after E-42, so the *declared* fill is the true ground only where
+// the element is large enough for the lobes not to meet in the middle. The
+// smaller the box, the wronger this scan is — and small boxes are exactly where
+// 11px text lives.
+//
+// A green pair here therefore means "the two declared tokens clear AA", not "the
+// reader can read it". The second question needs a real render, which is the e2e
+// tier; a reviewer measuring the top-left pixel is what caught it this time.
+//
+// What it also does **not** pick up is the failure E-42 §7 found: an ink utility
+// on an element that is merely *over* a cream control — a sibling span
+// absolutely positioned on top of an `.input`, or a `text-…` override on a
+// `.btn-secondary` whose fill comes from base.css and not from the class list.
+// Neither names a fill, so blind spot 2 in the header above swallows both. That
+// is why E-42 §7 says to re-count by hand rather than trust a list.
 
 /**
  * The dark theme **as the cascade actually resolves it**, not as the dark block
@@ -941,9 +1034,35 @@ describe('the pairs components actually paint (E-32 §1)', () => {
     // so the scan skips the pair and passes. `bg-accent text-on-accent` was in
     // that blind spot, i.e. the fix for this ruling was the thing going
     // unchecked.
-    for (const token of ['--on-accent', '--on-hot', '--color-hot', '--color-accent-800']) {
+    for (const token of [
+      '--on-accent',
+      '--on-hot',
+      '--color-hot',
+      '--color-accent-800',
+      // E-42's cream set is the same shape and arrived later: declared once, in
+      // the base block, absolute *by design*, and therefore invisible to `dark`.
+      // The viewer paints all six inside `[data-theme='dark']` — it is the scope
+      // the ruling was written for — so reading `dark` alone would skip exactly
+      // the pairs the ruling created.
+      '--control-fill',
+      '--control-fill-hover',
+      '--control-well',
+      '--on-control',
+      '--on-control-accent',
+      '--on-control-dim',
+    ]) {
       expect(dark.has(token), `${token} is declared in the dark block after all`).toBe(false)
       expect(opaque(DARK_CASCADE, token), `${token} unresolvable in a dark scope`).not.toBeNull()
+    }
+    // The three frozen shadows cascade the same way but are not colours, so
+    // `opaque` cannot speak for them: they are checked for reachability only.
+    for (const token of [
+      '--shadow-control-inset',
+      '--shadow-control-raised',
+      '--shadow-accent-inset',
+    ]) {
+      expect(dark.has(token), `${token} is declared in the dark block after all`).toBe(false)
+      expect(DARK_CASCADE.get(token), `${token} unresolvable in a dark scope`).toBeDefined()
     }
   })
 
@@ -961,7 +1080,15 @@ describe('the pairs components actually paint (E-32 §1)', () => {
     // before `bg`/`surface` joined `FILL`, and one of them was a real defect.
     expect(seen).toContain(join('components', 'ds', 'FormatBadge.tsx') + ' bg-surface text-accent-text')
     expect(seen).toContain(join('features', 'viewer', 'ViewerPage.tsx') + ' bg-bg text-neutral-400')
-    expect(PAINTED.length).toBeGreaterThanOrEqual(6)
+    // The one the cream fills bought (E-42). It is the ⌘K hint chip on the
+    // library's search field: an absolute ground with an absolute ink, which is
+    // the pairing that has no theme to fall back on if it is wrong. The ink is
+    // `--on-control` and not the dim one — see the note above the `FILL` regex
+    // for why the dim ink measured a pass here and failed in a browser.
+    expect(seen).toContain(
+      join('components', 'shell', 'TopBar.tsx') + ' bg-control-well text-on-control',
+    )
+    expect(PAINTED.length).toBeGreaterThanOrEqual(7)
   })
 
   it('reads at AA on every solid fill it paints — under the paper grain', () => {
@@ -990,6 +1117,145 @@ describe('the pairs components actually paint (E-32 §1)', () => {
     // `--on-accent` and `--on-hot` exist for exactly this: an accent or hot fill
     // takes its own ink, never the page ground.
     expect(offenders).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Colour utilities on a cream control
+//
+// **The mechanism, in one sentence E-42 §7 wrote:** `base.css` lives in
+// `@layer components` and Tailwind's utilities come after it, so a utility beats
+// the component class **every time**. Changing a control's fill is therefore not
+// a matter of editing that class — it is a matter of re-counting everything
+// stacked on top of it.
+//
+// E-36 §5.3 listed five overrides to remove. There were seven, and three of the
+// real ones were inks rather than borders: `text-accent-text` at 1.65 on cream,
+// `text-ink` at 1.10, `bg-bg` overwriting the fill outright. Every one had been
+// correct against the ground the control *used to* have.
+//
+// **Nothing stopped any of them coming back.** `soft-ui.test.ts` deliberately
+// reads only `base.css`, and the scanner above only sees a class list that names
+// a fill *and* an ink together — a `text-…` on a `<Button variant="secondary">`
+// names neither, because the fill arrives from the stylesheet. So the seven were
+// deleted by hand and nothing was watching the hole.
+//
+// This closes it from the other end: find the **call sites** of the cream
+// controls and refuse a colour utility on them at all. Not "refuse an unreadable
+// one" — refuse the category. A control whose fill is frozen has one correct ink
+// set (`--on-control`, `--on-control-accent`, `--on-control-dim`) and `base.css`
+// already applies it; a utility here is by construction either redundant or a
+// regression, and telling the two apart needs a measurement nobody will redo.
+//
+// ## Scope
+//
+//  * Call sites are found by marker: `variant="secondary"`, `<Seg`, `<Input`,
+//    and a `className` naming the `input` / `seg-opt` classes directly.
+//  * The element's **opening tag** is read — from its `<` to the `>` that closes
+//    it at brace depth zero — with comments stripped first. base.css taught that
+//    lesson and so did `ds.test.tsx`: prose in this repo quotes class names in
+//    backticks, and `ViewerBottomBar`'s comment names `border-neutral-700` four
+//    lines above the code that no longer has it.
+//  * A "colour utility" is `text-` / `bg-` / `border-` whose suffix is in
+//    `COLOUR_UTILITIES`, i.e. resolved from `tailwind.config.ts`. `text-sm`,
+//    `border-y-2` and `bg-transparent` are not colours and do not match. An
+//    edge-direction segment is stripped, so `border-l-neutral-700` — the exact
+//    string E-36 §5.3 removed — is caught.
+//
+// ## What it cannot see
+//
+// The failure E-42 §7 found *last*: an ink on a **sibling** absolutely
+// positioned over a control (`TopBar`'s search icon and its ⌘K chip sit on the
+// `.input`, not in it). Those elements are not call sites of anything and no
+// class-list scan reaches them. That is a structural limit, it is the reason
+// E-42 §7 says to re-count by hand, and it is not closed here.
+// ---------------------------------------------------------------------------
+
+/**
+ * The colour utilities allowed to stand on a cream control, with the reason.
+ *
+ * Exact-match, not a floor: an entry disappearing is as much a regression as one
+ * appearing, because each of these is doing a job `base.css` cannot do from a
+ * class alone.
+ */
+const CREAM_CONTROL_UTILITIES = [
+  // The viewer's thumbnail-strip toggle, pressed state. `.btn-secondary` has a
+  // *hover* ink swap in the sheet but no `[aria-pressed]` state, so the pressed
+  // ink has to arrive from the call site. It is `--on-control-accent`, the
+  // absolute accent ink for this fill (7.06 washed) and the same ink the hover
+  // swaps to, so pressed and hovered agree. The utility that used to be here was
+  // `text-accent-text`, which is 1.65 on cream in the dark theme — E-42 §7's
+  // first measured casualty, i.e. this seat is exactly where the defect was.
+  'features/viewer/ViewerBottomBar.tsx | text-on-control-accent',
+]
+
+describe('a cream control carries no colour utility (E-42 §7)', () => {
+  /** The opening tag containing `at`, comments stripped. */
+  const openingTag = (source: string, at: number): string => {
+    const start = source.lastIndexOf('<', at)
+    let depth = 0
+    let quote: string | null = null
+    let end = start
+    for (; end < source.length; end++) {
+      const ch = source[end]
+      if (quote !== null) {
+        if (ch === quote) quote = null
+        continue
+      }
+      if (ch === '"' || ch === "'" || ch === '`') quote = ch
+      else if (ch === '{') depth += 1
+      else if (ch === '}') depth -= 1
+      else if (ch === '>' && depth === 0) break
+    }
+    return source
+      .slice(start, end + 1)
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/\/\/[^\n]*/g, ' ')
+  }
+
+  /** Every marker that means "this element is painted by a cream control class". */
+  const MARKERS = [/variant="secondary"/g, /<Seg\b/g, /<Input\b/g, /className="input[\s"]/g]
+
+  const sites = COMPONENTS.flatMap((file) => {
+    const source = read(join('src', file))
+    return MARKERS.flatMap((marker) =>
+      [...source.matchAll(marker)].map((m) => ({ file, tag: openingTag(source, m.index) })),
+    )
+  })
+
+  const found = [
+    ...new Set(
+      sites.flatMap(({ file, tag }) => {
+        const out: string[] = []
+        for (const literal of tag.matchAll(/'([^'\\\n]*)'|"([^"\\\n]*)"|`([^`\\\n$]*)`/g)) {
+          const list = literal[1] ?? literal[2] ?? literal[3] ?? ''
+          for (const u of list.matchAll(
+            /(?:^|\s)(?:[\w[\]&_.+:-]*:)?(text|bg|border)-((?:[trblxy]-|top-|bottom-|left-|right-)?[a-z0-9-]+)(?![\w/-])/g,
+          )) {
+            const suffix = (u[2] ?? '').replace(/^(?:[trblxy]|top|bottom|left|right)-/, '')
+            if (COLOUR_UTILITIES.has(suffix)) out.push(`${file} | ${u[1] ?? ''}-${suffix}`)
+          }
+        }
+        return out
+      }),
+    ),
+  ].sort()
+
+  it('found the call sites it is meant to police', () => {
+    // The positive control. An empty `sites` — a renamed variant, a `<Seg>` that
+    // became `<Segmented>`, a tag scanner that stopped finding `>` — makes the
+    // assertion below compare `[]` to a whitelist and fail loudly rather than
+    // quietly, but only because the whitelist is non-empty today. This is what
+    // holds when it is not.
+    expect(sites.length).toBeGreaterThanOrEqual(20)
+    expect(new Set(sites.map((s) => s.file)).size).toBeGreaterThanOrEqual(10)
+    // And the tag reader must actually reach the class list, not stop at the
+    // first `>` inside a `{…}` expression.
+    expect(sites.some((s) => s.tag.includes('className'))).toBe(true)
+  })
+
+  it('paints no colour utility onto a control whose fill is frozen', () => {
+    expect(found).toEqual([...CREAM_CONTROL_UTILITIES].sort())
   })
 })
 

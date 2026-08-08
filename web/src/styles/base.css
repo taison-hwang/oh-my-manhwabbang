@@ -5,9 +5,17 @@
  * gives the app-shell CSS the prototype adds on top. Both are reproduced here
  * as real classes rather than re-derived as Tailwind utility strings in TSX,
  * for three reasons: the geometry is full of values that are not on any scale
- * (7px, 14.4px, 66px, 1.5px), sibling selectors like `.seg-opt + .seg-opt`
- * have no utility equivalent, and keeping the paint here is what makes
- * "zero hardcoded hex in a component" checkable by grep.
+ * (7px, 14.4px, 66px, 1.5px), the layered box-shadow stacks a soft-UI control
+ * is made of — a raised lobe *and* an inset marker ring in one declaration,
+ * where the order of the layers decides which one is visible — have no utility
+ * equivalent, and keeping the paint here is what makes "zero hardcoded hex in a
+ * component" checkable by grep.
+ *
+ * (That second reason used to read "sibling selectors like the segmented
+ * control's `+` divider". E-36 deleted that divider — separation now comes from
+ * the recessed track and the gap — so the reason is restated rather than left
+ * pointing at a rule that is gone. A stale rationale outliving the rule it
+ * justified is the exact failure E-36 §2 diagnosed.)
  *
  * Not one colour literal appears below — every value comes from tokens.css.
  */
@@ -433,6 +441,29 @@
 
 @layer components {
   /* ---------------------------------------------------------------- buttons */
+  /* E-36 §3 / E-42: a control is a raised surface, not a bordered box. Three
+     things about this rule carry a ruling rather than a preference.
+
+     **`border: 0` (E-36 table row 2) is adopted.** The transparent 1px border
+     was load-bearing only if the <768 44px hit target came out of it. It does
+     not: the media query at the foot of this file gives `.btn` both
+     `min-height` and `min-width: var(--touch-min)`, and with Tailwind
+     preflight's `box-sizing: border-box` that 44px is the *outer* box either
+     way. Dropping the border shrinks a desktop button by 2px per axis and
+     changes nothing a touch rule depends on. It also makes the viewer's
+     `border-neutral-700` colour overrides inert, which is what E-36 §5.3 wants.
+
+     **`font-weight` stays 800 — table row 3 is NOT adopted.** The prototype
+     says 600. ui-spec §2.3's `.btn` row is one of the rows E-36 did *not* mark
+     ⟳, so it is still the contract, and it pins 800; button labels are set in
+     the heading family and E-32 kept them at the heading weight. Taking the
+     prototype's 600 here would be adopting an unamended row by accident.
+
+     **The transition covers four properties, not one.** `box-shadow`,
+     `color` and `transform` are all animated now because the variants below
+     move all three: a raised pill presses into an inset on `:active`, and the
+     cream secondary swaps its ink on hover. A `background`-only transition
+     would snap the other three. */
   .btn {
     display: inline-flex;
     align-items: center;
@@ -444,12 +475,16 @@
     line-height: 1.2;
     color: var(--color-text);
     background: transparent;
-    border: 1px solid transparent;
+    border: 0;
     /* var(--space-2) calc(var(--space-3) * 1.2) => 8px 14.4px */
     padding: var(--space-2) calc(var(--space-3) * 1.2);
     border-radius: var(--radius-pill);
     cursor: pointer;
-    transition: background var(--hover-fade) ease;
+    transition:
+      background var(--hover-fade) ease,
+      box-shadow var(--hover-fade) ease,
+      color var(--hover-fade) ease,
+      transform var(--hover-fade) ease;
   }
 
   .btn svg {
@@ -467,31 +502,65 @@
   .btn-primary {
     background: var(--color-accent);
     color: var(--on-accent);
+    box-shadow: var(--shadow-sm);
   }
   .btn-primary:hover:not(:disabled) {
     background: var(--accent-hover);
   }
+  /* `--shadow-accent-inset` and not `--shadow-inset`: E-42's rule is that a
+     shadow follows the surface it falls on, not the theme. This one falls
+     inside the accent fill, which is the same deep teal in both themes, so the
+     press has to be the dark-ground inset in both — the light `--shadow-inset`
+     carries a cream up-left lobe that would draw a pale outline inside a teal
+     pill. `translateY(1px)` is the other half of a press (E-36 §3.4). */
   .btn-primary:active:not(:disabled) {
     background: var(--accent-press);
+    box-shadow: var(--shadow-accent-inset);
+    transform: translateY(1px);
   }
 
+  /* E-36 §4 / E-42: a raised **cream** pill in every scope — light, dark and
+     the viewer — because the fill is an absolute, not a theme-relative
+     surface. `--color-surface` would have made this a deep-teal pill on the
+     viewer's deep-teal bar (the divergence `docs/ui-shots/README.md` measured
+     as the largest in the set). The ink is absolute for the same reason: the
+     theme-relative `--color-text` is near-white on dark and would vanish here.
+     `--shadow-sm` — not the raised-control token — because this pill sits on
+     the page ground, and the ground *does* flip. */
   .btn-secondary {
-    border-color: var(--control-border);
+    background: var(--control-fill);
+    color: var(--on-control);
+    box-shadow: var(--shadow-sm);
   }
   .btn-secondary:hover:not(:disabled) {
-    background: var(--hover-tint);
+    background: var(--control-fill-hover);
+    color: var(--on-control-accent);
   }
+  /* The old `background: var(--press-tint)` is gone rather than kept alongside
+     the inset. It is a translucent tint that *replaces* the fill, so on a cream
+     pill it would drop the cream for the duration of the press and let the bar
+     behind show through — the one thing the absolute fill exists to prevent.
+     The prototype presses with elevation alone and so does this. */
   .btn-secondary:active:not(:disabled) {
-    background: var(--press-tint);
+    box-shadow: var(--shadow-control-inset);
+    transform: translateY(1px);
   }
 
+  /* `--ink-dim`, not `--accent-text`: a ghost has no fill, so it is ink on the
+     page ground and takes the neutral ink that flips with the theme. The accent
+     moves to the hover, where the prototype puts it. */
   .btn-ghost {
-    color: var(--accent-text);
+    color: var(--ink-dim);
     padding-inline: var(--space-1);
   }
   .btn-ghost:hover:not(:disabled) {
     background: var(--ghost-hover);
+    color: var(--accent-text);
   }
+  /* No inset and no `translateY` here, unlike the two filled variants: E-36 §3.4
+     presses *surfaces*, and a ghost has none. An inset shadow needs a fill to be
+     cut into; drawn on the page it is a smudge on the ground rather than a
+     control being pushed in. The press is the deeper wash instead. */
   .btn-ghost:active:not(:disabled) {
     background: var(--ghost-press);
   }
@@ -512,14 +581,19 @@
   }
 
   /* ------------------------------------------------------------------- tags */
+  /* `border: 0` costs nothing here — the only consumer of the transparent
+     border was `.tag-outline`, and that variant becomes a filled chip below.
+     The corner stays `--radius-sm`: the prototype's literal 5px is not a value
+     the token scale produces (ui-spec §2.3). */
   .tag {
     display: inline-flex;
     align-items: center;
     font-size: 11px;
     letter-spacing: 0.02em;
     padding: 3px 10px;
+    font-weight: 600;
     border-radius: var(--radius-sm);
-    border: 1px solid transparent;
+    border: 0;
   }
   .tag-accent {
     background: var(--color-accent-100);
@@ -529,13 +603,27 @@
     background: var(--color-accent-2-100);
     color: var(--color-accent-2-800);
   }
+  /* NOT ADOPTED (E-36 table row 18, the ramp pair only): the prototype paints
+     this chip neutral-700 on neutral-200 and this class keeps 100/800. What was
+     missing from row 18 is the *shadow*, and ui-spec §2.3 says exactly that
+     ("it is the shadow that is missing today, not the fill"). The shipped pair
+     is measured — 10.68:1, with a dark counterpart below that swaps its ends —
+     and the prototype's pair is 200/700, a lower-contrast pair that would need
+     two new semantic tokens and a second dark counterpart to buy nothing. A
+     measured pair is not traded for an unmeasured one. */
   .tag-neutral {
     background: var(--color-neutral-100);
     color: var(--color-neutral-800);
+    box-shadow: var(--shadow-sm);
   }
+  /* The name is historical: this is a filled, lifted chip now, not an outline.
+     `--color-surface` and not the cream control fill — a tag is a label printed
+     on the page, not a control, so its ground is the page's surface and flips
+     with the theme like the other three chips above it. */
   .tag-outline {
-    border-color: var(--accent-text);
+    background: var(--color-surface);
     color: var(--accent-text);
+    box-shadow: var(--shadow-sm);
   }
 
   /* The three filled tags above are painted from raw ramp steps, and the ramps
@@ -572,27 +660,69 @@
     color: var(--ink-label);
   }
 
+  /* E-36 §3.1: a recessed well, not a bordered box. The geometry is unchanged;
+     the boundary is what moves — `border: 0` plus an inset shadow. The fill and
+     all three inks are the absolute cream set for the reason in `.btn-secondary`
+     above: a field on the viewer's dark bar is cream in the prototype, and a
+     theme-relative ink on a fill that does not flip is an ink that disappears.
+
+     `:hover` is deleted outright rather than restyled — it only ever moved
+     `border-color`, and there is no border left for it to move.
+
+     The placeholder takes `--on-control-dim` and not `--ink-dim`: `--ink-dim`
+     is a pale teal in the dark theme and lands at 1.50:1 on this cream.
+     (The prototype's neutral-500 stays refused — 2.37:1, E-36 §8.)
+
+     **`color-scheme: light` is load-bearing, not tidiness.** A field has parts
+     this stylesheet does not paint — `::-webkit-search-cancel-button`, the
+     native `<select>` menu, an inner scrollbar — and the UA colours those from
+     the *scheme*, not from `color`. `tokens.css` sets `color-scheme: dark` on
+     the dark theme, which was right while this fill flipped with it and became
+     a lie the moment the fill was pinned to cream: the clear ✕ was drawn
+     near-white on cream, measured at **1.14:1**. Declaring the scheme here says
+     the same thing the fill says — this surface is light in every theme — and
+     fixes the ✕, the caret and the menu together. `appearance: none` on the ✕
+     would have hidden the symptom by deleting the control. */
   .input {
     width: 100%;
     min-height: 36px;
     padding: 6px 10px;
     font-size: 14px;
     font-family: inherit;
-    color: var(--color-text);
-    caret-color: var(--accent-text);
-    background: var(--color-surface);
-    border: 1px solid var(--control-border);
+    color: var(--on-control);
+    caret-color: var(--on-control-accent);
+    background: var(--control-fill);
+    color-scheme: light;
+    border: 0;
     border-radius: var(--radius-md);
+    box-shadow: var(--shadow-control-inset);
   }
-  .input:hover {
-    border-color: var(--control-border-hover);
-  }
+  /* The focus marker becomes part of the well's own shadow stack, and the
+     indicator does not go away with the outline. **It lands in the same place
+     the outline did** — `0 0 0 2px` has no `inset`, so it is painted in the 2px
+     band just outside the border box, pixel for pixel where
+     `outline: 2px solid; outline-offset: 0` was. (An earlier draft of this
+     comment said the ring moved *inside* the recess. It does not; a render
+     says so. What changes is that the marker is now one declaration with the
+     recess instead of two properties that can be turned off separately — which
+     is also why the forced-colours block further down has to restate it.)
+     The base layer gives every element
+     `outline: 2px solid var(--color-hot)` on `:focus-visible`; this rule turns
+     that off and draws the same 2px hot ring as the outer layer of the
+     box-shadow stack instead, so the field keeps a hot focus marker of the same
+     colour, the same width and the same position.
+     Cascade layers, not specificity, are what make this win: `@layer components`
+     comes after `@layer base`, so the `outline: none` here beats the base rule
+     regardless of how the two selectors score. Deleting this rule would restore
+     the outer outline; deleting only the `outline: none` would draw both. */
   .input:focus-visible {
-    border-color: var(--color-hot);
-    outline-offset: 0;
+    box-shadow:
+      var(--shadow-control-inset),
+      0 0 0 2px var(--color-hot);
+    outline: none;
   }
   .input::placeholder {
-    color: var(--ink-dim);
+    color: var(--on-control-dim);
   }
 
   /* ------------------------------------------------------------------ radio */
@@ -613,49 +743,135 @@
     box-sizing: border-box;
   }
   /* `--accent-fill`, not `--color-accent`: the checked dot has to read against
-     the ground, and the teal accent is 1.09:1 on the dark one — a checked radio
-     would look unchecked in the dark theme. */
+     the ground, and the teal accent is 1.48:1 on the dark one — a checked radio
+     would look unchecked in the dark theme. (1.09 is that accent against
+     `--fill-track`, which is where `tokens.css` quotes it; this dot sits on the
+     ground.)
+
+     E-36 §7 left this open and E-42 closes it as **C**: the body stays
+     `--accent-fill` and `--color-hot` is added on top of it as an inset ring,
+     never as the fill or the border. The two are buying different things —
+     `--accent-fill` is what makes the dot a *shape* (6.21 on the dark ground),
+     `--color-hot` is what makes it a *marker* — and hot alone cannot hold the
+     shape: it is 2.83 on the dark ground and 2.28 on the dark surface, under
+     the 3:1 floor for a UI component. This is now the same grammar as
+     `.seg-opt[data-checked='true']`: accent fill, hot inset ring.
+
+     **Order is load-bearing.** In a box-shadow list the *first* layer paints on
+     top, so the 1.5px hot ring has to precede the 4px `--color-bg` ring. Put it
+     after and the bg ring — which covers the outer 4px of the padding box —
+     paints straight over it and the marker silently disappears. */
   .radio[data-checked='true'] .dot {
     border-color: var(--accent-fill);
     background: var(--accent-fill);
-    box-shadow: inset 0 0 0 4px var(--color-bg);
+    box-shadow:
+      inset 0 0 0 1.5px var(--color-hot),
+      inset 0 0 0 4px var(--color-bg);
   }
 
   /* -------------------------------------------------------------- segmented */
+  /* E-36 §3.1: a recessed track the options sit *in*, not a box with dividers.
+     The well fill is absolute for the same reason the other controls' is — this
+     track is cream on the viewer's dark bar too. The corner stays
+     `--radius-lg`; the prototype's literal 8px is not on the scale.
+
+     **`overflow: hidden` stays, against ui-spec §2.3's ⟳ row.** That row says it
+     "goes with `padding`+`gap`", on the reasoning that it existed to clip the
+     options to the corners and the options no longer reach the edge. The
+     reasoning is half the truth: the declaration was clipping *elevation* too.
+     The selected option carries `--shadow-control-raised`, whose up-left lobe is
+     `rgb(255 253 246 / 0.9)` reaching 11px (3px offset + 8px blur) while the
+     track holds it off by only 3px of padding — so with the clip removed a
+     near-white halo is painted 8px out onto whatever the track sits on. On the
+     viewer's bar — the dark theme's `--color-bg` — that measured **3.29:1** in a real
+     render, i.e. above the 3:1 floor: not a soft lift but a bright edge, the
+     exact "white outline around every card" `tokens.css` refuses in its dark
+     elevation block.
+     `soft-ui.css` could not have known — it is light-only, and on cream the same
+     halo is invisible. This is E-36 §4's warning arriving a second time: a
+     light-only instruction moved into a scope the prototype never had. */
   .seg {
     display: inline-flex;
     overflow: hidden;
-    border: 1px solid var(--control-border);
+    gap: 2px;
+    padding: 3px;
+    background: var(--control-well);
+    border: 0;
     border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-control-inset);
   }
 
+  /* NOT ADOPTED (E-36 table row 28): the prototype's `padding: 5px 12px`. The
+     product keeps `7px 12px`, which is what ui-spec §2.3's ⟳ row itself
+     instructs — "keep the product's 7px 12px padding unless the 5px version is
+     measured to still clear the target". It has not been measured. The <768
+     rule already puts `min-height: var(--touch-min)` on this class, so a phone
+     is covered either way, but 768–1023 is the tier `--touch-min` is 0 on and
+     the tier most likely to be a tablet; 4px off the height there is a change
+     to a hit area, and a hit area is not changed on a guess.
+
+     The ink is `--on-control-dim`, the absolute dim: an unselected option sits
+     on the cream well in every scope, so a theme-relative dim ink would be
+     near-white on it in the dark theme. */
   .seg-opt {
     display: inline-flex;
     align-items: center;
     gap: 6px;
     padding: 7px 12px;
     font-size: 13px;
+    font-weight: 600;
+    color: var(--on-control-dim);
     cursor: pointer;
     white-space: nowrap;
+    border-radius: var(--radius-lg);
+    transition:
+      background var(--hover-fade) ease,
+      color var(--hover-fade) ease,
+      box-shadow var(--hover-fade) ease;
   }
-  .seg-opt + .seg-opt {
-    border-left: 1px solid var(--control-border);
-  }
-  /* E-32 §1: the checked option carries a `--color-hot` **inset ring**, and it
-     is load-bearing rather than decorative. The fill is the teal accent, which
-     is 1.2:1 against the dark viewer ground — on the dark theme a selected
-     segment without the ring is simply not distinguishable from an unselected
-     one. Measured on the prototype as `<dual-light>, rgb(236,48,19) 0 0 0 2px
-     inset`, i.e. `--shadow-sm` plus the ring, and that is what this is. */
+  /* E-32 §1: the checked option carries a `--color-hot` **inset ring**. Measured
+     on the prototype as `<dual-light>, rgb(236,48,19) 0 0 0 2px inset`, i.e. a
+     raised shadow plus the ring, and that is what this is.
+
+     **Why the ring is kept has changed, and the old reason is retired here.**
+     It used to read: the accent fill is 1.2:1 against the dark viewer ground, so
+     on the dark theme a selected segment without the ring is not distinguishable
+     from an unselected one — the ring was load-bearing. E-42 moved the ground
+     out from under that sentence. The option no longer sits on the dark bar; it
+     sits on `--control-well`, an absolute cream, where this fill is **6.41
+     washed**. The selection is legible without the ring now. (The retired number
+     was also mis-sourced: 1.20 is the accent against the dark *surface*; against
+     the dark ground it is 1.48.)
+     The ring stays because E-32 §1 named this seat for `--color-hot` — "current
+     / selected / focused" — and E-42 §1 made that grammar the product's one way
+     of saying *selected*, shared with `.radio .dot`. It is a marker now, not a
+     crutch.
+
+     The raised half is `--shadow-control-raised` rather than `--shadow-sm`
+     (E-42): this shadow does not fall on the page, it falls on the cream track
+     three pixels away, and the track is an absolute that does not flip. The
+     dark theme's `--shadow-sm` is a hairline plus ambient black tuned for a
+     dark ground; on cream it draws a dark outline around the pill instead of
+     lifting it. The hot ring is untouched — E-32 §1 named that seat. */
   .seg-opt[data-checked='true'] {
     background: var(--color-accent);
     color: var(--on-accent);
     box-shadow:
-      var(--shadow-sm),
+      var(--shadow-control-raised),
       inset 0 0 0 2px var(--color-hot);
   }
+  /* Colour alone, which is what the prototype does — and the product's own
+     `background: var(--hover-tint)` is **deleted** rather than kept beside it.
+     `--hover-tint` flips with the theme (a dark wash on light, a near-white one
+     on dark) but the surface under it does not: the well is an absolute. On the
+     dark theme that put a near-white 8% wash on near-white cream, which computes
+     to **1.00:1** — the background hover was not subtle there, it did not happen
+     at all. A theme-relative tint on a theme-invariant surface is the one thing
+     E-42 §3 rules out, and this was the only rule still doing it.
+     The ink carries the state instead: `--on-control-dim` → `--on-control-accent`
+     is a hue and a darkness step in both themes (6.41 washed on the well). */
   .seg-opt[data-checked='false']:hover {
-    background: var(--hover-tint);
+    color: var(--on-control-accent);
   }
   .seg-opt:has(input:focus-visible) {
     outline: 2px solid var(--color-hot);
@@ -663,6 +879,10 @@
   }
 
   /* ------------------------------------------------------------------ cards */
+  /* A card is lifted (E-36 §3.2). It had no shadow because ui-spec §0.2 used to
+     say only three things carry one — a sentence E-32 retired and did not
+     amend, which is the whole subject of E-36 §2. `--shadow-md` and not the
+     control tokens: a card sits on the page ground, which flips. */
   .card {
     display: flex;
     flex-direction: column;
@@ -670,6 +890,7 @@
     padding: var(--space-3);
     background: var(--color-surface);
     border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
   }
   .card-kicker {
     font-size: 10px;
@@ -746,6 +967,22 @@
   }
 
   /* ---------------------------------------------------------------- dialogs */
+  /* The prototype separates the dialog from the page with **blur plus a lighter
+     wash**, not with a heavier wash alone. Only the blur half is adopted, and
+     the other half is **refused on purpose** (E-42 §5): `--scrim-modal` is not
+     the dialog's own token — `.drawer-backdrop` below shares it — so taking the
+     prototype's `.34` would thin the drawer's scrim too, and the drawer has no
+     blur to make up the difference. The prototype has no drawer at all: it is
+     desktop-only (ui-spec §0.5), so it never had to answer this.
+
+     `-webkit-backdrop-filter` is the Safari spelling and is not decoration:
+     without it the effect is simply absent there, and the scrim alone is what
+     the product already had.
+
+     `.drawer-backdrop` further down deliberately keeps a plain scrim. It backs
+     a panel that slides in from the edge on a phone, is dismissed by a tap
+     anywhere, and covers a viewport where a full-screen blur is the most
+     expensive thing on the frame — E-36's table does not name it. */
   .dialog-backdrop {
     position: fixed;
     inset: 0;
@@ -753,6 +990,8 @@
     place-items: center;
     padding: var(--space-4);
     background: var(--scrim-modal);
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
     z-index: var(--z-overlay);
   }
   .dialog {
@@ -1001,6 +1240,59 @@
       var(--fill-subtle) 0 5px,
       var(--fill-track) 5px 10px
     );
+  }
+
+  /* Forced colours (Windows High Contrast and the like) — the one mode where
+     this whole skin evaporates.
+
+     E-36 made every control a surface: the boundary that used to be a border is
+     now `box-shadow`, and the focus marker `.input` used to take from the base
+     layer's `outline` moved into the well as `box-shadow` too. **Forced-colors
+     computes `box-shadow` to `none`.** So in that mode a control had no edge, and
+     a focused field had no indicator at all — a regression this round would have
+     shipped, because nothing in the repo has ever mentioned this mode (grep:
+     zero hits before this rule).
+
+     `outline` and `border` do survive forced colours, and the system keywords
+     are what the user's own palette is guaranteed to honour. Nothing below
+     changes a normal render: the whole block is inert unless the mode is on.
+
+     These borders are not a return of the bordered box (E-36 §3.3) — they are
+     the same declaration the browser would draw for a native control in this
+     mode, and they exist only where the shadow was carrying the boundary.
+
+     **The boundary was not the only thing riding on `box-shadow`.** The
+     *selected* state does too: a checked segment says so with an accent fill
+     and `inset 0 0 0 2px var(--color-hot)`, and forced colours erase both — the
+     fill because backgrounds are overridden, the ring because it is a shadow.
+     Measured in this mode before the rules below: a checked option and an
+     unchecked one were byte-identical, so nothing on the screen said which
+     display mode the viewer was in. `outline` survives forced colours, which is
+     why the marker is restated as one. `.btn-primary` gets an edge for the same
+     reason its siblings do — without it the one button in the product with no
+     boundary at all would be the primary action. */
+  @media (forced-colors: active) {
+    .btn-primary,
+    .btn-secondary,
+    .input,
+    .seg,
+    .tag-neutral,
+    .tag-outline,
+    .card {
+      border: 1px solid ButtonBorder;
+    }
+    .input:focus-visible {
+      outline: 2px solid Highlight;
+      outline-offset: 0;
+    }
+    /* Drawn inside the option so it cannot collide with the neighbour 2px away,
+       and on `[aria-pressed]` too — the viewer's chrome toggles say "on" the
+       same way a checked segment does. */
+    .seg-opt[data-checked='true'],
+    [aria-pressed='true'] {
+      outline: 2px solid Highlight;
+      outline-offset: -2px;
+    }
   }
 
   /* Touch targets are >= 44x44 CSS px below 768 (ui-spec §7, NFR-CMP-002).

@@ -4,7 +4,6 @@ import { useNavigate } from 'react-router-dom'
 
 import { useContinue, useSeriesList } from '../../api/queries'
 import { Dialog } from '../../components/ds/Dialog'
-import { Input } from '../../components/ds/Input'
 import { cn } from '../../lib/cn'
 import { matchRange } from '../../lib/chosung'
 import { formatBytes, formatContinueCounter, formatVolumeCount } from '../../lib/format'
@@ -150,10 +149,43 @@ export function CommandPalette({ open, query, onQueryChange, onClose }: CommandP
         >
           <Search size={17} />
         </span>
-        <Input
+        {/* Deliberately **not** `.input` (E-42). ui-spec §8.4 describes this
+            field as `border:0; border-bottom:2px; background:transparent` —
+            i.e. a big underlined search line, not a field — and `.input` is now
+            the opposite of that: a cream well with an inset shadow and the
+            absolute cream ink. It shipped as `.input` plus four overrides that
+            cancelled the class, and the `bg-transparent` one is what made it a
+            defect: a Tailwind `bg-*` lands after `@layer components`, so it
+            removed the well and left `--on-control` — the cream set's ink — on the dialog's
+            own surface — **1.40:1** in the dark theme. Spelling out what this
+            field needs is smaller than fighting a class whose every declaration
+            has to be undone.
+            What the class was still carrying, restated here:
+              - `w-full` + `pl-[46px] pr-4` — its horizontal padding, which is
+                not optional: Tailwind preflight zeroes an input's padding, and
+                the vertical half is moot against `min-h-[56px]`,
+              - `text-ink` — the theme-flipping ink, because the ground here is
+                `--color-surface`, not cream. The icon beside it keeps
+                `text-ink-dim` for the same reason,
+              - `placeholder:text-ink-dim` and `caret-accent-text`,
+              - the ≥44px touch target of NFR-CMP-002: `min-h-[56px]` clears it
+                at every width, which `.input` only did below 768 via a media
+                query that no longer applies here,
+              - focus: the base layer's hot `:focus-visible` outline is what
+                marks this field now, pulled **inside** the field. The field is
+                the full width of a `p-0` panel and its own corners are square,
+                so any outset ring — the base layer's `outline-offset: 2px`, and
+                equally the `0` this used to carry — is drawn past the dialog's
+                6px radius and hangs a square red corner off it. A render says
+                so; the earlier note here claimed `0` was flush and it is not,
+                the same mistake `.input`'s own comment made. `-2px` puts the
+                ring on the field's own edge, which is the only offset that
+                cannot escape the panel. */}
+        <input
+          type="text"
           aria-label="시리즈로 이동…"
           placeholder="시리즈로 이동…"
-          className="min-h-[56px] border-0 border-b-2 border-rule-strong bg-transparent pl-[46px] text-[17px]"
+          className="min-h-[56px] w-full border-b-2 border-rule-strong bg-transparent pl-[46px] pr-4 text-[17px] text-ink caret-accent-text placeholder:text-ink-dim focus-visible:[outline-offset:-2px]"
           value={query}
           onChange={(e) => {
             onQueryChange(e.target.value)

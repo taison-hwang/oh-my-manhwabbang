@@ -8,6 +8,16 @@ docs/ui-shots/"*. **No gate performs that comparison.** Playwright has no pixel 
 without anything turning red. It has, twice: once at E-32 and again at session 10. Assume the same of
 whatever you find here — check the dates and the derivation before you trust a file as a target.
 
+> **STALE AGAIN — session 14 (2026-08-08), ruling E-42.** Every control in the product changed shape:
+> `.btn-secondary`, `.input` and `.seg` are now raised/recessed **cream** surfaces in *both* themes and in
+> the viewer, the segmented control lost its dividers and gained a cream track, `.card` gained
+> `--shadow-md`, and the viewer's chrome buttons went from bordered ghosts to cream pills. **Any shot in
+> this directory that contains a button, a field or a segmented control is out of date**, including the
+> `v3-prototype/` set for everything except the prototype's own intent. Nothing turned red for this —
+> that is the whole point of the paragraph above. The current renders are in `docs/e2e-shots/` from the
+> session-14 round (105 files, all four widths, both themes); they were reviewed by eye and are the
+> nearest thing to a target until open item `x` puts a real pixel baseline in place.
+
 ## Which set is current
 
 | | | |

@@ -208,6 +208,27 @@ describe('E-32 markers in the component stylesheet', () => {
     )
   })
 
+  /*
+   * **The checked segment's raised shadow is asserted in `styles/soft-ui.test.ts`,
+   * not here.**
+   *
+   * A pair of assertions pinning `.seg-opt[data-checked='true']` to
+   * `--shadow-control-raised` (and off `--shadow-sm`) briefly lived here as well
+   * as there. That is a second source of truth for one rule, which is the thing
+   * `soft-ui.test.ts`'s own header refuses to do about §3.6 — and two copies of a
+   * contract drift the moment one is updated, which is E-36 §2 in miniature.
+   *
+   * `soft-ui.test.ts` is the copy that stays: the rename is a consequence of
+   * E-42 §3's shadow rule, that file holds the rule and the frozen tokens it
+   * names, and the surrounding assertions there (`--shadow-control-raised` is
+   * light `--shadow-sm` frozen, and is a literal rather than a `var()`) are what
+   * make the pin mean anything. Isolated in this file it would be a string
+   * comparison with its reasoning somewhere else.
+   *
+   * What stays here is the `--color-hot` ring above, which is a *marker* rule
+   * from E-32 §1 rather than an elevation one.
+   */
+
   it('rings the selected sidebar row in --color-hot, not a 3px accent rail', () => {
     const rule = block(".sidebar-nav-row[data-active='true']")
     expect(rule).toContain('inset 0 0 0 2px var(--color-hot)')
