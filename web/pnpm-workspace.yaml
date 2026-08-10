@@ -1,0 +1,20 @@
+# pnpm settings. Not a monorepo — there is no `packages:` key and this stays a
+# single package; since pnpm 10 this file is simply where settings live, and
+# `package.json`'s `"pnpm"` field is no longer read at all.
+#
+# `onlyBuiltDependencies` is an ALLOW-LIST for dependency lifecycle scripts, and
+# the failure mode when it goes missing is the opposite of the intuitive one:
+# pnpm does not fall back to blocking, it falls back to running **every**
+# dependency's postinstall. Measured on pnpm 10.30.2 — with this list in force
+# and esbuild left out of it, install prints `Ignored build scripts:
+# esbuild@0.25.0`; with the list sitting in `package.json` where pnpm no longer
+# reads it, the same install runs `esbuild postinstall$ node install.js`.
+#
+# So this file is a supply-chain control, not a convenience. It was silently
+# inert for however long the repo ran a pnpm that had moved the setting: the
+# only signal was a `[WARN]` line in install output, and no gate reads that.
+# Both entries below need a script at install time — esbuild fetches its
+# platform binary, msw writes its service worker.
+onlyBuiltDependencies:
+  - esbuild
+  - msw

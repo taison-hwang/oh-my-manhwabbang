@@ -100,6 +100,29 @@ main.go`** — 합성 라운드가 **같은 이름 목록을 공유**하므로 m
 **⑧ 다섯 게이트 — §4.17.** `make gates`가 이 환경을 끊는 것은 그대로이고, **이번에는
 `make web-gates`도 끊었다**(vitest가 시작되는 순간). 네 `pnpm` 스크립트를 하나씩 돌렸다.
 
+**⑨ 세션 종료 후: pnpm 설정이 조용히 꺼져 있던 것을 찾아 고쳤다 — 그리고 고장 방향이 직관과
+반대였다.** 사용자가 `make build` 출력에서 `[WARN] The "pnpm" field in package.json is no longer read
+by pnpm ... "pnpm.onlyBuiltDependencies"` 를 발견했다. pnpm 10부터 설정의 집이
+**`pnpm-workspace.yaml`** 로 옮겨졌는데 이 저장소는 `package.json`의 `"pnpm"` 필드에 두고 있었다.
+**`pnpm config get onlyBuiltDependencies`가 `undefined`였다 — 설정이 전혀 적용되지 않고 있었다.**
+
+**직관은 "허용 목록이 사라지면 전부 차단되어 빌드가 깨진다"** 인데, pnpm 10.30.2에서 재현한 결과는
+정반대다. 목록이 유효한 채 esbuild를 빼면 설치가 `Ignored build scripts: esbuild@0.25.0`을 찍고
+**차단**하지만, 목록이 읽히지 않는 자리에 있으면 같은 설치가 `esbuild postinstall$ node install.js`를
+**실행**한다. 즉 **fallback은 차단이 아니라 전면 허용**이고, 의존성의 임의 코드 실행을 막던 장치가
+꺼져 있었다. 고친 방법은 `web/pnpm-workspace.yaml` 신설(`onlyBuiltDependencies: [esbuild, msw]`) +
+`package.json`의 `"pnpm"` 필드 삭제 — 경고는 **필드의 존재 자체**에 반응하므로 새 파일만 만들어서는
+사라지지 않는다(이것도 재현으로 확인).
+
+**게이트가 이것을 볼 수 없었다.** 유일한 신호는 `pnpm install` 출력의 `[WARN]` 한 줄이고 어느 게이트도
+그 줄을 읽지 않는다. `--frozen-lockfile`로 도는 한 락파일도 `git status`도 움직이지 않는다 —
+**§6.5의 "검사가 출하되는 것 옆을 본다"의 교과서적 사례**이고, 이번에는 사람이 빌드 출력을 읽어서
+잡혔다. 검증: `pnpm config get` → `esbuild,msw` · `pnpm install --frozen-lockfile` 경고 0·락파일 무변경 ·
+typecheck·eslint 0 · vitest 874 · `make build` 0(WARN 0) · `web/dist/index.html` **바이트 동일**
+(바이너리 해시만 달라졌고 그것은 `ldflags`가 박는 커밋·빌드시각 때문이다) ·
+`make e2e-synthetic`의 Playwright **92/92**와 curl 단언 전부 통과(9단계만 사용자 서버가 `resources/`에
+써서 빨감 — 항목 `ak`).
+
 ### 1.0 14세션차 요약 (보존)
 
 **세 세션 연속 밀렸던 항목 `y`를 실행했다 — soft-UI의 나머지 절반.** E-36이 전수로 세어 둔 33행을
@@ -2221,6 +2244,7 @@ rgb(45 43 43 / .14)`. `--shadow-inset`·`--color-hot`·`--shadow-sidebar`는 그
 | **aj** / **x** | `docs/ui-shots/` 레퍼런스가 자동으로 빨개지지 않는다 | **또 나빠졌다.** E-44가 뷰어 상단 바를 다시 바꿔(네 번째 옵션, 랩 높이 네 폭 전부 변경) 무효화가 **두 겹**이 됐다. 게다가 이 라운드가 `docs/e2e-shots/`의 **109장을 디스크에서 전부 다시 썼다**(gitignore 대상). §5.7의 4순위 |
 | **ar** | 소스 스캐너가 볼 수 없는 형태 다섯 | **여섯 번째는 나오지 않았다.** 15세션차는 CSS를 건드리지 않았다. 다만 이번 결함 넷 중 둘(`Maximize` 아이콘, `Seg`의 화살표 순회)이 **같은 계열의 공백** — 게이트가 보는 것과 출하되는 것이 다른 자리 — 이었고 둘 다 `getComputedStyle`/실브라우저 티어에서만 닫혔다 |
 | ~~**ah**~~ | ~~`main`이 `origin/main`보다 앞서 있다~~ | **닫혔다.** 세션 종료 시점에 사용자가 푸쉬를 지시했고 **14커밋이 올라갔다**(`17023c2..42d2b2a`). 12세션차에 열려 세 세션을 살아 있던 항목이다 |
+| ~~**az**~~ | ~~`onlyBuiltDependencies`가 pnpm 10에서 무효가 돼 의존성 postinstall이 전면 허용돼 있었다~~ | **찾자마자 닫혔다(§1 ⑨).** 사용자가 `make build` 출력의 `[WARN]`을 읽어서 잡았다 — **게이트는 원리적으로 못 본다.** `web/pnpm-workspace.yaml`로 옮기고 `package.json`의 `"pnpm"` 필드를 지웠다. **열린 채로 남는 질문 하나:** 설정이 꺼져 있던 동안 설치된 현재 `node_modules`에서 **어떤 패키지의 스크립트가 실제로 돌았는지는 모른다.** 되돌아가 세려면 `node_modules`를 지우고 다시 설치해 `Ignored build scripts:` 목록을 읽어야 하는데, 그 자체가 이 저장소에서 값비싼 작업이라 하지 않았다 |
 | **ae**, **af**, **ai**, **ak**, **al**, **am**~**at** | 핫 리무브 미구매 · 재추가 `pending` · 설정 경합 무테스트 · e2e가 사용자 서버와 경합 · 고스트 호버 3.90 · 나머지 기록/관측 | **전부 그대로.** 다만 `ak`는 **관측에서 실제 피해로 올라갔다** — 이번 세션 `make e2e` 한 라운드의 9단계가 그것 때문에 빨개졌다(§4.17) |
 
 **15세션차가 새로 연 것 (전부 실측):**
