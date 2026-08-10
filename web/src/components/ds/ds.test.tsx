@@ -288,6 +288,29 @@ describe('ProgressBar (ui-spec §9 #5)', () => {
   })
 
   /**
+   * `Infinity` is an ordinary input here, not a defensive afterthought.
+   *
+   * Callers divide a page by a page count and a `status != "ok"` volume reports
+   * `page_count: 0` (arch §4.11), so `last_page / 0` reaches this component by
+   * the plain route. The clamp alone would answer it with a **full** bar —
+   * `Math.min(1, Infinity)` is 1 — which is the single worst reading available:
+   * a volume that lost its pages drawn as finished.
+   */
+  it('reads a non-finite value as an empty trough, not a full bar', () => {
+    for (const value of [Infinity, NaN, -Infinity]) {
+      const { container, unmount } = render(<ProgressBar value={value} label="몬스터" />)
+      expect(screen.getByRole('progressbar', { name: '몬스터' })).toHaveAttribute(
+        'aria-valuenow',
+        '0',
+      )
+      expect(container.querySelector<HTMLElement>('[role=progressbar] > div')?.style.width).toBe(
+        '0%',
+      )
+      unmount()
+    }
+  })
+
+  /**
    * The fill is `--accent-fill`, never `--color-accent`.
    *
    * E-32 turned the accent into #17595B, which is **1.09:1** on `--fill-track`

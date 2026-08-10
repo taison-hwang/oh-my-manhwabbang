@@ -518,9 +518,18 @@ type AuthStatus struct {
 // Page is a pointer so that an absent `page` is distinguishable from `0`: the
 // contract has no page 0, and "you forgot the field" and "you sent an illegal
 // value" are different messages.
+//
+// StaleSeen is the reader's acknowledgement that they saw the "the file
+// changed" hint (ruling E-45). It is the only thing that lets a write move the
+// stored `page_count` baseline, because that baseline is what makes the hint
+// derivable at all: an ordinary page turn is not evidence the reader saw
+// anything — the viewer writes one on a timer whether or not anybody looked.
+// It is optional, so a client that never sends it keeps warning, which is the
+// safe end of the trade.
 type progressUpdateBody struct {
 	Page      *int  `json:"page"`
 	Completed *bool `json:"completed"`
+	StaleSeen *bool `json:"stale_seen"`
 }
 
 // bookPrefsUpdateBody is `PUT /api/books/{bid}/prefs`.

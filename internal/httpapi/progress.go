@@ -20,6 +20,11 @@ import (
 //   - `page_count === 0` means "length unknown" — a book whose status is not
 //     "ok" (§4.11). Only the lower bound applies, so the clamp is [1, ∞). It is
 //     NOT a 400 and NOT an empty range.
+//
+// The index's *current* length is what goes to the storage layer, because that
+// is what both rules above need. Whether it is also written to the stored
+// `page_count` baseline is a separate question, and the answer is `stale_seen`:
+// only an acknowledged write rebaselines (ruling E-45, userdata.PutProgress).
 func (s *Server) handlePutProgress(w http.ResponseWriter, r *http.Request) error {
 	if s.user == nil {
 		return unavailable("user data is not available")
@@ -56,6 +61,7 @@ func (s *Server) handlePutProgress(w http.ResponseWriter, r *http.Request) error
 		Page:      *body.Page,
 		PageCount: int(book.PageCount),
 		Completed: body.Completed,
+		StaleSeen: body.StaleSeen != nil && *body.StaleSeen,
 	})
 	if err != nil {
 		if errors.Is(err, userdata.ErrInvalidArgument) {

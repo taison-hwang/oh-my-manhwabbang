@@ -30,7 +30,18 @@ import { cn } from '../../lib/cn'
  * just a light smear.
  */
 export interface ProgressBarProps {
-  /** 0..1. Clamped; values <= 0 still render the trough. */
+  /**
+   * 0..1. Clamped; values <= 0 still render the trough.
+   *
+   * **Non-finite is part of the contract, not a defensive accident.** Callers
+   * divide a page by a page count, and a `status != "ok"` volume reports
+   * `page_count: 0` (arch §4.11) — so `Infinity` and `NaN` arrive here by the
+   * ordinary route and are normalised to an empty trough, once, in the one place
+   * that draws the bar. `ContinueCard` used to repeat the guard locally; the
+   * copy was removable with every test still green, because this is what was
+   * answering. `library.test.tsx`'s "draws an empty bar rather than a full one"
+   * is the case that fails if this stops being true.
+   */
   value: number
   /** 6 in rows and cards, 7 in the stat strip, 5 over artwork. */
   height?: 5 | 6 | 7

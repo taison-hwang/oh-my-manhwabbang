@@ -4,8 +4,10 @@ import {
   CHROME_AUTOHIDE_MS,
   CHROME_HINT_MS,
   DEFAULT_FIT,
+  STALE_NOTICE_MS,
   cancelChromeAutoHide,
   selectAtVolumeEnd,
+  selectStaleAckOwed,
   useViewerStore,
 } from './viewer'
 
@@ -210,6 +212,182 @@ describe('changing volume is a continuation, not an entry', () => {
     expect(useViewerStore.getState().chromeVisible).toBe(false)
     expect(useViewerStore.getState().hintVisible).toBe(true)
     expect(useViewerStore.getState().stripOpen).toBe(false)
+  })
+
+  /**
+   * **The changed-file notice is the one thing that does *not* carry over
+   * (E-45 §1 REVISION).**
+   *
+   * The first cut reused `continuing` here as well, so the answered warning was
+   * inherited by the next volume. The two notices ask different questions: the
+   * hint asks whether this *reader* has been greeted, the warning asks whether
+   * this *file* changed — and the next volume is a different file. This case is
+   * the discriminator, and it is deliberately in the continuation block rather
+   * than beside the lifetime tests: what it pins is that one `open()` answers
+   * the two with opposite judgements.
+   */
+  it('re-asks the changed-file question on the next volume, but not the hint', () => {
+    useViewerStore.getState().open('bk', { pageCount: 10, stale: true })
+    vi.advanceTimersByTime(STALE_NOTICE_MS)
+    expect(useViewerStore.getState().staleVisible).toBe(false)
+    expect(useViewerStore.getState().hintVisible).toBe(false)
+
+    useViewerStore.getState().open('bk-2', { pageCount: 8, page: 1, stale: true })
+    // A different file, so it is asked again — and armed under *its own* id.
+    expect(useViewerStore.getState().staleVisible).toBe(true)
+    expect(useViewerStore.getState().staleBookId).toBe('bk-2')
+    // …while the hint, which is about the reader, stays answered.
+    expect(useViewerStore.getState().hintVisible).toBe(false)
+
+    vi.advanceTimersByTime(STALE_NOTICE_MS)
+    expect(useViewerStore.getState().staleVisible).toBe(false)
+    expect(selectStaleAckOwed(useViewerStore.getState(), 'bk-2')).toBe(true)
+  })
+
+  it('drops volume 1’s live timer instead of letting it latch under volume 2', () => {
+    // The measured defect (E-45 §1 REVISION): resume volume 1, see the warning,
+    // press 다음 권 읽기 **inside** the 3 400 ms window. The timer used to
+    // survive the volume change and latch a moment later, and the screen — bound
+    // to the route's `:bid` — signed it as volume 2.
+    useViewerStore.getState().open('bk', { pageCount: 10, stale: true })
+    vi.advanceTimersByTime(STALE_NOTICE_MS - 1)
+    expect(useViewerStore.getState().staleVisible).toBe(true)
+
+    useViewerStore.getState().open('bk-2', { pageCount: 8, page: 1, stale: false })
+    // One millisecond later volume 1's timer would have fired.
+    vi.advanceTimersByTime(1)
+    expect(useViewerStore.getState().staleSeen).toBe(false)
+    expect(useViewerStore.getState().staleBookId).toBeNull()
+    vi.advanceTimersByTime(STALE_NOTICE_MS * 2)
+    expect(useViewerStore.getState().staleSeen).toBe(false)
+    // Neither book is signed for: volume 1 was left inside its window, and
+    // volume 2 was never stale.
+    expect(selectStaleAckOwed(useViewerStore.getState(), 'bk')).toBe(false)
+    expect(selectStaleAckOwed(useViewerStore.getState(), 'bk-2')).toBe(false)
+  })
+})
+
+/**
+ * The `파일이 변경되었습니다` lifetime (**E-45 §1, §2**).
+ *
+ * The defect this replaces was not a wrong duration but a *derivation*: the
+ * screen read `progress.stale` out of the query cache on every render, and the
+ * automatic progress `PUT` — which goes out because the book loaded, not because
+ * the reader did anything — answered `stale:false` and unmounted the notice
+ * about a second in. The store tier's job here is the half that has no DOM: the
+ * latch survives on its own clock, and the acknowledgement latches **only** when
+ * the notice has been up for the whole of it.
+ */
+describe('the changed-file notice has a lifetime (ruling E-45)', () => {
+  it('is deliberately the opening hint’s lifetime, as two constants', () => {
+    // E-45 §1 makes them equal on purpose; they are separate names so that
+    // retuning the opening hint cannot silently retune this.
+    expect(STALE_NOTICE_MS).toBe(3_400)
+    expect(STALE_NOTICE_MS).toBe(CHROME_HINT_MS)
+  })
+
+  it('stays up for its whole lifetime and then acknowledges itself', () => {
+    useViewerStore.getState().open('bk', { pageCount: 10, stale: true })
+    expect(useViewerStore.getState().staleVisible).toBe(true)
+    expect(useViewerStore.getState().staleSeen).toBe(false)
+
+    vi.advanceTimersByTime(STALE_NOTICE_MS - 1)
+    expect(useViewerStore.getState().staleVisible).toBe(true)
+    // Not owed one millisecond early — the acknowledgement is the *whole* life.
+    expect(useViewerStore.getState().staleSeen).toBe(false)
+
+    vi.advanceTimersByTime(1)
+    expect(useViewerStore.getState().staleVisible).toBe(false)
+    expect(useViewerStore.getState().staleSeen).toBe(true)
+  })
+
+  it('arms nothing at all for a book whose progress is current', () => {
+    open(10)
+    expect(useViewerStore.getState().staleVisible).toBe(false)
+    vi.advanceTimersByTime(STALE_NOTICE_MS * 2)
+    expect(useViewerStore.getState().staleSeen).toBe(false)
+  })
+
+  it('owes no acknowledgement when the reader leaves inside the window', () => {
+    useViewerStore.getState().open('bk', { pageCount: 10, stale: true })
+    vi.advanceTimersByTime(STALE_NOTICE_MS - 1)
+    useViewerStore.getState().close()
+
+    // The correct ending (E-45 §2): the baseline survives, so the *next* entry
+    // warns again. A timer left running would have latched after the exit and
+    // acknowledged a notice the reader never finished reading.
+    vi.advanceTimersByTime(STALE_NOTICE_MS * 2)
+    expect(useViewerStore.getState().staleSeen).toBe(false)
+    expect(useViewerStore.getState().staleVisible).toBe(false)
+  })
+
+  it('warns again on a fresh entry into the same book', () => {
+    useViewerStore.getState().open('bk', { pageCount: 10, stale: true })
+    vi.advanceTimersByTime(STALE_NOTICE_MS)
+    useViewerStore.getState().close()
+
+    useViewerStore.getState().open('bk', { pageCount: 10, stale: false })
+    expect(useViewerStore.getState().staleVisible).toBe(false)
+    useViewerStore.getState().open('bk', { pageCount: 10, stale: true })
+    expect(useViewerStore.getState().staleVisible).toBe(true)
+  })
+
+  it('consumes the latch on dismiss, so one notice cannot be acknowledged twice', () => {
+    useViewerStore.getState().open('bk', { pageCount: 10, stale: true })
+    vi.advanceTimersByTime(STALE_NOTICE_MS)
+    expect(useViewerStore.getState().staleSeen).toBe(true)
+
+    useViewerStore.getState().dismissStale()
+    expect(useViewerStore.getState().staleSeen).toBe(false)
+    expect(useViewerStore.getState().staleVisible).toBe(false)
+    // The owner goes with it, or a book re-opened under the same id would find
+    // a latch that says it is owed something.
+    expect(useViewerStore.getState().staleBookId).toBeNull()
+    vi.advanceTimersByTime(STALE_NOTICE_MS * 2)
+    expect(useViewerStore.getState().staleSeen).toBe(false)
+  })
+
+  /**
+   * **The acknowledgement names its own book (E-45 §1 REVISION).**
+   *
+   * `staleSeen` is written by a timer and spent by a screen bound to the route's
+   * `:bid`, and those two disagree for the length of a volume change. The ruling
+   * asks that the invariant be assertable *in one place* rather than emerging
+   * from two files agreeing; this is that place.
+   */
+  it('owes the acknowledgement to the book it was armed for, and to no other', () => {
+    useViewerStore.getState().open('bk', { pageCount: 10, stale: true })
+    expect(useViewerStore.getState().staleBookId).toBe('bk')
+    // Not owed before the notice has served its whole life.
+    expect(selectStaleAckOwed(useViewerStore.getState(), 'bk')).toBe(false)
+
+    vi.advanceTimersByTime(STALE_NOTICE_MS)
+    expect(selectStaleAckOwed(useViewerStore.getState(), 'bk')).toBe(true)
+    // The single fact the screen used to get wrong: a latch is not a licence to
+    // write `stale_seen` against whatever book the route happens to name.
+    expect(selectStaleAckOwed(useViewerStore.getState(), 'bk-2')).toBe(false)
+    expect(selectStaleAckOwed(useViewerStore.getState(), '')).toBe(false)
+  })
+
+  /**
+   * **A book with no pages is never armed (E-45 §2, the symmetric `isStale`).**
+   *
+   * `isStale(recorded, current)` is false when *either* side is 0, so a
+   * well-behaved server cannot send `stale:true` for a broken book. This is the
+   * screen's own half of that contract, not a reliance on it — and it has to be
+   * here rather than at the call site, because the trap is a closed loop: the
+   * screen is already showing 열 수 없는 파일, and `progressReady`'s
+   * `pageCount > 0` makes the acknowledgement literally unsendable, so the
+   * notice would run its whole life, latch, never be answered, and come back on
+   * every single entry for ever.
+   */
+  it('arms nothing for a book with no pages, whatever the server said', () => {
+    useViewerStore.getState().open('bk', { pageCount: 0, stale: true })
+    expect(useViewerStore.getState().staleVisible).toBe(false)
+    expect(useViewerStore.getState().staleBookId).toBeNull()
+    vi.advanceTimersByTime(STALE_NOTICE_MS * 2)
+    expect(useViewerStore.getState().staleSeen).toBe(false)
+    expect(selectStaleAckOwed(useViewerStore.getState(), 'bk')).toBe(false)
   })
 })
 

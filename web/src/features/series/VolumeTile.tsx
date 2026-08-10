@@ -137,8 +137,12 @@ export function VolumeTile({ book, number, onOpen }: VolumeTileProps) {
     </>
   )
 
+  // `data-testid` for the same reason `VolumeRow` carries one: a tile is the
+  // unit the 라벨 · 색조 · 버튼 agreement is asserted over (E-45 §6, 따름정리의
+  // 따름정리), and without a handle on the whole tile a test can only reach the
+  // grid, where several volumes' controls are siblings.
   return (
-    <div className="group relative flex flex-col gap-[6px]">
+    <div data-testid="volume-tile" className="group relative flex flex-col gap-[6px]">
       {openable ? (
         <button
           type="button"

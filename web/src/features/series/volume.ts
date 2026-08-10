@@ -17,7 +17,7 @@
  *    but must not move this number.
  */
 
-import { formatProgressLabel } from '../../lib/format'
+import { formatPercent, formatProgressLabel } from '../../lib/format'
 import type { BookSummary, ItemStatus, SeriesProgress } from '../../api/types'
 
 /** How a volume box is drawn (ui-spec §5.3's `X`). */
@@ -76,13 +76,29 @@ export function volumeBadge(book: BookSummary): VolumeBadge | null {
   return { label: canned.label, reason: canned.reason, detail: book.error }
 }
 
-/** 0..1 for one volume: 1 when completed, else `last_page / page_count`. */
+/**
+ * 0..1 for one volume: 1 when completed, else `last_page / book.page_count`.
+ *
+ * **E-45 §6 — the denominator is `book.page_count`, never
+ * `progress.page_count`.** The recorded count is the *baseline* `isStale`
+ * compares against (arch §3.4), and since E-45 §2 stopped every write from
+ * re-baselining it, the two values legitimately disagree: a 10-page file that
+ * grew to 190 still carries `progress.page_count = 10`. Dividing by the
+ * baseline would call that reader 100 % done when he has seen 5 % — and the
+ * `Math.min(1, …)` clamp below is exactly why nothing ever crashed over it.
+ * The shrinking direction agrees: 190 → 10 with the reader clamped to page 10
+ * *is* 100 %. Only the index's current length answers both.
+ *
+ * The `<= 0` guard therefore watches `book.page_count` too — a `status != "ok"`
+ * volume has no pages, and `last_page / 0` is `Infinity`, which the clamp would
+ * quietly turn into a full bar.
+ */
 export function volumeProgressRatio(book: BookSummary): number {
   const progress = book.progress
   if (progress === null) return 0
   if (progress.completed) return 1
-  if (progress.page_count <= 0) return 0
-  return Math.max(0, Math.min(1, progress.last_page / progress.page_count))
+  if (book.page_count <= 0) return 0
+  return Math.max(0, Math.min(1, progress.last_page / book.page_count))
 }
 
 export function volumeTone(book: BookSummary): VolumeTone {
@@ -109,10 +125,29 @@ export function volumeBytes(book: BookSummary): number {
   return book.file_size > 0 ? book.file_size : book.total_bytes
 }
 
-/** The 5th list cell / the tile's state: `ERR` · `완독` · `34%` · `—`. */
+/**
+ * The 5th list cell / the tile's state: `ERR` · `완독` · `34%` · `—`.
+ *
+ * **`완독` follows `completed`, never the ratio** (E-45 §6, 따름정리의 따름정리).
+ * §6 made the denominator the index's *current* length, which newly made a ratio
+ * of exactly 1.0 reachable for a volume that is **not** completed: a 190-page
+ * file that shrank to 10 with the reader clamped to page 10 has honestly read
+ * all of what exists. The number stays 1.0 — that is the truthful value, and §6
+ * ruled on it — but the *word* is a state, and the state is
+ * `progress.completed`. Letting the ratio speak it split one book across three
+ * readings on two screens: `완독` in the list with a terminal badge and a
+ * `tone='done'` bar, `읽는 중` on the grid, and a `읽음 표시` button on both,
+ * which is exactly the state/action confusion **E-12** forbids.
+ *
+ * It asks `volumeTone` rather than `book.progress.completed` directly so that
+ * the label and the colour cannot answer the same question differently — the
+ * drift this exists to close is two surfaces reading two fields.
+ */
 export function volumeStateLabel(book: BookSummary): string {
   if (!isOpenable(book)) return 'ERR'
-  return formatProgressLabel(volumeProgressRatio(book))
+  const ratio = volumeProgressRatio(book)
+  if (ratio >= 1 && volumeTone(book) !== 'finished') return formatPercent(ratio)
+  return formatProgressLabel(ratio)
 }
 
 /**

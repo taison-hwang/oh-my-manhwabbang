@@ -123,6 +123,11 @@ export interface VolumeRowProps {
  * The two states ui-spec §2.5 lets the accent run as a solid field for: the
  * `완독` badge and the 손상/암호화 family, whose row-level stand-in is `ERR`.
  * Everything else in this cell is a number, and numbers are text.
+ *
+ * It reads the *label*, so it inherits `volumeStateLabel`'s rule that `완독` is
+ * `progress.completed` and not a ratio of 1.0 (E-45 §6, 따름정리의 따름정리).
+ * That is the whole reason this badge and the bar's tone below can no longer
+ * disagree with the row's own `읽음 표시` button.
  */
 function isTerminalState(state: string): boolean {
   return state === 'ERR' || state === '완독'
@@ -230,7 +235,12 @@ export function VolumeRow({ book, onOpen }: VolumeRowProps) {
         <ProgressBar
           value={ratio}
           className="hidden flex-1 md:block"
-          tone={ratio >= 1 ? 'done' : 'accent'}
+          // `tone`, like the badge, is a **state** and follows `completed`
+          // (E-45 §6, 따름정리의 따름정리). It used to read `ratio >= 1`, which
+          // §6's denominator change made reachable for a shrunk volume that is
+          // not completed: the row then drew the finished ink beside a
+          // `읽음 표시` button. The fill stays at 100 % — that number is honest.
+          tone={tone === 'finished' ? 'done' : 'accent'}
           label={`${book.name} 진행률`}
         />
         <span className="flex w-[46px] flex-none justify-end">

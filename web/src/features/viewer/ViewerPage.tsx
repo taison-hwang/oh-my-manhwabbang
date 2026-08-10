@@ -20,6 +20,7 @@ import { useMediaQuery } from '../../lib/useMediaQuery'
 import { openingDirection, useSeriesDirStore } from '../../store/seriesDir'
 import { useUiStore } from '../../store/ui'
 import {
+  selectStaleAckOwed,
   useViewerStore,
   type DisplayMode,
   type FitMode,
@@ -207,6 +208,14 @@ export function ViewerPage() {
   const releaseChrome = useViewerStore((s) => s.releaseChrome)
   const syncPage = useViewerStore((s) => s.syncPage)
   const hintVisible = useViewerStore((s) => s.hintVisible)
+  // E-45 §1: latched when the book was opened, not re-derived from the query
+  // cache per render.
+  const staleVisible = useViewerStore((s) => s.staleVisible)
+  // Not `s.staleSeen`. The latch and this screen's writer can be looking at two
+  // different books for the length of a volume change (E-45 §1 REVISION), and
+  // `selectStaleAckOwed` is where that is decided — see the effect below.
+  const staleAckOwed = useViewerStore((s) => selectStaleAckOwed(s, bookId))
+  const dismissStale = useViewerStore((s) => s.dismissStale)
 
   const detail = book.data
   const cv = detail?.cv ?? null
@@ -276,6 +285,9 @@ export function ViewerPage() {
       // screen's seed; a book that has one keeps it. See `openingDirection`.
       dir: openingDirection(detail.prefs, seedDir),
       fit: detail.prefs.fit_mode,
+      // E-45 §1. This is the one moment `progress.stale` is trustworthy: the
+      // detail has just been fetched and no `PUT` has answered over it yet.
+      stale: detail.progress?.stale === true,
     })
   }, [bookId, detail, open, requestedPage, seedDir])
 
@@ -318,8 +330,58 @@ export function ViewerPage() {
   // Progress (FR-VWR-009 / FR-VWR-012)
   // -------------------------------------------------------------------------
 
+  /**
+   * The writer is off until *this* book has been loaded and opened.
+   *
+   * **`detail !== undefined` is the load-bearing half, and what it guards is a
+   * volume change, not a first mount.** `pageCount` and `page` are store state
+   * that survives the route param moving: 다음 권 읽기 swaps `:bid` while the
+   * store still holds volume 1's length and volume 1's page, and
+   * `useProgressSync`'s effect re-runs the moment `save`'s identity changes with
+   * the new `bid`. Without this gate that re-run writes **volume 1's page onto
+   * volume 2** (D-13 / NFR-DAT-004) — the same class of defect as E-45's
+   * misdirected acknowledgement, one route param earlier. `detail` is per-book
+   * query data, so it is `undefined` for exactly the window `open()` has not
+   * closed yet.
+   *
+   * `pageCount > 0` is the narrower half: a book with no pages has no place to
+   * record, and it is also what keeps the acknowledgement below from being
+   * consumed for a book the writer would refuse.
+   */
   const progressReady = detail !== undefined && pageCount > 0
   const progress = useProgressSync(bookId, page, pageCount, { enabled: progressReady })
+
+  /**
+   * The acknowledgement (**E-45 §2**).
+   *
+   * The store latches `staleSeen` only when `파일이 변경되었습니다` has been on
+   * screen for its whole `STALE_NOTICE_MS`, so this is the single place a
+   * `stale_seen: true` body is born — and the only thing that lets the server
+   * re-baseline `page_count`. Leaving early therefore sends nothing: `close()`
+   * runs on unmount, the timer is dropped un-fired, and the next entry warns
+   * again. That is the ruling's intended ending, not a missed write.
+   *
+   * `dismissStale()` consumes the latch in the same tick, so a re-render (or a
+   * page turn changing `acknowledgeStale`'s identity) cannot send a second one —
+   * which is also why the latch is not consumed before `progressReady`: the
+   * writer refuses while the book has no length, and consuming a latch nothing
+   * acted on would drop the acknowledgement silently.
+   *
+   * **`staleAckOwed`, never `staleSeen` (E-45 §1 REVISION).** `acknowledgeStale`
+   * writes to whatever `:bid` the route currently names, and the route changes a
+   * beat before the store does: 다음 권 읽기 inside the notice's window used to
+   * latch volume 1's timer and sign it here as volume 2, sending
+   * `{"bid":"nextbook…","body":{"page":1,"stale_seen":true}}` — volume 2's
+   * baseline burnt over a warning nobody was shown. The selector asks the store
+   * whether the latch belongs to *this* `bookId`, so the mismatch simply never
+   * produces a write.
+   */
+  const { acknowledgeStale } = progress
+  useEffect(() => {
+    if (!staleAckOwed || !progressReady) return
+    acknowledgeStale()
+    dismissStale()
+  }, [staleAckOwed, progressReady, acknowledgeStale, dismissStale])
 
   // -------------------------------------------------------------------------
   // Per-book preferences (FR-VWR-002 / D-35)
@@ -712,8 +774,6 @@ export function ViewerPage() {
   const atVolumeEnd =
     detail !== undefined && pageCount > 0 && page >= pageCount && mode !== 'vertical'
 
-  const stale = detail?.progress?.stale === true
-
   return (
     <div
       ref={rootRef}
@@ -860,10 +920,37 @@ export function ViewerPage() {
           over it. So while the chrome is up this is a row *in the column*,
           directly under the bar at whatever height it has wrapped to (same
           `order-first`, later in the DOM). Chromeless it goes back to being an
-          overlay, which is the state it most needs to be readable in. */}
-      {stale && (
+          overlay, which is the state it most needs to be readable in.
+
+          **It has a lifetime now, and that lifetime is store state (E-45 §1).**
+          This condition used to read `detail?.progress?.stale === true` — a
+          derivation off the query cache, which `useSaveProgress.onSuccess`
+          overwrites wholesale with the `PUT`'s own `progress` (`stale:false`).
+          The automatic write goes out simply because the book loaded, so the
+          notice unmounted about a second in and never came back: not a designed
+          lifetime, a side effect of the save path. `staleVisible` is latched by
+          `open()` and timed down by the store exactly as `hintVisible` is, and
+          is therefore immune to whatever the server answers next — but **per
+          book, not per entry** (E-45 §1 REVISION): unlike the hint above, this
+          is dropped and re-asked on every volume, because the next volume is a
+          different file.
+
+          `role="status"` is not decoration (E-45 §1): a notice that removes
+          itself and has no live region has a lifetime of zero on a screen
+          reader. The chrome hint above already carried one; this did not.
+
+          The DOM shape is load-bearing — the paper grain is declared on the
+          **span** rather than on this wrapper (`base.css:384` for the
+          containment, `:400` and `:466` for the `::after` itself), because the
+          wrapper is a transparent full-width flex row and papering it would lay
+          the wash straight over the artwork. `tokens.test.ts:1969` is the
+          assertion that the wrapper is *not* matched, `:1978` that the span is
+          contained, and `:2011` that the span is still the element carrying the
+          ground. */}
+      {staleVisible && (
         <div
           data-role="stale-progress"
+          role="status"
           className={cn(
             'pointer-events-none flex justify-center',
             chromeVisible

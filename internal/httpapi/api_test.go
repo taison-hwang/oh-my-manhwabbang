@@ -790,6 +790,266 @@ func TestProgress_staleWhenTheIndexLengthMoved(t *testing.T) {
 	if isStale(0, 5) {
 		t.Error("stale = true for a book whose length was never known")
 	}
+	// The other end of the same comparison (E-45 §2): a book that is broken now
+	// has no length to disagree with, and the screen is already telling the
+	// reader the file cannot be opened.
+	if isStale(3, 0) {
+		t.Error("stale = true for a book whose length is unknown NOW; the predicate needs " +
+			"two lengths and 0 is not one")
+	}
+	if isStale(0, 0) {
+		t.Error("stale = true when neither length is known")
+	}
+}
+
+// moveIndexPageCount rewrites a book's length in the index: the storage-level
+// shape of "the file changed on disk and a scan noticed". Nothing else about
+// the row moves, so `stale` is the only observable that can react.
+func (e *env) moveIndexPageCount(bookID string, pageCount int64) {
+	e.t.Helper()
+	ctx := e.t.Context()
+	row, err := e.idx.GetBook(ctx, bookID)
+	if err != nil {
+		e.t.Fatalf("reading book %s: %v", bookID, err)
+	}
+	book := row.Book
+	book.PageCount = pageCount
+
+	w := e.idx.Writer(index.WriterOptions{})
+	defer func() { _ = w.Close() }()
+	if err := w.UpsertBook(ctx, book); err != nil {
+		e.t.Fatalf("moving the index length of %s: %v", bookID, err)
+	}
+	if err := w.Flush(ctx); err != nil {
+		e.t.Fatalf("flushing the index length change: %v", err)
+	}
+}
+
+// Ruling E-45 — the warning survives the writes the viewer makes while it is on
+// screen, and only the reader's acknowledgement retires it.
+//
+// This one goes over HTTP on purpose. TestProgress_staleWhenTheIndexLengthMoved
+// above asserts the same predicate as a pure function, and a pure function
+// cannot see the defect this test exists for: the PUT was overwriting the very
+// baseline the predicate reads, so a single page turn retired the warning
+// permanently and `isStale` kept answering correctly about numbers that were no
+// longer there.
+func TestProgress_staleSurvivesWritesUntilTheReaderAcknowledgesIt(t *testing.T) {
+	e := newEnv(t)
+	target := "/api/books/" + e.bookDirID + "/progress"
+
+	// The stored progress as the rest of the API reports it, which is the half
+	// of the contract a PUT response cannot vouch for.
+	stored := func() Progress {
+		t.Helper()
+		book := decodeBody[BookDetail](t, e.get("/api/books/"+e.bookDirID), http.StatusOK)
+		if book.Progress == nil {
+			t.Fatal("the book detail carries no progress")
+		}
+		return *book.Progress
+	}
+
+	// The reader opens a two-page book and the file then grows to seven.
+	if got := decodeBody[Progress](t, e.jsonBody(http.MethodPut, target, `{"page":1}`),
+		http.StatusOK); got.Stale {
+		t.Fatalf("stale before the length moved: %+v", got)
+	}
+	e.moveIndexPageCount(e.bookDirID, 7)
+	if got := stored(); !got.Stale {
+		t.Fatalf("stale = false right after the index length moved: %+v", got)
+	}
+
+	// Every write the viewer makes on its own — the debounced page turns, an
+	// explicit completed, an `stale_seen:false` — keeps the warning alive. The
+	// reader never said they saw it.
+	//
+	// Each one also asserts where the reader ended up, because the preserved
+	// baseline must not become the clamp: it is 2 while the file is 7 pages
+	// long, and a write clamped to it would strand the reader on page 2 of a
+	// book they can see seven pages of (E-45 §3).
+	for i, step := range []struct {
+		body     string
+		wantPage int
+	}{
+		{`{"page":2}`, 2},
+		{`{"page":3}`, 3},
+		{`{"page":3,"completed":false}`, 3},
+		{`{"page":4,"stale_seen":false}`, 4},
+	} {
+		got := decodeBody[Progress](t, e.jsonBody(http.MethodPut, target, step.body), http.StatusOK)
+		if !got.Stale {
+			t.Fatalf("PUT %d %s answered stale=false: the write erased its own warning: %+v",
+				i, step.body, got)
+		}
+		if got.LastPage != step.wantPage {
+			t.Fatalf("PUT %d %s put the reader on page %d, want %d — the clamp uses the "+
+				"index's current length, not the preserved baseline",
+				i, step.body, got.LastPage, step.wantPage)
+		}
+		after := stored()
+		if !after.Stale {
+			t.Fatalf("GET after PUT %d %s = stale false: %+v", i, step.body, after)
+		}
+		if after.LastPage != step.wantPage {
+			t.Fatalf("GET after PUT %d %s reports page %d, want %d",
+				i, step.body, after.LastPage, step.wantPage)
+		}
+	}
+	if got := stored(); got.PageCount != 2 {
+		t.Errorf("recorded page_count = %d after four writes, want the 2 the reader saw",
+			got.PageCount)
+	}
+
+	// The acknowledgement, and nothing else, retires it — in the PUT's own
+	// answer, so the client need not re-fetch to learn the hint is done.
+	ack := decodeBody[Progress](t, e.jsonBody(http.MethodPut, target, `{"page":5,"stale_seen":true}`),
+		http.StatusOK)
+	if ack.Stale || ack.PageCount != 7 || ack.LastPage != 5 {
+		t.Fatalf("acknowledged write = %+v, want stale false, page_count 7, last_page 5", ack)
+	}
+	if got := stored(); got.Stale || got.PageCount != 7 || got.LastPage != 5 {
+		t.Fatalf("GET after the acknowledgement = %+v, want stale false, page_count 7, last_page 5",
+			got)
+	}
+
+	// ...and an ordinary write afterwards does not resurrect it. The reader can
+	// reach the last page of the file as it is now — page 7 — and that is what
+	// FR-VWR-012's automatic completion fires on.
+	last := decodeBody[Progress](t, e.jsonBody(http.MethodPut, target, `{"page":7}`), http.StatusOK)
+	if last.Stale {
+		t.Errorf("a plain write after the acknowledgement re-raised the warning: %+v", last)
+	}
+	if last.LastPage != 7 || !last.Completed {
+		t.Errorf("the last write = page %d completed %v, want page 7 completed true — the "+
+			"reader must be able to reach the end of the file the book grew into",
+			last.LastPage, last.Completed)
+	}
+	if got := stored(); got.LastPage != 7 || !got.Completed {
+		t.Errorf("GET after the last write = %+v, want last_page 7 and completed", got)
+	}
+
+	// The field is optional and strictly decoded (arch §7.1): a client that
+	// never heard of it is unaffected, a typo is a 400 rather than a silently
+	// ignored acknowledgement.
+	errorBody(t, e.jsonBody(http.MethodPut, target, `{"page":1,"stale_scene":true}`),
+		http.StatusBadRequest, CodeBadRequest)
+	errorBody(t, e.jsonBody(http.MethodPut, target, `{"page":1,"stale_seen":"yes"}`),
+		http.StatusBadRequest, CodeBadRequest)
+}
+
+// Ruling E-45 / arch §4.11 — a book whose length was never known is not stale,
+// and no write of either kind gives it a baseline out of nothing.
+//
+// Note what this fixture can and cannot see. Its book has never had a length,
+// so the recorded value is 0 before the acknowledgement and 0 after it whichever
+// way the storage rule branches — it CANNOT tell a preserved baseline from a
+// rebaselined one. That distinction is the next test's, on a book that had a
+// length to lose.
+func TestProgress_unknownLengthIsNeverStale(t *testing.T) {
+	e := newEnv(t)
+	target := "/api/books/" + e.bookBrokenID + "/progress"
+
+	for _, body := range []string{`{"page":42}`, `{"page":42,"stale_seen":true}`} {
+		got := decodeBody[Progress](t, e.jsonBody(http.MethodPut, target, body), http.StatusOK)
+		if got.Stale || got.PageCount != 0 {
+			t.Errorf("PUT %s = %+v, want stale false and page_count 0", body, got)
+		}
+		if got.LastPage != 42 {
+			t.Errorf("PUT %s put the reader on page %d, want 42 — an unknown length has no "+
+				"upper bound (arch §7.6)", body, got.LastPage)
+		}
+	}
+	book := decodeBody[BookDetail](t, e.get("/api/books/"+e.bookBrokenID), http.StatusOK)
+	if book.Progress == nil || book.Progress.Stale || book.Progress.PageCount != 0 {
+		t.Errorf("book detail progress = %+v, want stale false and page_count 0", book.Progress)
+	}
+}
+
+// Ruling E-45 §2 — a book that BREAKS does not warn, it WAITS. The warning is
+// deferred until there are two lengths to compare, and the baseline is what
+// makes that later comparison possible.
+//
+// The scanner leaves a file it can no longer read at `status:"error",
+// page_count:0` (internal/scanner/scanner.go, bookFailure). Nothing about the
+// reader's saved place changed, and the screen is already saying the file cannot
+// be opened — a second line claiming their place may have moved is a warning
+// about a condition they cannot act on, which is exactly what `isStale`'s own
+// comment forbids. It could also never be dismissed: the viewer never finishes
+// loading such a book, so no acknowledgement is ever sent.
+//
+// Two rules meet here and this test holds both. `isStale` is symmetric, so
+// nothing warns while the length is unknown; and the storage layer refuses to
+// rebaseline an unknown length, so the recorded 2 is still there when the file
+// comes back. A hand-made API call can send an acknowledgement the viewer never
+// would — the second rule is what keeps that from destroying the baseline the
+// first rule is waiting on.
+func TestProgress_aBrokenBookDefersTheWarningAndKeepsTheBaseline(t *testing.T) {
+	e := newEnv(t)
+	target := "/api/books/" + e.bookDirID + "/progress"
+
+	stored := func() Progress {
+		t.Helper()
+		book := decodeBody[BookDetail](t, e.get("/api/books/"+e.bookDirID), http.StatusOK)
+		if book.Progress == nil {
+			t.Fatal("the book detail carries no progress")
+		}
+		return *book.Progress
+	}
+
+	// The reader gets through a two-page book, and then the file goes bad.
+	if got := decodeBody[Progress](t, e.jsonBody(http.MethodPut, target, `{"page":2}`),
+		http.StatusOK); got.PageCount != 2 || got.Stale {
+		t.Fatalf("first write = %+v, want page_count 2 and stale false", got)
+	}
+	e.moveIndexPageCount(e.bookDirID, 0)
+	if got := stored(); got.Stale {
+		t.Fatalf("a book that is unreadable NOW reported stale = true: %+v — there is no "+
+			"length to disagree with, and the reader cannot act on it", got)
+	}
+	if got := stored(); got.PageCount != 2 {
+		t.Fatalf("the baseline moved to %d when the book broke, want the recorded 2",
+			got.PageCount)
+	}
+
+	// A write arriving while the book is broken — including one carrying an
+	// acknowledgement no viewer would have sent, because no hint was shown to
+	// acknowledge — leaves the baseline alone. There is no length to agree to.
+	ack := decodeBody[Progress](t, e.jsonBody(http.MethodPut, target, `{"page":1,"stale_seen":true}`),
+		http.StatusOK)
+	if ack.PageCount != 2 {
+		t.Fatalf("the acknowledgement rebaselined to %d; a length of 0 is not a length the "+
+			"reader can acknowledge (E-45 §2)", ack.PageCount)
+	}
+	if ack.Stale {
+		t.Errorf("write against the broken book = %+v, want stale false", ack)
+	}
+	if got := stored(); got.PageCount != 2 || got.Stale {
+		t.Fatalf("GET after that write = %+v, want the recorded 2 and stale false", got)
+	}
+
+	// The file is repaired — to seven pages, not the two it had. THIS is where
+	// the warning belongs, and the surviving baseline is the only reason it can
+	// still be raised. Had either rule failed, this GET would report stale:false
+	// forever and the reader would resume at page 1 of a different book with no
+	// warning at all.
+	e.moveIndexPageCount(e.bookDirID, 7)
+	if got := stored(); !got.Stale || got.PageCount != 2 {
+		t.Fatalf("the repaired book = %+v, want stale true against the recorded 2 — the "+
+			"symmetric predicate defers the warning, it does not swallow it", got)
+	}
+
+	// And now that there is a length again, acknowledging works exactly as it
+	// always did.
+	done := decodeBody[Progress](t, e.jsonBody(http.MethodPut, target, `{"page":3,"stale_seen":true}`),
+		http.StatusOK)
+	if done.Stale || done.PageCount != 7 || done.LastPage != 3 {
+		t.Fatalf("acknowledgement of the repaired book = %+v, want stale false, page_count 7, "+
+			"last_page 3", done)
+	}
+	if got := stored(); got.Stale || got.PageCount != 7 {
+		t.Errorf("GET after the second acknowledgement = %+v, want stale false and page_count 7",
+			got)
+	}
 }
 
 // FR-VWR-002 — per-book preferences are three-state: absent leaves the override

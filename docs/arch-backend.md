@@ -707,9 +707,24 @@ CREATE TABLE IF NOT EXISTS progress (            -- FR-STT-001
     book_path   TEXT NOT NULL,                   -- root-relative; lets us rebuild ids
                                                  --   after a rename without the index
     last_page   INTEGER NOT NULL,                -- 1-based
-    page_count  INTEGER NOT NULL,                -- as of the last write; a mismatch
+    page_count  INTEGER NOT NULL,                -- the length the reader last saw: set by
+                                                 --   the first write, then moved only by
+                                                 --   an ACKNOWLEDGED one; a mismatch
                                                  --   against the index means the file
-                                                 --   changed -> UI shows a hint
+                                                 --   changed -> UI shows a hint. A 0 on
+                                                 --   EITHER side is "length unknown"
+                                                 --   (§4.11), not a mismatch: a broken
+                                                 --   book defers the hint until it can be
+                                                 --   read again (§7.3 `stale`).
+                                                 --   AMENDMENT A-14 (ruling E-45): this is
+                                                 --   a baseline, not a measurement of the
+                                                 --   last write. An ordinary page turn
+                                                 --   leaves it alone; only a PUT carrying
+                                                 --   stale_seen:true and a known length
+                                                 --   rebaselines it (§7.6).
+                                                 --   Overwriting it on every write erased
+                                                 --   the evidence the hint is derived from,
+                                                 --   so the hint fired once and never again
     completed   INTEGER NOT NULL DEFAULT 0,      -- 0|1   FR-VWR-012
     started_at  INTEGER NOT NULL,
     updated_at  INTEGER NOT NULL
@@ -1590,12 +1605,25 @@ interface Progress {
   book_id: ID;
   series_id: ID;
   last_page: number;       // 1-based
-  page_count: number;      // as recorded when progress was written
+  page_count: number;      // the book's length as the reader last saw it: set by the
+                           //   FIRST write, then moved only by an ACKNOWLEDGED one —
+                           //   AMENDMENT A-14 (ruling E-45). A plain page turn does not
+                           //   move it; only `stale_seen: true` does, and only when the
+                           //   length is known (§7.6). It is the baseline `stale` below
+                           //   is computed against, so a write that moved it would be a
+                           //   write that deleted the warning.
   completed: boolean;
   started_at: Unix;
   updated_at: Unix;
   stale: boolean;          // true when page_count no longer matches the index
-                           //   -> the UI may warn that the file changed
+                           //   -> the UI may warn that the file changed.
+                           //   SYMMETRIC (A-14, ruling E-45): 0 on EITHER side is
+                           //   false, because 0 is "length unknown" (§4.11), not a
+                           //   length. A book that is unreadable NOW therefore does
+                           //   not warn — the screen already says the file cannot be
+                           //   opened and there is no place to resume at — and the
+                           //   warning is DEFERRED, not lost: the baseline survives,
+                           //   so a repair to a different length raises it then.
 }
 
 interface SeriesProgress {                 // FR-STT-002, aggregated over books
@@ -2231,10 +2259,53 @@ interface ProgressUpdate {
   completed?: boolean;       // omitted => auto: true when page === page_count (FR-VWR-012).
                              //   With page_count === 0 the auto rule cannot fire, so
                              //   completed stays false unless sent explicitly.
+  stale_seen?: boolean;      // AMENDMENT A-14 (ruling E-45). The reader has SEEN the
+                             //   "the file changed" hint. Omitted or false => an ordinary
+                             //   write. true => also rebaseline the stored page_count to
+                             //   the index's current length, which retires the hint —
+                             //   but only when that length is known: with page_count === 0
+                             //   the baseline is preserved instead (see below). No viewer
+                             //   sends it in that state, because a book with no length
+                             //   shows no hint (§7.3 `stale` is symmetric).
 }
 // 200 -> Progress
 ```
 Idempotent; safe to send on every page turn. The frontend should debounce to ~1 s. `404` unknown book.
+
+**AMENDMENT A-14 (ruling E-45) — an unacknowledged write preserves `page_count`.** The stored
+`progress.page_count` is a *baseline*: it is the length the reader last agreed the book had, and
+`Progress.stale` (§7.3) is derived by comparing it with the index. So the storage rule is:
+
+- **INSERT** (first write for this book) stores the length it was given. There is no baseline to
+  protect and the reader has just seen the book at exactly that length.
+- **UPDATE** stores it **only when `stale_seen: true` and the index's length is known (`> 0`)**. Every
+  other write leaves the column exactly as it was — the same treatment `started_at` already gets, and
+  for the same reason: neither column describes *this* write.
+- **An acknowledgement with `page_count === 0` preserves the baseline too.** `0` means "length unknown"
+  (§4.11), which is what a scan leaves behind when a file goes bad, and an unknown length is not
+  something a reader can agree to: what they saw was *the file changed*, not *this book is zero pages
+  long*. Storing the `0` would be **permanent** — a recorded `0` is never `stale` (§7.3), so the
+  baseline would match every length the book is ever repaired to and the hint could never fire again on
+  any device, with `DELETE /progress` or an import the only way back. It is also what keeps
+  `page_count === 0` on the wire meaning exactly one thing.
+
+  **No client sends this**: `stale` is symmetric (§7.3), so a book with no current length shows no hint
+  and there is nothing to acknowledge. The rule is here for the request that did not come from a screen
+  — a hand-made call, a script — because that is the one the contract has to hold the line against. The
+  two rules together are what make the warning *deferred* rather than *lost*: nothing warns while the
+  file is broken, the recorded length survives it, and a repair to a different length raises the hint
+  then.
+- **`page` and `completed` are unaffected.** Both are still computed from the index's **current**
+  length: the clamp is `[1, current]` and the auto-complete rule is `page === current`, so a reader
+  can reach page 190 of a file that grew to 190 pages. What is preserved is one recorded column, not
+  the number the server computes with.
+
+The acknowledgement is an explicit field rather than an inference from "the page moved" because the
+viewer writes progress on a timer whether or not anybody looked at the hint. A reader who closes the
+tab one second in sends no acknowledgement, the baseline survives, and the next entry warns again —
+which is the intended outcome. The field is optional, so a client that predates it never
+acknowledges anything and therefore never loses a warning; strict decoding (§7.1) turns a
+misspelling into `400 bad_request` rather than a silently ignored acknowledgement.
 
 #### `DELETE /api/books/{bid}/progress` → `204`. Removes the row ("mark as unread").
 

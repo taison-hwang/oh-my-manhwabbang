@@ -451,6 +451,19 @@ export interface ProgressUpdate {
   page: number
   /** Omitted ⇒ auto: `true` when `page === page_count` (FR-VWR-012). */
   completed?: boolean
+  /**
+   * **E-45 §2 — the reader saw `파일이 변경되었습니다` for its full lifetime.**
+   *
+   * The only signal that lets the server re-baseline the recorded `page_count`;
+   * every other write preserves it. Sent by exactly one caller,
+   * `useSaveProgress.acknowledgeStale`, and never inferred from a page turn —
+   * `useProgressSync`'s automatic write goes out because the book loaded, so
+   * treating it as consent would acknowledge a notice nobody read.
+   *
+   * `contractcheck` cannot see this: it deliberately does not inspect request
+   * bodies (`scripts/contractcheck/main.go:48-53`). Known and accepted (E-45 §4).
+   */
+  stale_seen?: boolean
 }
 
 /** `PUT /api/books/{bid}/prefs` — every field optional; `null` clears the override. */

@@ -30,6 +30,14 @@ type Progress struct {
 // ProgressUpdate is the PUT /api/books/{bid}/progress payload plus the identity
 // the caller resolved from the index. Completed is optional: nil means "auto",
 // i.e. true exactly when Page reaches PageCount (FR-VWR-012).
+//
+// PageCount is always the index's current length: it is what the clamp and the
+// auto-complete rule are computed from. StaleSeen decides something else — a
+// caller sets it when the reader has acknowledged the "the file changed" hint,
+// and only then does PageCount also replace the stored baseline of an existing
+// row, and only when that length is known at all (ruling E-45 §2: an
+// acknowledgement of an unknown length would rebaseline to 0, which is never
+// stale and therefore permanent).
 type ProgressUpdate struct {
 	BookID    string
 	SeriesID  string
@@ -38,6 +46,7 @@ type ProgressUpdate struct {
 	Page      int
 	PageCount int
 	Completed *bool
+	StaleSeen bool
 }
 
 const progressColumns = `book_id, series_id, root_name, book_path, last_page,
@@ -100,6 +109,13 @@ func (db *DB) GetProgressMany(ctx context.Context, bookIDs []string) (map[string
 //
 // Page is clamped to [1, PageCount]. started_at is preserved across updates —
 // it is when the user first opened the book, not when they last touched it.
+// page_count is preserved the same way, and for the same kind of reason: it is
+// a baseline, not a measurement of this write. It records how long the book was
+// when the reader last agreed it was that long, so that `stale` stays derivable
+// (arch §3.4, §7.3). Only a write carrying StaleSeen and a KNOWN length
+// (PageCount > 0) moves it — an unacknowledged write that rebaselined would
+// silently destroy the evidence the hint is computed from, and an acknowledged
+// write of an unknown length would destroy it just as completely (ruling E-45).
 func (db *DB) PutProgress(ctx context.Context, u ProgressUpdate) (Progress, error) {
 	if u.BookID == "" {
 		return Progress{}, fmt.Errorf("userdata: empty book id: %w", ErrInvalidArgument)
@@ -118,6 +134,39 @@ func (db *DB) PutProgress(ctx context.Context, u ProgressUpdate) (Progress, erro
 		completed = 1
 	}
 
+	// The INSERT always stores the length it was given: a first write has no
+	// baseline to protect, and the reader has seen the book at exactly this
+	// length. Only the UPDATE branch has something to preserve, and the CASE is
+	// where it does. Two things about that CASE are worth knowing:
+	// `progress.page_count` is qualified for clarity, not out of necessity — a
+	// bare `page_count` on the right-hand side of DO UPDATE SET already means
+	// the pre-update row's value in SQLite and behaves identically, but the
+	// qualifier says so at a glance next to `excluded.`; and its `?` is the
+	// TENTH parameter, since SQLite numbers anonymous parameters by their order
+	// in the statement text and the conflict clause is written after the nine
+	// VALUES.
+	//
+	// The acknowledgement only counts when the length is known. `PageCount == 0`
+	// means "length unknown" (arch §4.11) — what the scanner leaves behind when a
+	// file goes bad (scanner.bookFailure) — and an unknown length is not
+	// something a reader can acknowledge: what they saw was "the file changed",
+	// not "this book is 0 pages long". Letting an acknowledgement store 0 would
+	// be permanent, because a recorded 0 is never stale (isStale, convert.go):
+	// the baseline would answer "unchanged" for every length the book is ever
+	// repaired to, and the warning could never fire again. Refusing it is also
+	// what keeps `page_count = 0` on the wire meaning exactly one thing —
+	// "length unknown" — instead of doubling as "the reader acknowledged a
+	// length of zero", which no reader ever means (ruling E-45 §2).
+	//
+	// `isStale` is symmetric, so no hint is shown while the length is unknown and
+	// no viewer sends this acknowledgement in the first place. This gate is what
+	// makes that true of a hand-made API call as well: the request never passes
+	// through the screen, so the contract has to hold the line itself.
+	ackStale := 0
+	if u.StaleSeen && u.PageCount > 0 {
+		ackStale = 1
+	}
+
 	now := db.now().Unix()
 	err := db.writeTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
@@ -129,10 +178,13 @@ func (db *DB) PutProgress(ctx context.Context, u ProgressUpdate) (Progress, erro
 				root_name  = excluded.root_name,
 				book_path  = excluded.book_path,
 				last_page  = excluded.last_page,
-				page_count = excluded.page_count,
+				page_count = CASE WHEN ? = 1
+				                  THEN excluded.page_count
+				                  ELSE progress.page_count END,
 				completed  = excluded.completed,
 				updated_at = excluded.updated_at`,
-			u.BookID, u.SeriesID, u.RootName, u.BookPath, page, u.PageCount, completed, now, now)
+			u.BookID, u.SeriesID, u.RootName, u.BookPath, page, u.PageCount, completed, now, now,
+			ackStale)
 		if err != nil {
 			return fmt.Errorf("writing progress for book %q: %w", u.BookID, err)
 		}

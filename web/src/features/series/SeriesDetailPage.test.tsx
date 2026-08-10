@@ -168,6 +168,35 @@ const DUPLICATE_BOOKS: BookSummary[] = [
   }),
 ]
 
+/**
+ * The volume E-45 §6 newly made reachable: **ratio 1.0, `completed: false`.**
+ *
+ * A 190-page file shrank to 10 and the server clamped the reader to page 10, so
+ * he has honestly seen all of what exists — while `progress.page_count` keeps
+ * the 190 baseline that E-45 §2 stopped every write from overwriting. Before §6
+ * changed the denominator the two fields were always equal and this state could
+ * not occur; after it, the ratio is 1.0 and nobody has marked the volume read.
+ */
+const SHRUNK_VOLUME: BookSummary = volume({
+  id: 'ffffffffffffffff',
+  name: '군계(軍鷄) 11권.zip',
+  kind: 'zip',
+  ord: 5,
+  page_count: 10,
+  total_bytes: 1_200_000,
+  file_size: 1_200_000,
+  progress: {
+    book_id: 'ffffffffffffffff',
+    series_id: SERIES_ID,
+    last_page: 10,
+    page_count: 190,
+    completed: false,
+    started_at: 1,
+    updated_at: 2,
+    stale: true,
+  },
+})
+
 function detailOf(overrides: Partial<SeriesDetail> = {}): SeriesDetail {
   return {
     ...seriesDetail,
@@ -721,6 +750,88 @@ describe('manual read / unread (FR-VWR-012)', () => {
       expect(within(after).getByText('완독')).toBeInTheDocument()
       expect(within(after).getByRole('button', { name: '읽음 해제' })).toBeInTheDocument()
     })
+  })
+})
+
+/**
+ * **라벨 · 색조 · 버튼 agree on one screen** (E-45 §6, 따름정리의 따름정리).
+ *
+ * §6 moved the denominator to the index's current length, which made a ratio of
+ * exactly 1.0 reachable for a volume nobody has marked read. The word `완독`,
+ * the terminal badge and the finished ink all keyed off that ratio, so one book
+ * read three ways at once: `완독` with a done-toned bar in the list, `읽는 중`
+ * on the grid, and `읽음 표시` on the button of both — E-12's state/action
+ * confusion, arrived at from a direction §6 had not looked in.
+ *
+ * The ratio itself is left alone; §6 ruled it honest. What is asserted here is
+ * that the three *readings* of it cannot disagree, on **both** surfaces — the
+ * list row and the grid tile — because the mismatch lived in the gap between
+ * them and a check on either one alone would have missed it.
+ */
+describe('a shrunk volume reads the same on both surfaces (E-45 §6)', () => {
+  const withShrunk = (): SeriesDetail =>
+    detailOf({ books: [...DUPLICATE_BOOKS, SHRUNK_VOLUME], book_count: 6 })
+
+  const shrunkBar = (scope: HTMLElement): HTMLElement =>
+    within(scope).getByRole('progressbar', { name: '군계(軍鷄) 11권.zip 진행률' })
+
+  it('says 100%, not 완독, and tones the row to match its button', async () => {
+    useUiStore.setState({ view: 'list' })
+    await setup(withShrunk())
+    const row = at(screen.getAllByTestId('volume-row'), 5)
+
+    // The label is the honest number, and it is not the terminal word…
+    expect(within(row).getByText('100%')).toBeInTheDocument()
+    expect(within(row).queryByText('완독')).not.toBeInTheDocument()
+    // …so it is not drawn as a terminal badge either (ui-spec §2.5 permits the
+    // solid accent field for 완독 and the 손상 family, and for nothing else).
+    const state = within(row).getByText('100%')
+    expect(state).toHaveClass('text-accent-text')
+    expect(state.classList.contains('bg-accent')).toBe(false)
+
+    // The bar is full — that is the ratio — but in the unfinished ink.
+    const bar = shrunkBar(row)
+    expect(bar).toHaveAttribute('aria-valuenow', '100')
+    const fill = bar.firstElementChild
+    expect(fill).toHaveClass('bg-accent-fill')
+    expect(fill?.classList.contains('bg-ink')).toBe(false)
+
+    // And the control, which has always answered `completed`, still does.
+    expect(within(row).getByRole('button', { name: '읽음 표시' })).toBeInTheDocument()
+  })
+
+  it('draws the same volume as 읽는 중 on the grid, with the same button', async () => {
+    useUiStore.setState({ view: 'grid' })
+    await setup(withShrunk())
+    const tile = at(screen.getAllByTestId('volume-tile'), 5)
+
+    // `tone === 'started'` is what puts a bar on a tile at all; a finished tile
+    // has none. Full, and present — the grid's way of saying 읽는 중.
+    expect(shrunkBar(tile)).toHaveAttribute('aria-valuenow', '100')
+    // The tile's volume number dims only for a finished volume.
+    const number = within(tile).getByText('6')
+    expect(number).toHaveClass('text-ink-faint')
+    expect(number.classList.contains('text-ink-dim')).toBe(false)
+    expect(within(tile).getByRole('button', { name: '읽음 표시' })).toBeInTheDocument()
+    expect(within(tile).queryByText('완독')).not.toBeInTheDocument()
+  })
+
+  it('still says 완독 on both surfaces once the volume really is completed', async () => {
+    // The discriminator: the word did not disappear, it changed what it follows.
+    const shrunkProgress = SHRUNK_VOLUME.progress
+    if (shrunkProgress === null) throw new Error('the fixture must carry progress')
+    const completed: BookSummary = {
+      ...SHRUNK_VOLUME,
+      progress: { ...shrunkProgress, completed: true },
+    }
+    useUiStore.setState({ view: 'list' })
+    await setup(detailOf({ books: [...DUPLICATE_BOOKS, completed], book_count: 6 }))
+
+    const row = at(screen.getAllByTestId('volume-row'), 5)
+    const state = within(row).getByText('완독')
+    expect(state).toHaveClass('bg-accent')
+    expect(shrunkBar(row).firstElementChild).toHaveClass('bg-ink')
+    expect(within(row).getByRole('button', { name: '읽음 해제' })).toBeInTheDocument()
   })
 })
 

@@ -30,6 +30,16 @@ export interface ProgressSyncApi {
   flush: () => void
   /** FR-VWR-012 manual toggle: records the current page with an explicit flag. */
   setCompleted: (completed: boolean) => void
+  /**
+   * **E-45 §2** — reports that `파일이 변경되었습니다` was shown for its full
+   * lifetime, at whatever page the reader has reached by then.
+   *
+   * Note what it is *not* attached to: the effect below writes a page whenever
+   * the book loads, with the reader having done nothing at all. That write is
+   * why the notice looked like it lasted a second, and it can never be read as
+   * consent to move the baseline.
+   */
+  acknowledgeStale: () => void
   mutation: SaveProgressApi['mutation']
 }
 
@@ -40,10 +50,12 @@ export function useProgressSync(
   options: ProgressSyncOptions = {},
 ): ProgressSyncApi {
   const { debounceMs, enabled = true } = options
-  const { save, flush, mutation } = useSaveProgress(
-    bookId,
-    debounceMs === undefined ? {} : { debounceMs },
-  )
+  const {
+    save,
+    acknowledgeStale: ack,
+    flush,
+    mutation,
+  } = useSaveProgress(bookId, debounceMs === undefined ? {} : { debounceMs })
 
   useEffect(() => {
     if (!enabled || pageCount <= 0 || page < 1) return
@@ -76,5 +88,10 @@ export function useProgressSync(
     [flush, page, pageCount, save],
   )
 
-  return { flush, setCompleted, mutation }
+  const acknowledgeStale = useCallback(() => {
+    if (pageCount <= 0) return
+    ack(Math.max(1, Math.min(pageCount, page)))
+  }, [ack, page, pageCount])
+
+  return { flush, setCompleted, acknowledgeStale, mutation }
 }

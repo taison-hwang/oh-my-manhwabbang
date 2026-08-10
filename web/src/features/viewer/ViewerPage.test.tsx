@@ -37,7 +37,13 @@ import { LibraryPage } from '../library/LibraryPage'
 import { SeriesDetailPage } from '../series/SeriesDetailPage'
 import { useSeriesDirStore } from '../../store/seriesDir'
 import { seriesCardDomId, seriesRowDomId, useUiStore } from '../../store/ui'
-import { CHROME_AUTOHIDE_MS, cancelChromeAutoHide, useViewerStore } from '../../store/viewer'
+import {
+  CHROME_AUTOHIDE_MS,
+  STALE_NOTICE_MS,
+  cancelChromeAutoHide,
+  useViewerStore,
+} from '../../store/viewer'
+import { PROGRESS_DEBOUNCE_MS, queryKeys } from '../../api/queries'
 import { EDGE_STRIP_PX, POINTER_IDLE_MS, ViewerPage } from './ViewerPage'
 import { OVERRIDE_CHIP_LABEL } from './ViewerTopBar'
 import { THUMB_SLOT_PX, THUMB_SLOT_TOUCH_PX } from './ThumbnailStrip'
@@ -113,15 +119,31 @@ function detailOf(prefs: Partial<BookPrefs> = {}, overrides: Partial<BookDetail>
 // Harness
 // ---------------------------------------------------------------------------
 
+interface ProgressPutBody {
+  page: number
+  completed?: boolean
+  stale_seen?: boolean
+}
+
 interface Recorded {
-  progressPuts: { page: number; completed?: boolean }[]
+  /** `stale_seen` is E-45 §2's acknowledgement — recorded so its *absence* is assertable. */
+  progressPuts: ProgressPutBody[]
+  /**
+   * The same writes, each with the **book it landed on** (E-45 §1 REVISION).
+   *
+   * The body alone cannot see the two defects that live one route param away: an
+   * acknowledgement signed for the volume the reader moved *to*, and volume 1's
+   * page written onto volume 2 while volume 2 is still loading. Both are correct
+   * bodies at the wrong address.
+   */
+  progressWrites: { bid: string; body: ProgressPutBody }[]
   prefsPuts: unknown[]
   /** Every URL handed to `new Image()` by the prefetcher. */
   prefetched: string[]
 }
 
 function newRecorded(): Recorded {
-  return { progressPuts: [], prefsPuts: [], prefetched: [] }
+  return { progressPuts: [], progressWrites: [], prefsPuts: [], prefetched: [] }
 }
 
 type PrefsPatch = Partial<Record<'reading_direction' | 'display_mode' | 'fit_mode', string | null>>
@@ -191,8 +213,15 @@ function handlers(detail: BookDetail, recorded: Recorded, prefetch = 4) {
       }),
     ),
     http.get(`${ORIGIN}/api/settings`, () => HttpResponse.json({ ...settings, prefetch })),
-    http.put(`${ORIGIN}/api/books/:bid/progress`, async ({ request }) => {
-      recorded.progressPuts.push((await request.json()) as { page: number; completed?: boolean })
+    // Answers `progressOf()` — i.e. `stale: false` — exactly as the server does:
+    // `PUT` replies with the progress it just stored, and E-45's acknowledgement
+    // is the *only* thing that re-baselines it. This reply is what
+    // `useSaveProgress.onSuccess` writes over `books.detail` with, so it is also
+    // the murder weapon in the defect E-45 names.
+    http.put(`${ORIGIN}/api/books/:bid/progress`, async ({ request, params }) => {
+      const body = (await request.json()) as ProgressPutBody
+      recorded.progressPuts.push(body)
+      recorded.progressWrites.push({ bid: String(params.bid), body })
       return HttpResponse.json(progressOf())
     }),
     http.put(`${ORIGIN}/api/books/:bid/prefs`, async ({ request }) => {
@@ -290,7 +319,15 @@ interface SetupOptions {
   width?: number
 }
 
-async function setup(options: SetupOptions = {}): Promise<Recorded> {
+interface Mounted {
+  recorded: Recorded
+  /** The screen's own cache — the surface `useSaveProgress.onSuccess` writes to. */
+  client: QueryClient
+  unmount: () => void
+}
+
+/** Everything `setup` does except waiting, so a fake clock can own the wait. */
+function mount(options: SetupOptions = {}): Mounted {
   const recorded = newRecorded()
   const detail = detailOf(options.prefs, options.detail)
   server.use(...handlers(detail, recorded, options.prefetch ?? 4))
@@ -300,7 +337,7 @@ async function setup(options: SetupOptions = {}): Promise<Recorded> {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
-  render(
+  const { unmount } = render(
     <QueryClientProvider client={client}>
       <MemoryRouter
         initialEntries={[`/series/${SERIES_ID}/books/${BOOK_ID}${options.search ?? '?page=12'}`]}
@@ -312,8 +349,88 @@ async function setup(options: SetupOptions = {}): Promise<Recorded> {
       </MemoryRouter>
     </QueryClientProvider>,
   )
+  return { recorded, client, unmount }
+}
+
+async function setup(options: SetupOptions = {}): Promise<Recorded> {
+  const { recorded } = mount(options)
   await screen.findAllByRole('img', { name: /page_/ })
   return recorded
+}
+
+/**
+ * Let the fake clock run until `ready()`, yielding to the real event loop
+ * between ticks so MSW, `fetch` and React Query can make progress.
+ *
+ * `waitFor` and `findBy*` cannot be used under a fake clock here:
+ * `@testing-library/dom`'s fake-timer support is **jest-only** — `helpers.js`
+ * gates it on `typeof jest !== 'undefined'`, and this suite runs on vitest — so
+ * their polling `setInterval` is itself faked and nothing would ever advance it.
+ * The budget is spent in *fake* milliseconds, and deliberately far short of
+ * anything this file times, so a settle cannot eat a lifetime under test.
+ */
+async function tickUntil(ready: () => boolean, budgetMs = 400): Promise<void> {
+  for (let spent = 0; spent <= budgetMs; spent += 5) {
+    if (ready()) return
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5)
+    })
+  }
+  if (!ready()) throw new Error('the screen never settled inside its fake-clock budget')
+}
+
+/**
+ * `setup` with the fake clock installed **before the first render**.
+ *
+ * It has to be before: the notice's timer is armed by the open effect, which
+ * runs inside this function. A clock installed afterwards does not own that
+ * timer — `advanceTimersByTime` would not fire it, and the real 3 400 ms would
+ * land long after the test had ended, which is a test that can only ever agree
+ * with whatever the screen does.
+ */
+async function setupOnFakeClock(options: SetupOptions = {}): Promise<Mounted> {
+  vi.useFakeTimers()
+  const mounted = mount(options)
+  await tickUntil(() => document.querySelector('img[alt*="page_"]') !== null)
+  return mounted
+}
+
+/**
+ * `setupOnFakeClock`, stopped at the **instant the notice went up**, with the
+ * clock reading of that instant (**E-45 §1**).
+ *
+ * Without it the screen tier cannot state a duration at all: `setupOnFakeClock`
+ * spends an unknown number of fake milliseconds waiting for the artwork, so
+ * every assertion afterwards is "some time later", and a test written that way
+ * passes for any lifetime between the two moments it happens to sample. It ticks
+ * one millisecond at a time and reads the clock *before* advancing, so `armedAt`
+ * is the arming instant to within a single tick — which is why the boundary case
+ * below leaves itself two.
+ */
+async function mountUntilStaleArmed(
+  options: SetupOptions = {},
+): Promise<Mounted & { armedAt: number }> {
+  vi.useFakeTimers()
+  const mounted = mount(options)
+  for (let spent = 0; spent <= 400; spent += 1) {
+    if (useViewerStore.getState().staleVisible) break
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1)
+    })
+  }
+  if (!useViewerStore.getState().staleVisible) {
+    throw new Error('the changed-file notice never went up')
+  }
+  return { ...mounted, armedAt: Date.now() }
+}
+
+/** Run the fake clock forward to an absolute reading of it. */
+async function advanceTo(when: number): Promise<void> {
+  const remaining = when - Date.now()
+  if (remaining < 0) throw new Error('the clock is already past that instant')
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(remaining)
+  })
 }
 
 function stage(): HTMLElement {
@@ -501,6 +618,10 @@ afterEach(() => {
   resetBasePath()
   cancelChromeAutoHide()
   vi.unstubAllGlobals()
+  // A fake clock installed by one case must not be inherited by the next: the
+  // cases that time things install it *before* their first render, so a leaked
+  // one would freeze a later test's debounce with nothing to advance it.
+  vi.useRealTimers()
 })
 afterAll(() => {
   server.close()
@@ -1660,14 +1781,358 @@ describe('progress (acceptance 13; FR-VWR-009, FR-STT-001)', () => {
     })
   })
 
-  it('warns once when the recorded progress no longer matches the file', async () => {
-    await setup({ detail: { progress: progressOf({ stale: true }) } })
-    expect(screen.getByText('파일이 변경되었습니다')).toBeInTheDocument()
+  /**
+   * **The writer is off until *this* book has loaded (`progressReady`).**
+   *
+   * The guard reads `detail !== undefined && pageCount > 0`, and until now
+   * nothing asserted it: deleting it left every test on this screen green,
+   * because on a first mount `pageCount` is 0 anyway and `useProgressSync`
+   * refuses on its own. The case it actually stands in front of is a **volume
+   * change**. `page` and `pageCount` are store state that outlives the route
+   * param, so between 다음 권 읽기 and the moment volume 2's detail arrives the
+   * screen is holding volume 1's page against volume 2's id — and
+   * `useProgressSync`'s effect re-runs precisely then, because `save`'s identity
+   * changes with the new `bid`. Without the guard that re-run records **page 214
+   * of a 190-page volume 2** (D-13 / NFR-DAT-004), which the server clamps and
+   * then marks completed.
+   *
+   * Volume 2's detail is held open on purpose: the window is real but short, and
+   * a test that raced it would pass on timing rather than on the guard.
+   */
+  it('writes nothing to the next volume until the next volume has loaded', async () => {
+    let release = (): void => {
+      throw new Error('the held handler was never installed')
+    }
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const { recorded } = await setupOnFakeClock({ search: '?page=214' })
+    server.use(
+      http.get(`${ORIGIN}/api/books/:bid`, async ({ params }) => {
+        if (params.bid === BOOK_ID) return HttpResponse.json(detailOf())
+        await held
+        return HttpResponse.json({
+          ...detailOf(),
+          id: String(params.bid),
+          page_count: 190,
+          pages: PAGES.slice(0, 190),
+          next_book_id: null,
+        })
+      }),
+    )
+    await tickUntil(() => screen.queryByText('권의 마지막 페이지') !== null)
+
+    fireEvent.click(screen.getByRole('button', { name: '다음 권 읽기' }))
+    // Long past the debounce, with volume 2 still in flight.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PROGRESS_DEBOUNCE_MS * 3)
+    })
+    expect(writesTo(recorded, NEXT_BOOK_ID), 'volume 1’s page was written to volume 2').toEqual([])
+    // Volume 1's own page did go out — the guard suppresses the wrong write, not
+    // the right one.
+    expect(writesTo(recorded, BOOK_ID)).toContainEqual({ page: 214 })
+
+    release()
+    await tickUntil(() => useViewerStore.getState().bookId === NEXT_BOOK_ID)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PROGRESS_DEBOUNCE_MS)
+    })
+    await tickUntil(() => writesTo(recorded, NEXT_BOOK_ID).length > 0)
+    expect(writesTo(recorded, NEXT_BOOK_ID)).toEqual([{ page: 1 }])
   })
 
   it('does not warn when the progress is current', async () => {
     await setup()
-    expect(screen.queryByText('파일이 변경되었습니다')).not.toBeInTheDocument()
+    expect(screen.queryByText(STALE_NOTICE)).not.toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Ruling E-45 — the changed-file notice has a lifetime
+// ---------------------------------------------------------------------------
+
+const STALE_NOTICE = '파일이 변경되었습니다'
+
+const staleNotice = (): HTMLElement | null =>
+  document.querySelector('[data-role="stale-progress"]')
+
+/** Only E-45's acknowledgement carries the flag; every other write must not. */
+const acknowledgements = (recorded: Recorded): Recorded['progressPuts'] =>
+  recorded.progressPuts.filter((put) => put.stale_seen === true)
+
+/** The same, with the book each one was signed against (E-45 §1 REVISION). */
+const signedFor = (recorded: Recorded): Recorded['progressWrites'] =>
+  recorded.progressWrites.filter((write) => write.body.stale_seen === true)
+
+/** Every progress write that landed on `bid`, in order. */
+const writesTo = (recorded: Recorded, bid: string): ProgressPutBody[] =>
+  recorded.progressWrites.filter((write) => write.bid === bid).map((write) => write.body)
+
+/**
+ * `파일이 변경되었습니다` — the half of E-45 that lives in the browser.
+ *
+ * **What the test this replaces was worth.** It was called *"warns **once** when
+ * the recorded progress no longer matches the file"* and asserted a single
+ * `getByText`. It measured no timer, no disappearance and no second entry; it
+ * passed because it finished before the 1 s progress debounce did. The defect it
+ * was named for — the notice living about a second and then never again — was
+ * sitting underneath it the whole time.
+ *
+ * The mechanism, so these tests are read as a set: the screen used to derive the
+ * notice per render from `detail.progress.stale` in the React Query cache, and
+ * `useSaveProgress.onSuccess` replaces that cache entry with the `PUT`'s own
+ * `progress`, whose `stale` is `false`. The `PUT` goes out because the book
+ * loaded — the reader need not turn a single page — so the notice unmounted on
+ * its own save path. Hence the two shapes asserted below: it **survives** the
+ * write, and it dies of **nothing but its own clock**.
+ */
+describe('the changed-file notice has a lifetime (ruling E-45)', () => {
+  const staleBook: SetupOptions = { detail: { progress: progressOf({ stale: true }) } }
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /**
+   * Let the automatic write — the one nobody asked for — reach the server.
+   *
+   * It is buffered behind `PROGRESS_DEBOUNCE_MS`, well past what `tickUntil`
+   * budgets, so the debounce is spent deliberately rather than waited out.
+   */
+  async function letTheAutomaticWriteLand(recorded: Recorded): Promise<void> {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PROGRESS_DEBOUNCE_MS)
+    })
+    await tickUntil(() => recorded.progressPuts.length > 0)
+  }
+
+  it('outlives the progress write that overwrites the cache it used to read', async () => {
+    const { recorded, client } = await setupOnFakeClock(staleBook)
+    expect(staleNotice()).toBeInTheDocument()
+    // A notice that removes itself and has no live region has a lifetime of
+    // zero on a screen reader (E-45 §1); the chrome hint already had one.
+    expect(staleNotice()).toHaveAttribute('role', 'status')
+
+    // Nobody touched anything: this write exists because the book loaded.
+    await letTheAutomaticWriteLand(recorded)
+    expect(recorded.progressPuts[0]).toEqual({ page: 12 })
+    expect(acknowledgements(recorded), 'a page write is not consent').toEqual([])
+
+    // The cache really has been overwritten with `stale: false` — this is the
+    // exact state in which the old screen unmounted the notice…
+    await tickUntil(
+      () => client.getQueryData<BookDetail>(queryKeys.books.detail(BOOK_ID))?.progress?.stale === false,
+    )
+    // …and the latched one keeps it up, because the reader has not seen it yet.
+    expect(staleNotice()).toBeInTheDocument()
+    expect(screen.getByText(STALE_NOTICE)).toBeInTheDocument()
+  })
+
+  it('goes down when its lifetime runs out, and acknowledges itself only then', async () => {
+    const { recorded } = await setupOnFakeClock(staleBook)
+    await letTheAutomaticWriteLand(recorded)
+    expect(staleNotice()).toBeInTheDocument()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STALE_NOTICE_MS)
+    })
+    expect(staleNotice()).not.toBeInTheDocument()
+
+    // E-45 §2: the reader saw the whole notice, so the server may re-baseline.
+    await tickUntil(() => acknowledgements(recorded).length > 0)
+    expect(acknowledgements(recorded)).toEqual([{ page: 12, stale_seen: true }])
+  })
+
+  it('acknowledges nothing when the reader leaves before the notice is done', async () => {
+    const { recorded, unmount } = await setupOnFakeClock(staleBook)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(Math.floor(STALE_NOTICE_MS / 2))
+    })
+    // The proof that this test is inside the window rather than past it.
+    expect(staleNotice()).toBeInTheDocument()
+
+    unmount()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STALE_NOTICE_MS * 2)
+    })
+
+    // The right ending (E-45 §2): the baseline survives, so the next entry
+    // warns again. A stale timer that outlived the screen would have signed for
+    // a notice the reader closed the tab on.
+    expect(acknowledgements(recorded)).toEqual([])
+    expect(recorded.progressPuts.every((put) => put.stale_seen === undefined)).toBe(true)
+  })
+
+  it('does not come back when the book is fetched again inside the same entry', async () => {
+    const { recorded, client } = await setupOnFakeClock(staleBook)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STALE_NOTICE_MS)
+    })
+    expect(staleNotice()).not.toBeInTheDocument()
+    // Every write has to be *finished*, not merely sent: a mutation still in
+    // flight lands its `onSuccess` after the refetch below and puts
+    // `stale: false` back, at which point the cache agrees with the screen for
+    // the wrong reason and this test passes against the very defect it is for.
+    // `isMutating() === 0` is the only form of that guarantee available here.
+    await tickUntil(() => acknowledgements(recorded).length > 0 && client.isMutating() === 0)
+
+    // The server has not been told anything yet, so `books.detail` refills with
+    // `stale: true`. Armed **once per entry** means the notice stays down: a
+    // render that derives from the cache would put it straight back up, which
+    // is the same wiring fault seen from the other side.
+    // The refetched payload is marked, so the wait below can be answered by the
+    // *screen* rather than by the cache. Waiting on the cache alone is a race
+    // this test lost once: the store write lands a tick before React re-renders
+    // from it, so a cache-only gate can assert the DOM before the render that
+    // would have put the notice back.
+    const REFETCHED = '군계(軍鷄) 01권 — 다시 읽어온 이름.zip'
+    server.use(
+      http.get(`${ORIGIN}/api/books/:bid`, () =>
+        HttpResponse.json({
+          ...detailOf(undefined, { progress: progressOf({ stale: true }) }),
+          name: REFETCHED,
+        }),
+      ),
+    )
+    act(() => {
+      void client.refetchQueries({ queryKey: queryKeys.books.detail(BOOK_ID) })
+    })
+    await tickUntil(() => screen.queryByText(REFETCHED) !== null)
+
+    expect(
+      client.getQueryData<BookDetail>(queryKeys.books.detail(BOOK_ID))?.progress?.stale,
+      'the refetch has to reinstate the flag, or this test proves nothing',
+    ).toBe(true)
+    expect(staleNotice()).not.toBeInTheDocument()
+  })
+
+  /**
+   * **The lifetime, measured on the screen (E-45 §4-2).**
+   *
+   * The store tier already pins `STALE_NOTICE_MS - 1` against `STALE_NOTICE_MS`,
+   * but the ruling asks for the duration to be measurable *here*, where the
+   * timer, the render and the save path are wired together — and the two cases
+   * around this one sample the clock so far apart that `STALE_NOTICE_MS` could
+   * be retuned to anything between them without a screen test noticing.
+   *
+   * The two-millisecond slack is `mountUntilStaleArmed`'s tick, not tolerance
+   * for the duration: it is far tighter than any retuning this is meant to
+   * catch, and it does not widen with the value under test.
+   */
+  it('measures its own lifetime, on the screen and not only in the store', async () => {
+    const { armedAt } = await mountUntilStaleArmed(staleBook)
+
+    await advanceTo(armedAt + STALE_NOTICE_MS - 2)
+    expect(staleNotice(), 'gone early — the notice is shorter than its constant').toBeInTheDocument()
+
+    await advanceTo(armedAt + STALE_NOTICE_MS)
+    expect(staleNotice(), 'still up — the notice is longer than its constant').not.toBeInTheDocument()
+  })
+
+  /**
+   * **A page turn inside the debounce leaves with the acknowledgement, as one
+   * request (E-45 §2).**
+   *
+   * This is the only reachable state in which `acknowledgeStale` finds anything
+   * in `useSaveProgress`'s buffer at all, and it is worth pinning because the
+   * obvious implementation — acknowledge with its own `mutate` and leave the
+   * buffer alone — sends **two** writes, with the plain page landing *after* the
+   * flag. See the note on `acknowledgeStale` in `queries.ts` for why the merge
+   * itself cannot change the body.
+   */
+  it('carries a page turned inside the debounce out with the acknowledgement', async () => {
+    const { recorded, armedAt } = await mountUntilStaleArmed(staleBook)
+    // The automatic write is long gone by here; page 13 is the reader's own.
+    await advanceTo(armedAt + STALE_NOTICE_MS - 400)
+    expect(recorded.progressPuts).toEqual([{ page: 12 }])
+
+    fireEvent.keyDown(window, { key: 'ArrowRight' })
+    await advanceTo(armedAt + STALE_NOTICE_MS)
+    await tickUntil(() => acknowledgements(recorded).length > 0)
+
+    // One request, not two, and the flag rides the page rather than chasing it.
+    expect(recorded.progressPuts).toEqual([{ page: 12 }, { page: 13, stale_seen: true }])
+    // Still only one after the debounce the turn armed would have expired.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(PROGRESS_DEBOUNCE_MS * 2)
+    })
+    expect(recorded.progressPuts).toEqual([{ page: 12 }, { page: 13, stale_seen: true }])
+  })
+
+  /**
+   * **The next volume is a different file, so it is asked again (E-45 §1
+   * REVISION).**
+   *
+   * This case replaces one that asserted the opposite. The first cut reused
+   * `open()`'s `continuing` judgement for the warning as well as for the opening
+   * hint, on the reasoning that one word should not carry two criteria — and
+   * that saving cost two defects at once. This is the second: a volume 2 that
+   * really *had* changed underneath the reader was never announced.
+   */
+  it('warns again on the next volume, and signs that volume’s own notice', async () => {
+    const { recorded } = await setupOnFakeClock({ ...staleBook, search: '?page=214' })
+    await tickUntil(() => screen.queryByText('권의 마지막 페이지') !== null)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STALE_NOTICE_MS)
+    })
+    expect(staleNotice()).not.toBeInTheDocument()
+    await tickUntil(() => acknowledgements(recorded).length > 0)
+
+    // The next volume answers `stale: true` too (the MSW book handler serves the
+    // same progress under any id) — and it is a different file, so the reader is
+    // told about it.
+    fireEvent.click(screen.getByRole('button', { name: '다음 권 읽기' }))
+    await tickUntil(() => useViewerStore.getState().bookId === NEXT_BOOK_ID)
+    expect(staleNotice()).toBeInTheDocument()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STALE_NOTICE_MS)
+    })
+    await tickUntil(() => signedFor(recorded).length > 1)
+    // Two notices, two acknowledgements, each against its own book — never two
+    // against the same one, and never volume 1's notice signed as volume 2.
+    expect(signedFor(recorded)).toEqual([
+      { bid: BOOK_ID, body: { page: 214, stale_seen: true } },
+      { bid: NEXT_BOOK_ID, body: { page: 1, stale_seen: true } },
+    ])
+  })
+
+  /**
+   * **The measured defect: 다음 권 읽기 *inside* the notice's window.**
+   *
+   * A plain path — resume volume 1, read the warning, press the button before
+   * the 3 400 ms are up. Volume 1's timer used to survive the volume change,
+   * latch a moment later, and be signed here as volume 2, because the writer is
+   * bound to the route's `:bid`. The observed request was
+   * `{"bid":"nextbook…","body":{"page":1,"stale_seen":true}}`: **volume 2's
+   * baseline burnt over a warning its reader was never shown.**
+   *
+   * The right ending is neither book signed. Volume 1's notice did not run its
+   * course, so it is not consent (E-45 §2, the same rule as leaving the screen);
+   * volume 2's has only just started.
+   */
+  it('signs neither book when the reader moves on inside the window', async () => {
+    const { recorded } = await setupOnFakeClock({ ...staleBook, search: '?page=214' })
+    await tickUntil(() => screen.queryByText('권의 마지막 페이지') !== null)
+    // The proof that this test is inside volume 1's window rather than past it.
+    expect(staleNotice()).toBeInTheDocument()
+    expect(acknowledgements(recorded)).toEqual([])
+
+    fireEvent.click(screen.getByRole('button', { name: '다음 권 읽기' }))
+    await tickUntil(() => useViewerStore.getState().bookId === NEXT_BOOK_ID)
+    // Volume 1's timer is gone, and the latch — if anything ever set it — could
+    // no longer name this book.
+    expect(useViewerStore.getState().staleBookId).toBe(NEXT_BOOK_ID)
+
+    // Straight through the instant volume 1's timer would have fired.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STALE_NOTICE_MS - 1)
+    })
+    expect(signedFor(recorded), 'volume 1 was left inside its window').toEqual([])
+
+    // …and volume 2's own notice, which started at the volume change, is still
+    // running: it has a full life of its own, not the remainder of volume 1's.
+    expect(staleNotice()).toBeInTheDocument()
   })
 })
 

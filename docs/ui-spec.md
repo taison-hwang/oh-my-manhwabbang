@@ -1225,11 +1225,11 @@ the page — the principle broken at the one moment it matters most. The viewer 
 | | Shipped | Taken from |
 |---|---|---|
 | Auto-hide | **2600 ms** after the last wake | `CHROME_AUTOHIDE_MS`, `web/src/store/viewer.ts:21` |
-| …**held** while the pointer rests inside either bar | **Derived from where the pointer is, not latched by the bars** (**E-30**). One rule on the viewer root answers `pointerover`/`pointerout` with "is the node under the pointer inside `[data-role=viewer-top-bar]` or `[data-role=viewer-bottom-bar]`?" → `holdChrome()` / `releaseChrome()`. A wake during a hold does not arm a timer behind it. Without the hold the bars dissolve under a pointer resting on the control it is about to press. **A touch never holds** (`pointerType === 'touch'`): a tap inside a bar leaves the 2600 ms running like anywhere else, because a finger does not *rest* on a control | `trackChromeHover`, `web/src/features/viewer/ViewerPage.tsx:438`; the root's three handlers at `:501`–`:503`; `holdChrome`/`releaseChrome`, `web/src/store/viewer.ts:345`–`:358` |
-| …and never fires mid-drag | the timer runs but declines to hide while `dragging` — the slider's preview lives in the bar it would have taken away | `web/src/store/viewer.ts:192` |
-| Cursor | hidden **1600 ms** after the pointer stops moving, **independently of the chrome**; `pointer` over the two page-turn zones while awake, `default` over the centre and over the bars | `POINTER_IDLE_MS`, `web/src/features/viewer/ViewerPage.tsx:92`; the cursor itself at `:498` |
-| Summons the chrome | a **44px screen-edge strip** at the top or the bottom (`mouseenter` *or* click) wakes it; the **centre 36 %** tap zone and the **`H`** key *toggle* it, so a second tap or press sends it away | `EDGE_STRIP_PX`, `ViewerPage.tsx:101`; the strips at `:511`–`:522`; §8.2, §8.3 |
-| Does **not** wake it | moving the mouse — only the cursor comes back — and scrolling a webtoon, which reports its page through `syncPage` precisely so it cannot | `nudgePointer`, `ViewerPage.tsx:338`; `web/src/store/viewer.ts:293` |
+| …**held** while the pointer rests inside either bar | **Derived from where the pointer is, not latched by the bars** (**E-30**). One rule on the viewer root answers `pointerover`/`pointerout` with "is the node under the pointer inside `[data-role=viewer-top-bar]` or `[data-role=viewer-bottom-bar]`?" → `holdChrome()` / `releaseChrome()`. A wake during a hold does not arm a timer behind it. Without the hold the bars dissolve under a pointer resting on the control it is about to press. **A touch never holds** (`pointerType === 'touch'`): a tap inside a bar leaves the 2600 ms running like anywhere else, because a finger does not *rest* on a control | `trackChromeHover`, `web/src/features/viewer/ViewerPage.tsx:719`; the root's three handlers at `:788`–`:790`; `holdChrome`/`releaseChrome`, `web/src/store/viewer.ts:500`–`:513` |
+| …and never fires mid-drag | the timer runs but declines to hide while `dragging` — the slider's preview lives in the bar it would have taken away | `web/src/store/viewer.ts:297` |
+| Cursor | hidden **1600 ms** after the pointer stops moving, **independently of the chrome**; `pointer` over the two page-turn zones while awake, `default` over the centre and over the bars | `POINTER_IDLE_MS`, `web/src/features/viewer/ViewerPage.tsx:94`; the cursor itself at `:785` |
+| Summons the chrome | a **44px screen-edge strip** at the top or the bottom (`mouseenter` *or* click) wakes it; the **centre 36 %** tap zone and the **`H`** key *toggle* it, so a second tap or press sends it away | `EDGE_STRIP_PX`, `ViewerPage.tsx:107`; the strips at `:800`–`:815`; §8.2, §8.3 |
+| Does **not** wake it | moving the mouse — only the cursor comes back — and scrolling a webtoon, which reports its page through `syncPage` precisely so it cannot | `nudgePointer`, `ViewerPage.tsx:562`; `web/src/store/viewer.ts:448` |
 
 The edge strips are rendered **only while the chrome is away**. Once the bars are up they are what the
 pointer reaches for, and a strip over them would eat the first click on 뒤로. A click on a strip also stops
@@ -1255,9 +1255,9 @@ for the rest of the session: `chromeHeld` is module-scoped and nothing renders f
 state a reader could see or correct. The hold is taken without a crossing, so the release may not depend on
 the matching crossing arriving either. (1) a `pointerout` whose destination is not a bar — including
 `relatedTarget: null`, the pointer leaving the window; (2) `onPointerLeave` on the root; (3) a plain
-`mousemove` over the stage, folded into `nudgePointer` (`ViewerPage.tsx:358`) — a different event family
+`mousemove` over the stage, folded into `nudgePointer` (`ViewerPage.tsx:562`) — a different event family
 that keeps arriving rather than firing once at a boundary; (4) `open()` and `close()` reset the flag
-(`store/viewer.ts:237`, `:266`), so a viewer that was left, or a volume swapped underneath one, cannot
+(`store/viewer.ts:373`, `:418`), so a viewer that was left, or a volume swapped underneath one, cannot
 bequeath a hold. Mutation showed (1) and (2) are genuinely independent: breaking the `pointerout` release
 left the window-exit case still releasing through the root's `pointerleave`.
 
@@ -1306,7 +1306,7 @@ entry, so it does not come back on the next volume (**E-28** §3).
 `font-size:11px; tabular-nums; letter-spacing:.06em; color:var(--ink-dim); pointer-events:none`. It is
 suppressed wherever it would lie or crowd: while the chrome is up (the bar has its own counter), while the
 loading indicator (§6.3) is showing, in 세로 — several pages are on screen at once — and at 맞춤 너비, where
-the page is taller than the viewport. `ViewerPage.tsx:584`.
+the page is taller than the viewport. `ViewerPage.tsx:873`.
 
 ### 6.2 Stage
 
@@ -1324,7 +1324,7 @@ Page frame: `position:relative; flex:0 0 auto` plus the fit rule:
 | Fit mode | Label | Sizing |
 |---|---|---|
 | `width` | 너비 | `width:100%; height:auto` — the stage scrolls vertically |
-| `height` | 높이 | `height:100%; width:auto` — **default** (`DEFAULT_FIT`, `store/viewer.ts:34`) |
+| `height` | 높이 | `height:100%; width:auto` — **default** (`DEFAULT_FIT`, `store/viewer.ts:51`) |
 | `original` | 원본 | intrinsic size, stage padding drops to 0, stage scrolls on both axes |
 | `contain` | 화면 | `max-width:100%; max-height:100%`. **The control is back** (**E-44**) — 맞춤 is *four* options again (§6.6) and prd FR-VWR-005 was re-amended to match, after **E-27** had cut it to three. 화면 sits **third** in the group, between 높이 and 원본. Nothing had to be re-derived: the geometry stayed in `fit.ts` and stayed tested throughout (`fit.test.ts:185,201,210,225,247`), and the wire enum never moved (`arch-backend.md` §7 lists `width｜height｜original｜contain` at `:407`, `:726`, `:1559`; `PUT /api/books/{id}/prefs` accepts `contain` — `internal/httpapi/api_test.go:832-846`). **A book stored at `contain` opens at `contain`**: E-27's coercion in `openingFit` (`store/viewer.ts`) was a corollary of the control's absence, and it goes out with the absence (E-44 §2) |
 
@@ -1501,6 +1501,55 @@ own, so a notice that rides along with it is a notice nobody is ever shown. The 
 cleared a one-row 53px bar by three pixels and nothing else — once the bar wrapped (103px at 900, 122px at
 760) the notice was inside the bar's box and `z-chrome` painted over it. The offset had always been a
 coincidence.
+
+**And it has a lifetime (E-45 §1).** Like the opening hint it is **timed, not dismissible** — **3400 ms**
+(`STALE_NOTICE_MS`, `store/viewer.ts:48`), deliberately the same value as `CHROME_HINT_MS` but a
+*separate* constant, so that retuning the hint cannot silently retune a warning about the reader's saved
+place. It carries `role="status"`: a notice that removes itself and has no live region has a lifetime of
+zero on a screen reader.
+
+> **Open item — the two live regions are *mounted*, not filled.** This notice and the opening hint above
+> are both `role="status"` elements that are inserted into the DOM **with their text already in them**, and
+> a live region created that way is frequently never announced: the assistive tech has nothing to observe a
+> *change* against. They can also arrive in the same commit (a fresh entry into a changed book raises both),
+> where two polite regions appearing at once are serialised or one is dropped. Their *placement* does not
+> collide — bottom-centre pill vs `top:56px` / in-column row, measured — so this is an announcement defect,
+> not a layout one. The remedy is one permanently-mounted region whose **content** is swapped, which is a
+> change to both notices at once and interacts with the paper layer (§2.7: the grain is an `::after` at
+> `inset:0` on each notice's own box, so an always-present empty wrapper would lay a wash over the artwork).
+> **No ruling covers that trade, so it is left open rather than guessed at.**
+
+**Armed once per _book_ — not per entry (E-45 §1 REVISION).** The first cut reused `open()`'s `continuing`
+judgement here, so 다음 권 읽기 inherited whatever answer volume 1 had given. That is right for the opening
+hint, which asks *"have I already greeted this reader"*, and wrong for this one, which asks *"has this file
+changed"* — the next volume is a different file. It cost two defects at once: volume 1's live timer latched
+under volume 2 and the screen, bound to the route's `:bid`, signed `stale_seen: true` against **volume 2's**
+baseline over a warning nobody was shown; and a volume 2 that really had changed was never announced. So
+`open()` drops the previous book's timer and re-arms from the new book's `progress.stale` on every call,
+`staleBookId` (`store/viewer.ts:158`) records which book it was armed for, and `selectStaleAckOwed`
+(`store/viewer.ts:596`) is the single place that decides whether an acknowledgement belongs to the book
+about to be written to. **The opening hint's `continuing` handling is unchanged.**
+
+**Nothing is armed for a volume with no pages.** `isStale` is symmetric — neither a recorded nor a current
+`0` is "the file changed" (E-45 §2) — so a well-behaved server cannot send `stale:true` alongside
+`page_count: 0`; `open()` refuses it anyway. That screen is already showing 열 수 없는 파일, the reader has
+no saved place to be moved, and the acknowledgement is unsendable there, so the notice would run its whole
+life, latch, and come back on every entry for ever.
+
+**The lifetime is store state, not a derived value, and that is the whole of E-45 §1.** `staleVisible`
+(`store/viewer.ts:128`) is latched by `open()` and timed down by a module-scoped timer, exactly as
+`hintVisible` is. The condition used to be read per render out of the React Query cache, which
+`useSaveProgress.onSuccess` overwrites with the `PUT`'s own `progress` (`stale:false`) — and that `PUT`
+goes out because the book *loaded*, not because the reader did anything. The notice therefore vanished
+about a second in and never returned: a side effect of the save path, never a designed duration.
+
+**Running the lifetime out is what acknowledges it (E-45 §2).** Only then does the client send a progress
+`PUT` carrying `stale_seen: true` (`ProgressUpdate`, `api/types.ts:449`), which is the one signal that lets
+the server re-take its `page_count` baseline. Turning a page is *not* consent. A reader who leaves inside
+the window sends nothing, the baseline survives, and the next entry warns again — that is the intended
+ending, not a lost write. **It goes out only for the book the latch names**: `ViewerPage.tsx:217` asks the
+store whose acknowledgement is owed, `:380-384` is the effect that writes it, and `:950-965` renders the
+notice.
 
 ### 6.7 Bottom overlay
 

@@ -81,10 +81,83 @@ describe('volumeProgressRatio / volumeStateLabel', () => {
   })
 
   it('is last_page / page_count while in progress', () => {
-    // 42 / 187 = 22.4 % → floors to 22 %.
+    // 42 / 187 = 22.4 % → floors to 22 %. Note both lengths are 187 in this
+    // fixture, so this case cannot say *which* one is the denominator — the
+    // three E-45 §6 cases below are the ones that can.
     expect(volumeProgressRatio(bookSummary)).toBeCloseTo(42 / 187)
     expect(volumeStateLabel(bookSummary)).toBe('22%')
     expect(volumeTone(bookSummary)).toBe('started')
+  })
+
+  /**
+   * **E-45 §6 — the denominator is the index's current length.**
+   *
+   * `progress.page_count` is the *baseline* `isStale` compares against, and
+   * E-45 §2 made the server preserve it across unacknowledged writes. From that
+   * moment the baseline and the current length legitimately disagree, and the
+   * screen must divide by the current one.
+   *
+   * Every fixture in this file used to carry 187 in *both* fields, which is why
+   * `42 / 187` above passes with either denominator. These three set them apart
+   * on purpose: swap `book.page_count` back for `progress.page_count` in
+   * `volume.ts` and all three go red.
+   */
+  it('divides by the index length, not the baseline, when the file grew (E-45 §6)', () => {
+    // 10 pages became 190; the reader has seen 10 of them. That is 5 %, not 완독.
+    const grew = book({
+      page_count: 190,
+      progress: { ...seriesProgressRow(), last_page: 10, page_count: 10 },
+    })
+    expect(volumeProgressRatio(grew)).toBeCloseTo(10 / 190)
+    expect(volumeStateLabel(grew)).toBe('5%')
+    expect(volumeTone(grew)).toBe('started')
+  })
+
+  /**
+   * **The ratio is 1.0 and the word is not `완독`** (E-45 §6, 따름정리의 따름정리).
+   *
+   * This case is where §6's own correction became visible. It asserted `완독`
+   * and — alone among the cases here — left the tone unasserted, which is how a
+   * three-way disagreement got *recorded* by a green test rather than caught by
+   * it: `완독` with a terminal badge and finished ink in the list, `읽는 중` on
+   * the grid, `읽음 표시` on the button of both. The number stays 1.0; the word,
+   * the tone and the control all answer `progress.completed`.
+   */
+  it('reads 100%, not 완독, for a shrunk volume nobody marked read', () => {
+    // 190 pages became 10 and the server clamps the reader to page 10: he is at
+    // the end of the file that exists. The old baseline would call that 5 %.
+    const shrank = book({
+      page_count: 10,
+      progress: { ...seriesProgressRow(), last_page: 10, page_count: 190, completed: false },
+    })
+    expect(volumeProgressRatio(shrank)).toBe(1)
+    expect(volumeStateLabel(shrank)).toBe('100%')
+    expect(volumeTone(shrank)).toBe('started')
+  })
+
+  it('says 완독 for the same ratio once the volume really is completed', () => {
+    // The discriminator against "1.0 never says 완독": the word is not gone, it
+    // just answers `completed` instead of the fraction.
+    const done = book({
+      page_count: 10,
+      progress: { ...seriesProgressRow(), last_page: 10, page_count: 190, completed: true },
+    })
+    expect(volumeProgressRatio(done)).toBe(1)
+    expect(volumeStateLabel(done)).toBe('완독')
+    expect(volumeTone(done)).toBe('finished')
+  })
+
+  it('is 0, not a full bar, for a volume with no pages left but a recorded row', () => {
+    // The guard has to watch the *denominator*. `last_page / 0` is Infinity, and
+    // the `Math.min(1, …)` clamp would silently render that as a finished volume.
+    const gone = book({
+      status: 'error',
+      page_count: 0,
+      progress: { ...seriesProgressRow(), last_page: 42, page_count: 187 },
+    })
+    expect(volumeProgressRatio(gone)).toBe(0)
+    expect(volumeStateLabel(gone)).toBe('ERR')
+    expect(volumeTone(gone)).toBe('broken')
   })
 
   it('is an em dash when the volume was never opened', () => {

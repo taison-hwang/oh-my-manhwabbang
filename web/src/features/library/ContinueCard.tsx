@@ -41,8 +41,22 @@ export function ContinueCard({ item, onResume }: ContinueCardProps) {
     enabled: item.has_cover,
   })
 
-  const total = item.progress.page_count
-  const ratio = total > 0 ? item.progress.last_page / total : 0
+  // E-45 §6: the denominator is the index's *current* length, not the baseline
+  // `progress.page_count` that `isStale` compares against. Since E-45 §2 stopped
+  // every write from re-baselining that column the two can disagree, and the old
+  // length is wrong in both directions (a grown file reads 100 %, a shrunk one
+  // reads a fraction of a book the reader has finished).
+  //
+  // A `status != "ok"` volume reports `page_count: 0` (arch §4.11) and this
+  // divides by it. There is deliberately **no `> 0` guard here**: `ProgressBar`
+  // normalises a non-finite `value` to an empty trough, that is written into its
+  // contract, and `library.test.tsx`'s "draws an empty bar rather than a full
+  // one" case fails the moment it stops doing so. The guard that used to stand
+  // here was removable with every test still green — it was a second answer to a
+  // question already answered one component down, and a comment claiming it was
+  // load-bearing (§6.5 exactly).
+  const total = item.book.page_count
+  const ratio = item.progress.last_page / total
 
   return (
     <button

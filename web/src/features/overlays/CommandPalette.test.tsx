@@ -10,7 +10,7 @@ import { MemoryRouter, Route, Routes, useLocation, useParams } from 'react-route
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { continueResponse, ORIGIN, seriesSummary, SERIES_ID } from '../../api/fixtures'
-import type { SeriesSummary } from '../../api/types'
+import type { ContinueItem, SeriesSummary } from '../../api/types'
 import { resetBasePath } from '../../api/urls'
 import { CommandPalette } from './CommandPalette'
 
@@ -150,6 +150,37 @@ describe('empty query (WP-10 acceptance 5)', () => {
     expect(options[0]).toHaveAttribute('aria-selected', 'true')
     // The recents come from /api/continue, so no series search was issued.
     expect(seriesRequests).toEqual([])
+  })
+
+  /**
+   * **E-45 §6 — the recent row's counter divides by `book.page_count`.**
+   *
+   * `progress.page_count` is the stale-detection baseline, which E-45 §2 stopped
+   * re-baselining on every write; from then on it can be an *old* length. The
+   * shared `continueResponse` fixture carries 187 in both fields, so the row
+   * above renders `42 / 187p` no matter which field the palette picks. These two
+   * set the fields apart locally rather than editing the shared fixture.
+   */
+  function recentWith(book: Partial<ContinueItem['book']>, progress: Partial<ContinueItem['progress']>): ContinueItem {
+    const base = at(continueResponse.items, 0)
+    return { ...base, book: { ...base.book, ...book }, progress: { ...base.progress, ...progress } }
+  }
+
+  it('counts a recent against the index length, not the stale baseline (E-45 §6)', async () => {
+    // 10 pages became 190 and the reader has seen 10: `10 / 190p`, not `10 / 10p`.
+    const grew = recentWith({ page_count: 190 }, { page_count: 10, last_page: 10 })
+    server.use(http.get(`${ORIGIN}/api/continue`, () => HttpResponse.json({ items: [grew] })))
+
+    renderPalette()
+    expect(await screen.findByText('군계(軍鷄) 01권.zip · 10 / 190p')).toBeInTheDocument()
+  })
+
+  it('counts a recent against the index length when the file shrank too (E-45 §6)', async () => {
+    const shrank = recentWith({ page_count: 10 }, { page_count: 190, last_page: 10 })
+    server.use(http.get(`${ORIGIN}/api/continue`, () => HttpResponse.json({ items: [shrank] })))
+
+    renderPalette()
+    expect(await screen.findByText('군계(軍鷄) 01권.zip · 10 / 10p')).toBeInTheDocument()
   })
 
   it('renders the §8.4 footer hints', async () => {

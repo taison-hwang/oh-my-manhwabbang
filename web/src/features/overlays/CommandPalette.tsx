@@ -94,7 +94,9 @@ export function CommandPalette({ open, query, onQueryChange, onClose }: CommandP
       out.push({
         seriesId: item.series_id,
         title: item.series_name,
-        sub: `${item.book.name} · ${formatContinueCounter(item.progress.last_page, item.progress.page_count)}`,
+        // E-45 §6: `book.page_count` (the index's current length), not
+        // `progress.page_count` (the stale-detection baseline E-45 §2 now preserves).
+        sub: `${item.book.name} · ${formatContinueCounter(item.progress.last_page, item.book.page_count)}`,
       })
     }
     return out.slice(0, PALETTE_LIMIT)

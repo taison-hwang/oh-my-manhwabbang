@@ -421,6 +421,27 @@ export interface SaveProgressVariables {
 export interface SaveProgressApi {
   /** Records a 1-based page; the write is debounced and idempotent. */
   save: (page: number, completed?: boolean) => void
+  /**
+   * **E-45 §2** — carries `stale_seen: true` on the next write and sends it now.
+   *
+   * Separate from `save` because it says a different thing. `save` reports where
+   * the reader is; this reports that `파일이 변경되었습니다` was on screen for its
+   * whole `STALE_NOTICE_MS`, which is the one fact that lets the server re-take
+   * its `page_count` baseline. Deriving it from a page turn is the §6.5 shape
+   * this repository keeps paying for — the check would end up watching the thing
+   * *next to* the notice rather than the notice.
+   *
+   * It **takes over** the debounce buffer rather than racing it, so a page
+   * turned inside the last second and the acknowledgement leave as **one**
+   * request. That much is a path and is asserted (`ViewerPage.test.tsx`, "carries
+   * a page turned inside the debounce out with the acknowledgement"): the
+   * obvious alternative — acknowledge with its own `mutate` and leave the buffer
+   * alone — sends two writes with the bare page landing *after* the flag.
+   *
+   * The field-level merge inside it is a **guard, not a path**; see the note at
+   * the implementation for why nothing distinguishable can be in that buffer.
+   */
+  acknowledgeStale: (page: number) => void
   /** Sends the pending write immediately — use on unmount and `visibilitychange`. */
   flush: () => void
   mutation: UseMutationResult<Progress, Error, SaveProgressVariables>
@@ -471,11 +492,46 @@ export function useSaveProgress(bid: ID, options: SaveProgressOptions = {}): Sav
     [bid, debounceMs, flush],
   )
 
+  const acknowledgeStale = useCallback(
+    (page: number) => {
+      assertPageNumber(page)
+      // A buffered write for *another* book is that book's page, and replacing
+      // it in the buffer would lose it (D-13 / NFR-DAT-004). It should never be
+      // here — the `bid` effect below flushes on every volume change — so this
+      // is a guard rather than a path, and it sends rather than discards.
+      if (pending.current !== null && pending.current.bid !== bid) flush()
+      // **Both of the lines below are guards, and only one of them is a path.**
+      //
+      // Replacing the buffer *is* the path: whatever is in it must not simply be
+      // dropped, and a second `mutate` beside it would put two writes on the
+      // wire in an undefined order. That is asserted.
+      //
+      // Spreading the buffered fields is the guard, and it is measured to be an
+      // identity today — remove it and the whole suite stays green. The only
+      // thing that can be buffered when this runs is a `{page}` from the effect
+      // in `useProgressSync`, and that page is *this* page: both read the same
+      // render's `page`, and `setCompleted`, the one caller that would add a
+      // second field, flushes on the spot. The spread is kept because it costs
+      // nothing and states the intent — the acknowledgement adds a flag to the
+      // reader's write, it does not replace it — but it is not defended, and a
+      // comment claiming otherwise is the §6.5 shape this repository keeps
+      // paying for. If a future caller can buffer `completed`, this becomes a
+      // path and needs a case of its own.
+      const buffered = pending.current
+      pending.current = {
+        bid,
+        update: buffered === null ? { page, stale_seen: true } : { ...buffered.update, stale_seen: true },
+      }
+      flush()
+    },
+    [bid, flush],
+  )
+
   // Flushes on unmount *and* whenever `bid` changes, so the previous book's pending
   // write goes out before the next book's `save` can replace it in the buffer.
   useEffect(() => flush, [flush, bid])
 
-  return { save, flush, mutation }
+  return { save, acknowledgeStale, flush, mutation }
 }
 
 /** FR-VWR-012 "안읽음": `DELETE /api/books/{bid}/progress`. */

@@ -2457,6 +2457,74 @@ describe('이어보기 (FR-LIB-010)', () => {
     expect(await screen.findByText('viewer')).toBeInTheDocument()
   })
 
+  /**
+   * **E-45 §6 — the counter's denominator is `book.page_count`.**
+   *
+   * `progress.page_count` is the stale-detection baseline (arch §3.4), and E-45
+   * §2 made the server preserve it across writes the reader never acknowledged.
+   * The two fields then disagree, and only the index's current length is a
+   * denominator: a 10-page file that grew to 190 leaves a reader who saw 10
+   * pages at 5 %, not at `10 / 10p`.
+   *
+   * `makeContinueItem()` carries 187 in both fields, so the counter assertion in
+   * the test above passes with either one. This one does not.
+   */
+  it('counts against the index length, not the stale baseline (E-45 §6)', async () => {
+    const grew = makeContinueItem()
+    grew.book.page_count = 190
+    grew.progress.page_count = 10
+    grew.progress.last_page = 10
+    scenario.continueItems = [grew]
+    renderLibrary()
+    await waitForLibrary()
+
+    expect(await screen.findByText('10 / 190p')).toBeInTheDocument()
+    expect(screen.queryByText('10 / 10p')).not.toBeInTheDocument()
+
+    // The bar has to agree with the counter — they are two readings of the same
+    // fraction, and the old denominator drew a full bar next to `10 / 190p`.
+    const card = screen.getByRole('button', { name: /군계\(軍鷄\) 01권\.zip/ })
+    expect(within(card).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '5')
+  })
+
+  it('counts against the index length when the file shrank too (E-45 §6)', async () => {
+    // 190 → 10 with the reader clamped to the last page that exists: 완독, and a
+    // full bar. The preserved baseline would have drawn 5 %.
+    const shrank = makeContinueItem()
+    shrank.book.page_count = 10
+    shrank.progress.page_count = 190
+    shrank.progress.last_page = 10
+    scenario.continueItems = [shrank]
+    renderLibrary()
+    await waitForLibrary()
+
+    expect(await screen.findByText('10 / 10p')).toBeInTheDocument()
+    const card = screen.getByRole('button', { name: /군계\(軍鷄\) 01권\.zip/ })
+    expect(within(card).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100')
+  })
+
+  it('draws an empty bar rather than a full one when the volume lost its pages', async () => {
+    // `status !== "ok"` books report `page_count: 0` (arch §4.11), and the card
+    // divides by that: the ratio it hands down really is `Infinity`.
+    //
+    // **This assertion is what defends `ProgressBar`'s non-finite fallback**,
+    // and it is the only thing that does at this seam. The comment here used to
+    // credit a `total > 0` guard in `ContinueCard` instead — measured, and
+    // false: that guard could be deleted with all 69 cases still green, because
+    // `Math.min(1, Infinity)` is 1 and only `Number.isFinite` in `ProgressBar`
+    // turns it back into an empty trough. The guard is gone; this line stayed.
+    const gone = makeContinueItem()
+    gone.book.page_count = 0
+    gone.book.status = 'error'
+    scenario.continueItems = [gone]
+    renderLibrary()
+    await waitForLibrary()
+
+    expect(await screen.findByText('42 / 0p')).toBeInTheDocument()
+    const card = screen.getByRole('button', { name: /군계\(軍鷄\) 01권\.zip/ })
+    expect(within(card).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '0')
+  })
+
   it('stays hidden during the skeleton state', async () => {
     scenario.hold = true
     scenario.continueItems = [makeContinueItem()]

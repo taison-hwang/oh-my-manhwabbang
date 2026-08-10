@@ -328,6 +328,133 @@ func TestPutProgress_isIdempotentAndKeepsStartedAt(t *testing.T) {
 	}
 }
 
+// Ruling E-45 — `page_count` is a baseline, not a measurement of this write.
+// The "the file changed" hint is *derived* from it (arch §3.4, §7.3), so an
+// ordinary page turn must not be able to erase it: a write that rebaselined
+// without the reader's acknowledgement would destroy the only evidence the hint
+// is computed from, and the hint could never fire again.
+func TestPutProgress_keepsThePageCountBaselineUntilAcknowledged(t *testing.T) {
+	t.Parallel()
+	db, _, _ := newDB(t)
+	ctx := t.Context()
+
+	// A first write has no baseline to protect, so the INSERT records the length
+	// it was given.
+	first, err := db.PutProgress(ctx, update("b1", "s1", 2, 10))
+	if err != nil {
+		t.Fatalf("PutProgress: %v", err)
+	}
+	if first.PageCount != 10 {
+		t.Fatalf("the first write recorded page_count %d, want 10", first.PageCount)
+	}
+
+	// The file then grew to 190 pages under the reader. Every unacknowledged
+	// write after that keeps the 10 the reader actually agreed to.
+	for i, page := range []int{3, 4, 5} {
+		got, err := db.PutProgress(ctx, update("b1", "s1", page, 190))
+		if err != nil {
+			t.Fatalf("PutProgress %d: %v", i, err)
+		}
+		if got.PageCount != 10 {
+			t.Fatalf("unacknowledged write %d moved the baseline to %d; want the recorded 10",
+				i, got.PageCount)
+		}
+	}
+
+	// What is preserved is the recorded column, not the number the write
+	// computes with: the clamp and the auto-complete rule still use the length
+	// the caller passed, so the reader can reach page 190 of a book that now has
+	// 190 pages (E-45 §3).
+	far, err := db.PutProgress(ctx, update("b1", "s1", 190, 190))
+	if err != nil {
+		t.Fatalf("PutProgress (far page): %v", err)
+	}
+	if far.LastPage != 190 || !far.Completed {
+		t.Errorf("progress = page %d completed %v, want page 190 completed true — the clamp "+
+			"and the auto-complete rule use the current length, not the baseline",
+			far.LastPage, far.Completed)
+	}
+	if far.PageCount != 10 {
+		t.Errorf("baseline = %d after reaching the new last page, want 10", far.PageCount)
+	}
+
+	// The acknowledgement — and only the acknowledgement — rebaselines.
+	ack := update("b1", "s1", 6, 190)
+	ack.StaleSeen = true
+	seen, err := db.PutProgress(ctx, ack)
+	if err != nil {
+		t.Fatalf("PutProgress (acknowledged): %v", err)
+	}
+	if seen.PageCount != 190 {
+		t.Fatalf("an acknowledged write left the baseline at %d, want 190", seen.PageCount)
+	}
+
+	// ...and the new baseline is then held just as firmly as the old one.
+	after, err := db.PutProgress(ctx, update("b1", "s1", 7, 190))
+	if err != nil {
+		t.Fatalf("PutProgress (after the acknowledgement): %v", err)
+	}
+	if after.PageCount != 190 {
+		t.Errorf("baseline = %d after the acknowledgement, want the acknowledged 190",
+			after.PageCount)
+	}
+	if after.StartedAt != first.StartedAt {
+		t.Errorf("started_at moved from %d to %d", first.StartedAt, after.StartedAt)
+	}
+	if n, _ := db.CountProgress(ctx); n != 1 {
+		t.Errorf("progress rows = %d, want 1", n)
+	}
+}
+
+// Ruling E-45 §2 — an acknowledgement of an UNKNOWN length is not an
+// acknowledgement. A broken file leaves the index at page_count 0
+// (scanner.bookFailure), and storing that 0 as the baseline would be permanent:
+// a recorded 0 is never stale, so no repaired length would ever be compared
+// against it again. The reader saw "the file changed", not "this book is 0 pages
+// long", and only the second would justify writing it.
+func TestPutProgress_acknowledgementWithAnUnknownLengthKeepsTheBaseline(t *testing.T) {
+	t.Parallel()
+	db, _, _ := newDB(t)
+	ctx := t.Context()
+
+	if _, err := db.PutProgress(ctx, update("b1", "s1", 99, 99)); err != nil {
+		t.Fatalf("PutProgress: %v", err)
+	}
+
+	broke := update("b1", "s1", 1, 0)
+	broke.StaleSeen = true
+	got, err := db.PutProgress(ctx, broke)
+	if err != nil {
+		t.Fatalf("PutProgress (acknowledged while broken): %v", err)
+	}
+	if got.PageCount != 99 {
+		t.Fatalf("the baseline moved to %d; an unknown length cannot be acknowledged",
+			got.PageCount)
+	}
+
+	// Repaired to a length that is not the old one: the surviving baseline is
+	// what lets the two be compared at all, which is what `stale` is derived
+	// from one layer up.
+	repaired, err := db.PutProgress(ctx, update("b1", "s1", 3, 7))
+	if err != nil {
+		t.Fatalf("PutProgress (repaired): %v", err)
+	}
+	if repaired.PageCount != 99 {
+		t.Errorf("baseline = %d after the repair, want the recorded 99", repaired.PageCount)
+	}
+
+	// ...and with a length to agree to, the acknowledgement lands.
+	ack := update("b1", "s1", 3, 7)
+	ack.StaleSeen = true
+	seen, err := db.PutProgress(ctx, ack)
+	if err != nil {
+		t.Fatalf("PutProgress (acknowledged after the repair): %v", err)
+	}
+	if seen.PageCount != 7 {
+		t.Errorf("baseline = %d after acknowledging a known length, want 7", seen.PageCount)
+	}
+}
+
 func TestProgress_missingAndDeleted(t *testing.T) {
 	t.Parallel()
 	db, _, _ := newDB(t)

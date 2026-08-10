@@ -127,12 +127,25 @@ func toProgressFromUser(p userdata.Progress, indexPageCount int64) Progress {
 // isStale reports that the book changed under the reader: the length recorded
 // when progress was written no longer matches the index (arch §7.3).
 //
-// A recorded 0 is not stale. It means the book had no known length when the
-// page was turned — a `status != "ok"` book, arch §4.11 — and calling that
-// "the file changed" would put a warning on the screen for a condition the
-// user cannot act on.
+// It is symmetric — 0 on EITHER side is not stale, because 0 does not mean a
+// length, it means "length unknown" (a `status != "ok"` book, arch §4.11), and
+// a comparison needs two lengths.
+//
+// A recorded 0 is the reader's side: the book had no known length when the page
+// was turned, and calling that "the file changed" would put a warning on the
+// screen for a condition the user cannot act on. A current 0 is the same
+// sentence about the other end of the comparison — the book is broken *now*, so
+// the screen already says the file cannot be opened and there is no page to
+// resume at. Adding "your saved place may have moved" to that is the very thing
+// the paragraph above forbids, and it would repeat on every entry forever: the
+// viewer cannot acknowledge a hint on a book it never finished loading.
+//
+// This defers the warning rather than swallowing it. The baseline survives
+// (userdata.PutProgress refuses to rebaseline an unknown length), so when the
+// file is repaired to a length that is not the recorded one, this answers true
+// and the reader is told honestly (ruling E-45 §2).
 func isStale(recorded int, current int64) bool {
-	if recorded == 0 {
+	if recorded == 0 || current == 0 {
 		return false
 	}
 	return int64(recorded) != current
