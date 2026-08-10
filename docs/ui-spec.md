@@ -1190,9 +1190,13 @@ No header row (volumes are naturally ordered; sorting is not offered).
 > **§6.1–§6.7 were reconciled against the shipped viewer on 2026-08-01.** They now describe the display
 > model as rulings **E-27**, **E-28** and **E-30** left it. Where this section and those rulings disagreed, the
 > rulings won — `docs/decisions.md` sits above this file in HANDOFF §3's priority list — and every number
-> below was then taken from the **code**, not from either ruling's prose. Three claims in particular are
-> gone because they were pre-E-27 and would now read as a regression: a 2200 ms auto-hide, "mouse movement
-> wakes the chrome", and a fourth 맞춤 mode. The amendment notes E-28 left in §6.5/§6.7 are kept.
+> below was then taken from the **code**, not from either ruling's prose. Three claims in particular were
+> removed then because they were pre-E-27 and would have read as a regression: a 2200 ms auto-hide, "mouse
+> movement wakes the chrome", and a fourth 맞춤 mode. The amendment notes E-28 left in §6.5/§6.7 are kept.
+>
+> **One of those three has since come back.** Ruling **E-44** (2026-08-09) restored 화면 to the 맞춤 control
+> and re-amended prd FR-VWR-005 to four modes, so §6.2 and §6.6 describe **four** again and a book stored at
+> `contain` opens at `contain`. The other two claims stay gone — E-44 touches nothing in the display model.
 >
 > The `viewer-*.png` captures under `ui-shots/` are the **pre-E-27 prototype**. They remain the reference
 > for everything except the display model: a bar visible in a capture is not evidence that a bar belongs
@@ -1322,7 +1326,7 @@ Page frame: `position:relative; flex:0 0 auto` plus the fit rule:
 | `width` | 너비 | `width:100%; height:auto` — the stage scrolls vertically |
 | `height` | 높이 | `height:100%; width:auto` — **default** (`DEFAULT_FIT`, `store/viewer.ts:34`) |
 | `original` | 원본 | intrinsic size, stage padding drops to 0, stage scrolls on both axes |
-| `contain` | ~~화면~~ | `max-width:100%; max-height:100%`. **No control since E-27** — 맞춤 is *three* options (§6.6) and prd FR-VWR-005 was amended to match. The geometry stays in `fit.ts` and stays tested; what disappeared is the route to it. The wire enum is **unchanged** (`arch-backend.md` §7 still lists `width｜height｜original｜contain`, and `PUT /api/books/{id}/prefs` still accepts `contain`), so a `user.db` written before the amendment keeps loading — and such a book **opens at 높이** (`openingFit`, `store/viewer.ts:45`). Read the deletion and the coercion as one thing: dropping the option alone would park a reader on a fit whose button does not exist, unable to see which one they are on or get off it |
+| `contain` | 화면 | `max-width:100%; max-height:100%`. **The control is back** (**E-44**) — 맞춤 is *four* options again (§6.6) and prd FR-VWR-005 was re-amended to match, after **E-27** had cut it to three. 화면 sits **third** in the group, between 높이 and 원본. Nothing had to be re-derived: the geometry stayed in `fit.ts` and stayed tested throughout (`fit.test.ts:185,201,210,225,247`), and the wire enum never moved (`arch-backend.md` §7 lists `width｜height｜original｜contain` at `:407`, `:726`, `:1559`; `PUT /api/books/{id}/prefs` accepts `contain` — `internal/httpapi/api_test.go:832-846`). **A book stored at `contain` opens at `contain`**: E-27's coercion in `openingFit` (`store/viewer.ts`) was a corollary of the control's absence, and it goes out with the absence (E-44 §2) |
 
 **RTL is the single easiest thing to get wrong.** In double-page mode with `R→L`, the flow container is
 `row-reverse`, so page *n* renders on the **right** and page *n+1* on the **left**. Verify against
@@ -1454,11 +1458,18 @@ display:flex; flex-wrap:wrap; align-items:center; gap:12px`. Left → right:
 |---|---|
 | Display mode | `단면` / `양면` / `세로` |
 | Reading direction | `L→R` / `R→L` |
-| Fit | `너비` / `높이` / `원본` — **three, not four** (**E-27**, which amended prd FR-VWR-005; 화면 has no control any more — §6.2) |
+| Fit | `너비` / `높이` / `화면` / `원본` — **four again** (**E-44**, which re-amended prd FR-VWR-005 after **E-27** had cut it to three; 화면 is third, icon lucide `Maximize` — §6.2) |
 
 **The bar wraps; it does not collapse into a sheet** (**E-28**). All three groups stay inline at every
-width and the bar is allowed to become two or three rows tall — measured against the design prototype at
-**55px @1440, 103px @900, 151px @500**. Two rules do it: `flex-wrap` on the bar, and
+width and the bar is allowed to become two or three rows tall. Measured **in the product**, at the four
+viewport widths the e2e projects actually run, with 맞춤 carrying its fourth option (**E-44**):
+**57px @1440 · 108px @1024 · 103px @768 · 232px @400**. The figures this line used to carry — 55 @1440,
+103 @900, 151 @500 — were taken against the design prototype when 맞춤 had three options and 900/500 were
+the widths of the day; E-44 widened the group by ~77px and invalidated all three. The numbers now come
+from `09-viewer-chrome.spec.ts`'s E-44 test, which prints them as `[measured]` on every round, so the next
+person to move this control gets fresh ones out of a log they already have. **They are reported, not
+asserted** — pinning a layout's height reddens a test for every legitimate change to the bar's contents.
+Two rules do the wrapping: `flex-wrap` on the bar, and
 `flex:none; white-space:nowrap` on each `.seg`, so a group moves to the next row **whole** or not at all.
 That is exactly the breakage
 [`viewer-overlay-400-broken.png`](./ui-shots/viewer-overlay-400-broken.png) captured — groups overflowing
@@ -1589,8 +1600,8 @@ and their labels break to vertical). Build the layer below.
 |---|---|---|---|---|---|
 | **≥1440** | Fixed, 240px | `--grid-min: 152px` → **6 cols @1440, 8 @1760** | All 7 columns | 269px cards, horizontal scroll | Full chrome, all 3 `.seg` groups inline |
 | **1024–1439** | Fixed, 240px | `--grid-min: 150px` → **4–5 cols** | All 7 columns | 269px cards, horizontal scroll | Full chrome ([`viewer-overlay-1024.png`](./ui-shots/viewer-overlay-1024.png)) |
-| **768–1023** | **Collapsed** to a 56px icon rail; the scope name moves into the section header. Full sidebar opens as an overlay drawer from a hamburger in the top bar | `--grid-min: 224px` → **3 cols** | **Drop 수정일 + 용량** → `32px minmax(0,1fr) 66px 64px 120px`. Format tag stays (it is primary metadata) | **260px cards** — ⚠ **not built**, ships 269 | **All 3 `.seg` groups stay inline**; the bar wraps to a second row instead (**E-28**). ~103px at 900 ([`viewer-overlay-768.png`](./ui-shots/viewer-overlay-768.png) predates the ruling and shows the old overflow menu) |
-| **<768** | **Off-canvas drawer** (`position:fixed; inset:0 auto 0 0; width:280px`) over a `--scrim-modal` backdrop. Closed by default | `--grid-min: 150px; gap: 12px` → **2 cols** | **Two-line row**: line 1 = title; line 2 = tag · 권 · 용량 · progress at 11px. Grid becomes `32px minmax(0,1fr)` | **Full-width cards, one per screen, snap scroll** — ⚠ **not built**, ships a 218px scroller | Touch-first (§8.3). **All 3 `.seg` groups stay inline and the top bar wraps to three rows** — ~151px at 500 (**E-28**, which deleted the `⋯` bottom sheet this row used to require). The bottom bar's control row wraps too, and the page slider grows to a 44px box |
+| **768–1023** | **Collapsed** to a 56px icon rail; the scope name moves into the section header. Full sidebar opens as an overlay drawer from a hamburger in the top bar | `--grid-min: 224px` → **3 cols** | **Drop 수정일 + 용량** → `32px minmax(0,1fr) 66px 64px 120px`. Format tag stays (it is primary metadata) | **260px cards** — ⚠ **not built**, ships 269 | **All 3 `.seg` groups stay inline**; the bar wraps to a second row instead (**E-28**). Measured **108px @1024 · 103px @768** with 맞춤's fourth option (**E-44**; the old "~103px at 900" was a three-option figure at a width no project runs) ([`viewer-overlay-768.png`](./ui-shots/viewer-overlay-768.png) predates the ruling and shows the old overflow menu) |
+| **<768** | **Off-canvas drawer** (`position:fixed; inset:0 auto 0 0; width:280px`) over a `--scrim-modal` backdrop. Closed by default | `--grid-min: 150px; gap: 12px` → **2 cols** | **Two-line row**: line 1 = title; line 2 = tag · 권 · 용량 · progress at 11px. Grid becomes `32px minmax(0,1fr)` | **Full-width cards, one per screen, snap scroll** — ⚠ **not built**, ships a 218px scroller | Touch-first (§8.3). **All 3 `.seg` groups stay inline and the top bar wraps to three rows** — measured **232px @400** with 맞춤's fourth option (**E-44**; the old "~151px at 500" was a three-option figure, and the growth here is the largest of the four widths — 맞춤 goes from ~235px to ~312px against a 368px content box, so the fourth button is what pushes this bar onto a further row). E-44's e2e asserts the bar's own `scrollWidth` does not exceed its `clientWidth` at every project width, which is the check `noHorizontalScroll` structurally cannot make: the viewer root is `fixed inset-0 overflow-hidden`, so a control off the end of this bar never reaches `documentElement`. (**E-28** deleted the `⋯` bottom sheet this row used to require.) The bottom bar's control row wraps too, and the page slider grows to a 44px box |
 
 > **Amended by E-37 — only the top two 이어보기 cells changed. The bottom two are requirements this
 > table is owed, and they are still open.**
@@ -1901,7 +1912,7 @@ TypeScript, not final API.
 type Format = 'zip' | 'folder' | 'pdf';
 type ReadDirection = 'ltr' | 'rtl';
 type DisplayMode = 'single' | 'double' | 'vertical';
-type FitMode = 'width' | 'height' | 'original' | 'screen';
+type FitMode = 'width' | 'height' | 'original' | 'contain';  // C-2 — the wire value; the prototype's 'screen' is not it
 type ViewMode = 'grid' | 'list';
 type SortKey = 'name' | 'mtime' | 'read' | 'size' | 'vols';
 type Scope = 'all' | 'reading' | 'added' | 'done' | RootId;
@@ -1960,7 +1971,7 @@ The prototype ships a full ko/en string table. Keep the Korean copy verbatim.
 | `clear` | 검색 지우기 | `volumes` | 권 목록 |
 | `readFirst` | 처음부터 읽기 | `resume / start` | 이어 읽기 / 읽기 시작 |
 | `rescan / rescanShort / remove` | 이 시리즈 재스캔 / 재스캔 / 제거 | `dir / back` | 읽기 방향 / 뒤로 |
-| `single / double / vertical` | 단면 / 양면 / 세로 | `fitW / fitH / fitO` | 너비 / 높이 / 원본 (**E-27** deleted `fitS` 화면 — §6.2, §6.6) |
+| `single / double / vertical` | 단면 / 양면 / 세로 | `fitW / fitH / fitS / fitO` | 너비 / 높이 / 화면 / 원본 (**E-27** deleted `fitS` 화면; **E-44** put it back, third — §6.2, §6.6. `fitS` is the prototype's **string-table key**; the wire value is `contain` and the prototype's `screen` never reaches the product — **C-2**) |
 | `thumbs` | 썸네일 | `loading` | 페이지 로딩 |
 | `chromeHint` (**E-27**) | 좌·우 클릭으로 페이지 · 중앙 클릭 또는 상하 가장자리로 컨트롤 | `chromeToggle / tapPage / tapChrome` (**E-27**, §8.5) | 컨트롤 표시 / 숨기기 · 이전 / 다음 페이지 · 컨트롤 토글 |
 | `loadFail / retry` | 이미지 로드 실패 / 다시 시도 | `volEnd` | 권의 마지막 페이지 |

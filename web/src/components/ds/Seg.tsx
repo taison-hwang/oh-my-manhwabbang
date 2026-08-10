@@ -11,8 +11,13 @@ import { cn } from '../../lib/cn'
  * Chrome, but the attribute keeps the component assertable in jsdom, which is
  * where the "checked option is an accent field" rule is tested.
  *
- * Used for: 그리드/리스트, 읽기 방향, 단면/양면/세로, 너비/높이/원본/화면,
- * and the 라이트/다크/시스템 theme switch.
+ * Used for: 그리드/리스트, 읽기 방향, 단면/양면/세로, 너비/높이/화면/원본,
+ * and the 라이트/다크/시스템 theme switch. That list is orientation only, never
+ * an authority — each caller's own options array is the authority, and this one
+ * has been wrong about 맞춤 twice (it listed four while E-27 §1 had cut it to
+ * three, then listed the four in the pre-E-44 order). For 맞춤 read
+ * `FIT_OPTIONS` (`web/src/features/viewer/ViewerTopBar.tsx:146`), whose order
+ * ruling **E-44 §1** fixes and whose long note says why 화면 sits third.
  */
 export interface SegOption<T extends string> {
   value: T

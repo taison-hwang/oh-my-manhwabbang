@@ -1,0 +1,1324 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Oh My Manhwa-bbang — Comic Archive Reader</title>
+<link rel="stylesheet" href="./ds-styles.css" />
+<link rel="stylesheet" href="./soft-ui.css" />
+<script src="_ds/modernist-fdccad8b-ff39-4c2d-b4b7-b240146bd0eb/_ds_bundle.js"></script>
+<script src="./image-slot.js"></script>
+<script src="./paper-texture.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; }
+  * { scrollbar-width: thin; scrollbar-color: var(--color-neutral-400) transparent; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: var(--color-neutral-400); border-radius:999px; border: 3px solid transparent; background-clip: content-box; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--color-neutral-500); background-clip: content-box; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-corner { background: transparent; }
+  [data-screen-label] { scrollbar-gutter: stable; }
+  input[type=range] { -webkit-appearance: none; appearance: none; background: transparent; accent-color: var(--color-accent); height: 24px; }
+  input[type=range]::-webkit-slider-runnable-track { height: 2px; background: var(--color-divider); }
+  input[type=range]::-moz-range-track { height: 2px; background: var(--color-divider); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; border: 0; border-radius: 0; width: 12px; height: 18px; margin-top: -8px; background: var(--color-accent); }
+  input[type=range]::-moz-range-thumb { border: 0; border-radius: 0; width: 12px; height: 18px; background: var(--color-accent); }
+  input[type=range].on-dark::-webkit-slider-runnable-track { background: var(--color-neutral-600); }
+  input[type=range].on-dark::-moz-range-track { background: var(--color-neutral-600); }
+  @media (max-width: 767px) {
+    input[type=range] { height: 44px; }
+    input[type=range]::-webkit-slider-thumb { width: 16px; height: 28px; margin-top: -13px; }
+    input[type=range]::-moz-range-thumb { width: 16px; height: 28px; }
+  }
+  @keyframes shimmer { 0% { opacity: .3 } 50% { opacity: .7 } 100% { opacity: .3 } }
+  @keyframes slideIn { from { transform: translateX(-100%) } to { transform: translateX(0) } }
+  @keyframes spin { to { transform: rotate(360deg) } }
+</style>
+</helmet>
+
+<x-import component-from-global-scope="paper-texture" enabled="{{ paperOn }}" variant="{{ paperVariant }}" intensity="{{ paperIntensity }}" tone="{{ paperTone }}" seed="4" hint-size="0px,0px"></x-import>
+
+<div data-screen-label="app" style="height:100vh;display:flex;flex-direction:column;overflow:hidden;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);font-size:14px">
+
+  <sc-if value="{{ showOnboarding }}" hint-placeholder-val="{{ false }}">
+    <div data-screen-label="onboarding" style="flex:1;display:flex;align-items:center;justify-content:center;padding:var(--space-8)">
+      <div style="max-width:520px;display:flex;flex-direction:column;align-items:flex-start;gap:var(--space-4)">
+        <div style="display:flex;align-items:center;gap:var(--space-3)">
+          <div style="display:flex;align-items:flex-end;gap:6px;height:76px;padding:12px 14px;border-radius:7px;background:var(--color-surface);box-shadow:var(--shadow-md)" aria-hidden="true">
+            <div style="width:9px;height:44px;border-radius:2px;background:var(--color-accent-700)"></div>
+            <div style="width:9px;height:30px;border-radius:2px;background:var(--color-neutral-400)"></div>
+            <div style="width:9px;height:52px;border-radius:2px;background:var(--color-accent)"></div>
+            <div style="width:9px;height:22px;border-radius:2px;background:var(--color-neutral-400)"></div>
+            <div style="width:9px;height:36px;border-radius:2px;background:var(--color-accent-300)"></div>
+          </div>
+          <div style="display:flex;flex-direction:column;line-height:1">
+            <div style="font-family:var(--font-heading);font-weight:800;font-size:38px;letter-spacing:-.02em;line-height:1.05">Oh My Manhwa-bbang</div>
+            <div style="font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--color-neutral-600);margin-top:8px">Comic Archive Reader · Local Library</div>
+          </div>
+        </div>
+        <h1 style="margin:0">{{ t.onbTitle }}</h1>
+        <hr class="hr" style="width:100%;margin:0" />
+        <p style="margin:0;font-size:15px;color:var(--color-neutral-700);text-wrap:pretty">{{ t.onbBody }}</p>
+        <div style="display:flex;gap:var(--space-2);margin-top:var(--space-2)">
+          <button class="btn btn-primary" onClick="{{ addRoot }}" style="gap:8px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex:0 0 auto;" aria-hidden="true"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>{{ t.addRoot }}</button>
+          <button class="btn btn-secondary" onClick="{{ openSettings }}">{{ t.settings }}</button>
+        </div>
+        <div style="margin-top:var(--space-3);width:100%;padding:var(--space-3);border-radius:5px;background:var(--color-neutral-200);box-shadow:var(--shadow-inset);font-size:12px;letter-spacing:.02em;color:var(--color-neutral-600);display:flex;flex-direction:column;gap:3px">
+          <div>/Volumes/6.0 TB/pds/taison-data/02. books/01. mangga</div>
+          <div>/Volumes/6.0 TB/pds/taison-data/02. books/02. lanovel</div>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ showApp }}" hint-placeholder-val="{{ true }}">
+  <div style="flex:1;display:flex;min-height:0">
+
+    <!-- sidebar -->
+    <sc-if value="{{ showDrawerScrim }}" hint-placeholder-val="{{ false }}">
+      <div onClick="{{ closeDrawer }}" style="position:fixed;inset:0;z-index:40;background:color-mix(in srgb, var(--color-text) 55%, transparent)"></div>
+    </sc-if>
+
+    <sc-if value="{{ showSidebar }}" hint-placeholder-val="{{ true }}">
+    <aside style="position:{{ sidebarPos }};top:0;bottom:0;left:0;z-index:41;animation:{{ sidebarAnim }};width:{{ sidebarW }};flex:0 0 {{ sidebarW }};background:var(--color-surface);box-shadow:4px 0 18px rgba(150,128,96,.16);display:flex;flex-direction:column;min-height:0">
+      <div style="padding:var(--space-3) var(--space-4);display:flex;align-items:center;gap:var(--space-2)">
+        <div style="display:flex;align-items:flex-end;gap:3px;height:22px;padding:5px 7px;border-radius:4px;background:var(--color-surface);box-shadow:var(--shadow-sm)" aria-hidden="true">
+          <div style="width:4px;height:16px;border-radius:1px;background:var(--color-accent-700)"></div>
+          <div style="width:4px;height:11px;border-radius:1px;background:var(--color-neutral-400)"></div>
+          <div style="width:4px;height:16px;border-radius:1px;background:var(--color-accent)"></div>
+          <div style="width:4px;height:8px;border-radius:1px;background:var(--color-neutral-400)"></div>
+        </div>
+        <div style="display:{{ brandTextDisplay }};flex-direction:column;line-height:1">
+          <div style="font-family:var(--font-heading);font-weight:800;font-size:15px;letter-spacing:-.01em;white-space:nowrap">Oh My Manhwa-bbang</div>
+          <div style="font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--color-neutral-600);margin-top:3px">Comic Archive Reader</div>
+        </div>
+      </div>
+
+      <div style="flex:1;overflow-y:auto;min-height:0;padding-bottom:var(--space-4)">
+        <div style="display:{{ sectionLabelDisplay }};padding:var(--space-3) var(--space-4) var(--space-1);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-600)">{{ t.roots }}</div>
+        <sc-for list="{{ roots }}" as="r" hint-placeholder-count="3">
+          <div onClick="{{ r.select }}" title="{{ r.name }}" style="display:flex;align-items:center;justify-content:{{ rowJustify }};gap:var(--space-2);min-height:42px;margin:2px var(--space-2);padding:7px 11px;border-radius:4px;cursor:pointer;background:{{ r.bg }};box-shadow:{{ r.shadow }}" style-hover="background:var(--color-neutral-100)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex:0 0 auto;color:var(--color-neutral-600)" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>
+            <div style="display:{{ labelDisplay }};flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;color:{{ r.fg }}">{{ r.name }}</div>
+            <div style="display:{{ labelDisplay }};font-size:11px;font-variant-numeric:tabular-nums;color:var(--color-neutral-600)">{{ r.count }}</div>
+          </div>
+        </sc-for>
+
+        <div style="display:{{ sectionLabelDisplay }};padding:var(--space-4) var(--space-4) var(--space-1);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-600)">{{ t.lists }}</div>
+        <sc-for list="{{ smartLists }}" as="l" hint-placeholder-count="3">
+          <div onClick="{{ l.select }}" title="{{ l.name }}" style="display:flex;align-items:center;justify-content:{{ rowJustify }};gap:var(--space-2);min-height:42px;margin:2px var(--space-2);padding:7px 11px;border-radius:4px;cursor:pointer;background:{{ l.bg }};box-shadow:{{ l.shadow }}" style-hover="background:var(--color-neutral-100)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex:0 0 auto;color:var(--color-neutral-600)" aria-hidden="true"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2Z"></path></svg>
+            <div style="display:{{ labelDisplay }};flex:1;font-size:13px;color:{{ l.fg }}">{{ l.name }}</div>
+            <div style="display:{{ labelDisplay }};font-size:11px;font-variant-numeric:tabular-nums;color:var(--color-neutral-600)">{{ l.count }}</div>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="padding:var(--space-3) var(--space-4);display:flex;flex-direction:column;gap:var(--space-2)">
+        <div onClick="{{ openLog }}" style="display:flex;align-items:center;gap:var(--space-2);cursor:pointer;font-size:11px;letter-spacing:.02em;color:var(--color-neutral-700)" style-hover="color:var(--color-accent)">
+          <div style="width:7px;height:7px;flex:0 0 7px;background:{{ scanDot }}"></div>
+          <div style="display:{{ labelDisplay }};flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ scanLabel }}</div>
+        </div>
+        <div style="display:flex;flex-direction:{{ footerDir }};gap:var(--space-2)">
+          <button class="btn btn-secondary" onClick="{{ openSettings }}" style="flex:1;justify-content:{{ rowJustify }};gap:7px;min-height:40px;font-size:12px" title="{{ t.settings }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;flex:0 0 auto;" aria-hidden="true"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"></path><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6 1.65 1.65 0 0 0 10 3.09V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v0c.36.14.68.38.92.69.24.31.38.69.39 1.09V12c0 .4-.15.78-.39 1.09-.24.31-.56.55-.92.69Z"></path></svg><span style="display:{{ labelDisplay }}">{{ t.settings }}</span></button>
+          <button class="btn btn-secondary" onClick="{{ openShortcuts }}" style="font-size:12px" aria-label="shortcuts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex:0 0 auto;" aria-hidden="true"><path d="M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3"></path></svg></button>
+        </div>
+      </div>
+    </aside>
+    </sc-if>
+
+    <!-- main -->
+    <main style="flex:1;display:flex;flex-direction:column;min-width:0;min-height:0">
+
+      <div style="flex:0 0 auto;background:var(--color-surface);box-shadow:0 4px 14px rgba(150,128,96,.14);display:flex;flex-wrap:wrap;row-gap:var(--space-2);align-items:center;gap:var(--space-3);padding:var(--space-3) var(--space-4);z-index:5">
+        <sc-if value="{{ showBurger }}" hint-placeholder-val="{{ false }}">
+          <button class="btn btn-secondary" onClick="{{ openDrawer }}" style="min-height:44px;min-width:44px;justify-content:center" aria-label="menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px" aria-hidden="true"><path d="M4 6h16"></path><path d="M4 12h16"></path><path d="M4 18h16"></path></svg></button>
+        </sc-if>
+        <sc-if value="{{ isSeries }}" hint-placeholder-val="{{ false }}">
+          <button class="btn btn-secondary" onClick="{{ goHome }}" style="font-size:12px;gap:7px;min-height:44px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex:0 0 auto;" aria-hidden="true"><path d="m12 19-7-7 7-7"></path><path d="M19 12H5"></path></svg>{{ t.library }}</button>
+        </sc-if>
+        <div style="position:relative;flex:1 1 260px;min-width:220px;max-width:400px">
+          <div style="position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--color-neutral-600);pointer-events:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;flex:0 0 auto;" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg></div>
+          <input class="input" value="{{ q }}" onChange="{{ onSearch }}" placeholder="{{ t.searchPh }}" style="padding-left:34px;padding-right:52px" />
+          <div style="position:absolute;right:9px;top:50%;transform:translateY(-50%);font-size:11px;letter-spacing:.04em;color:var(--color-neutral-600);border:1px solid var(--color-divider);padding:0 5px">⌘K</div>
+        </div>
+        <sc-if value="{{ scanning }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;align-items:center;gap:var(--space-2);font-size:11px;font-variant-numeric:tabular-nums;color:var(--color-neutral-700)">
+            <div style="width:96px;height:2px;background:var(--color-neutral-300)"><div style="height:100%;width:{{ scanPct }}%;background:var(--color-accent)"></div></div>
+            <div>{{ scanPct }}%</div>
+          </div>
+        </sc-if>
+        <div style="display:flex;align-items:center;gap:var(--space-2)">
+          <span style="display:flex;align-items:center;gap:6px;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-600)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex:0 0 auto;" aria-hidden="true"><path d="m3 16 4 4 4-4"></path><path d="M7 20V4"></path><path d="M11 4h10"></path><path d="M11 8h7"></path><path d="M11 12h4"></path></svg>{{ t.sort }}</span>
+          <select class="input" value="{{ sort }}" onChange="{{ onSort }}" style="width:auto;min-width:132px;cursor:pointer;font-size:13px">
+            <option value="name">{{ t.sName }}</option>
+            <option value="mtime">{{ t.sMtime }}</option>
+            <option value="read">{{ t.sRead }}</option>
+            <option value="size">{{ t.sSize }}</option>
+            <option value="vols">{{ t.sVols }}</option>
+          </select>
+        </div>
+        <div class="seg" style="flex:0 0 auto;white-space:nowrap">
+          <label class="seg-opt"><input type="radio" name="viewmode" checked="{{ isGrid }}" onChange="{{ setGrid }}" /><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex:0 0 auto;margin-right:6px" aria-hidden="true"><rect width="7" height="7" x="3" y="3"></rect><rect width="7" height="7" x="14" y="3"></rect><rect width="7" height="7" x="14" y="14"></rect><rect width="7" height="7" x="3" y="14"></rect></svg>{{ t.grid }}</label>
+          <label class="seg-opt"><input type="radio" name="viewmode" checked="{{ isList }}" onChange="{{ setList }}" /><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex:0 0 auto;margin-right:6px" aria-hidden="true"><path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><path d="M3 6h.01"></path><path d="M3 12h.01"></path><path d="M3 18h.01"></path></svg>{{ t.list }}</label>
+        </div>
+      </div>
+
+      <!-- HOME -->
+      <sc-if value="{{ isHome }}" hint-placeholder-val="{{ true }}">
+      <div data-screen-label="library" style="flex:1;overflow-y:auto;min-height:0">
+
+        <sc-if value="{{ showContinue }}" hint-placeholder-val="{{ true }}">
+        <div style="padding:var(--space-4)">
+          <div style="display:flex;align-items:baseline;gap:var(--space-2);margin-bottom:var(--space-3)">
+            <div style="margin:0;font-family:var(--font-heading);font-weight:800;font-size:16px;letter-spacing:-.01em;line-height:1.2">{{ t.continue }}</div>
+            <div style="font-size:11px;font-variant-numeric:tabular-nums;color:var(--color-neutral-600)">{{ continueCount }}</div>
+          </div>
+          <div style="display:flex;gap:var(--space-3);overflow-x:auto;padding-bottom:16px">
+            <sc-for list="{{ continueList }}" as="c" hint-placeholder-count="3">
+              <div onClick="{{ c.resume }}" style="flex:0 0 {{ contCardW }};display:flex;gap:var(--space-3);padding:var(--space-3);background:var(--color-surface);cursor:pointer;border-radius:6px;box-shadow:var(--shadow-md);transition:box-shadow .16s,transform .16s" style-hover="box-shadow:var(--shadow-lg);transform:translateY(-2px)">
+                <div style="flex:0 0 96px;height:144px;overflow:hidden;border-radius:4px;background:var(--color-neutral-300);box-shadow:var(--shadow-inset)">
+                  <image-slot id="{{ c.slotId }}" shape="rect" placeholder="커버"></image-slot>
+                </div>
+                <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:5px">
+                  <div style="font-family:var(--font-heading);font-weight:700;font-size:13px;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">{{ c.title }}</div>
+                  <div style="font-size:11px;color:var(--color-neutral-700);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ c.volName }}</div>
+                  <div style="flex:1"></div>
+                  <div style="font-size:12px;font-variant-numeric:tabular-nums;color:var(--color-accent-700)">{{ c.pageLabel }}</div>
+                  <div style="height:6px;border-radius:999px;background:var(--color-neutral-300);box-shadow:var(--shadow-inset);overflow:hidden"><div style="height:100%;border-radius:999px;width:{{ c.pct }}%;background:var(--color-accent)"></div></div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        </sc-if>
+
+        <div style="padding:var(--space-4) var(--space-4) var(--space-3);display:flex;align-items:baseline;gap:var(--space-3);position:sticky;top:0;background:var(--color-bg);z-index:2">
+          <div style="margin:0;font-family:var(--font-heading);font-weight:800;font-size:16px;letter-spacing:-.01em;line-height:1.2">{{ scopeLabel }}</div>
+          <div style="font-size:11px;font-variant-numeric:tabular-nums;color:var(--color-neutral-600)">{{ resultLabel }}</div>
+        </div>
+
+        <div style="padding:var(--space-4)">
+          <sc-if value="{{ showSkeleton }}" hint-placeholder-val="{{ false }}">
+            <div style="display:grid;gap:var(--space-4);grid-template-columns:repeat(auto-fill,minmax({{ gridMin }}px,1fr))">
+              <sc-for list="{{ skeletons }}" as="k" hint-placeholder-count="12">
+                <div style="display:flex;flex-direction:column;gap:7px">
+                  <div style="aspect-ratio:2/3;border-radius:5px;background:var(--color-neutral-300);box-shadow:var(--shadow-inset);animation:shimmer 1.6s ease-in-out infinite;animation-delay:{{ k.delay }}s"></div>
+                  <div style="height:10px;border-radius:999px;width:84%;background:var(--color-neutral-300);animation:shimmer 1.6s ease-in-out infinite;animation-delay:{{ k.delay }}s"></div>
+                  <div style="height:10px;border-radius:999px;width:44%;background:var(--color-neutral-200);animation:shimmer 1.6s ease-in-out infinite;animation-delay:{{ k.delay }}s"></div>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ showEmpty }}" hint-placeholder-val="{{ false }}">
+            <div style="padding:var(--space-8) 0;display:flex;flex-direction:column;align-items:flex-start;gap:var(--space-3);border-top:2px solid var(--color-divider);border-bottom:2px solid var(--color-divider)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:28px;height:28px;flex:0 0 auto;color:var(--color-neutral-500);display:{{ emptyClearDisplay }}" aria-hidden="true"><path d="m13.5 8.5-5 5"></path><path d="m8.5 8.5 5 5"></path><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:28px;height:28px;flex:0 0 auto;color:var(--color-neutral-500);display:{{ emptyFolderIconDisplay }}" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>
+              <h3 style="margin:0">{{ emptyTitle }}</h3>
+              <p style="margin:0;color:var(--color-neutral-700)">{{ emptyBody }}</p>
+              <button class="btn btn-secondary" onClick="{{ clearSearch }}" style="display:{{ emptyClearDisplay }}">{{ t.clear }}</button>
+              <button class="btn btn-secondary" onClick="{{ rescan }}" style="display:{{ emptyRescanDisplay }}">{{ t.rescanShort }}</button>
+            </div>
+          </sc-if>
+
+          <!-- grid -->
+          <sc-if value="{{ showGrid }}" hint-placeholder-val="{{ true }}">
+            <div style="display:grid;gap:var(--space-4);grid-template-columns:repeat(auto-fill,minmax({{ gridMin }}px,1fr))">
+              <sc-for list="{{ visible }}" as="s" hint-placeholder-count="14">
+                <div style="display:flex;flex-direction:column;gap:7px">
+                  <div id="{{ s.anchorId }}" tabindex="-1" onClick="{{ s.open }}" style="position:relative;aspect-ratio:2/3;overflow:hidden;outline:none;border-radius:5px;background:var(--color-surface);box-shadow:{{ s.focusShadow }};cursor:pointer;transition:box-shadow .16s,transform .16s" style-hover="box-shadow:var(--shadow-lg);transform:translateY(-3px)">
+                    <div style="position:absolute;inset:0;background-image:repeating-linear-gradient(135deg,var(--color-neutral-200) 0 8px,var(--color-neutral-300) 8px 16px);display:flex;flex-direction:column;justify-content:flex-end;padding:var(--space-2);padding-bottom:16px">
+                      <div style="font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-600);margin-bottom:5px">{{ s.coverNote }}</div>
+                      <div style="font-family:var(--font-heading);font-weight:700;font-size:12px;line-height:1.15;color:var(--color-neutral-800);display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden">{{ s.short }}</div>
+                    </div>
+                    <div style="position:absolute;top:8px;left:8px;font-size:9px;font-weight:600;letter-spacing:.06em;padding:3px 8px;border-radius:999px;background:rgba(246,242,233,.9);color:var(--color-accent-800);box-shadow:0 2px 6px rgba(38,59,56,.18)">{{ s.format }}</div>
+                    <sc-if value="{{ s.done }}" hint-placeholder-val="{{ false }}">
+                      <div style="position:absolute;top:8px;right:8px;font-size:9px;font-weight:600;letter-spacing:.06em;padding:3px 8px;border-radius:999px;background:var(--color-accent);color:#F6F2E9;box-shadow:0 2px 6px rgba(38,59,56,.24)">{{ t.doneBadge }}</div>
+                    </sc-if>
+                    <div style="position:absolute;inset:0;opacity:0;display:flex;flex-direction:column;justify-content:flex-end;gap:var(--space-1);padding:var(--space-2);background:linear-gradient(to top,rgba(20,38,36,.92),rgba(20,38,36,.55) 62%,rgba(20,38,36,.15));transition:opacity .14s" style-hover="opacity:1">
+                      <button class="btn btn-primary btn-block" onClick="{{ s.resume }}" style="margin:0;font-size:12px">{{ s.primaryAction }}</button>
+                      <button class="btn btn-block" onClick="{{ s.open }}" style="margin:0;font-size:12px;background:rgba(246,242,233,.94);color:var(--color-accent-800)">{{ t.detail }}</button>
+                    </div>
+                    <sc-if value="{{ s.reading }}" hint-placeholder-val="{{ false }}">
+                      <div style="position:absolute;left:0;right:0;bottom:0;height:5px;background:rgba(246,242,233,.62);overflow:hidden"><div style="height:100%;width:{{ s.pct }}%;background:var(--color-accent)"></div></div>
+                    </sc-if>
+                  </div>
+                  <div style="font-size:12px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">{{ s.title }}</div>
+                  <div style="display:flex;gap:var(--space-2);font-size:11px;font-variant-numeric:tabular-nums;color:var(--color-neutral-600)">
+                    <span>{{ s.volLabel }}</span><span>{{ s.sizeLabel }}</span>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+
+          <!-- list -->
+          <sc-if value="{{ showList }}" hint-placeholder-val="{{ false }}">
+            <div style="overflow-x:auto;max-width:100%;border-radius:6px;background:var(--color-surface);box-shadow:var(--shadow-md);padding:var(--space-2);padding-bottom:14px">
+              <div style="display:grid;min-width:772px;grid-template-columns:28px minmax(260px,3fr) 66px 60px 76px 96px 132px;gap:var(--space-3);align-items:center;padding:var(--space-2);border-bottom:2px solid var(--color-divider);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-600)">
+                <div></div>
+                <div onClick="{{ sortByName }}" style="cursor:pointer;color:{{ hName }}">{{ t.cTitle }} {{ aName }}</div>
+                <div>{{ t.cFormat }}</div>
+                <div onClick="{{ sortByVols }}" style="cursor:pointer;text-align:right;color:{{ hVols }}">{{ t.cVols }} {{ aVols }}</div>
+                <div onClick="{{ sortBySize }}" style="cursor:pointer;text-align:right;color:{{ hSize }}">{{ t.cSize }} {{ aSize }}</div>
+                <div onClick="{{ sortByMtime }}" style="cursor:pointer;text-align:right;color:{{ hMtime }}">{{ t.cMtime }} {{ aMtime }}</div>
+                <div>{{ t.cProgress }}</div>
+              </div>
+              <sc-for list="{{ visible }}" as="s" hint-placeholder-count="16">
+                <div id="{{ s.anchorId }}" tabindex="-1" onClick="{{ s.open }}" style="display:grid;min-width:772px;grid-template-columns:28px minmax(260px,3fr) 66px 60px 76px 96px 132px;gap:var(--space-3);align-items:center;min-height:44px;padding:{{ rowPadY }} var(--space-2);border-radius:4px;cursor:pointer;outline:{{ s.focusOutline }};outline-offset:-2px" style-hover="background:var(--color-neutral-100)">
+                  <div style="width:24px;height:36px;border-radius:2px;background-image:repeating-linear-gradient(135deg,var(--color-neutral-200) 0 5px,var(--color-neutral-300) 5px 10px);box-shadow:var(--shadow-inset)"></div>
+                  <div style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px">{{ s.title }}</div>
+                  <div><span class="tag {{ s.tagClass }}">{{ s.format }}</span></div>
+                  <div style="font-size:12px;font-variant-numeric:tabular-nums;text-align:right">{{ s.volLabel }}</div>
+                  <div style="font-size:12px;font-variant-numeric:tabular-nums;text-align:right;color:var(--color-neutral-700)">{{ s.sizeLabel }}</div>
+                  <div style="font-size:12px;font-variant-numeric:tabular-nums;text-align:right;color:var(--color-neutral-600)">{{ s.mtime }}</div>
+                  <div style="display:flex;align-items:center;gap:var(--space-2)">
+                    <div style="flex:1;height:6px;border-radius:999px;background:var(--color-neutral-300);box-shadow:var(--shadow-inset);overflow:hidden"><div style="height:100%;border-radius:999px;width:{{ s.pct }}%;background:{{ s.barColor }}"></div></div>
+                    <div style="width:54px;text-align:right;font-size:11px;font-variant-numeric:tabular-nums;color:{{ s.pctFg }}">{{ s.progressLabel }}</div>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+        </div>
+      </div>
+      </sc-if>
+
+      <!-- SERIES DETAIL -->
+      <sc-if value="{{ isSeries }}" hint-placeholder-val="{{ false }}">
+      <div data-screen-label="series" style="flex:1;overflow-y:auto;min-height:0">
+        <div style="display:flex;flex-direction:{{ heroDir }};gap:var(--space-6);margin:var(--space-4);padding:var(--space-4);border-radius:7px;background:var(--color-surface);box-shadow:var(--shadow-md)">
+          <div style="flex:0 0 {{ heroCoverW }};width:{{ heroCoverW }};height:{{ heroCoverH }};overflow:hidden;border-radius:5px;background:var(--color-neutral-300);box-shadow:var(--shadow-inset)">
+            <image-slot id="series-hero-cover" shape="rect" placeholder="Drop cover"></image-slot>
+          </div>
+          <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:var(--space-3)">
+            <h2 style="margin:0;text-wrap:pretty">{{ cur.title }}</h2>
+            <div style="font-size:12px;letter-spacing:.02em;color:var(--color-neutral-600);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ cur.path }}</div>
+            <hr class="hr" style="margin:var(--space-1) 0" />
+            <div style="display:flex;flex-wrap:wrap;gap:{{ metaGap }};row-gap:var(--space-3)">
+              <div style="display:flex;flex-direction:column;gap:2px">
+                <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-600)">{{ t.cVols }}</div>
+                <div style="font-family:var(--font-heading);font-weight:800;font-size:22px;font-variant-numeric:tabular-nums">{{ cur.vols }}</div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:2px">
+                <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-600)">{{ t.cSize }}</div>
+                <div style="font-family:var(--font-heading);font-weight:800;font-size:22px;font-variant-numeric:tabular-nums">{{ cur.sizeLabel }}</div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:2px">
+                <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-600)">{{ t.cFormat }}</div>
+                <div style="font-family:var(--font-heading);font-weight:800;font-size:22px">{{ cur.format }}</div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:4px;min-width:200px">
+                <div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-600)">{{ t.cProgress }}</div>
+                <div style="font-family:var(--font-heading);font-weight:800;font-size:22px;font-variant-numeric:tabular-nums;color:var(--color-accent-700)">{{ cur.progressLabel }}</div>
+                <div style="height:7px;border-radius:999px;background:var(--color-neutral-300);box-shadow:var(--shadow-inset);overflow:hidden"><div style="height:100%;border-radius:999px;width:{{ cur.pct }}%;background:var(--color-accent)"></div></div>
+              </div>
+            </div>
+            <div style="flex:1"></div>
+            <div style="display:flex;flex-wrap:wrap;gap:var(--space-2);row-gap:var(--space-2);align-items:center">
+              <button class="btn btn-primary" onClick="{{ cur.resume }}" style="gap:8px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex:0 0 auto;fill:currentColor;stroke:none" aria-hidden="true"><path d="M6 3l14 9-14 9Z"></path></svg>{{ cur.primaryAction }}</button>
+              <button class="btn btn-secondary" onClick="{{ cur.readFirst }}" style="gap:8px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex:0 0 auto;" aria-hidden="true"><path d="M12 7v14"></path><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"></path></svg>{{ t.readFirst }}</button>
+              <button class="btn btn-secondary" onClick="{{ rescan }}" style="gap:8px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex:0 0 auto;" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path><path d="M8 16H3v5"></path></svg>{{ t.rescan }}</button>
+              <div style="flex:1"></div>
+              <span style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-600)">{{ t.dir }}</span>
+              <div class="seg" style="flex:0 0 auto;white-space:nowrap">
+                <label class="seg-opt"><input type="radio" name="dir-detail" checked="{{ isLtr }}" onChange="{{ setLtr }}" />L→R</label>
+                <label class="seg-opt"><input type="radio" name="dir-detail" checked="{{ isRtl }}" onChange="{{ setRtl }}" />R→L</label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style="padding:var(--space-2) var(--space-4) var(--space-3);display:flex;align-items:baseline;gap:var(--space-3)">
+          <div style="margin:0;font-family:var(--font-heading);font-weight:800;font-size:16px;letter-spacing:-.01em;line-height:1.2">{{ t.volumes }}</div>
+          <div style="font-size:11px;font-variant-numeric:tabular-nums;color:var(--color-neutral-600)">{{ cur.volLabel }}</div>
+        </div>
+
+        <div style="padding:var(--space-4)">
+          <sc-if value="{{ showGrid }}" hint-placeholder-val="{{ true }}">
+            <div style="display:grid;gap:var(--space-3);grid-template-columns:repeat(auto-fill,minmax(128px,1fr))">
+              <sc-for list="{{ volumes }}" as="v" hint-placeholder-count="12">
+                <div onClick="{{ v.open }}" style="display:flex;flex-direction:column;gap:6px;cursor:pointer">
+                  <div style="position:relative;aspect-ratio:2/3;overflow:hidden;border-radius:5px;box-shadow:{{ v.shadow }};background-image:repeating-linear-gradient(135deg,var(--color-neutral-200) 0 8px,var(--color-neutral-300) 8px 16px);transition:box-shadow .16s,transform .16s" style-hover="box-shadow:var(--shadow-lg);transform:translateY(-2px)">
+                    <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-weight:800;font-size:26px;color:{{ v.numFg }}">{{ v.num }}</div>
+                    <sc-if value="{{ v.broken }}" hint-placeholder-val="{{ false }}">
+                      <div style="position:absolute;inset:0;background:color-mix(in srgb, var(--color-accent-900) 82%, transparent);display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-end;gap:4px;padding:var(--space-2)">
+                        <div style="display:flex;align-items:center;gap:5px;font-size:9px;font-weight:600;letter-spacing:.06em;padding:3px 8px;border-radius:999px;background:var(--color-accent);color:#F6F2E9"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px;flex:0 0 auto;" aria-hidden="true"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>{{ v.errBadge }}</div>
+                        <div style="font-size:10px;line-height:1.25;color:var(--color-accent-200)">{{ v.errText }}</div>
+                      </div>
+                    </sc-if>
+                    <sc-if value="{{ v.reading }}" hint-placeholder-val="{{ false }}">
+                      <div style="position:absolute;left:0;right:0;bottom:0;height:5px;background:rgba(246,242,233,.62);overflow:hidden"><div style="height:100%;width:{{ v.pct }}%;background:var(--color-accent)"></div></div>
+                    </sc-if>
+                  </div>
+                  <div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ v.name }}</div>
+                  <div style="font-size:11px;font-variant-numeric:tabular-nums;color:var(--color-neutral-600)">{{ v.pageLabel }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ showList }}" hint-placeholder-val="{{ false }}">
+            <div style="overflow-x:auto;border-radius:6px;background:var(--color-surface);box-shadow:var(--shadow-md);padding:var(--space-2);padding-bottom:14px">
+              <sc-for list="{{ volumes }}" as="v" hint-placeholder-count="12">
+                <div onClick="{{ v.open }}" style="display:grid;min-width:560px;grid-template-columns:26px minmax(220px,3fr) 66px 62px 132px;gap:var(--space-3);align-items:center;min-height:44px;padding:{{ rowPadY }} var(--space-2);border-radius:4px;cursor:pointer" style-hover="background:var(--color-neutral-100)">
+                  <div style="width:20px;height:30px;border-radius:2px;background-image:repeating-linear-gradient(135deg,var(--color-neutral-200) 0 5px,var(--color-neutral-300) 5px 10px);box-shadow:var(--shadow-inset)"></div>
+                  <div style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px">{{ v.name }}</div>
+                  <div><span class="tag {{ v.tagClass }}">{{ v.format }}</span></div>
+                  <div style="font-size:12px;font-variant-numeric:tabular-nums;text-align:right;color:var(--color-neutral-700)">{{ v.pageLabel }}</div>
+                  <div style="display:flex;align-items:center;gap:var(--space-2)">
+                    <div style="flex:1;height:6px;border-radius:999px;background:var(--color-neutral-300);box-shadow:var(--shadow-inset);overflow:hidden"><div style="height:100%;border-radius:999px;width:{{ v.pct }}%;background:{{ v.barColor }}"></div></div>
+                    <div style="width:46px;text-align:right;font-size:11px;font-variant-numeric:tabular-nums;color:{{ v.stateFg }}">{{ v.stateLabel }}</div>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+        </div>
+      </div>
+      </sc-if>
+    </main>
+  </div>
+  </sc-if>
+
+  <!-- VIEWER -->
+  <sc-if value="{{ viewerOpen }}" hint-placeholder-val="{{ false }}">
+  <div data-screen-label="viewer" onMouseMove="{{ nudgePointer }}" onTouchStart="{{ onTouchStart }}" onTouchEnd="{{ onTouchEnd }}" style="position:fixed;inset:0;z-index:60;background:var(--color-text);color:var(--color-bg);display:flex;flex-direction:column;overflow:hidden;cursor:{{ viewerCursor }}">
+
+    <div onMouseEnter="{{ wake }}" onClick="{{ wakeClick }}" style="position:absolute;top:0;left:0;right:0;height:44px;z-index:2;pointer-events:auto"></div>
+    <div onMouseEnter="{{ wake }}" onClick="{{ wakeClick }}" style="position:absolute;bottom:0;left:0;right:0;height:44px;z-index:2;pointer-events:auto"></div>
+
+    <div onClick="{{ tapLeft }}" style="position:absolute;top:44px;bottom:44px;left:0;width:32%;z-index:1;cursor:{{ leftCursor }}"></div>
+    <div onClick="{{ tapCenter }}" style="position:absolute;top:44px;bottom:44px;left:32%;width:36%;z-index:1"></div>
+    <div onClick="{{ tapRight }}" style="position:absolute;top:44px;bottom:44px;right:0;width:32%;z-index:1;cursor:{{ rightCursor }}"></div>
+
+    <div ref="{{ stageRef }}" style="flex:1;min-height:0;display:flex;align-items:{{ stageAlign }};justify-content:{{ stageAlign }};overflow:{{ stageOverflow }};padding:{{ stagePadY }} {{ stagePadX }} {{ stagePadBottom }};order:0">
+      <div style="display:flex;flex-direction:{{ pageFlow }};gap:{{ pageGap }};align-items:{{ flowJustify }};justify-content:{{ flowJustify }};height:{{ flowH }};min-height:{{ flowMinH }};width:{{ flowW }};min-width:100%;max-width:{{ flowMaxW }};margin:0 auto;flex:0 0 auto">
+        <sc-for list="{{ shownPages }}" as="p" hint-placeholder-count="1">
+          <div style="position:relative;height:{{ p.h }};width:{{ p.w }};max-height:{{ p.maxH }};max-width:{{ p.maxW }};aspect-ratio:2 / 3;flex:{{ p.flex }};background-image:repeating-linear-gradient(135deg,var(--color-neutral-900) 0 14px,color-mix(in srgb, var(--color-neutral-900) 72%, black) 14px 28px);display:flex;align-items:center;justify-content:center">
+            <div style="font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--color-neutral-600)">{{ p.label }}</div>
+            <sc-if value="{{ p.failed }}" hint-placeholder-val="{{ false }}">
+              <div style="position:absolute;inset:0;background:var(--color-text);display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:var(--space-2);padding:var(--space-6)">
+                <div style="display:flex;align-items:center;gap:6px;font-size:10px;letter-spacing:.1em;padding:4px 8px;background:var(--color-accent);color:var(--color-bg)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;flex:0 0 auto;" aria-hidden="true"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>{{ t.loadFail }}</div>
+                <div style="font-size:12px;color:var(--color-neutral-500)">{{ p.failNote }}</div>
+                <button class="btn btn-secondary" onClick="{{ retry }}" style="margin-top:var(--space-1);color:var(--color-accent-800);font-size:12px">{{ t.retry }}</button>
+              </div>
+            </sc-if>
+          </div>
+        </sc-for>
+      </div>
+
+      <sc-if value="{{ showQuietCounter }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;bottom:10px;right:14px;font-size:11px;font-variant-numeric:tabular-nums;letter-spacing:.06em;color:var(--color-neutral-600);pointer-events:none">{{ pageCounter }}</div>
+      </sc-if>
+
+      <sc-if value="{{ showHint }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;bottom:22px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:var(--space-3);padding:7px 12px;background:var(--color-text);border:1px solid var(--color-neutral-800);font-size:11px;letter-spacing:.04em;color:var(--color-neutral-400);pointer-events:none;transition:opacity .4s;opacity:{{ hintOpacity }}">{{ t.chromeHint }}</div>
+      </sc-if>
+
+      <sc-if value="{{ loadingPage }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;bottom:var(--space-6);right:var(--space-6);display:flex;align-items:center;gap:var(--space-2);font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--color-neutral-500)">
+          <div style="width:11px;height:11px;border:2px solid var(--color-neutral-700);border-top-color:var(--color-accent-400);border-radius:50%;animation:spin .7s linear infinite"></div>
+          <div>{{ t.loading }}</div>
+        </div>
+      </sc-if>
+    </div>
+
+    <sc-if value="{{ atVolumeEnd }}" hint-placeholder-val="{{ false }}">
+      <div style="position:absolute;inset:0;background:color-mix(in srgb, var(--color-text) 92%, transparent);display:flex;align-items:center;justify-content:center;padding:var(--space-4)">
+        <div style="width:380px;max-width:100%;background:var(--color-bg);color:var(--color-text);padding:var(--space-4);display:flex;flex-direction:column;gap:var(--space-3);box-shadow:var(--shadow-lg)">
+          <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--color-accent)">{{ t.volEnd }}</div>
+          <div style="font-family:var(--font-heading);font-weight:700;font-size:20px;line-height:1.15">{{ nextVolName }}</div>
+          <div style="font-size:12px;font-variant-numeric:tabular-nums;color:var(--color-neutral-700)">{{ nextVolMeta }}</div>
+          <hr class="hr" style="margin:0" />
+          <div style="display:flex;gap:var(--space-2)">
+            <button class="btn btn-primary" onClick="{{ goNextVol }}" style="flex:1;justify-content:flex-start">{{ t.nextVol }}</button>
+            <button class="btn btn-secondary" onClick="{{ closeViewer }}">{{ t.backToSeries }}</button>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- top overlay -->
+    <div onMouseEnter="{{ holdChrome }}" onMouseLeave="{{ releaseChrome }}" style="position:{{ barPos }};order:-1;flex:0 0 auto;z-index:3;top:0;left:0;right:0;opacity:{{ chromeOpacity }};pointer-events:{{ chromePE }};transition:opacity .18s;background:var(--color-text);border-bottom:2px solid var(--color-neutral-800);padding:var(--space-2) var(--space-4);display:flex;flex-wrap:wrap;row-gap:var(--space-2);align-items:center;gap:var(--space-3)">
+      <button class="btn btn-secondary" onClick="{{ closeViewer }}" style="color:var(--color-accent-800);font-size:12px;gap:7px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex:0 0 auto;" aria-hidden="true"><path d="m12 19-7-7 7-7"></path><path d="M19 12H5"></path></svg>{{ t.back }}</button>
+      <button class="btn btn-secondary" onClick="{{ goLibrary }}" style="color:var(--color-accent-800);font-size:12px;gap:7px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex:0 0 auto;" aria-hidden="true"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"></path></svg>{{ libraryLabel }}</button>
+      <div style="min-width:0;display:flex;flex-direction:column">
+        <div style="font-family:var(--font-heading);font-weight:700;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ vTitle }}</div>
+        <div style="font-size:11px;color:var(--color-neutral-500);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ vVolName }}</div>
+      </div>
+      <div style="flex:1"></div>
+      <sc-if value="{{ hasOverride }}" hint-placeholder-val="{{ false }}">
+        <div onClick="{{ resetSeriesPrefs }}" title="{{ overrideReset }}" style="display:flex;align-items:center;gap:6px;flex:0 0 auto;padding:4px 9px;border-radius:5px;font-size:11px;font-weight:600;letter-spacing:.02em;color:#F6F2E9;background:var(--color-hot);cursor:pointer">
+          <span>{{ overrideLabel }}</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;flex:0 0 auto" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9 9 0 0 0-6.4 2.7L3 8"></path><path d="M3 3v5h5"></path></svg>
+        </div>
+      </sc-if>
+      <div class="seg" style="flex:0 0 auto;white-space:nowrap">
+        <label class="seg-opt"><input type="radio" name="dmode" checked="{{ isSingle }}" onChange="{{ modeSingle }}" /><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex:0 0 auto;margin-right:6px" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v5h6"></path></svg>{{ t.single }}</label>
+        <label class="seg-opt"><input type="radio" name="dmode" checked="{{ isDouble }}" onChange="{{ modeDouble }}" /><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex:0 0 auto;margin-right:6px" aria-hidden="true"><rect width="18" height="18" x="3" y="3"></rect><path d="M12 3v18"></path></svg>{{ t.double }}</label>
+        <label class="seg-opt"><input type="radio" name="dmode" checked="{{ isVertical }}" onChange="{{ modeVertical }}" /><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex:0 0 auto;margin-right:6px" aria-hidden="true"><path d="m7 6 5 5 5-5"></path><path d="m7 13 5 5 5-5"></path></svg>{{ t.vertical }}</label>
+      </div>
+      <div class="seg" style="flex:0 0 auto;white-space:nowrap">
+        <label class="seg-opt"><input type="radio" name="dirv" checked="{{ isLtr }}" onChange="{{ setLtr }}" />L→R</label>
+        <label class="seg-opt"><input type="radio" name="dirv" checked="{{ isRtl }}" onChange="{{ setRtl }}" />R→L</label>
+      </div>
+      <div class="seg" style="flex:0 0 auto;white-space:nowrap">
+        <label class="seg-opt"><input type="radio" name="fitv" checked="{{ isFitW }}" onChange="{{ fitW }}" /><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex:0 0 auto;margin-right:6px" aria-hidden="true"><path d="m6 8-4 4 4 4"></path><path d="m18 8 4 4-4 4"></path><path d="M2 12h20"></path></svg>{{ t.fitW }}</label>
+        <label class="seg-opt"><input type="radio" name="fitv" checked="{{ isFitH }}" onChange="{{ fitH }}" /><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex:0 0 auto;margin-right:6px" aria-hidden="true"><path d="m8 18 4 4 4-4"></path><path d="m8 6 4-4 4 4"></path><path d="M12 2v20"></path></svg>{{ t.fitH }}</label>
+        <label class="seg-opt"><input type="radio" name="fitv" checked="{{ isFitS }}" onChange="{{ fitS }}" /><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex:0 0 auto;margin-right:6px" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3"></path><path d="M21 8V5a2 2 0 0 0-2-2h-3"></path><path d="M3 16v3a2 2 0 0 0 2 2h3"></path><path d="M16 21h3a2 2 0 0 0 2-2v-3"></path></svg>{{ t.fitS }}</label>
+        <label class="seg-opt"><input type="radio" name="fitv" checked="{{ isFitO }}" onChange="{{ fitO }}" /><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex:0 0 auto;margin-right:6px" aria-hidden="true"><rect width="18" height="18" x="3" y="3"></rect><circle cx="9" cy="9" r="2"></circle><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"></path></svg>{{ t.fitO }}</label>
+      </div>
+    </div>
+
+    <!-- bottom overlay -->
+    <div onMouseEnter="{{ holdChrome }}" onMouseLeave="{{ releaseChrome }}" style="position:{{ barPos }};order:1;flex:0 0 auto;z-index:3;bottom:0;left:0;right:0;opacity:{{ chromeOpacity }};pointer-events:{{ chromePE }};transition:opacity .18s;background:var(--color-text);border-top:2px solid var(--color-neutral-800)">
+      <sc-if value="{{ thumbsOpen }}" hint-placeholder-val="{{ false }}">
+        <div ref="{{ stripRef }}" data-thumb-strip="true" style="display:flex;gap:var(--space-1);overflow-x:auto;scroll-behavior:smooth;padding:var(--space-3) var(--space-4) 18px;border-bottom:1px solid var(--color-neutral-800)">
+          <sc-for list="{{ thumbs }}" as="th" hint-placeholder-count="20">
+            <div onClick="{{ th.go }}" style="flex:0 0 auto;width:{{ thumbW }};height:{{ thumbH }};border:2px solid {{ th.border }};background-image:repeating-linear-gradient(135deg,var(--color-neutral-900) 0 7px,color-mix(in srgb, var(--color-neutral-900) 72%, black) 7px 14px);display:flex;align-items:flex-end;justify-content:flex-start;padding:3px;font-size:10px;font-variant-numeric:tabular-nums;color:{{ th.fg }};cursor:pointer">{{ th.n }}</div>
+          </sc-for>
+        </div>
+      </sc-if>
+      <div style="padding:var(--space-2) var(--space-4) var(--space-3);display:flex;flex-wrap:wrap;row-gap:var(--space-2);align-items:center;gap:var(--space-4)">
+        <div style="font-size:13px;font-variant-numeric:tabular-nums;min-width:84px;letter-spacing:.04em">{{ pageCounter }}</div>
+        <div style="flex:1;position:relative">
+          <input class="on-dark" type="range" min="1" max="{{ totalPages }}" value="{{ page }}" onChange="{{ onSlider }}" onMouseDown="{{ startDrag }}" onMouseUp="{{ endDrag }}" style="display:block;width:100%;cursor:pointer" />
+          <sc-if value="{{ dragging }}" hint-placeholder-val="{{ false }}">
+            <div style="position:absolute;bottom:24px;left:{{ previewLeft }}%;transform:translateX(-50%);width:68px;height:102px;border:2px solid var(--color-hot);background-image:repeating-linear-gradient(135deg,var(--color-neutral-900) 0 8px,color-mix(in srgb, var(--color-neutral-900) 72%, black) 8px 16px);display:flex;align-items:flex-end;padding:4px;font-size:11px;font-variant-numeric:tabular-nums;color:var(--color-bg)">{{ page }}</div>
+          </sc-if>
+        </div>
+        <button class="btn btn-secondary" onClick="{{ toggleThumbs }}" style="color:{{ thumbFg }};font-size:12px;gap:7px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex:0 0 auto;" aria-hidden="true"><rect width="18" height="18" x="3" y="3"></rect><path d="M3 15h18"></path></svg>{{ t.thumbs }} · T</button>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <!-- FOLDER PICKER -->
+  <sc-if value="{{ pickerOpen }}" hint-placeholder-val="{{ false }}">
+  <div class="dialog-backdrop" onClick="{{ closePicker }}" data-screen-label="folder-picker" style="z-index:90">
+    <div class="dialog" onClick="{{ stop }}" style="width:min(720px,100%);gap:0;padding:0">
+      <div style="display:flex;align-items:center;gap:var(--space-3);padding:var(--space-4) var(--space-4);border-bottom:2px solid var(--color-divider)">
+        <div class="dialog-title" style="flex:1">{{ t.pickTitle }}</div>
+        <button class="btn btn-secondary" onClick="{{ closePicker }}" style="font-size:12px">esc</button>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:var(--space-2);padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--color-divider);background:var(--color-neutral-100)">
+        <button class="btn btn-ghost btn-icon" onClick="{{ pickUp }}" title="{{ t.pickUp }}" disabled="{{ atFsRoot }}" style="flex:0 0 auto"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><path d="m18 15-6-6-6 6" /></svg></button>
+        <div style="display:flex;align-items:center;flex-wrap:wrap;gap:2px;flex:1;min-width:0;font-family:var(--font-body);font-size:12px">
+          <sc-for list="{{ crumbs }}" as="c" hint-placeholder-count="3">
+            <span style="display:flex;align-items:center;gap:2px">
+              <span style="color:var(--color-neutral-500)">{{ c.sep }}</span>
+              <button onClick="{{ c.go }}" style="border:0;background:transparent;cursor:pointer;font:inherit;padding:2px 4px;white-space:nowrap;color:{{ c.fg }};font-weight:{{ c.weight }}">{{ c.label }}</button>
+            </span>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="height:320px;overflow-y:auto">
+        <sc-for list="{{ pickEntries }}" as="e" hint-placeholder-count="5">
+          <div onClick="{{ e.select }}" onDoubleClick="{{ e.enter }}" style="display:flex;align-items:center;gap:var(--space-3);padding:var(--space-2) var(--space-4);cursor:{{ e.cursor }};opacity:{{ e.opacity }};border-bottom:1px solid var(--color-divider);background:{{ e.bg }};box-shadow:{{ e.shadow }}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;flex:0 0 auto;color:{{ e.icon }}"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" /></svg>
+            <div style="flex:1;min-width:0">
+              <div style="font-family:var(--font-heading);font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ e.name }}</div>
+              <div style="font-size:11px;color:var(--color-neutral-600);font-variant-numeric:tabular-nums">{{ e.meta }}</div>
+            </div>
+            <div style="display:{{ e.badgeDisplay }};font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent-700);flex:0 0 auto">{{ t.pickRegistered }}</div>
+            <button class="btn btn-ghost btn-icon" onClick="{{ e.enter }}" style="display:{{ e.enterDisplay }};flex:0 0 auto"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><path d="m9 18 6-6-6-6" /></svg></button>
+          </div>
+        </sc-for>
+        <div style="display:{{ pickEmptyDisplay }};padding:var(--space-6) var(--space-4);font-size:13px;color:var(--color-neutral-600)">{{ t.pickEmpty }}</div>
+      </div>
+
+      <div style="display:flex;align-items:flex-end;gap:var(--space-3);padding:var(--space-4) var(--space-4);border-top:2px solid var(--color-divider)">
+        <div class="field" style="flex:1;min-width:0">
+          <label for="pickpath">{{ t.pickPathLabel }}</label>
+          <input id="pickpath" class="input" value="{{ pickPath }}" onChange="{{ onPickPath }}" spellcheck="false" style="font-size:12px" />
+        </div>
+        <button class="btn btn-secondary" onClick="{{ closePicker }}">{{ t.cancel }}</button>
+        <button class="btn btn-primary" onClick="{{ confirmPick }}" disabled="{{ pickDisabled }}">{{ t.pickSelect }}</button>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <!-- COMMAND PALETTE -->
+  <sc-if value="{{ paletteOpen }}" hint-placeholder-val="{{ false }}">
+  <div class="dialog-backdrop" onClick="{{ closeOverlays }}" style="z-index:80;place-items:start center;padding-top:12vh">
+    <div class="dialog" onClick="{{ stop }}" style="width:min(620px,100%);gap:0;padding:0">
+      <div style="position:relative;display:flex;align-items:center">
+        <div style="position:absolute;left:var(--space-4);color:var(--color-neutral-600);pointer-events:none"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:17px;height:17px;flex:0 0 auto;" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg></div>
+        <input class="input" value="{{ pq }}" onChange="{{ onPQ }}" placeholder="{{ t.palettePh }}" style="border:0;border-bottom:2px solid var(--color-divider);min-height:56px;font-size:17px;background:transparent;padding-left:46px" />
+      </div>
+      <div style="max-height:52vh;overflow-y:auto">
+        <div style="padding:var(--space-3) var(--space-4) var(--space-1);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--color-neutral-600)">{{ paletteGroup }}</div>
+        <sc-for list="{{ paletteItems }}" as="p" hint-placeholder-count="6">
+          <div onClick="{{ p.go }}" style="display:flex;align-items:center;gap:var(--space-3);padding:7px var(--space-4);cursor:pointer;background:{{ p.bg }};border-left:3px solid {{ p.mark }}" style-hover="background:color-mix(in srgb, var(--color-text) 7%, transparent)">
+            <div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px">{{ p.title }}</div>
+            <div style="font-size:11px;font-variant-numeric:tabular-nums;color:var(--color-neutral-600)">{{ p.sub }}</div>
+          </div>
+        </sc-for>
+        <sc-if value="{{ paletteEmpty }}" hint-placeholder-val="{{ false }}">
+          <div style="padding:var(--space-6) var(--space-4);color:var(--color-neutral-600)">{{ t.noResults }}</div>
+        </sc-if>
+      </div>
+      <div style="border-top:2px solid var(--color-divider);padding:var(--space-2) var(--space-4);display:flex;flex-wrap:wrap;gap:var(--space-4);white-space:nowrap;font-size:11px;color:var(--color-neutral-600)">
+        <div style="display:flex;align-items:center;gap:5px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;flex:0 0 auto;" aria-hidden="true"><path d="m9 10-5 5 5 5"></path><path d="M20 4v7a4 4 0 0 1-4 4H4"></path></svg>{{ t.openHint }}</div><div>esc {{ t.closeHint }}</div><div>{{ t.chosungHint }}</div>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <!-- SHORTCUTS -->
+  <sc-if value="{{ shortcutsOpen }}" hint-placeholder-val="{{ false }}">
+  <div class="dialog-backdrop" onClick="{{ closeOverlays }}" style="z-index:80">
+    <div class="dialog" onClick="{{ stop }}" style="width:min(560px,100%)">
+      <div style="display:flex;align-items:baseline;gap:var(--space-3)">
+        <div class="dialog-title">{{ t.shortcuts }}</div>
+        <div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--color-accent)">{{ t.viewer }}</div>
+      </div>
+      <hr class="hr" style="margin:0" />
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-2) var(--space-6)">
+        <sc-for list="{{ shortcutList }}" as="k" hint-placeholder-count="8">
+          <div style="display:flex;align-items:center;gap:var(--space-3);border-bottom:1px solid var(--color-divider);padding-bottom:6px">
+            <div style="min-width:52px;text-align:center;font-size:12px;padding:2px 7px;background:var(--color-text);color:var(--color-bg)">{{ k.key }}</div>
+            <div style="font-size:13px;color:var(--color-neutral-800)">{{ k.label }}</div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+
+  <!-- SETTINGS -->
+  <sc-if value="{{ settingsOpen }}" hint-placeholder-val="{{ false }}">
+  <div class="dialog-backdrop" onClick="{{ closeOverlays }}" data-screen-label="settings" style="z-index:80">
+    <div class="dialog" onClick="{{ stop }}" style="width:min(760px,100%);max-height:88vh;overflow-y:auto;gap:var(--space-6)">
+      <div style="display:flex;align-items:center;gap:var(--space-3)">
+        <div class="dialog-title" style="flex:1">{{ t.settings }}</div>
+        <button class="btn btn-secondary" onClick="{{ closeOverlays }}" style="font-size:12px">esc</button>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:var(--space-2)">
+        <div style="margin:0;font-family:var(--font-heading);font-weight:800;font-size:16px;letter-spacing:-.01em;line-height:1.2">{{ t.rootMgmt }}</div>
+        <sc-for list="{{ roots }}" as="r" hint-placeholder-count="3">
+          <div style="display:flex;align-items:center;gap:var(--space-3);padding:var(--space-2) 0;border-bottom:1px solid var(--color-divider)">
+            <div style="flex:1;min-width:0">
+              <div style="font-size:13px">{{ r.name }}</div>
+              <div style="font-size:11px;color:var(--color-neutral-600);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ r.path }}</div>
+            </div>
+            <div style="font-size:11px;font-variant-numeric:tabular-nums;color:var(--color-neutral-700)">{{ r.count }} · {{ r.size }}</div>
+            <button class="btn btn-secondary" onClick="{{ rescan }}" style="font-size:12px;gap:6px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;flex:0 0 auto;" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path><path d="M8 16H3v5"></path></svg>{{ t.rescanShort }}</button>
+            <button class="btn btn-ghost" onClick="{{ r.remove }}" style="font-size:12px;gap:6px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;flex:0 0 auto;" aria-hidden="true"><path d="M3 6h18"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>{{ t.remove }}</button>
+          </div>
+        </sc-for>
+        <button class="btn btn-secondary" onClick="{{ addRoot }}" style="align-self:flex-start;margin-top:var(--space-2);gap:7px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex:0 0 auto;" aria-hidden="true"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>{{ t.addRoot }}</button>
+      </div>
+
+      <div style="display:flex;gap:var(--space-6)">
+        <div style="flex:1;display:flex;flex-direction:column;gap:var(--space-2)">
+          <div style="margin:0;font-family:var(--font-heading);font-weight:800;font-size:16px;letter-spacing:-.01em;line-height:1.2">{{ t.cache }}</div>
+          <div style="display:flex;align-items:baseline;gap:var(--space-2)">
+            <div style="font-family:var(--font-heading);font-weight:800;font-size:32px;font-variant-numeric:tabular-nums">1.84</div>
+            <div style="font-size:13px;color:var(--color-neutral-700)">GB / 4.00 GB</div>
+          </div>
+          <div style="height:4px;background:var(--color-neutral-300)"><div style="height:100%;width:46%;background:var(--color-accent)"></div></div>
+          <div style="font-size:11px;color:var(--color-neutral-600)">{{ t.cacheNote }}</div>
+          <button class="btn btn-secondary" onClick="{{ noop }}" style="align-self:flex-start">{{ t.clearCache }}</button>
+        </div>
+        <div style="flex:1;display:flex;flex-direction:column;gap:var(--space-3)">
+          <div style="margin:0;font-family:var(--font-heading);font-weight:800;font-size:16px;letter-spacing:-.01em;line-height:1.2">{{ t.readDefaults }}</div>
+          <div style="display:flex;align-items:center;gap:var(--space-3)">
+            <div style="flex:1;font-size:13px">{{ t.dir }}</div>
+            <div class="seg" style="flex:0 0 auto;white-space:nowrap">
+              <label class="seg-opt"><input type="radio" name="dirs" checked="{{ isDefLtr }}" onChange="{{ defLtr }}" />L→R</label>
+              <label class="seg-opt"><input type="radio" name="dirs" checked="{{ isDefRtl }}" onChange="{{ defRtl }}" />R→L</label>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:var(--space-3)">
+            <div style="flex:1;font-size:13px">{{ t.displayMode }}</div>
+            <div class="seg" style="flex:0 0 auto;white-space:nowrap">
+              <label class="seg-opt"><input type="radio" name="dmodes" checked="{{ isDefSingle }}" onChange="{{ defSingle }}" /><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex:0 0 auto;margin-right:6px" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v5h6"></path></svg>{{ t.single }}</label>
+              <label class="seg-opt"><input type="radio" name="dmodes" checked="{{ isDefDouble }}" onChange="{{ defDouble }}" /><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex:0 0 auto;margin-right:6px" aria-hidden="true"><rect width="18" height="18" x="3" y="3"></rect><path d="M12 3v18"></path></svg>{{ t.double }}</label>
+              <label class="seg-opt"><input type="radio" name="dmodes" checked="{{ isDefVertical }}" onChange="{{ defVertical }}" /><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;flex:0 0 auto;margin-right:6px" aria-hidden="true"><path d="m7 6 5 5 5-5"></path><path d="m7 13 5 5 5-5"></path></svg>{{ t.vertical }}</label>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:var(--space-3)">
+            <div style="flex:1;font-size:13px">{{ t.prefetch }}</div>
+            <input type="range" min="0" max="12" value="{{ prefetch }}" onChange="{{ onPrefetch }}" style="width:130px;cursor:pointer" />
+            <div style="width:20px;text-align:right;font-size:13px;font-variant-numeric:tabular-nums">{{ prefetch }}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:var(--space-3)">
+            <div style="flex:1;font-size:13px">{{ t.theme }}</div>
+            <div style="font-size:11px;color:var(--color-neutral-600)">{{ t.themeNote }}</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:var(--space-2)">
+        <div style="display:flex;align-items:baseline;gap:var(--space-3)">
+          <div style="margin:0;flex:1;font-family:var(--font-heading);font-weight:800;font-size:16px;letter-spacing:-.01em;line-height:1.2">{{ t.scanLog }}</div>
+          <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--color-accent-700)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;flex:0 0 auto;" aria-hidden="true"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>{{ logSummary }}</div>
+        </div>
+        <div style="border-top:2px solid var(--color-divider);max-height:200px;overflow-y:auto;font-size:12px;letter-spacing:.01em">
+          <sc-for list="{{ logLines }}" as="g" hint-placeholder-count="9">
+            <div style="display:flex;gap:var(--space-3);padding:3px 0;border-bottom:1px solid var(--color-divider)">
+              <span style="color:var(--color-neutral-600);font-variant-numeric:tabular-nums">{{ g.ts }}</span>
+              <span style="width:48px;flex:0 0 48px;color:{{ g.fg }};letter-spacing:.06em">{{ g.level }}</span>
+              <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--color-neutral-800)">{{ g.msg }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </div>
+  </sc-if>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;lang&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;ko&quot;,&quot;en&quot;],&quot;default&quot;:&quot;ko&quot;,&quot;tsType&quot;:&quot;'ko' | 'en'&quot;,&quot;section&quot;:&quot;General&quot;},&quot;demoState&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;normal&quot;,&quot;skeleton&quot;,&quot;noroots&quot;],&quot;default&quot;:&quot;normal&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;States&quot;},&quot;gridMin&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;min&quot;:110,&quot;max&quot;:280,&quot;step&quot;:2,&quot;default&quot;:152,&quot;unit&quot;:&quot;px&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;General&quot;},&quot;paperTexture&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Paper&quot;},&quot;paperVariant&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;newsprint&quot;,&quot;cardstock&quot;,&quot;crumpled&quot;],&quot;default&quot;:&quot;newsprint&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Paper&quot;},&quot;paperIntensity&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;min&quot;:0,&quot;max&quot;:1,&quot;step&quot;:0.05,&quot;default&quot;:0.5,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Paper&quot;}}">
+const CHO = 'ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ';
+function chosung(str) {
+  let out = '';
+  for (const ch of str) {
+    const c = ch.charCodeAt(0) - 0xac00;
+    out += (c >= 0 && c < 11172) ? CHO[Math.floor(c / 588)] : ch;
+  }
+  return out;
+}
+
+const STR = {
+  ko: { roots: '루트', lists: '목록', settings: '설정', library: '라이브러리', searchPh: '시리즈 검색 (초성 가능)',
+    sort: 'Sort', sName: '이름', sMtime: '수정일', sRead: '최근 읽은 순', sSize: '용량', sVols: '권 수',
+    grid: '그리드', list: '리스트', continue: '이어보기', detail: '상세', doneBadge: '완독',
+    cTitle: '시리즈명', cFormat: '형식', cVols: '권', cSize: '용량', cMtime: '수정일', cProgress: '진행률',
+    noResults: '검색 결과 없음', noResultsSub: '초성 검색도 지원합니다. 다른 표기를 시도해 보세요.', clear: '검색 지우기',
+    volumes: '권 목록', readFirst: '처음부터 읽기', resume: '이어 읽기', start: '읽기 시작', rescan: '이 시리즈 재스캔',
+    rescanShort: '재스캔', remove: '제거', dir: '읽기 방향', back: '뒤로',
+    single: '단면', double: '양면', vertical: '세로', fitW: '너비', fitH: '높이', fitO: '원본', fitS: '화면',
+    thumbs: '썸네일', loading: '페이지 로딩', loadFail: '이미지 로드 실패', retry: '다시 시도',
+    volEnd: '권의 마지막 페이지', nextVol: '다음 권 읽기', backToSeries: '시리즈로',
+    palettePh: '시리즈로 이동…', openHint: '열기', closeHint: '닫기', chosungHint: '초성 검색 ㅎㅌㅂㅅㅋ',
+    shortcuts: '키보드 단축키', viewer: '뷰어',
+    rootMgmt: '루트 관리', cache: '캐시', cacheNote: '썸네일 · 압축 해제 페이지 캐시', clearCache: '전체 삭제',
+    readDefaults: '읽기 기본값', displayMode: '표시 모드', prefetch: '프리페치 페이지', theme: '테마', themeNote: '다크 (뷰어 고정)',
+    chromeHint: '좌·우 클릭으로 페이지 · 중앙 클릭 또는 상하 가장자리로 컨트롤',
+    scanLog: '스캔 로그', onbTitle: '읽을 폴더를 등록하세요', onbBody: 'ZIP · 폴더 · PDF가 담긴 루트를 지정하면 압축을 풀지 않고 그대로 훑어 시리즈로 정리합니다.', addRoot: '루트 추가',
+    recent: '최근 항목', allSeries: '전체 시리즈', reading: '읽는 중', done: '완독', added: '최근 추가',
+    scanIdle: '스캔 대기 — 8분 전 완료', scanRun: '스캔 중',
+    pickTitle: '루트 폴더 선택', pickUp: '상위 폴더', pickEmpty: '하위 폴더가 없습니다 — 이 폴더를 그대로 루트로 지정할 수 있습니다.',
+    pickPathLabel: '서버 경로', pickSelect: '이 폴더 선택', cancel: '취소', pickRegistered: '등록됨',
+    pickSub: '폴더', pickArch: '개 아카이브', pickNoArch: '비어 있음', pickFsRoot: '서버',
+    emptyScanning: '스캔 중', emptyScanningSub: '이 루트를 훑어 시리즈로 정리하고 있습니다. 잠시만 기다려 주세요.',
+    emptyRoot: '아직 시리즈가 없습니다', emptyRootSub: '이 루트에서 ZIP · 폴더 · PDF를 찾지 못했습니다. 다시 스캔하거나 다른 폴더를 등록해 보세요.' },
+  en: { roots: 'Roots', lists: 'Lists', settings: 'Settings', library: 'Library', searchPh: 'Search series',
+    sort: 'Sort', sName: 'Name', sMtime: 'Modified', sRead: 'Last read', sSize: 'Size', sVols: 'Volumes',
+    grid: 'Grid', list: 'List', continue: 'Continue reading', detail: 'Details', doneBadge: 'Done',
+    cTitle: 'Series', cFormat: 'Format', cVols: 'Vols', cSize: 'Size', cMtime: 'Modified', cProgress: 'Progress',
+    noResults: 'No matches', noResultsSub: 'Initial-consonant search is supported too.', clear: 'Clear search',
+    volumes: 'Volumes', readFirst: 'Read from start', resume: 'Resume', start: 'Start reading', rescan: 'Rescan series',
+    rescanShort: 'Rescan', remove: 'Remove', dir: 'Direction', back: 'Back',
+    single: 'Single', double: 'Spread', vertical: 'Scroll', fitW: 'Width', fitH: 'Height', fitO: '1:1', fitS: 'Screen',
+    thumbs: 'Thumbnails', loading: 'Loading page', loadFail: 'Image failed', retry: 'Retry',
+    volEnd: 'End of volume', nextVol: 'Read next volume', backToSeries: 'Back to series',
+    palettePh: 'Jump to series…', openHint: 'open', closeHint: 'close', chosungHint: 'chosung ㅎㅌㅂㅅㅋ',
+    shortcuts: 'Keyboard shortcuts', viewer: 'Viewer',
+    rootMgmt: 'Roots', cache: 'Cache', cacheNote: 'Thumbnails + decoded pages', clearCache: 'Clear all',
+    readDefaults: 'Reading defaults', displayMode: 'Display mode', prefetch: 'Prefetch pages', theme: 'Theme', themeNote: 'Dark (viewer locked)',
+    chromeHint: 'Click left / right to turn · center or screen edge for controls',
+    scanLog: 'Scan log', onbTitle: 'Register a folder to read', onbBody: 'Point at a root of ZIPs, folders and PDFs — it is indexed into series in place, without unpacking.', addRoot: 'Add root',
+    recent: 'Recent', allSeries: 'All series', reading: 'Reading', done: 'Finished', added: 'Recently added',
+    scanIdle: 'Idle — last scan 8m ago', scanRun: 'Scanning',
+    pickTitle: 'Choose root folder', pickUp: 'Parent folder', pickEmpty: 'No subfolders — you can register this folder as the root.',
+    pickPathLabel: 'Server path', pickSelect: 'Select folder', cancel: 'Cancel', pickRegistered: 'Added',
+    pickSub: 'folders', pickArch: 'archives', pickNoArch: 'empty', pickFsRoot: 'Server',
+    emptyScanning: 'Scanning', emptyScanningSub: 'Indexing this root into series — one moment.',
+    emptyRoot: 'No series yet', emptyRootSub: 'No ZIPs, folders or PDFs found in this root. Rescan, or register a different folder.' }
+};
+
+const RAW = [
+  ['히트(HEAT) [1-12권] 이케가미 료이치', 'folder', 12, 3.4, '2018-07-30', 214, 0.42, 1],
+  ['후르츠바스켓 1~23(완)', 'folder', 23, 5.1, '2018-07-30', 188, 1, 1],
+  ['회장님은 메이드사마 1~12권 + 56~85화 (완)', 'folder', 18, 4.2, '2018-07-30', 176, 0.08, 1],
+  ['히스토리에 1~76화', 'folder', 21, 2.9, '2018-07-30', 192, 0.61, 1],
+  ['후우카 1~37화', 'folder', 39, 6.8, '2018-07-30', 168, 0, 1],
+  ['흑신', 'folder', 16, 2.1, '2018-07-30', 180, 0, 1],
+  ['환타지스타(완)', 'folder', 25, 4.9, '2018-07-30', 196, 0.23, 1],
+  ['환상인형괴담 (완)', 'folder', 5, 0.6, '2018-07-30', 164, 1, 1],
+  ['우마루', 'folder', 133, 11.2, '2019-08-08', 24, 0.05, 1],
+  ['3X3 EYES 1~40(완)', 'zip', 40, 0.78, '2014-08-14', 204, 0, 1],
+  ['30센치 스타 1~11화 (완)', 'zip', 11, 0.04, '2015-05-31', 42, 0, 1],
+  ['Anorexia (완)', 'zip', 3, 0.09, '2015-07-01', 158, 1, 1],
+  ['Another : 어나더 1권 - 4권 [完][스캔／번역본]', 'zip', 4, 0.74, '2015-06-04', 210, 0.77, 1],
+  ['BIG ORDER 1~20화', 'zip', 20, 0.3, '2015-10-21', 48, 0, 1],
+  ['BM 넥타 (1-12) - 유키 후지사와', 'zip', 12, 0.33, '2015-06-12', 186, 0, 1],
+  ['BOCCHI MAN (완)', 'zip', 6, 0.07, '2015-06-08', 172, 0, 1],
+  ['B그룹의 소년 (완)', 'zip', 9, 0.06, '2015-06-08', 166, 0, 1],
+  ['몬스터 1~18(완)', 'folder', 18, 3.7, '2017-02-11', 198, 0.34, 1],
+  ['20세기 소년 1~22(완)', 'zip', 22, 4.4, '2016-11-02', 202, 0, 1],
+  ['배가본드 1~37', 'folder', 37, 8.9, '2019-03-24', 210, 0.12, 1],
+  ['강철의 연금술사 1~27(완)', 'zip', 27, 5.2, '2016-05-19', 190, 1, 1],
+  ['역시 내 청춘 러브코미디는 잘못됐다', 'zip', 14, 0.67, '2015-05-25', 320, 0.19, 2],
+  ['오버로드 1-8권', 'zip', 8, 0.41, '2015-09-01', 344, 0, 2],
+  ['아키라 1~6권', 'pdf', 6, 1.9, '2013-10-08', 362, 0.55, 3]
+];
+
+// mock server filesystem for the root picker
+const d = (name, sub, arch) => ({ name, sub: sub || 0, arch: arch || 0 });
+const FS = {
+  '/': [d('Volumes', 3), d('srv', 2), d('home', 1), d('mnt', 2)],
+  '/Volumes': [d('6.0 TB', 3), d('Backup 2TB', 2), d('Macintosh HD', 4)],
+  '/Volumes/6.0 TB': [d('pds', 2), d('media', 3), d('_incomplete', 0, 12)],
+  '/Volumes/6.0 TB/pds': [d('taison-data', 3), d('incoming', 0, 48)],
+  '/Volumes/6.0 TB/pds/taison-data': [d('01. music', 12), d('02. books', 4), d('03. video', 6)],
+  '/Volumes/6.0 TB/pds/taison-data/02. books': [d('01. mangga', 812, 2843), d('02. lanovel', 240, 512), d('03. scan', 41, 96), d('04. magazine', 18, 204)],
+  '/Volumes/Backup 2TB': [d('archive-2019', 0, 640), d('archive-2023', 0, 918)],
+  '/srv': [d('comics', 2), d('nas-share', 3)],
+  '/srv/comics': [d('completed', 0, 1204), d('ongoing', 0, 318)],
+  '/srv/nas-share': [d('doujin', 0, 88), d('webtoon', 0, 452), d('raw', 0, 1130)],
+  '/home': [d('taison', 3)],
+  '/home/taison': [d('Downloads', 0, 26), d('Documents', 0, 4), d('Comics', 0, 312)],
+  '/mnt': [d('usb-4t', 0, 220), d('sdb1', 0, 15)]
+};
+const parentOf = (p) => { const i = p.lastIndexOf('/'); return i <= 0 ? '/' : p.slice(0, i); };
+const baseOf = (p) => p.slice(p.lastIndexOf('/') + 1) || '/';
+const ROOTS = [
+  { id: 1, name: '01. mangga', path: '/Volumes/6.0 TB/pds/taison-data/02. books/01. mangga', size: '4.9 TB' },
+  { id: 2, name: '02. lanovel', path: '/Volumes/6.0 TB/pds/taison-data/02. books/02. lanovel', size: '412 GB' },
+  { id: 3, name: '03. scan (PDF)', path: '/Volumes/6.0 TB/pds/taison-data/02. books/03. scan', size: '96 GB' }
+];
+
+class Component extends DCLogic {
+  state = {
+    route: 'home', view: 'grid', sort: 'name', asc: true, q: '', scope: 'all',
+    sel: 0, palette: false, pq: '', shortcuts: false, settings: false, prefetch: 4,
+    scanning: false, scanPct: 0, roots: ROOTS,
+    picker: false, pickPath: '/Volumes/6.0 TB/pds/taison-data/02. books', pickSel: '',
+    viewer: false, vVol: 0, page: 1, thumbsOpen: false,
+    defDir: 'rtl', defMode: 'single', defFit: 'height',
+    dirs: {}, modes: {}, fits: {}, focus: null,
+    chrome: true, dragging: false, loading: false, pointer: true,
+    w: typeof window !== 'undefined' ? window.innerWidth : 1440, drawer: false,
+    stageW: 0, stageH: 0
+  };
+
+  _setStage = (el) => {
+    if (this._stageEl === el) return;
+    this._stageEl = el;
+    if (this._ro) { this._ro.disconnect(); this._ro = null; }
+    if (el && typeof ResizeObserver !== 'undefined') {
+      this._ro = new ResizeObserver(() => {
+        const r = el.getBoundingClientRect();
+        const cs = getComputedStyle(el);
+        const w = Math.round(r.width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight));
+        const h = Math.round(r.height - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom));
+        if (w !== this.state.stageW || h !== this.state.stageH) this.setState({ stageW: w, stageH: h });
+      });
+      this._ro.observe(el);
+    }
+  };
+
+  onResize = () => { if (window.innerWidth !== this.state.w) this.setState({ w: window.innerWidth }); };
+
+  nudgePointer = () => {
+    if (!this.state.pointer) this.setState({ pointer: true });
+    clearTimeout(this._pt);
+    this._pt = setTimeout(() => this.setState({ pointer: false }), 1600);
+  };
+
+
+
+  series = RAW.map((r, i) => {
+    const [title, format, vols, size, mtime, pages, prog, root] = r;
+    const total = vols * pages;
+    return { id: i, title: '[' + (root === 2 ? '라노벨' : root === 3 ? '스캔' : '만화') + '] ' + title,
+      short: title, format, vols, size, mtime, pages, prog, root, total, readPages: Math.round(total * prog) };
+  });
+
+  _setStrip = (el) => { this._stripEl = el; };
+
+  centerThumb = (behavior = 'smooth') => {
+    requestAnimationFrame(() => {
+      const el = this._stripEl || document.querySelector('[data-thumb-strip]');
+      if (!el) return;
+      const kid = el.children[this.state.page - 1];
+      if (!kid) return;
+      const max = Math.max(0, el.scrollWidth - el.clientWidth);
+      const target = kid.offsetLeft - (el.clientWidth - kid.offsetWidth) / 2;
+      el.scrollTo({ left: Math.max(0, Math.min(max, target)), behavior });
+    });
+  };
+
+  setPage(p, extra) {
+    this.setState({ page: p, ...(extra || {}) }, this.centerThumb);
+  }
+
+  componentDidMount() {
+    this._key = (e) => {
+      const k = e.key;
+      if ((e.metaKey || e.ctrlKey) && k.toLowerCase() === 'k') { e.preventDefault(); this.setState(s => ({ palette: !s.palette, pq: '' })); return; }
+      if (k === 'Escape') { if (this.state.picker) this.setState({ picker: false, pickSel: '' });
+        else if (this.state.palette || this.state.shortcuts || this.state.settings) this.closeOverlays(); else if (this.state.viewer) this.closeViewer(); return; }
+      if (k === '?') { this.setState({ shortcuts: true }); return; }
+      if (!this.state.viewer) return;
+      if (k === 'ArrowRight') this.step(this.dir() === 'rtl' ? -1 : 1);
+      else if (k === 'ArrowLeft') this.step(this.dir() === 'rtl' ? 1 : -1);
+      else if (k === ' ') { e.preventDefault(); this.step(1); }
+      else if (k.toLowerCase() === 't') this.setState(s => ({ thumbsOpen: !s.thumbsOpen }), () => { if (this.state.thumbsOpen) this.centerThumb('auto'); });
+      else if (k === '1') this.setSeriesPref('modes', 'single');
+      else if (k === '2') this.setSeriesPref('modes', 'double');
+      else if (k === '3') this.setSeriesPref('modes', 'vertical');
+      else if (k.toLowerCase() === 'h') { this._hold = false; this.setState(s => ({ chrome: !s.chrome }), this.armHide); }
+    };
+    window.addEventListener('keydown', this._key);
+    window.addEventListener('resize', this.onResize);
+    this._touch = { x: 0, y: 0, t: 0 };
+  }
+  componentWillUnmount() {
+    window.removeEventListener('keydown', this._key);
+    window.removeEventListener('resize', this.onResize);
+    if (this._ro) { this._ro.disconnect(); this._ro = null; }
+    clearTimeout(this._ct); clearTimeout(this._lt); clearTimeout(this._ht); clearTimeout(this._pt); clearInterval(this._si);
+  }
+
+  cur() { return this.series[this.state.sel]; }
+  dir() { const s = this.state; return s.dirs[s.sel] || s.defDir; }
+  modeOf() { const s = this.state; return s.modes[s.sel] || s.defMode; }
+  fitOf() { const s = this.state; return s.fits[s.sel] || s.defFit; }
+  hasOverride() { const s = this.state; return !!(s.dirs[s.sel] || s.modes[s.sel] || s.fits[s.sel]); }
+  setSeriesPref = (bag, val) => this.setState(s => ({ [bag]: { ...s[bag], [s.sel]: val } }));
+  resetSeriesPrefs = (e) => {
+    if (e) e.stopPropagation();
+    this.setState(s => {
+      const strip = (bag) => { const n = { ...s[bag] }; delete n[s.sel]; return n; };
+      return { dirs: strip('dirs'), modes: strip('modes'), fits: strip('fits') };
+    });
+  };
+  goLibrary = (e) => {
+    if (e) e.stopPropagation();
+    this.setState({ route: 'home', viewer: false, drawer: false, scope: 'all', q: '', focus: this.state.sel, pointer: true },
+      () => requestAnimationFrame(this.revealFocus));
+  };
+  revealFocus = () => {
+    const id = this.state.focus;
+    if (id === null || id === undefined) return;
+    const el = document.getElementById('card-' + id);
+    if (!el) return;
+    const sc = el.closest('[data-screen-label="library"]');
+    if (sc) sc.scrollTop += el.getBoundingClientRect().top - sc.getBoundingClientRect().top - 96;
+    try { el.focus({ preventScroll: true }); } catch (err) { el.focus(); }
+  };
+  vols(s) {
+    const n = Math.min(s.vols, 60), readVols = s.readPages / s.pages;
+    return Array.from({ length: n }, (_, i) => {
+      const broken = (s.id === 0 && i === 8) || (s.id === 3 && i === 12);
+      let p = 0;
+      if (i < Math.floor(readVols)) p = 1; else if (i === Math.floor(readVols)) p = readVols % 1;
+      return { idx: i, num: i + 1, name: s.short.replace(/\s*[\d~[(].*$/, '').trim() + ' ' + (i + 1) + '권',
+        pages: s.pages, prog: broken ? 0 : p, broken };
+    });
+  }
+  fmtSize(gb) { return gb >= 1 ? gb.toFixed(1) + ' GB' : Math.round(gb * 1024) + ' MB'; }
+
+  step(d) {
+    const total = this.cur().pages, inc = this.state.mode === 'double' ? 2 : 1;
+    let p = this.state.page + d * inc;
+    if (p < 1) p = 1;
+    if (p > total) { this.setPage(total); return; }
+    this.setPage(p, { loading: true });
+    clearTimeout(this._lt); this._lt = setTimeout(() => this.setState({ loading: false }), 240);
+  }
+  wake = () => {
+    if (!this.state.chrome) this.setState({ chrome: true });
+    this.armHide();
+  };
+  armHide = () => {
+    clearTimeout(this._ct);
+    if (this._hold) return;
+    this._ct = setTimeout(() => this.setState({ chrome: false }), 2600);
+  };
+  holdChrome = (e) => { if (e) e.stopPropagation(); this._hold = true; clearTimeout(this._ct); };
+  releaseChrome = (e) => { if (e) e.stopPropagation(); this._hold = false; this.armHide(); };
+  openViewer = (id, volIdx, page) => {
+    this._hold = false;
+    this.setState({ viewer: true, sel: id, vVol: volIdx, page: page || 1, chrome: false, route: 'series', hint: true, pointer: true });
+    this.nudgePointer();
+    clearTimeout(this._ht);
+    this._ht = setTimeout(() => this.setState({ hint: false }), 3400);
+  };
+  closeViewer = () => {
+    clearTimeout(this._ct); clearTimeout(this._pt);
+    this.setState({ viewer: false, pointer: true });
+  };
+  closeOverlays = () => this.setState({ palette: false, shortcuts: false, settings: false });
+  startScan = (e) => {
+    if (e) e.stopPropagation();
+    if (this.state.scanning) return;
+    this.setState({ scanning: true, scanPct: 0 });
+    clearInterval(this._si);
+    this._si = setInterval(() => this.setState(s => {
+      const n = s.scanPct + 7;
+      if (n >= 100) { clearInterval(this._si); return { scanPct: 100, scanning: false }; }
+      return { scanPct: n };
+    }), 180);
+  };
+
+  visibleSeries() {
+    const st = this.state, q = st.q.trim().toLowerCase();
+    let list = this.series.filter(s => st.scope === 'all' ? true
+      : st.scope === 'reading' ? (s.prog > 0 && s.prog < 1)
+      : st.scope === 'done' ? s.prog >= 1
+      : st.scope === 'added' ? s.mtime >= '2017'
+      : s.root === st.scope);
+    if (q) list = list.filter(s => s.title.toLowerCase().includes(q) || chosung(s.title).includes(q));
+    const d = st.asc ? 1 : -1;
+    const by = { name: (a, b) => a.short.localeCompare(b.short, 'ko'), mtime: (a, b) => a.mtime.localeCompare(b.mtime),
+      read: (a, b) => a.prog - b.prog, size: (a, b) => a.size - b.size, vols: (a, b) => a.vols - b.vols }[st.sort];
+    return list.slice().sort((a, b) => by(a, b) * d);
+  }
+
+  renderVals() {
+    const st = this.state, t = STR[this.props.lang || 'ko'] || STR.ko, isKo = t === STR.ko;
+    const demo = this.props.demoState || 'normal';
+    const cur = this.cur(), volumes = this.vols(cur), vol = volumes[st.vVol] || volumes[0];
+    const totalPages = cur.pages, pct = (n) => Math.round(n * 100);
+    const tagOf = (f) => f === 'zip' ? 'tag-neutral' : f === 'pdf' ? 'tag-outline' : 'tag-accent';
+
+    const decorate = (s) => ({
+      ...s,
+      slotId: 'cover-' + s.id,
+      anchorId: 'card-' + s.id,
+      focusOutline: st.focus === s.id ? '2px solid var(--color-hot)' : '0 solid transparent',
+      focusShadow: st.focus === s.id ? 'var(--shadow-md), inset 0 0 0 2px var(--color-hot)' : 'var(--shadow-md)',
+      coverNote: s.format.toUpperCase() + ' · no thumbnail',
+      volLabel: s.vols + (isKo ? '권' : ' vol'),
+      sizeLabel: this.fmtSize(s.size),
+      pct: pct(s.prog),
+      progressLabel: s.prog >= 1 ? t.doneBadge : s.prog > 0 ? pct(s.prog) + '%' : '—',
+      pctFg: s.prog >= 1 ? 'var(--color-accent-700)' : s.prog > 0 ? 'var(--color-accent-700)' : 'var(--color-neutral-500)',
+      barColor: s.prog >= 1 ? 'var(--color-accent-300)' : 'var(--color-accent)',
+      reading: s.prog > 0 && s.prog < 1, done: s.prog >= 1,
+      format: s.format.toUpperCase(), tagClass: tagOf(s.format),
+      primaryAction: s.prog > 0 && s.prog < 1 ? t.resume : t.start,
+      path: (this.state.roots.find(r => r.id === s.root) || {}).path + '/' + s.title,
+      open: () => this.setState({ route: 'series', sel: s.id, vVol: 0 }),
+      resume: (e) => { if (e) e.stopPropagation(); const vi = Math.min(Math.floor(s.readPages / s.pages), s.vols - 1); this.openViewer(s.id, vi, (s.readPages % s.pages) + 1); }
+    });
+
+    const visible = this.visibleSeries().map(decorate);
+    const continueList = this.series.filter(s => s.prog > 0 && s.prog < 1).slice(0, 5).map(s => {
+      const d = decorate(s), vi = Math.min(Math.floor(s.readPages / s.pages), s.vols - 1), p = (s.readPages % s.pages) + 1;
+      return { ...d, volName: this.vols(s)[vi].name, pageLabel: p + ' / ' + s.pages + 'p', pct: Math.round(p / s.pages * 100) };
+    });
+
+    const mode = this.modeOf(), dirNow = this.dir();
+    let fit = this.fitOf();
+    const wide = mode === 'double' ? '50%' : '100%';
+    // "screen" fit: contain the whole spread inside the measured stage box, ratio intact
+    const spread = mode === 'double' && st.page + 1 <= totalPages;
+    let screenGeo = null;
+    if (fit === 'screen' && mode !== 'vertical' && st.stageW > 0 && st.stageH > 0) {
+      const n = spread ? 2 : 1;
+      const gapPx = 2 * (n - 1);
+      const boxW = Math.max(40, (st.stageW - gapPx) / n);
+      const pw = Math.min(boxW, st.stageH * (2 / 3));
+      screenGeo = { h: Math.floor(pw * 1.5) + 'px', w: Math.floor(pw) + 'px', maxH: '100%', maxW: 'none' };
+    }
+    const geo = screenGeo ? screenGeo : mode === 'vertical'
+      ? { h: 'auto', w: '100%', maxH: 'none', maxW: '100%' }
+      : fit === 'width' ? { h: 'auto', w: wide, maxH: 'none', maxW: wide }
+      : fit === 'height' ? { h: '100%', w: 'auto', maxH: '100%', maxW: 'none' }
+      : fit === 'original' ? { h: '1100px', w: 'auto', maxH: 'none', maxW: 'none' }
+      : { h: '100%', w: 'auto', maxH: '100%', maxW: wide };
+    if (fit === 'screen' && !screenGeo && mode !== 'vertical') { geo.h = '100%'; geo.w = 'auto'; geo.maxH = '100%'; geo.maxW = wide; }
+    const pageH = geo.h, pageW = geo.w, pageFlex = '0 0 auto';
+    const scrolls = mode === 'vertical' || (mode !== 'vertical' && (fit === 'width' || fit === 'original'));
+    const mk = (n) => ({ n, label: 'page ' + n + ' / ' + totalPages, h: pageH, w: pageW, flex: pageFlex, maxH: geo.maxH, maxW: geo.maxW,
+      failed: n === 44, failNote: 'page_044.jpg — CRC mismatch' });
+    let shownPages = [mk(st.page)];
+    if (mode === 'double' && st.page + 1 <= totalPages) shownPages = [mk(st.page), mk(st.page + 1)];
+    if (mode === 'vertical') shownPages = Array.from({ length: 4 }, (_, i) => mk(Math.min(st.page + i, totalPages)));
+
+    const volsOf = volumes.map(v => ({
+      ...v, pct: pct(v.prog), reading: v.prog > 0 && v.prog < 1, pageLabel: v.pages + 'p',
+      format: cur.format.toUpperCase(), tagClass: tagOf(cur.format),
+      border: v.broken ? 'var(--color-accent)' : v.prog > 0 ? 'var(--color-neutral-700)' : 'var(--color-divider)',
+      shadow: v.broken ? 'var(--shadow-sm), 0 0 0 2px var(--color-accent-300)' : 'var(--shadow-sm)',
+      numFg: v.prog >= 1 ? 'var(--color-neutral-600)' : 'var(--color-neutral-500)',
+      barColor: v.prog >= 1 ? 'var(--color-accent-300)' : 'var(--color-accent)',
+      stateLabel: v.broken ? 'ERR' : v.prog >= 1 ? '100%' : v.prog > 0 ? pct(v.prog) + '%' : '—',
+      stateFg: v.broken ? 'var(--color-accent)' : v.prog > 0 ? 'var(--color-accent-700)' : 'var(--color-neutral-500)',
+      errBadge: v.idx === 8 ? (isKo ? '암호화' : 'Encrypted') : (isKo ? '손상' : 'Corrupt'),
+      errText: v.idx === 8 ? (isKo ? '비밀번호가 필요한 ZIP' : 'password-protected zip') : (isKo ? '중앙 디렉터리 손상' : 'bad central directory'),
+      open: () => { if (!v.broken) this.openViewer(cur.id, v.idx, 1); }
+    }));
+
+    const pq = st.pq.trim().toLowerCase();
+    const pItems = (pq ? this.series.filter(s => s.title.toLowerCase().includes(pq) || chosung(s.title).includes(pq))
+      : this.series.filter(s => s.prog > 0)).slice(0, 8)
+      .map((s, i) => ({ title: s.title, sub: s.vols + (isKo ? '권 · ' : ' vol · ') + this.fmtSize(s.size),
+        bg: i === 0 ? 'color-mix(in srgb, var(--color-accent) 8%, transparent)' : 'transparent',
+        mark: i === 0 ? 'var(--color-accent)' : 'transparent',
+        go: () => this.setState({ palette: false, route: 'series', sel: s.id, vVol: 0 }) }));
+
+    const join = (base, name) => (base === '/' ? '/' + name : base + '/' + name);
+    const pickEntries = (FS[st.pickPath] || []).map(e => {
+      const full = join(st.pickPath, e.name);
+      const on = st.pickSel === full;
+      const registered = this.state.roots.some(r => r.path === full);
+      return { name: e.name,
+        meta: (e.sub ? e.sub + ' ' + t.pickSub + ' · ' : '') + (e.arch ? e.arch.toLocaleString() + ' ' + t.pickArch : (e.sub ? '' : t.pickNoArch)),
+        bg: on ? 'var(--color-surface)' : 'transparent',
+        shadow: on ? 'var(--shadow-sm), inset 0 0 0 2px var(--color-hot)' : 'none',
+        icon: on ? 'var(--color-hot)' : 'var(--color-neutral-600)',
+        badgeDisplay: registered ? 'block' : 'none',
+        opacity: registered ? 0.5 : 1,
+        cursor: registered ? 'default' : 'pointer',
+        select: registered ? () => {} : () => this.setState({ pickSel: full }),
+        enterDisplay: FS[full] ? 'inline-flex' : 'none',
+        enter: (ev) => { if (ev) ev.stopPropagation(); if (FS[full]) this.setState({ pickPath: full, pickSel: '' }); else if (!registered) this.setState({ pickSel: full }); } };
+    });
+    const segs = st.pickPath === '/' ? [] : st.pickPath.split('/').slice(1);
+    const crumbs = [{ label: t.pickFsRoot, sep: '', path: '/' }].concat(segs.map((s, i) => ({
+      label: s, sep: '/', path: '/' + segs.slice(0, i + 1).join('/')
+    }))).map((c, i, arr) => ({ ...c, weight: i === arr.length - 1 ? 700 : 500,
+      fg: i === arr.length - 1 ? 'var(--color-text)' : 'var(--color-neutral-600)',
+      go: () => this.setState({ pickPath: c.path, pickSel: '' }) }));
+
+    const scopeName = st.scope === 'all' ? t.allSeries : st.scope === 'reading' ? t.reading : st.scope === 'done' ? t.done
+      : st.scope === 'added' ? t.added : (this.state.roots.find(r => r.id === st.scope) || {}).name;
+    const hasRoots = demo !== 'noroots' && this.state.roots.length > 0;
+    const showSkeleton = demo === 'skeleton';
+    const showEmpty = !showSkeleton && visible.length === 0;
+    const W = st.w;
+    const bp = W < 768 ? 'xs' : W < 1024 ? 'sm' : W < 1440 ? 'md' : 'lg';
+    const touch = bp === 'xs';
+    const railMode = bp === 'sm';
+    const baseGutter = mode === 'vertical' ? '0' : (fit === 'original' ? '0' : '20px');
+    const on = (b) => b ? 'var(--color-text)' : 'var(--color-neutral-600)';
+    const mark = (b) => b ? 'var(--color-accent)' : 'transparent';
+    const bgOn = (b) => b ? 'color-mix(in srgb, var(--color-accent) 8%, transparent)' : 'transparent';
+
+    return {
+      t, q: st.q, sort: st.sort, prefetch: st.prefetch, page: st.page, totalPages,
+      gridMin: this.props.gridMin ?? (bp === 'xs' ? 120 : bp === 'sm' ? 136 : bp === 'md' ? 150 : 168),
+      bp, isTouch: touch, isRail: railMode,
+      sidebarFloating: bp === 'xs',
+      showSidebar: bp !== 'xs' || st.drawer,
+      showDrawerScrim: bp === 'xs' && st.drawer,
+      showBurger: bp === 'xs',
+      sidebarW: railMode ? '68px' : '240px',
+      sidebarPos: bp === 'xs' ? 'fixed' : 'relative',
+      sidebarAnim: bp === 'xs' ? 'slideIn .18s ease' : 'none',
+      labelDisplay: railMode ? 'none' : 'block',
+      rowJustify: railMode ? 'center' : 'flex-start',
+      sectionLabelDisplay: railMode ? 'none' : 'block',
+      brandTextDisplay: railMode ? 'none' : 'flex',
+      footerDir: railMode ? 'column' : 'row',
+      contPad: touch ? 'var(--space-3)' : 'var(--space-4)',
+      contCardW: touch ? '272px' : '336px',
+      rowPadY: touch ? '10px' : 'var(--space-1)',
+      heroDir: touch ? 'column' : 'row',
+      heroCoverW: touch ? '128px' : '176px',
+      heroCoverH: touch ? '192px' : '264px',
+      metaGap: touch ? 'var(--space-4)' : 'var(--space-8)',
+      openDrawer: () => this.setState({ drawer: true }),
+      closeDrawer: () => this.setState({ drawer: false }),
+      onTouchStart: (e) => { const t = e.touches[0]; this._touch = { x: t.clientX, y: t.clientY, t: Date.now() }; },
+      onTouchEnd: (e) => {
+        const t = e.changedTouches[0], s0 = this._touch;
+        const dx = t.clientX - s0.x, dy = t.clientY - s0.y;
+        if (Date.now() - s0.t > 600 || Math.abs(dx) < 44 || Math.abs(dy) > Math.abs(dx)) return;
+        this.step(dirNow === 'rtl' ? (dx > 0 ? 1 : -1) : (dx > 0 ? -1 : 1));
+      },
+      roots: this.state.roots.map(r => ({ ...r, count: this.series.filter(s => s.root === r.id).length,
+        bg: st.scope === r.id ? 'var(--color-surface)' : 'transparent',
+        shadow: st.scope === r.id ? 'var(--shadow-sm), inset 0 0 0 2px var(--color-hot)' : 'none',
+        mark: mark(st.scope === r.id), fg: st.scope === r.id ? 'var(--color-accent-800)' : 'var(--color-neutral-700)',
+        select: () => this.setState({ scope: r.id, route: 'home', drawer: false }),
+        remove: () => this.setState(s => ({ roots: s.roots.filter(x => x.id !== r.id) })) })),
+      smartLists: [{ key: 'reading', name: t.reading }, { key: 'added', name: t.added }, { key: 'done', name: t.done }].map(l => ({
+        name: l.name,
+        count: l.key === 'reading' ? this.series.filter(s => s.prog > 0 && s.prog < 1).length
+          : l.key === 'done' ? this.series.filter(s => s.prog >= 1).length : this.series.filter(s => s.mtime >= '2017').length,
+        bg: st.scope === l.key ? 'var(--color-surface)' : 'transparent',
+        shadow: st.scope === l.key ? 'var(--shadow-sm), inset 0 0 0 2px var(--color-hot)' : 'none',
+        mark: mark(st.scope === l.key), fg: st.scope === l.key ? 'var(--color-accent-800)' : 'var(--color-neutral-700)',
+        select: () => this.setState({ scope: l.key, route: 'home', drawer: false })
+      })),
+      scanning: st.scanning, scanPct: st.scanPct,
+      scanDot: st.scanning ? 'var(--color-accent)' : 'var(--color-neutral-500)',
+      scanLabel: st.scanning ? t.scanRun + ' 1,842 / 2,250' : t.scanIdle,
+      showApp: hasRoots, showOnboarding: !hasRoots,
+      isHome: st.route === 'home', isSeries: st.route === 'series',
+      isGrid: st.view === 'grid', isList: st.view === 'list',
+      showGrid: st.view === 'grid' && !showSkeleton && !showEmpty,
+      showList: st.view === 'list' && !showSkeleton && !showEmpty,
+      showSkeleton, showEmpty,
+      emptyTitle: st.q ? t.noResults : st.scanning ? t.emptyScanning : t.emptyRoot,
+      emptyBody: st.q ? t.noResultsSub : st.scanning ? t.emptyScanningSub : t.emptyRootSub,
+      emptyClearDisplay: st.q ? 'inline-flex' : 'none',
+      emptyFolderIconDisplay: st.q ? 'none' : 'block',
+      emptyRescanDisplay: !st.q && !st.scanning ? 'inline-flex' : 'none',
+      skeletons: Array.from({ length: 18 }, (_, i) => ({ delay: (i % 6) * 0.12 })),
+      visible, continueList, showContinue: continueList.length > 0 && !showSkeleton,
+      continueCount: continueList.length + (isKo ? '개' : ''),
+      scopeLabel: scopeName, resultLabel: visible.length + (isKo ? '개 시리즈' : ' series'),
+      hName: on(st.sort === 'name'), aName: st.sort === 'name' ? (st.asc ? '↑' : '↓') : '',
+      hVols: on(st.sort === 'vols'), aVols: st.sort === 'vols' ? (st.asc ? '↑' : '↓') : '',
+      hSize: on(st.sort === 'size'), aSize: st.sort === 'size' ? (st.asc ? '↑' : '↓') : '',
+      hMtime: on(st.sort === 'mtime'), aMtime: st.sort === 'mtime' ? (st.asc ? '↑' : '↓') : '',
+      cur: { ...decorate(cur), volLabel: cur.vols + (isKo ? '권' : ' volumes'), readFirst: () => this.openViewer(cur.id, 0, 1) },
+      volumes: volsOf,
+      viewerOpen: st.viewer, vTitle: cur.title, vVolName: vol.name,
+      shownPages, pageFlow: mode === 'vertical' ? 'column' : (dirNow === 'rtl' ? 'row-reverse' : 'row'),
+      flowH: scrolls ? 'auto' : '100%',
+      flowMinH: scrolls ? 'auto' : '100%',
+      flowW: scrolls ? 'max-content' : '100%',
+      flowMaxW: scrolls ? 'none' : '100%',
+      pageGap: mode === 'vertical' ? '12px' : '2px',
+      stageOverflow: scrolls ? 'auto' : 'hidden',
+      stageAlign: scrolls ? 'flex-start' : 'center',
+      flowJustify: mode === 'vertical' || fit === 'width' ? 'flex-start' : 'center',
+      stagePadX: mode === 'vertical' ? '0' : (fit === 'original' ? '0' : '20px'),
+      stagePadY: baseGutter, stagePadBottom: baseGutter,
+      barPos: st.chrome ? 'relative' : 'absolute',
+      viewerCursor: st.pointer ? 'default' : 'none',
+      nudgePointer: this.nudgePointer,
+      chromeOpacity: st.chrome ? 1 : 0, chromePE: st.chrome ? 'auto' : 'none',
+      wakeClick: (e) => { e.stopPropagation(); this.wake(); },
+      tapLeft: (e) => { e.stopPropagation(); this.step(dirNow === 'rtl' ? 1 : -1); },
+      tapRight: (e) => { e.stopPropagation(); this.step(dirNow === 'rtl' ? -1 : 1); },
+      leftCursor: st.pointer ? 'pointer' : 'none',
+      rightCursor: st.pointer ? 'pointer' : 'none',
+      showQuietCounter: !st.chrome && !st.loading && mode !== 'vertical' && fit !== 'width' && fit !== 'screen',
+      showHint: !!st.hint && !st.chrome, hintOpacity: st.hint ? 1 : 0,
+      pageCounter: st.page + ' / ' + totalPages,
+      previewLeft: Math.round((st.page - 1) / Math.max(totalPages - 1, 1) * 100),
+      dragging: st.dragging, loadingPage: st.loading,
+      atVolumeEnd: st.page >= totalPages && mode !== 'vertical',
+      nextVolName: (volumes[st.vVol + 1] || volumes[0]).name,
+      nextVolMeta: cur.pages + 'p · ' + cur.format.toUpperCase(),
+      thumbW: touch ? '56px' : '48px', thumbH: touch ? '84px' : '72px',
+      thumbsOpen: st.thumbsOpen, thumbFg: st.thumbsOpen ? 'var(--color-hot)' : 'var(--color-accent-800)',
+      stripRef: this._setStrip,
+      paperOn: String(this.props.paperTexture !== false),
+      paperVariant: this.props.paperVariant || 'newsprint',
+      paperIntensity: String(this.props.paperIntensity ?? 0.5),
+      paperTone: st.viewer ? '#0d0c0c' : '#201e1d',
+      thumbs: Array.from({ length: totalPages }, (_, i) => ({
+        n: i + 1, border: i + 1 === st.page ? 'var(--color-hot)' : 'var(--color-neutral-800)',
+        fg: i + 1 === st.page ? 'var(--color-bg)' : 'var(--color-neutral-600)',
+        go: () => this.setPage(i + 1)
+      })),
+      isSingle: mode === 'single', isDouble: mode === 'double', isVertical: mode === 'vertical',
+      isFitW: fit === 'width', isFitH: fit === 'height', isFitO: fit === 'original', isFitS: fit === 'screen',
+      stageRef: this._setStage,
+      isLtr: dirNow === 'ltr', isRtl: dirNow === 'rtl',
+      paletteOpen: st.palette, pq: st.pq, paletteItems: pItems, paletteEmpty: pItems.length === 0,
+      paletteGroup: pq ? (isKo ? '검색 결과' : 'Results') : t.recent,
+      shortcutsOpen: st.shortcuts, settingsOpen: st.settings,
+      shortcutList: [
+        { key: '← →', label: isKo ? '이전 / 다음 페이지' : 'previous / next page' },
+        { key: 'Space', label: isKo ? '다음 페이지' : 'next page' },
+        { key: 'T', label: t.thumbs }, { key: 'F', label: isKo ? '전체화면' : 'fullscreen' },
+        { key: 'Esc', label: isKo ? '뷰어 나가기' : 'exit viewer' },
+        { key: '⌘K', label: isKo ? '커맨드 팔레트' : 'command palette' },
+        { key: '1 2 3', label: isKo ? '단면 / 양면 / 세로' : 'single / spread / scroll' },
+        { key: 'H', label: isKo ? '컨트롤 표시 / 숨기기' : 'show / hide controls' },
+        { key: isKo ? '좌 / 우 클릭' : 'click L / R', label: isKo ? '이전 / 다음 페이지' : 'previous / next page' },
+        { key: isKo ? '중앙 클릭' : 'click center', label: isKo ? '컨트롤 토글' : 'toggle controls' },
+        { key: '?', label: t.shortcuts }
+      ],
+      logSummary: isKo ? '경고 3 · 오류 2' : '3 warn · 2 error',
+      logLines: [
+        { ts: '23:41:02', level: 'INFO', fg: 'var(--color-neutral-600)', msg: 'scan start — /01. mangga (depth 1)' },
+        { ts: '23:41:04', level: 'INFO', fg: 'var(--color-neutral-600)', msg: 'indexed 1,842 series / 21,904 volumes' },
+        { ts: '23:41:09', level: 'WARN', fg: 'var(--color-accent-700)', msg: '[만화] 히트(HEAT) 09권.zip — password required, skipped' },
+        { ts: '23:41:11', level: 'ERROR', fg: 'var(--color-accent)', msg: '[만화] 히스토리에 13.zip — bad central directory' },
+        { ts: '23:41:15', level: 'WARN', fg: 'var(--color-accent-700)', msg: '우마루 — 133 items, no volume pattern matched' },
+        { ts: '23:41:22', level: 'INFO', fg: 'var(--color-neutral-600)', msg: 'thumbnail queue 2,250 → 408 remaining' },
+        { ts: '23:41:31', level: 'ERROR', fg: 'var(--color-accent)', msg: 'page_044.jpg — CRC mismatch (Another 3권)' },
+        { ts: '23:41:33', level: 'WARN', fg: 'var(--color-accent-700)', msg: 'pdf render fallback — 아키라 4권 (no embedded jpeg)' },
+        { ts: '23:41:40', level: 'INFO', fg: 'var(--color-neutral-600)', msg: 'scan complete in 38.1s' }
+      ],
+      goHome: this.goLibrary,
+      onSearch: (e) => this.setState({ q: e.target.value }),
+      clearSearch: () => this.setState({ q: '' }),
+      onSort: (e) => this.setState({ sort: e.target.value }),
+      sortByName: () => this.setState(s => ({ sort: 'name', asc: s.sort === 'name' ? !s.asc : true })),
+      sortByVols: () => this.setState(s => ({ sort: 'vols', asc: s.sort === 'vols' ? !s.asc : false })),
+      sortBySize: () => this.setState(s => ({ sort: 'size', asc: s.sort === 'size' ? !s.asc : false })),
+      sortByMtime: () => this.setState(s => ({ sort: 'mtime', asc: s.sort === 'mtime' ? !s.asc : false })),
+      setGrid: () => this.setState({ view: 'grid' }), setList: () => this.setState({ view: 'list' }),
+      openSettings: () => this.setState({ settings: true }), openLog: () => this.setState({ settings: true }),
+      openShortcuts: () => this.setState({ shortcuts: true }),
+      closeOverlays: this.closeOverlays, stop: (e) => e.stopPropagation(), noop: () => {},
+      onPQ: (e) => this.setState({ pq: e.target.value }),
+      rescan: this.startScan,
+      addRoot: (e) => { if (e) e.stopPropagation(); this.setState({ picker: true, pickSel: '' }); },
+      closePicker: () => this.setState({ picker: false, pickSel: '' }),
+      pickerOpen: st.picker,
+      atFsRoot: st.pickPath === '/',
+      pickUp: () => this.setState({ pickPath: parentOf(st.pickPath), pickSel: '' }),
+      pickPath: st.pickSel || st.pickPath,
+      onPickPath: (ev) => { const v = ev.target.value || '/'; this.setState({ pickPath: FS[v] ? v : st.pickPath, pickSel: FS[v] ? '' : v }); },
+      pickEntries: pickEntries, crumbs: crumbs,
+      pickEmptyDisplay: pickEntries.length ? 'none' : 'block',
+      pickDisabled: (!st.pickSel && !FS[st.pickPath]) || this.state.roots.some(r => r.path === (st.pickSel || st.pickPath)),
+      confirmPick: () => {
+        const path = st.pickSel || st.pickPath;
+        if (this.state.roots.some(r => r.path === path)) { this.setState({ picker: false }); return; }
+        const e = (FS[parentOf(path)] || []).find(x => x.name === baseOf(path));
+        const id = Math.max(0, ...this.state.roots.map(r => r.id)) + 1;
+        this.setState(s => ({
+          roots: [...s.roots, { id, name: baseOf(path), path, size: e && e.arch ? (e.arch * 0.42).toFixed(0) + ' GB' : '— ' }],
+          picker: false, pickSel: '', scope: id, route: 'home', settings: false
+        }), this.startScan);
+      },
+      setLtr: (e) => { if (e) e.stopPropagation(); this.setSeriesPref('dirs', 'ltr'); },
+      setRtl: (e) => { if (e) e.stopPropagation(); this.setSeriesPref('dirs', 'rtl'); },
+      modeSingle: (e) => { if (e) e.stopPropagation(); this.setSeriesPref('modes', 'single'); },
+      modeDouble: (e) => { if (e) e.stopPropagation(); this.setSeriesPref('modes', 'double'); },
+      modeVertical: (e) => { if (e) e.stopPropagation(); this.setSeriesPref('modes', 'vertical'); },
+      fitW: (e) => { if (e) e.stopPropagation(); this.setSeriesPref('fits', 'width'); },
+      fitH: (e) => { if (e) e.stopPropagation(); this.setSeriesPref('fits', 'height'); },
+      fitO: (e) => { if (e) e.stopPropagation(); this.setSeriesPref('fits', 'original'); },
+      fitS: (e) => { if (e) e.stopPropagation(); this.setSeriesPref('fits', 'screen'); },
+      defLtr: (e) => { if (e) e.stopPropagation(); this.setState({ defDir: 'ltr' }); },
+      defRtl: (e) => { if (e) e.stopPropagation(); this.setState({ defDir: 'rtl' }); },
+      defSingle: (e) => { if (e) e.stopPropagation(); this.setState({ defMode: 'single' }); },
+      defDouble: (e) => { if (e) e.stopPropagation(); this.setState({ defMode: 'double' }); },
+      defVertical: (e) => { if (e) e.stopPropagation(); this.setState({ defMode: 'vertical' }); },
+      isDefLtr: st.defDir === 'ltr', isDefRtl: st.defDir === 'rtl',
+      isDefSingle: st.defMode === 'single', isDefDouble: st.defMode === 'double', isDefVertical: st.defMode === 'vertical',
+      hasOverride: this.hasOverride(), resetSeriesPrefs: this.resetSeriesPrefs,
+      overrideLabel: isKo ? '이 시리즈 전용 설정' : 'Series override',
+      overrideReset: isKo ? '기본값으로' : 'Use default',
+      goLibrary: this.goLibrary, libraryLabel: isKo ? '라이브러리' : 'Library',
+      toggleThumbs: (e) => {
+        if (e) e.stopPropagation();
+        this.setState(s => ({ thumbsOpen: !s.thumbsOpen }), () => { if (this.state.thumbsOpen) this.centerThumb('auto'); });
+      },
+      onSlider: (e) => this.setPage(Number(e.target.value)),
+      startDrag: (e) => { e.stopPropagation(); this.setState({ dragging: true }); },
+      endDrag: (e) => { e.stopPropagation(); this.setState({ dragging: false }); },
+      onPrefetch: (e) => this.setState({ prefetch: Number(e.target.value) }),
+      retry: (e) => { e.stopPropagation(); this.setState({ loading: true }); clearTimeout(this._lt); this._lt = setTimeout(() => this.setState({ loading: false }), 500); },
+      wake: this.wake, holdChrome: this.holdChrome, releaseChrome: this.releaseChrome,
+      tapCenter: (e) => { if (e) e.stopPropagation(); this._hold = false; this.setState(s => ({ chrome: !s.chrome, hint: false }), this.armHide); },
+      closeViewer: this.closeViewer,
+      goNextVol: (e) => { e.stopPropagation(); this.setState(s => ({ vVol: Math.min(s.vVol + 1, volumes.length - 1), page: 1 })); }
+    };
+  }
+}
+</script>
+</body>
+</html>

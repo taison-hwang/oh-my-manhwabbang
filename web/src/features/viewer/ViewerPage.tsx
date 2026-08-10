@@ -20,7 +20,6 @@ import { useMediaQuery } from '../../lib/useMediaQuery'
 import { openingDirection, useSeriesDirStore } from '../../store/seriesDir'
 import { useUiStore } from '../../store/ui'
 import {
-  openingFit,
   useViewerStore,
   type DisplayMode,
   type FitMode,
@@ -341,6 +340,23 @@ export function ViewerPage() {
     },
     [detail, savePrefs, setDirection],
   )
+  /**
+   * **Known, and left alone: arrowing across 맞춤 persists every fit it passes.**
+   *
+   * `Seg` is a native radio group — one `useId()` shared as every option's
+   * `name` (`web/src/components/ds/Seg.tsx:50`, `:65`), no keydown handler
+   * anywhere — and native ←/→ *change the selection* as they move the focus.
+   * Every step is a real `change`, so every step lands here, and there is no
+   * debounce on `savePrefs`. E-44 makes that visible rather than new: with 화면
+   * back in the
+   * row and sitting third (`ViewerTopBar.tsx:146`), a keyboard reader going
+   * 너비 → 원본 now fires **three** `PUT /prefs` where it fired two, and the
+   * middle one writes `contain` — so they persist a fit they only travelled
+   * through. Harmless today (last write wins, the reader ends on the fit they
+   * stopped at, and `is_override` was going true anyway), which is why this is a
+   * note and not a patch: debouncing, or only saving on blur, changes when a
+   * reader's choice becomes durable, and nobody has ruled on that.
+   */
   const applyFit = useCallback(
     (next: FitMode) => {
       setFit(next)
@@ -371,9 +387,19 @@ export function ViewerPage() {
    * anything for it" is the series seed if there is one (E-33 §2) and the global
    * default otherwise. Anything else would make 이 권 전용 설정 clear the
    * override and then disagree with the very next open of the same book.
-   * `openingFit` for the matching E-27 reason: a global default of `contain` has
-   * no button, and landing the reader on a segment with nothing selected is the
-   * state that ruling exists to remove.
+   *
+   * The fit, by contrast, is **not** wrapped: it is set from the response as it
+   * came back, exactly like the `setMode(prefs.display_mode)` two lines above
+   * it. It used to go through `openingFit`, for E-27 §1's `contain` → `height`
+   * coercion and nothing else — the grounds being that a global default of
+   * `contain` had no button to select;
+   * **E-44 restored 화면 to `FIT_OPTIONS`** (`ViewerTopBar.tsx:146`), so that
+   * grounds is gone and the coercion with it. What is left in `openingFit` is
+   * an `undefined` fallback this site cannot reach — `BookPrefs.fit_mode` is
+   * non-nullable (`web/src/api/types.ts:429`) and `onSuccess` is handed a whole
+   * re-merged `BookPrefs` — so wrapping it here would be an identity dressed as
+   * a rule, and the next reader would look for the rule. Every fit the server
+   * can name now has a segment, this one included.
    */
   const resetPrefs = useCallback(() => {
     if (detail === undefined) return
@@ -383,7 +409,7 @@ export function ViewerPage() {
         onSuccess: (prefs) => {
           setMode(prefs.display_mode)
           setDirection(openingDirection(prefs, seedDir))
-          setFit(openingFit(prefs.fit_mode))
+          setFit(prefs.fit_mode)
         },
       },
     )

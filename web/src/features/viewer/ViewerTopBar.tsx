@@ -5,6 +5,7 @@ import {
   File,
   Image as ImageIcon,
   Library,
+  Maximize,
   MoveHorizontal,
   MoveVertical,
 } from 'lucide-react'
@@ -89,18 +90,63 @@ const DIR_OPTIONS: readonly SegOption<ReadingDirection>[] = [
 ]
 
 /**
- * 세 종 — 너비 · 높이 · 원본 (ruling **E-27**, prd FR-VWR-005 as amended).
+ * 네 종 — 너비 · 높이 · 화면 · 원본 (ruling **E-44**, prd FR-VWR-005 restored).
  *
- * `contain` is still a value on the wire and still a value the store holds
- * (arch §7 is unchanged, so a `user.db` written before the amendment keeps
- * loading); it simply has no control any more, and `useViewerStore.open` opens
- * such a book at 높이. Read the pair together: dropping the option without the
- * coercion would leave a reader on a fit whose button does not exist, unable to
- * see which one they are on or get off it.
+ * E-44 overturns **E-27 §1**, and only that clause: E-27 cut 화면 from this
+ * array and paired the cut with a coercion in `openingFit`
+ * (`web/src/store/viewer.ts:66`) that opened a book stored at `contain` on 높이.
+ * The two halves only ever made sense together — the coercion existed solely so
+ * that no reader could be parked on a fit whose button did not exist — so they
+ * come back out together. With the button restored, the coercion is the thing
+ * that would strand a reader: it would silently refuse the fit they chose last
+ * time, on a segment that is sitting right there showing 높이 instead.
+ *
+ * Nothing below this line ever moved. `contain` stayed a legal wire value end
+ * to end (`FIT_MODES`, `web/src/api/types.ts:63`; the Go DTO enum; `user.db`),
+ * and the geometry stayed implemented — `stageScrollsY`, `stageStyle`,
+ * `pageFrameStyle`, `pageFitStyle` and `verticalPageHeight` all still answer for
+ * it (`web/src/features/viewer/fit.ts:159`). E-27 deleted one array entry and a
+ * branch; that is all E-44 has to put back.
+ *
+ * **화면 sits third, between 높이 and 원본** — E-44 §1's UI row, restated in
+ * ui-spec §6.6's control table. Order is not cosmetic: `Seg` is one tab stop
+ * whose ←/→ walk the radios in DOM order, moving the selection as they move the
+ * focus. Nothing here implements that — `Seg` has no keydown handler anywhere;
+ * it gets ←/→ "for free" (`web/src/components/ds/Seg.tsx:8-9`) because every
+ * option's input shares one `useId()` as its `name`
+ * (`web/src/components/ds/Seg.tsx:50`, `:65`), which makes the four a single
+ * native radio group. So the sequence *is* the keyboard mapping, which is
+ * why `ViewerPage.test.tsx` pins all four **in order** — and why inserting 화면
+ * in the middle rather than at the end is a real change to how a keyboard
+ * reader gets to 원본 (see `applyFit` in `ViewerPage`).
+ *
+ * **This is not `FIT_MODES`' order, and the difference is not a bug.**
+ * `FIT_MODES` is the wire enum — `contain` *last*, where arch-backend §7
+ * appends it, pinned by `web/src/api/types.test.ts:47`. This array is the row a
+ * reader sees, `contain` third, pinned by `ViewerPage.test.tsx`. Two orderings
+ * of the same four values, each answering to a different authority; neither may
+ * be sorted to match the other. Aligning the first would edit a frozen
+ * contract; aligning the second would remap the arrow keys.
+ *
+ * Do not "correct" this against the artefacts in the repo — **they are the old
+ * position, not a contradiction.** 화면 used to sit *fourth*, and everything
+ * here captured before E-27 still says so: the three files in
+ * `docs/ui-html/…프로토타입.zip` (2026-07-28) emit `fitW · fitH · fitO · fitS`,
+ * `docs/ui-shots/viewer-overlay-visible-1440.png` reads 너비 · 높이 · 원본 · 화면
+ * left to right, and design.md 화면 3 lists 맞춤(너비 / 높이 / 원본 / 화면). The
+ * live design project moved it when it restored it: fetched 2026-08-09, its fit
+ * `.seg` emits `isFitW · isFitH · isFitS · isFitO`, which is where E-44 §1 gets
+ * third from. So the repo's copies are stale twice over — first for deleting
+ * the option, now for its place — and a diff against them silently remaps the
+ * arrow keys. Moving 화면 back to fourth needs a ruling, not a capture.
+ *
+ * C-2: the wire value is `contain` and the label is 화면. There is no `screen`;
+ * the prototype's `fitS`/`screen` is a string-table key and stays outside.
  */
 const FIT_OPTIONS: readonly SegOption<FitMode>[] = [
   { value: 'width', label: '너비', icon: <MoveHorizontal size={13} /> },
   { value: 'height', label: '높이', icon: <MoveVertical size={13} /> },
+  { value: 'contain', label: '화면', icon: <Maximize size={13} /> },
   { value: 'original', label: '원본', icon: <ImageIcon size={13} /> },
 ]
 

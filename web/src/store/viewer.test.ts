@@ -143,17 +143,18 @@ describe('opening chromeless (ruling E-27)', () => {
     expect(useViewerStore.getState().hintVisible).toBe(false)
   })
 
-  it('opens a book stored at `contain` on 높이 — the fit E-27 removed the control for', () => {
+  it('opens a book stored at `contain` on 화면 — E-44 gave the fit its button back', () => {
+    // The discriminator against E-27 §1's coercion, which answered `height`
+    // here: that branch existed only because `FIT_OPTIONS` had no 화면 segment
+    // to select (`web/src/features/viewer/ViewerTopBar.tsx:146`). With the
+    // segment restored, coercing is what strands the reader — it refuses the fit
+    // they chose last session while the control shows them 높이 instead.
     useViewerStore.getState().open('bk', { pageCount: 10, fit: 'contain' })
-    expect(useViewerStore.getState().fit).toBe('height')
-    // The wire value itself is untouched: `setFit` still round-trips it, so a
-    // client that has one in `user.db` is not rewritten by being read.
-    useViewerStore.getState().setFit('contain')
     expect(useViewerStore.getState().fit).toBe('contain')
   })
 
-  it('opens the three fits that still have controls exactly as stored', () => {
-    for (const fit of ['width', 'height', 'original'] as const) {
+  it('opens each of the four fits exactly as stored', () => {
+    for (const fit of ['width', 'height', 'original', 'contain'] as const) {
       useViewerStore.getState().open('bk', { pageCount: 10, fit })
       expect(useViewerStore.getState().fit).toBe(fit)
     }

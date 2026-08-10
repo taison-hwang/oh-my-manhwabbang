@@ -783,3 +783,118 @@ test('E-28 · at the end of a volume the chrome stays above the next-volume scri
 
   await clearProgress(page, bid)
 })
+
+/**
+ * E-44's fourth 맞춤 option, from the two directions no other tier can look.
+ *
+ * **Why this belongs at the browser tier and nowhere else.** `Seg` has no
+ * keydown handler at all: its options share one `name`, so the single tab stop
+ * and the ←/→ walk are the *browser's* radio-group behaviour, not ours
+ * (`components/ds/Seg.tsx:57-61`, intent at `:8-9`). jsdom does not implement
+ * that walk, so every arrow-key claim this repo makes about 맞춤 — including the
+ * three places E-44 pins the option order *because* order is the key mapping —
+ * was unverified until this test. A fourth radio that no key could reach would
+ * have left all five gates green.
+ *
+ * The second assertion answers the review finding that `noHorizontalScroll`
+ * (07-responsive) **structurally cannot** see this control overflow: the viewer
+ * root is `fixed inset-0 overflow-hidden`, so anything spilling out of the bar
+ * is clipped and never reaches `documentElement.scrollWidth`, and 07's viewer
+ * leg runs chromeless anyway. Measuring the bar's own scroll box is the same
+ * question asked where the answer lives. It runs in all four viewport projects,
+ * so 400 px — where the group grew from ~235 px to ~312 px against a 368 px
+ * content box — is covered without a width branch in the test.
+ */
+test('E-44 · 맞춤 네 옵션은 화살표로 전부 닿고, 어느 폭에서도 바 밖으로 넘치지 않는다', async ({
+  page,
+}, info) => {
+  const sid = await seriesId(page, SERIES.scars)
+  const books = await booksOf(page, sid)
+  const book = books.find((candidate) => candidate.status === 'ok')
+  expect(book, '§6.3 row 2: 상처를 쫓는자 is a folder of volume folders').toBeDefined()
+  const bid = book?.id ?? ''
+  await resetBookPrefs(page, bid)
+
+  await openViewerDirect(page, sid, bid, 1)
+  await waitForPage(page)
+
+  // 너비 is the first option, so the walk below starts at a known end of the
+  // group rather than at whatever `user.db` last held.
+  await setViewerSeg(page, '맞춤', 'width')
+  const fits = viewerTopBar(page).locator('[aria-label="맞춤"]')
+  const stage = page.locator('[data-role="stage"]')
+
+  // The premise the whole test rests on: clicking a label focuses the radio it
+  // wraps. Asserted rather than assumed — if focus went to the label or stayed
+  // on the body, every `press` below would go to the document and the walk
+  // would "pass" by never moving.
+  await expect(
+    fits.locator('input[value="width"]'),
+    'E-44: a click on the label focuses the radio, which is what makes the group one tab stop',
+  ).toBeFocused()
+
+  // Ascending DOM order *is* the key order (E-44 §1). 화면 is third, so it is
+  // on the path — a reader arrowing from 너비 to 원본 passes through it.
+  for (const value of ['height', 'contain', 'original']) {
+    await page.keyboard.press('ArrowRight')
+    await expect(
+      fits.locator(`label[data-value="${value}"]`),
+      `E-44: ArrowRight reaches ${value}`,
+    ).toHaveAttribute('data-checked', 'true')
+    await expect(
+      stage,
+      `E-44: ${value} is not just a checked radio — the stage takes the fit`,
+    ).toHaveAttribute('data-fit', value)
+  }
+
+  // Native radio groups wrap. Worth pinning: it is the property that makes the
+  // *first* option reachable from the last without a reverse walk, and it is
+  // the browser's, so a future `Seg` that grew its own keydown handler would
+  // have to keep it.
+  await page.keyboard.press('ArrowRight')
+  await expect(
+    fits.locator('label[data-value="width"]'),
+    'E-44: the walk wraps from 원본 back to 너비',
+  ).toHaveAttribute('data-checked', 'true')
+
+  // The overflow question, asked of the box that clips. `scrollWidth` beyond
+  // `clientWidth` means a control is off the end of a bar the reader cannot
+  // scroll — the fourth button's one real layout risk.
+  const overflow = await viewerTopBar(page).evaluate(
+    (el) => el.scrollWidth - el.clientWidth,
+  )
+  expect(
+    overflow,
+    'E-44: the wrapping bar holds all four 맞춤 options at this width — a group is `flex-none whitespace-nowrap`, so it cannot shrink its way out of trouble',
+  ).toBe(0)
+
+  // And the last option is inside the viewer, not merely inside a bar that is
+  // itself off-screen — the failure `scrollWidth` alone would not catch.
+  const viewerBox = await viewer(page).boundingBox()
+  const lastOption = await fits.locator('label[data-value="original"]').boundingBox()
+  expect(lastOption, 'the 원본 button must be laid out').not.toBeNull()
+  const box = lastOption ?? { x: 0, y: 0, width: 0, height: 0 }
+  expect(
+    boxContains(viewerBox, box.x, box.y) &&
+      boxContains(viewerBox, box.x + box.width, box.y + box.height),
+    'E-44: the option that a fourth button pushes rightmost stays inside the viewer',
+  ).toBe(true)
+
+  // ui-spec §6.6 quotes the bar's wrapped heights, and E-44 invalidated every
+  // one of them by widening 맞춤. Reported rather than asserted: the numbers are
+  // documentation of a layout, and pinning them would redden this test for
+  // every legitimate change to the bar's contents.
+  const bar = await viewerTopBar(page).boundingBox()
+  const measured = `viewer top bar height with four 맞춤 options: ${String(Math.round(bar?.height ?? 0))}px`
+  info.annotations.push({ type: 'measured', description: measured })
+  // Also to stdout, because the annotation alone is unreadable in practice: the
+  // `list` reporter never prints it and the `html` one buries it in an encoded
+  // blob. Whoever next has to refresh ui-spec §6.6's wrap heights needs this
+  // number out of a log they already have, not a second nine-minute round.
+  console.log(`[measured] ${info.project.name}: ${measured}`)
+
+  await shot(page, info, 'e44-viewer-fit-four-options')
+
+  await resetBookPrefs(page, bid)
+  await clearProgress(page, bid)
+})

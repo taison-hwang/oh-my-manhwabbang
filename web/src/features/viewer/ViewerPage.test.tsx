@@ -1303,17 +1303,78 @@ describe('fit (acceptance 3; FR-VWR-005, ui-spec §6.2)', () => {
     expect(img).toHaveStyle({ height: '100%', width: 'auto' })
   })
 
-  it('opens a book stored at 화면 on 높이 instead — E-27 took its control away', async () => {
-    // The `contain` *geometry* is still real and still tested, in `fit.test.ts`;
-    // what changed is that nothing routes a reader to it any more. Landing on a
-    // fit with no button would leave them unable to see which one they are on.
+  it('opens a book stored at 화면 on 화면, with that radio checked (E-44)', async () => {
+    // Both halves of E-27 §1, inverted together. That ruling deleted the 화면
+    // segment and, *because* it had deleted it, opened this book on 높이 —
+    // nobody may be parked on a fit with no button. E-44 restores the button, so
+    // the coercion becomes the thing that contradicts the reader: their stored
+    // fit refused, by a control sitting on screen showing a different one.
+    // The `contain` geometry never moved — it is asserted pure in `fit.test.ts`;
+    // what is pinned here is that a reader can arrive at it.
     await setup({ prefs: { fit_mode: 'contain' } })
-    expect(stage()).toHaveAttribute('data-fit', 'height')
-    expect(screen.queryByRole('radio', { name: '화면' })).toBeNull()
-    // …and the three that remain are all there.
-    for (const label of ['너비', '높이', '원본']) {
-      expect(screen.getByRole('radio', { name: label })).toBeInTheDocument()
-    }
+    expect(stage()).toHaveAttribute('data-fit', 'contain')
+    expect(screen.getByRole('radio', { name: '화면' })).toBeChecked()
+  })
+
+  it('offers four fits in E-44 §1 order — 너비 · 높이 · 화면 · 원본', async () => {
+    // Order is a keyboard mapping, not decoration: `Seg` is a single tab stop
+    // whose ←/→ walk the radios in DOM order — nothing in `Seg` implements that
+    // (it has no keydown handler at all), it falls out of every option's input
+    // sharing one `useId()` as its `name` (`web/src/components/ds/Seg.tsx:8-9`,
+    // `:50`, `:65`), which makes the four one native radio group. So a reorder
+    // silently remaps ←/→ for every reader — which is why it is pinned rather
+    // than left to a diff.
+    //
+    // **화면 was fourth and is now third** — the live design project moved it
+    // when it restored it (fetched 2026-08-09: `isFitW · isFitH · isFitS ·
+    // isFitO`). Everything in the repo predates that: `docs/ui-html/…zip`
+    // (2026-07-28) and `viewer-overlay-visible-1440.png` both read
+    // 너비 · 높이 · 원본 · 화면. They are the old position, not a contradiction;
+    // see the long note on `FIT_OPTIONS` in `ViewerTopBar.tsx`.
+    //
+    // Asserted as one list carrying *both* halves of every option rather than
+    // four `getByRole` existence checks, because a deletion, a reorder, a
+    // relabelled 화면 and a segment wired to the wrong wire value are four
+    // different regressions and a presence check catches only the first.
+    await setup()
+    const fits = within(screen.getByRole('radiogroup', { name: '맞춤' })).getAllByRole('radio')
+    expect(fits.map((el) => [el.getAttribute('value'), el.closest('label')?.textContent])).toEqual([
+      ['width', '너비'],
+      ['height', '높이'],
+      // C-2: `contain` on the wire, 화면 on the button. There is no `screen`.
+      ['contain', '화면'],
+      ['original', '원본'],
+    ])
+  })
+
+  it('draws each fit with its E-44 §1 icon — 화면 is `Maximize`', async () => {
+    // The one value E-44 introduced that nothing else held: swapping 화면's
+    // `Maximize` for `MoveHorizontal` in `FIT_OPTIONS` left typecheck, lint and
+    // every other test green. The icon is BINDING (E-44 §1, ui-spec §6.6), and
+    // in a segmented control it is what the row is *read* by — the labels are
+    // two and three characters at 13 px — so a wrong glyph is a wrong button to
+    // anyone scanning rather than reading.
+    //
+    // Pinned on the class, not on the path data. lucide's `createLucideIcon`
+    // puts `lucide-${kebab(iconName)}` on every icon's `<svg>` next to a bare
+    // `lucide` (`web/node_modules/lucide-react/dist/esm/createLucideIcon.js`
+    // and `Icon.js`, v0.474.0), so the class *is* the icon's identity: it names
+    // which icon is wrong when this fails, and it survives lucide redrawing a
+    // glyph, which a `d` attribute would not. Asserting the whole class string
+    // rather than a `toContain` also catches the icon being dropped for a bare
+    // `<svg>`. The glyphs are `aria-hidden` by rule (`Seg.tsx:73-77` — the label
+    // stays the accessible name), so there is no accessible name to check
+    // instead; the DOM is the only place the choice is visible to a test.
+    await setup()
+    const icons = within(screen.getByRole('radiogroup', { name: '맞춤' }))
+      .getAllByRole('radio')
+      .map((el) => el.closest('label')?.querySelector('svg')?.getAttribute('class'))
+    expect(icons).toEqual([
+      'lucide lucide-move-horizontal',
+      'lucide lucide-move-vertical',
+      'lucide lucide-maximize',
+      'lucide lucide-image',
+    ])
   })
 
   it('gives 너비 a definite width and lets the stage scroll', async () => {
@@ -1628,6 +1689,24 @@ describe('per-book preferences (FR-VWR-002 / D-35)', () => {
     // C-1: the wire value, never `double`.
     expect(useViewerStore.getState().mode).toBe('spread')
     expect(useViewerStore.getState().fit).toBe('width')
+  })
+
+  it('persists 화면 as `contain`, and the stage takes the fit (E-44)', async () => {
+    // The other end of the round trip the test above walks for 너비. It is worth
+    // its own case because 화면 is the one fit whose *press* had no code path at
+    // all under E-27 §1 — the segment did not exist, so nothing could send this
+    // body, and `openingFit` would have turned the stored value back into
+    // `height` on the next open. Both ends are asserted: the wire word (C-2 —
+    // `contain`, never `screen`) and the `data-fit` the stage actually resolves
+    // its geometry from (`fit.ts`).
+    const recorded = await setup()
+    await userEvent.click(screen.getByRole('radio', { name: '화면' }))
+
+    await waitFor(() => {
+      expect(recorded.prefsPuts).toEqual([{ fit_mode: 'contain' }])
+    })
+    expect(stage()).toHaveAttribute('data-fit', 'contain')
+    expect(screen.getByRole('radio', { name: '화면' })).toBeChecked()
   })
 
   it('opens with the book’s own preferences, not the global defaults', async () => {
