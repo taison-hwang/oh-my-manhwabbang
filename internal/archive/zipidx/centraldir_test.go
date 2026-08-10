@@ -14,6 +14,7 @@ import (
 
 	"shelf/internal/archive"
 	"shelf/internal/archive/zipidx"
+	"shelf/internal/kenc"
 	"shelf/internal/testutil"
 )
 
@@ -968,5 +969,145 @@ func TestReadCentralDirectory_entryOutsideTheArchive_isNotListed(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Archive-level name encoding (FR-IDX-008, extended for Shift_JIS)
+// ---------------------------------------------------------------------------
+
+// The Shift_JIS bytes of `天上天下 20.zip`, whose 189 names are the reason the
+// decision cannot be made one entry at a time: CP949 reads 160 of them without
+// substituting anything, and every one of those readings is wrong.
+var (
+	sjisAmbiguous = []byte("tenjou tenge v20/\x93\x56\x93\x56-20-001.jpg")
+	sjisKana      = []byte("tenjou tenge v20/\x93\x56\x93\x56-20-008 \x82\xcc\x83\x52\x83\x73\x81\x5b2.jpg")
+)
+
+// TestReadCentralDirectory_shiftJISArchive_isDecidedForTheWholeArchive is the
+// case that motivated resolveArchiveNames. The first name is readable as CP949
+// and must still come out Japanese, because of what the second name proves
+// about the archive it lives in.
+func TestReadCentralDirectory_shiftJISArchive_isDecidedForTheWholeArchive(t *testing.T) {
+	t.Parallel()
+
+	page := testutil.TinyJPEG(t, 8, 8)
+	data := testutil.BuildZIP(t, testutil.ZIPSpec{
+		Entries: []testutil.Entry{
+			{RawName: sjisAmbiguous, Data: page, Method: testutil.MethodDeflate},
+			{RawName: sjisKana, Data: page, Method: testutil.MethodDeflate},
+			// A flagged UTF-8 name in the same container must be left alone:
+			// the archive-level decision covers the legacy names only.
+			{Name: "표지.jpg", Data: page, Method: testutil.MethodStore, Flags: testutil.FlagUTF8},
+			// So must a flagless one the UTF-8 probe already claimed.
+			{Name: "001.jpg", Data: page, Method: testutil.MethodStore},
+		},
+	})
+
+	ix, err := zipidx.ReadCentralDirectory(t.Context(), bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatalf("ReadCentralDirectory: %v", err)
+	}
+	want := []struct{ name, enc string }{
+		{"tenjou tenge v20/天天-20-001.jpg", kenc.EncCP932},
+		{"tenjou tenge v20/天天-20-008 のコピー2.jpg", kenc.EncCP932},
+		{"표지.jpg", kenc.EncUTF8},
+		{"001.jpg", kenc.EncUTF8},
+	}
+	if len(ix.Entries) != len(want) {
+		t.Fatalf("entries = %d, want %d", len(ix.Entries), len(want))
+	}
+	for i, e := range ix.Entries {
+		if e.Name != want[i].name || e.NameEncoding != want[i].enc {
+			t.Errorf("entry %d = (%q, %q), want (%q, %q)", i, e.Name, e.NameEncoding, want[i].name, want[i].enc)
+		}
+	}
+}
+
+// TestReadCentralDirectory_koreanArchiveWithOneBadName_staysCP949 is the
+// regression that matters most. One unreadable name is what triggers the
+// fallback, and 1,871 archives in the collection are Korean against 4 that are
+// Japanese — so a fallback that fires on a Korean archive would rewrite
+// thousands of correct names into halfwidth-katakana nonsense.
+func TestReadCentralDirectory_koreanArchiveWithOneBadName_staysCP949(t *testing.T) {
+	t.Parallel()
+
+	page := testutil.TinyJPEG(t, 8, 8)
+	data := testutil.BuildZIP(t, testutil.ZIPSpec{
+		Entries: []testutil.Entry{
+			{RawName: testutil.CP949(t, "시티 헌터 완전판 08권/CS02-026.JPG"), Data: page, Method: testutil.MethodDeflate},
+			{RawName: testutil.CP949(t, "시티 헌터 완전판 08권/CS02-027.JPG"), Data: page, Method: testutil.MethodDeflate},
+			// The trigger: bytes no encoding reads.
+			{RawName: []byte("\xff\xfe\x80.jpg"), Data: page, Method: testutil.MethodStore},
+		},
+	})
+
+	ix, err := zipidx.ReadCentralDirectory(t.Context(), bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatalf("ReadCentralDirectory: %v", err)
+	}
+	want := []struct{ name, enc string }{
+		{"시티 헌터 완전판 08권/CS02-026.JPG", kenc.EncCP949},
+		{"시티 헌터 완전판 08권/CS02-027.JPG", kenc.EncCP949},
+		{"�.jpg", kenc.EncUnknown},
+	}
+	if len(ix.Entries) != len(want) {
+		t.Fatalf("entries = %d, want %d", len(ix.Entries), len(want))
+	}
+	for i, e := range ix.Entries {
+		if e.Name != want[i].name || e.NameEncoding != want[i].enc {
+			t.Errorf("entry %d = (%q, %q), want (%q, %q)", i, e.Name, e.NameEncoding, want[i].name, want[i].enc)
+		}
+	}
+}
+
+// TestReadCentralDirectory_shiftJISNames_surviveAPartialDirectory: the decision
+// runs on the error path too. A directory that goes bad partway still lists the
+// entries that parsed, and those names must be as right as they would have been
+// in a clean archive.
+func TestReadCentralDirectory_shiftJISNames_surviveAPartialDirectory(t *testing.T) {
+	t.Parallel()
+
+	page := testutil.TinyJPEG(t, 8, 8)
+	third := []byte("tenjou tenge v20/\x93\x56\x93\x56-20-003.jpg")
+	data := testutil.BuildZIP(t, testutil.ZIPSpec{
+		Entries: []testutil.Entry{
+			{RawName: sjisKana, Data: page, Method: testutil.MethodDeflate},
+			{RawName: sjisAmbiguous, Data: page, Method: testutil.MethodDeflate},
+			{RawName: third, Data: page, Method: testutil.MethodDeflate},
+		},
+	})
+
+	// Break the *third central-directory record* — the last occurrence of the
+	// name, the first being its local header — so the parse stops there with
+	// the end record still claiming three entries. Corrupting the local header
+	// instead would leave the directory perfectly readable and this test would
+	// silently assert nothing.
+	broken := append([]byte(nil), data...)
+	i := bytes.LastIndex(broken, third)
+	if i < 0 {
+		t.Fatal("fixture: third name not found in the central directory")
+	}
+	rec := i - 46 // centralHeaderLen, the fixed part preceding the name
+	if rec < 0 || binary.LittleEndian.Uint32(broken[rec:]) != 0x02014b50 {
+		t.Fatalf("fixture: no central-directory record at %d", rec)
+	}
+	broken[rec+3]++ // wreck the signature
+
+	ix, err := zipidx.ReadCentralDirectory(t.Context(), bytes.NewReader(broken), int64(len(broken)))
+	if err == nil {
+		t.Fatal("want the partial-directory error, got a clean read")
+	}
+	if ix == nil || len(ix.Entries) != 2 {
+		t.Fatalf("entries = %v, want the 2 that parsed", ix)
+	}
+	want := []string{
+		"tenjou tenge v20/天天-20-008 のコピー2.jpg",
+		"tenjou tenge v20/天天-20-001.jpg",
+	}
+	for i, e := range ix.Entries {
+		if e.Name != want[i] || e.NameEncoding != kenc.EncCP932 {
+			t.Errorf("entry %d = (%q, %q), want (%q, %q)", i, e.Name, e.NameEncoding, want[i], kenc.EncCP932)
+		}
 	}
 }

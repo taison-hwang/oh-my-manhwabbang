@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/text/encoding/japanese"
 	"golang.org/x/text/encoding/korean"
 )
 
@@ -386,6 +387,23 @@ func CP949(t testing.TB, s string) []byte {
 	out, err := korean.EUCKR.NewEncoder().Bytes([]byte(s))
 	if err != nil {
 		t.Fatalf("testutil: %q is not representable in CP949: %v", s, err)
+	}
+	return out
+}
+
+// ShiftJIS is CP949's counterpart for the Japanese archives of the collection,
+// the encoding kenc.ArchiveFallback selects for a whole container.
+//
+// Note what it can and cannot state. ShiftJIS("天天-20-001.jpg") is
+// "\x93\x56\x93\x56-20-001.jpg", which CP949 *also* reads — as
+// "밮밮-20-001.jpg" — so a golden vector built only from names like that one
+// proves nothing about detection. A test that means to exercise the fallback
+// needs at least one name CP949 cannot read, e.g. one containing kana.
+func ShiftJIS(t testing.TB, s string) []byte {
+	t.Helper()
+	out, err := japanese.ShiftJIS.NewEncoder().Bytes([]byte(s))
+	if err != nil {
+		t.Fatalf("testutil: %q is not representable in Shift_JIS: %v", s, err)
 	}
 	return out
 }

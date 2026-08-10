@@ -19,7 +19,8 @@ Sources: `prd.md` (URD, authoritative) · `design.md` · `ui-spec.md` · `arch-b
 | D-04 | **FR-STT-004 export/import: backend endpoints in, UI out.** | ~80 lines, and it protects the only authored data in the system; the UI is genuinely stage 3. |
 | D-05 | **Docker image out of scope**; `make release` cross-compilation in scope. | prd §9 stage 3 calls Docker "부가적"; NFR-OPS-003 (Linux/Windows/macOS binaries) is a hard NFR. |
 | D-06 | Basic touch (tap zones + horizontal swipe) **in**; gesture *optimisation* out. | FR-VWR-011 is 권장 and NFR-CMP-002 needs the basics; "모바일 제스처 최적화" is the stage-3 item. |
-| D-07 | Nested archives (a ZIP of ZIPs), RAR/CBR/7z **out**; `internal/archive.Reader` stays an interface. | prd §7.2. The one real container-of-ZIPs series indexes as `status:"empty"` rather than crashing. |
+| D-07 | ~~Nested archives (a ZIP of ZIPs)~~, RAR/CBR/7z **out**; `internal/archive.Reader` stays an interface. | prd §7.2. **Nested ZIPs are now IN — see D-70.** RAR/CBR/7z remain out, and a container holding only those still indexes as `status:"empty"` rather than crashing. |
+| D-70 | **Nested ZIPs are in, as books.** A ZIP whose entries are ZIPs becomes a series of `kind:"nestedzip"` volumes, one per inner archive. Supersedes the first clause of D-07 and narrows E-14. | 45 books — 623 volumes, 16.9 GB — were unreachable, `겟 벡커스 1~39완.zip` among them, and "the container is `empty`" was a true statement about a library the reader could not open. The cost turned out to be small: the inner archive is presented as an `io.ReaderAt` (`internal/archive/nested`), so the existing reader indexes and streams it unchanged, and the entries are stored JPEGs whose deflate ratio is measured at 1.0000, making the inflate very nearly a copy. Nothing is extracted and no cache is added. Only a book that produced **no pages of its own** is ever opened looking for volumes, so the ordinary path is untouched. |
 
 ## Architecture & dependencies
 

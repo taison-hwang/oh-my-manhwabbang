@@ -327,6 +327,7 @@ func bookOf(row index.BookRow) source.Book {
 		Kind:      source.Kind(row.Kind),
 		RootName:  row.RootName,
 		RelPath:   row.RelPath,
+		InnerPath: row.InnerPath,
 		FileSize:  row.FileSize,
 		FileMtime: row.FileMtime,
 	}

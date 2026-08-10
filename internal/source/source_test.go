@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -127,8 +128,19 @@ func TestExcluded_everyRuleOfFRIDX006(t *testing.T) {
 		{"thumbs.db case", "thumbs.DB", 100, false, true, source.ReasonSystemFile},
 		{"desktop.ini", "desktop.ini", 100, false, true, source.ReasonSystemFile},
 		{"desktop.ini case", "Desktop.ini", 100, false, true, source.ReasonSystemFile},
-		{"hidden file", "vol1/.hidden.jpg", 100, false, true, source.ReasonHidden},
+		// FR-IDX-006's 숨김 파일, as narrowed in exclude.go: a leading dot is
+		// not a hidden attribute inside an archive, so a dot-name that is a
+		// page is kept and a dot-name that is not is still dropped. The first
+		// case is the real shape from `엽기인 Girl 스나코 26권.zip`, whose 80
+		// pages the old rule dropped in their entirety.
+		{"dot-prefixed page", "vol/.▶스나코_26권◀_Scan11192010_193728.jpg", 100, false, false, ""},
+		{"dot-prefixed page, plain", "vol1/.hidden.jpg", 100, false, false, ""},
+		{"dot-prefixed non-page", "vol1/.hidden.txt", 100, false, true, source.ReasonHidden},
+		{"dot-prefixed zero byte", "vol1/.hidden.jpg", 0, false, true, source.ReasonZeroByte},
+		{"extension with no name", "vol1/.jpg", 100, false, true, source.ReasonHidden},
+		{"bare dot", ".", 100, false, true, source.ReasonHidden},
 		{"hidden directory", ".cache/001.jpg", 100, false, true, source.ReasonHidden},
+		{"hidden directory nested", "vol1/.cache/001.jpg", 100, false, true, source.ReasonHidden},
 		{"zero bytes", "001.jpg", 0, false, true, source.ReasonZeroByte},
 		{"text file", "readme.txt", 100, false, true, source.ReasonExtension},
 		{"nested archive", "vol1.zip", 100, false, true, source.ReasonExtension},
@@ -306,8 +318,9 @@ func TestFactory_registry(t *testing.T) {
 	f := newFixture(t, map[string]any{"book": map[string]any{"001.jpg": testutil.TinyJPEG(t, 8, 8)}})
 
 	kinds := f.factory.Kinds()
-	if len(kinds) != 3 {
-		t.Errorf("Kinds() = %v, want the three built-in kinds", kinds)
+	want := []source.Kind{source.KindDir, source.KindNestedZIP, source.KindPDF, source.KindZIP}
+	if !slices.Equal(kinds, want) {
+		t.Errorf("Kinds() = %v, want %v", kinds, want)
 	}
 
 	// An unregistered kind is ErrUnsupported, not a panic and not a nil source.

@@ -789,6 +789,12 @@ type bookResult struct {
 	// error status.
 	aborted bool
 
+	// expanded is set when this book turned out to be a *container* of volumes
+	// rather than a book: a ZIP whose entries are all more ZIPs. The results in
+	// it replace this one entirely (see expandContainers), which is how
+	// `겟 벡커스 1~39완.zip` stops being one empty book and becomes 39 real ones.
+	expanded []bookResult
+
 	logs []index.LogEntry
 }
 
@@ -874,6 +880,9 @@ func (s *Scanner) scanRoot(ctx context.Context, runID string, gen int64, cfg con
 				if t.remaining.Add(-1) != 0 {
 					continue
 				}
+				// Every book of this series is finished, so this goroutine owns
+				// the task outright and can rewrite its book list.
+				flattenExpanded(t)
 				if err := s.deliver(pipeCtx, resCh, t); err != nil {
 					return
 				}
@@ -1062,10 +1071,16 @@ func (s *Scanner) priorBook(ctx context.Context, bookID string) (index.Book, boo
 // becomes a books.status and a scan_log row. Nothing here returns an error to
 // its caller, because there is no failure the caller could usefully act on: the
 // scan must complete.
-func (s *Scanner) indexBook(ctx context.Context, rt *rootRun, t *seriesTask, i int) (res bookResult) {
-	u := t.books[i]
+func (s *Scanner) indexBook(ctx context.Context, rt *rootRun, t *seriesTask, i int) bookResult {
+	return s.indexUnit(ctx, rt, t, t.books[i])
+}
+
+// indexUnit indexes one book unit. It is separate from indexBook because a
+// container of volumes indexes several units that classification never saw —
+// see expandContainer.
+func (s *Scanner) indexUnit(ctx context.Context, rt *rootRun, t *seriesTask, u bookUnit) (res bookResult) {
 	res = bookResult{
-		id: ids.BookID(rt.cfg.Name, u.relPath), unit: u,
+		id: ids.NestedBookID(rt.cfg.Name, u.relPath, u.innerPath), unit: u,
 		status: StatusOK, dimsState: "none",
 	}
 
@@ -1112,7 +1127,7 @@ func (s *Scanner) indexBook(ctx context.Context, rt *rootRun, t *seriesTask, i i
 
 	src, err := s.books.Open(ctx, source.Book{
 		ID: res.id, Kind: u.kind, RootName: rt.cfg.Name, RelPath: u.relPath,
-		FileSize: u.size, FileMtime: u.mtime,
+		InnerPath: u.innerPath, FileSize: u.size, FileMtime: u.mtime,
 	})
 	if err != nil {
 		// A book abandoned because the run was cancelled is not a broken book.
@@ -1140,17 +1155,133 @@ func (s *Scanner) indexBook(ctx context.Context, rt *rootRun, t *seriesTask, i i
 			res.aborted = true
 			return res
 		}
+		// "Nothing in here is a page" is how a container of volumes announces
+		// itself, so that verdict is re-examined before it is recorded.
+		if errors.Is(listErr, source.ErrNoPages) {
+			if expanded, ok := s.expandContainer(ctx, rt, t, res); ok {
+				return expanded
+			}
+		}
 		// A partially readable central directory keeps the pages that parsed:
 		// the truncated `군계(軍鷄) 07권.zip` still shows most of its volume, and
 		// FR-IDX-010 asks for isolation, not deletion.
 		return s.bookFailure(rt, res, listErr)
 	}
 	if res.pageCount == 0 {
+		// Before calling it empty: a container of volumes has no pages of its
+		// own precisely because its entries are whole books. This is the only
+		// place the check runs, so an ordinary book never pays for it.
+		if expanded, ok := s.expandContainer(ctx, rt, t, res); ok {
+			return expanded
+		}
 		res.status = StatusEmpty
 		res.errMsg = "no supported image entries"
 		res.logs = append(res.logs, rt.entry(index.LevelWarn, u.relPath, res.errMsg))
 	}
 	return res
+}
+
+// expandContainer turns a book that is really a container of volumes into one
+// result per volume (prd §7.2 as widened; decision D-07 is superseded for ZIP).
+//
+// It reports false for anything that is not one, which is every book with pages
+// and every archive whose entries are not archives — so the ordinary path is a
+// single extra central-directory read for a book that was about to be recorded
+// as `비어 있음` anyway.
+//
+// The container itself stops being a book. It is not recorded as an empty
+// volume beside its own contents, because a 권 list showing "39 volumes and one
+// broken one, which is the thing holding the 39" is a worse answer than the one
+// the reader wants.
+func (s *Scanner) expandContainer(ctx context.Context, rt *rootRun, t *seriesTask, res bookResult) (bookResult, bool) {
+	u := res.unit
+	// Only a top-level archive expands. A volume already inside a container is
+	// not opened looking for more containers: nesting deeper than one level does
+	// not occur in the collection, and refusing it here is what bounds the work.
+	if u.kind != source.KindZIP || u.innerPath != "" || ctx.Err() != nil {
+		return res, false
+	}
+	src, err := s.books.Open(ctx, source.Book{
+		ID: res.id, Kind: source.KindZIP, RootName: rt.cfg.Name, RelPath: u.relPath,
+		FileSize: u.size, FileMtime: u.mtime,
+	})
+	if err != nil {
+		return res, false
+	}
+	lister, ok := src.(source.VolumeLister)
+	if !ok {
+		_ = src.Close()
+		return res, false
+	}
+	inner, err := lister.Volumes(ctx)
+	_ = src.Close()
+	if err != nil || len(inner) == 0 {
+		return res, false
+	}
+
+	out := res
+	out.expanded = make([]bookResult, 0, len(inner))
+	for _, name := range inner {
+		vu := u
+		vu.innerPath = name
+		vu.kind = source.KindNestedZIP
+		// The volume's identity within the series is the container plus the
+		// entry, so sort_key orders volumes inside a container the way natural
+		// sort orders any other pair of names.
+		vu.rel = path.Join(u.rel, name)
+		vu.name = baseName(name)
+		out.expanded = append(out.expanded, s.indexUnit(ctx, rt, t, vu))
+	}
+	out.logs = append(out.logs, rt.entry(index.LevelInfo, u.relPath,
+		fmt.Sprintf("container of %d volumes: indexed each one as a book", len(inner))))
+	return out, true
+}
+
+// baseName is path.Base for a slash path, minus the "." it returns for "".
+func baseName(p string) string {
+	if i := strings.LastIndexByte(p, '/'); i >= 0 {
+		return p[i+1:]
+	}
+	return p
+}
+
+// flattenExpanded replaces every container result with the volumes it turned
+// out to hold, so that everything downstream — ordering, series status, the
+// page rows, the counters — sees an ordinary list of books.
+//
+// It runs after the last of a series' books is indexed and before the series is
+// delivered, on the goroutine that finished last, which is the only moment at
+// which the task is owned by nobody else.
+func flattenExpanded(t *seriesTask) {
+	expanded := false
+	for i := range t.results {
+		if len(t.results[i].expanded) > 0 {
+			expanded = true
+			break
+		}
+	}
+	if !expanded {
+		return
+	}
+
+	books := make([]bookUnit, 0, len(t.books))
+	results := make([]bookResult, 0, len(t.results))
+	for i := range t.results {
+		vols := t.results[i].expanded
+		if len(vols) == 0 {
+			books = append(books, t.results[i].unit)
+			results = append(results, t.results[i])
+			continue
+		}
+		// The container's own scan_log rows are kept by moving them onto its
+		// first volume; the container itself is not recorded as a book.
+		vols[0].logs = append(t.results[i].logs, vols[0].logs...)
+		for j := range vols {
+			books = append(books, vols[j].unit)
+			results = append(results, vols[j])
+		}
+	}
+	t.books, t.results = books, results
 }
 
 // bookFailure records one isolated failure against a book.
@@ -1432,6 +1563,7 @@ func (s *Scanner) writeSeries(ctx context.Context, w *index.Writer, rt *rootRun,
 
 		if err := w.UpsertBook(ctx, index.Book{
 			ID: r.id, SeriesID: t.id, RootName: u.rootName, RelPath: r.unit.relPath,
+			InnerPath:      r.unit.innerPath,
 			DisplayName:    r.unit.name,
 			SortKey:        natsort.Key(r.unit.rel),
 			Ord:            ord,

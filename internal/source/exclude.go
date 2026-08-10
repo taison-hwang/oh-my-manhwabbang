@@ -78,12 +78,34 @@ func Excluded(name string, size int64, isDir bool) (bool, string) {
 			return true, ReasonSystemFile
 		}
 	}
+	// FR-IDX-006 요구사항 "숨김 파일", narrowed to what it can mean inside an
+	// archive. A ZIP entry has no hidden attribute; a leading dot is a leading
+	// dot, and whether it means "hide me" depends on a filesystem convention
+	// the entry was never subject to. Every artefact the convention is really
+	// aimed at is already caught above by a rule that names it — `._*` forks,
+	// `.DS_Store` — so what is left here is a name that merely starts with a
+	// dot.
+	//
+	// In this collection that is `엽기인 Girl 스나코 26권.zip`, whose 80 pages
+	// are all called `.▶스나코_26권◀_Scan11192010_193728.jpg`. The rule dropped
+	// every one of them and the book indexed as `비어 있음` with no pages at all
+	// — FR-IDX-006 costing a whole volume to hide nothing.
+	//
+	// So a dot-name that *is* a page is kept, and a dot-name that is not is
+	// still dropped. Measured over all 11,196 indexed ZIPs, this changes what
+	// is listed for exactly that one book: it is the only one with a
+	// dot-prefixed image entry, and there is no archive anywhere in the
+	// collection with an image under a dot-prefixed directory.
 	if strings.HasPrefix(base, ".") {
-		return true, ReasonHidden
+		if stem := strings.TrimSuffix(base, Ext(base)); stem == "" || stem == "." || !SupportedExt(Ext(base)) {
+			return true, ReasonHidden
+		}
 	}
-	// A hidden *directory* anywhere on the path hides everything under it,
-	// which is what "숨김 파일" means for a nested `.git/` or `.thumbnails/`.
-	for _, el := range strings.Split(slashed, "/") {
+	// A hidden *directory* is a different claim, and it is left alone: `.git/`
+	// or `.thumbnails/` is a tool's working directory, not a volume someone
+	// named oddly, and hiding everything beneath it is what the convention is
+	// for. Nothing in the collection is affected either way.
+	for _, el := range strings.Split(path.Dir(slashed), "/") {
 		if len(el) > 1 && el[0] == '.' {
 			return true, ReasonHidden
 		}
@@ -127,8 +149,11 @@ func ContentType(ext string) string {
 // recorded for the book (arch §4.4). The worst outcome wins: one entry that
 // needed CP949 makes the book a CP949 book, and one entry that fits neither
 // encoding is the thing an operator most needs to see.
+// `cp932` and `cp949` cannot both appear — the archive-level decision in
+// zipidx.resolveArchiveNames rewrites every legacy name to the one encoding it
+// settled on — but the fold is total anyway rather than relying on that.
 func nameEncoding(seen map[string]int) string {
-	for _, enc := range []string{"unknown", "utf-8-invalid", "cp949"} {
+	for _, enc := range []string{"unknown", "utf-8-invalid", "cp932", "cp949"} {
 		if seen[enc] > 0 {
 			return enc
 		}

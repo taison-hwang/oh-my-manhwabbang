@@ -56,7 +56,7 @@ describe('enum values that bite (C-1 … C-4)', () => {
   })
 
   it('books are "dir" while series are "folder" (C-4)', () => {
-    expect([...BOOK_KINDS]).toEqual(['zip', 'dir', 'pdf'])
+    expect([...BOOK_KINDS]).toEqual(['zip', 'nestedzip', 'dir', 'pdf'])
     expect([...SERIES_KINDS]).toEqual(['folder', 'zip', 'pdf'])
   })
 })

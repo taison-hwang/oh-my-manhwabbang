@@ -47,6 +47,10 @@ const (
 	KindZIP Kind = "zip"
 	KindDir Kind = "dir"
 	KindPDF Kind = "pdf"
+	// KindNestedZIP is one volume inside a container of volumes — a ZIP entry
+	// that is itself a ZIP. The container is the book's RelPath and the volume
+	// is its InnerPath.
+	KindNestedZIP Kind = "nestedzip"
 )
 
 // Errors callers match with errors.Is.
@@ -56,10 +60,13 @@ var (
 	// books.status='unsupported' and to HTTP 501.
 	ErrUnsupported = errors.New("book format is not supported by this build")
 	// ErrNoPages — the container opened cleanly but nothing survived the
-	// FR-IDX-006 exclusions. books.status='empty'. The 1.44 GB
-	// `엔젤하트` archive containing 33 nested ZIPs and zero images is the real
-	// instance of this (decision D-07: nested archives are out of scope, and
-	// this is what "without crashing" looks like).
+	// FR-IDX-006 exclusions. books.status='empty'.
+	//
+	// It used to be what a container of nested volumes produced — the 1.44 GB
+	// `엔젤하트` archive of 33 sub-ZIPs and zero images was the standing example.
+	// That is no longer true: those containers are now series of
+	// [KindNestedZIP] books (see nestedzipsource.go), and this error is back to
+	// meaning what it says.
 	ErrNoPages = errors.New("no supported image entries")
 	// ErrUnknownRoot — the book names a root that is not configured or not
 	// currently reachable.
@@ -103,6 +110,9 @@ type Book struct {
 	// RelPath is a slash-separated path relative to the root: the container
 	// file for zip/pdf, the directory for dir.
 	RelPath string
+	// InnerPath is the entry path of this book inside RelPath, for
+	// [KindNestedZIP]. Empty for every other kind.
+	InnerPath string
 	// FileSize and FileMtime are what the index recorded for the container.
 	// They are passed to the handle pool so a changed file can be reported as
 	// stale (arch §5.2) instead of silently served from wrong offsets. Zero
@@ -275,7 +285,7 @@ func NewFactory(opts Options) *Factory {
 		pdfMaxW: opts.PDFMaxWidth,
 		pdfQ:    opts.PDFQuality,
 		log:     opts.Logger,
-		openers: make(map[Kind]Opener, 3),
+		openers: make(map[Kind]Opener, 4),
 	}
 	if f.arch == nil {
 		f.arch = zipidx.New()
@@ -286,6 +296,7 @@ func NewFactory(opts Options) *Factory {
 	f.openers[KindZIP] = openZIP
 	f.openers[KindDir] = openDir
 	f.openers[KindPDF] = openPDF
+	f.openers[KindNestedZIP] = openNestedZIP
 	return f
 }
 

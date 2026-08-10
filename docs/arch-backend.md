@@ -581,10 +581,15 @@ CREATE INDEX IF NOT EXISTS ix_series_search     ON series(search_key);
 CREATE INDEX IF NOT EXISTS ix_series_gen        ON series(scan_gen);
 
 CREATE TABLE IF NOT EXISTS books (
-    id              TEXT PRIMARY KEY,       -- ids.BookID(root_name, rel_path)
+    id              TEXT PRIMARY KEY,       -- ids.NestedBookID(root_name, rel_path, inner_path)
     series_id       TEXT NOT NULL REFERENCES series(id) ON DELETE CASCADE,
     root_name       TEXT NOT NULL,
     rel_path        TEXT NOT NULL,          -- slash path, relative to the ROOT
+    inner_path      TEXT NOT NULL DEFAULT '',
+                                            -- the entry INSIDE rel_path that is this
+                                            --   book, for kind='nestedzip' (§4.5.1).
+                                            --   '' for every other book, which is what
+                                            --   keeps its id unchanged
     display_name    TEXT NOT NULL,          -- name shown in the UI
     sort_key        BLOB NOT NULL,          -- natsort.Key over the SERIES-relative path
     ord             INTEGER NOT NULL,       -- 0-based position within the series,
@@ -605,7 +610,7 @@ CREATE TABLE IF NOT EXISTS books (
         -- 'unsupported'         PDF in a nopdf build, or an unknown method
     error           TEXT,                   -- human-readable, shown in the UI
     scan_gen        INTEGER NOT NULL,
-    UNIQUE (root_name, rel_path)
+    UNIQUE (root_name, rel_path, inner_path)
 );
 CREATE INDEX IF NOT EXISTS ix_books_series ON books(series_id, ord);
 CREATE INDEX IF NOT EXISTS ix_books_gen    ON books(scan_gen);
@@ -1028,7 +1033,33 @@ func DecodeEntryName(raw []byte, utf8Flag bool) (name string, enc string) {
 
 So on this collection step 3 fires cleanly 14,630 times out of 14,630 and AC-002 holds. Step 2 costs nothing here but protects the many flagless-yet-UTF-8 archives produced by modern tools. (Across *all* 33,456 flagless entries, 18,826 were valid UTF-8 — those are the pure-ASCII `001.jpg` names, which step 2 also handles correctly.)
 
-The chosen encoding is recorded per book so the UI can surface it, and `pages.name` stores the **decoded** string. The raw bytes are never needed again: page access uses offsets.
+The chosen encoding is recorded per book so the UI can surface it, and `pages.name` stores the **decoded** string. Page access itself never needs the name again — it uses offsets — but the raw bytes are kept on `archive.Entry.RawName` for the archive-level pass below.
+
+#### 4.4.1 Where the per-entry rule stops: Shift_JIS (extends FR-IDX-008)
+
+Step 3 assumes the only legacy encoding in the collection is CP949. A survey of **all 11,196 indexed ZIPs (1.35 M entry names)** — not the 508-archive sample §4.4 is measured on — found that assumption wrong for four archives, and wrong in a way the per-entry rule *cannot* detect:
+
+| Archive population (all 11,196) | Count |
+|---|---|
+| Nothing but UTF-8 or ASCII names | 6,757 |
+| Read completely by CP949, and by nothing else | 1,871 |
+| Read completely by **Shift_JIS** and not by CP949 | **4** |
+| Read completely by **both** | 2,554 |
+| Read by neither | 1 |
+
+The four are the three `[文月晃] 海の御先` volumes and `天上天下 20.zip`, 728 entry names in total. The last one is the instructive case: **160 of its 189 flagless names decode as CP949 with zero U+FFFD, and all 160 readings are wrong** — `"밮밮-20-001.jpg"` is the CP949 misreading of `"天天-20-001.jpg"`. Nothing about that one record gives it away. What does is the *other* 28 names, which CP949 cannot read at all and Shift_JIS can.
+
+So the decision is made **once per archive**, in `zipidx.resolveArchiveNames`, after the whole central directory has parsed:
+
+1. If no name came back `unknown`, stop. CP949 read everything, and nothing is decoded twice — this is the path 11,192 of 11,196 archives take, at zero cost.
+2. Otherwise hand every legacy name (`cp949` + `unknown`; UTF-8 ones are not evidence) to `kenc.ArchiveFallback`.
+3. If it names an encoding, re-decode **all** of them in it — including the ones CP949 "read", which is the whole point.
+
+`ArchiveFallback` accepts Shift_JIS only when *every* name decodes without substituting **and** the result contains no halfwidth katakana **and** contains at least one fullwidth kana/kanji. The middle condition is what keeps Korean archives safe, and it is not a heuristic reach: Shift_JIS reads plenty of Korean bytes happily — `CP949("한글.jpg")` comes back as `"ﾇﾑｱﾛ.jpg"` — because the CP949 lead byte of an ordinary Hangul syllable (0xB0–0xC8) is exactly Shift_JIS's single-byte halfwidth range (0xA1–0xDF). Measured: the 4 Japanese archives contain **0** halfwidth katakana across all 794 names and 11,175 fullwidth kana/kanji; every Korean name tried the same way yields 4–15 halfwidth katakana and essentially no fullwidth CJK.
+
+Shift_JIS is the **only** candidate, deliberately. Each extra candidate is another chance to misread one of the 1,871 Korean archives, and the 2,554 that both codecs read cleanly are settled by CP949 winning by default — verified safe, since in none of them does the Shift_JIS reading contain kana while the CP949 reading lacks Hangul.
+
+The one archive neither codec reads is `BM 넥타 09.zip`, whose 95 names are not mis-encoded but **damaged**: the leading bytes of UTF-8 NFD jamo sequences are missing (`"BM _\x82\xe1\x85\xa6_…"`). No decoder recovers that. It stays `unknown`, which is the honest answer — the book still opens and its pages still serve.
 
 ### 4.5 Exclusion rules (FR-IDX-006)
 
@@ -1038,7 +1069,8 @@ A ZIP entry or directory child is **excluded from the page list** when any of th
 |---|---|
 | Directory entry | name ends with `/`, or the external-attributes directory bit is set, or `DirEntry.IsDir()` |
 | macOS resource forks | path equals `__MACOSX` or starts with `__MACOSX/` or contains `/__MACOSX/`; also any base name starting with `._` |
-| Hidden files | base name starts with `.` |
+| Hidden files | base name starts with `.` **and is not itself a page** — see below |
+| Hidden directories | any *directory* component of the path starts with `.` (`.git/`, `.thumbnails/`) |
 | System junk | base name case-insensitively equals `.DS_Store`, `Thumbs.db`, `desktop.ini`, `Desktop.ini` |
 | Zero-byte entries | `size == 0` |
 | Non-image extension | `ext` not in `{.jpg .jpeg .png .gif .webp .bmp .avif}` (FR-IDX-011). `.tif/.tiff` are decoded if present but are **not** advertised as supported. |
@@ -1046,6 +1078,31 @@ A ZIP entry or directory child is **excluded from the page list** when any of th
 | User globs | matches any `scan.exclude_globs` pattern against the root-relative slash path |
 
 `Thumbs.db` alone accounts for **125 excluded entries** in a 508-archive sample; the rules are load-bearing, not theoretical.
+
+**The hidden-file rule is narrower than "starts with a dot"** (FR-IDX-006 요구사항 "숨김 파일"). A ZIP entry has no hidden attribute — a leading dot only means "hidden" by a filesystem convention the entry was never subject to — and every artefact that convention is really aimed at is already caught by a rule that names it (`._*` forks, `.DS_Store`). What was left over was costing a whole book: `엽기인 Girl 스나코 26권.zip` holds 80 pages named `.▶스나코_26권◀_Scan11192010_193728.jpg`, the rule dropped all 80, and the volume indexed as `비어 있음` with `page_count=0`.
+
+So a dot-name with a supported image extension and a non-empty stem is a page; a dot-name without one is still hidden, as is anything under a dot-prefixed **directory**. Measured across all 11,196 indexed ZIPs and the whole filesystem tree, this changes what is listed for **exactly one book**: it is the only archive with a dot-prefixed image entry, there is no archive with an image under a dot-prefixed directory, and there is no dot-prefixed image file anywhere in the directory books either.
+
+#### 4.5.1 Nested archives — a container of volumes (D-70, supersedes D-07's first clause)
+
+45 books in the collection are not books. They are containers: a ZIP whose entries are all more ZIPs, 623 volumes and 16.9 GB in total, with `겟 벡커스 1~39완.zip` (1.4 GB, 39 volumes) the largest. Each indexed as one book with `status='empty'` and no pages, which was a true statement about a library the reader could not open.
+
+Each inner archive is now its own 권, `books.kind='nestedzip'`, identified by `(root_name, rel_path, inner_path)` — the container plus the entry name.
+
+**How it is read, and why nothing is extracted.** `internal/archive/nested` presents an inner archive as an `io.ReaderAt`, which is what every layer above already speaks. The existing `zipidx` then indexes it and streams its pages *unchanged*: the exclusion rules, the natural page order and the CP949/Shift_JIS name decoding are literally the same code an ordinary book gets. There is no second format, no temporary file, and no cache directory to size or evict.
+
+| Inner archive | Count | How it is served |
+|---|---|---|
+| `stored` | 13 | `io.SectionReader` over the outer file — true random access, zero cost |
+| `deflate` | 610 | one inflate stream, advanced by discarding; the last 2 MiB kept once inflated, which is where the central directory is |
+
+The deflated case is far cheaper than it sounds because the entries are already-compressed JPEGs: **16.9 GB uncompressed is stored in 16.9 GB, a ratio of 1.0000**, with 618 of the 623 above 0.99. Measured on `겟 벡커스`: ~500 ms to index a 107-page volume, ~13 ms to stream a mid-volume page.
+
+**What it costs an ordinary book: nothing.** Expansion is attempted only when a book has produced no pages of its own — the branch that was about to write `비어 있음` anyway. A book with pages is never reopened, and an unchanged book is never opened at all (`unchanged` still skips on `(size, mtime)`, and `status != 'ok'` still forces a re-read, which is what makes the 45 pick themselves up with no migration).
+
+**Bounds.** Only one level: a volume inside a container is not itself opened looking for containers. Only `.zip`/`.cbz`: prd §7.2 keeps RAR/7z out and this build cannot read them, so listing them would produce books that cannot open — `사모님은 학생회장.zip` (7 ZIPs + 8 RARs) yields its 7 readable volumes rather than nothing, and a container holding *only* RARs stays `empty`, exactly as D-07 says.
+
+The container itself stops being a book. A 권 list reading "39 volumes, plus one broken volume, which is the thing holding the other 39" is a worse answer than the one the reader asked for.
 
 ### 4.6 Incremental scan (FR-IDX-003)
 

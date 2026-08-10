@@ -60,28 +60,7 @@ func (s *zipSource) List(ctx context.Context) (*Listing, error) {
 		return l, fmt.Errorf("listing book %s: %w", s.book.ID, encryptedErr())
 	}
 
-	encodings := make(map[string]int, 4)
-	pages := make([]Page, 0, len(ix.Entries))
-	for i := range ix.Entries {
-		e := &ix.Entries[i]
-		if drop, _ := Excluded(e.Name, e.Size, e.Dir); drop {
-			l.Excluded++
-			continue
-		}
-		encodings[e.NameEncoding]++
-		pages = append(pages, Page{
-			Name:        baseName(e.Name),
-			EntryPath:   e.Name,
-			Ext:         Ext(e.Name),
-			Size:        e.Size,
-			CompSize:    e.CompSize,
-			Method:      e.Method,
-			LocalHdrOff: e.LocalHdrOff,
-			CRC32:       e.CRC32,
-		})
-	}
-	l.NameEncoding = nameEncoding(encodings)
-	finish(l, pages)
+	pagesFromIndex(l, ix)
 
 	// A partially readable directory is reported *with* the pages that did
 	// parse: the truncated `군계 07권.zip` still shows most of its volume, and
@@ -180,6 +159,37 @@ func (s *zipSource) Stale(ctx context.Context) (bool, error) {
 	}
 	defer ref.Release()
 	return ref.Stale(), nil
+}
+
+// pagesFromIndex turns a ZIP central directory into the book's page list,
+// applying the FR-IDX-006 exclusions and FR-IDX-007 order.
+//
+// It is shared by the plain and the nested ZIP sources, which is the point: a
+// volume inside a container must be enumerated by exactly the same rules as one
+// that is its own file, down to which entries are dropped and why.
+func pagesFromIndex(l *Listing, ix *archive.Index) {
+	encodings := make(map[string]int, 4)
+	pages := make([]Page, 0, len(ix.Entries))
+	for i := range ix.Entries {
+		e := &ix.Entries[i]
+		if drop, _ := Excluded(e.Name, e.Size, e.Dir); drop {
+			l.Excluded++
+			continue
+		}
+		encodings[e.NameEncoding]++
+		pages = append(pages, Page{
+			Name:        baseName(e.Name),
+			EntryPath:   e.Name,
+			Ext:         Ext(e.Name),
+			Size:        e.Size,
+			CompSize:    e.CompSize,
+			Method:      e.Method,
+			LocalHdrOff: e.LocalHdrOff,
+			CRC32:       e.CRC32,
+		})
+	}
+	l.NameEncoding = nameEncoding(encodings)
+	finish(l, pages)
 }
 
 // encryptedErr keeps the arch §4.11 wording in one place.

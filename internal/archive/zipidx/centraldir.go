@@ -181,6 +181,12 @@ func ReadCentralDirectory(ctx context.Context, r io.ReaderAt, size int64) (*arch
 		}
 	}
 
+	// Every name above was decoded on its own, which assumes CP949 for the
+	// flagless ones. That assumption is settled here, once, against the whole
+	// directory — including on the error paths below, because a book with a
+	// partially readable directory still shows the pages that did parse.
+	resolveArchiveNames(ix)
+
 	// The end record's entry count is 16-bit in a non-ZIP64 archive, so a real
 	// archive with more than 65 535 entries wraps it. archive/zip glosses over
 	// this by reading until a record fails to parse and only complaining if
@@ -199,6 +205,56 @@ func ReadCentralDirectory(ctx context.Context, r io.ReaderAt, size int64) (*arch
 			ErrBadCentralHeader, unusable, parsed)
 	}
 	return ix, nil
+}
+
+// resolveArchiveNames re-reads the legacy-encoded names of an archive that
+// CP949 could not read completely (FR-IDX-008, extended for Shift_JIS).
+//
+// The trigger is one EncUnknown name, which is what makes this free for the
+// 11,192 archives of 11,196 that do not need it: they leave the loop below on
+// the first iteration and nothing is decoded twice. Only when a name failed do
+// we ask kenc whether another encoding reads the whole set, and only then are
+// the CP949 readings — which may be *wrong* rather than merely absent, see
+// kenc.ArchiveFallback — replaced.
+//
+// Entry.Dir is deliberately not recomputed. It was derived from the external
+// attributes and a trailing slash, and a re-decode cannot move that slash:
+// neither CP949 nor Shift_JIS ever emits 0x2F as a trailing byte of a
+// double-byte character, so the 0x2F positions in RawName are the same
+// characters before and after.
+func resolveArchiveNames(ix *archive.Index) {
+	var needs bool
+	for i := range ix.Entries {
+		if ix.Entries[i].NameEncoding == kenc.EncUnknown {
+			needs = true
+			break
+		}
+	}
+	if !needs {
+		return
+	}
+
+	// Only the names that were read in a legacy encoding, or could not be read
+	// at all, are evidence. A name the producer flagged as UTF-8, or that the
+	// probe proved is UTF-8, says nothing about how the rest were written.
+	raws := make([][]byte, 0, len(ix.Entries))
+	for i := range ix.Entries {
+		switch ix.Entries[i].NameEncoding {
+		case kenc.EncCP949, kenc.EncUnknown:
+			raws = append(raws, ix.Entries[i].RawName)
+		}
+	}
+	legacy := kenc.ArchiveFallback(raws)
+	if legacy == "" {
+		return
+	}
+	for i := range ix.Entries {
+		e := &ix.Entries[i]
+		switch e.NameEncoding {
+		case kenc.EncCP949, kenc.EncUnknown:
+			e.Name, e.NameEncoding = kenc.DecodeEntryNameAs(e.RawName, false, legacy)
+		}
+	}
 }
 
 // usableEntry rejects geometry that can never be served: an offset before the

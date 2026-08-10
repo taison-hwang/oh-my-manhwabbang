@@ -30,7 +30,8 @@ CURATED=(
   "디엔엔젤 1-13권 연재중"                   # one 0-byte archive
   "미생 1~9 (완결 pdf)"                      # PDFs — AC-004
   "배틀로얄 1~15 [완결].zip"                 # 1 540 pages — AC-008
-  "엔젤하트 전32권 완결.zip"                 # container of ZIPs — empty
+  "엔젤하트 전32권 완결.zip"                 # container of ZIPs — volumes (D-70)
+  "비둘기.zip"                               # opens, holds no page and no volume — E-14
 )
 
 # The synthetic tree carries the same ten names plus two shapes the real

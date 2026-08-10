@@ -175,33 +175,32 @@ func TestI10_classification_matchesTheRealShapes(t *testing.T) {
 		}
 	})
 
-	t.Run("D-10 the nested archives are not read, and the series says so", func(t *testing.T) {
-		// D-10: nested-archive reading is out of scope (prd §7.2), so the BOOK
-		// is `empty` and the scan neither aborts nor counts it as a failure.
-		// Ruling E-14 narrows that at the SERIES level: the reader cannot open a
-		// single page of it, so it must not present as healthy — `error` with
-		// the book's reason. `empty` is now reserved for "no books at all".
+	t.Run("D-70 the nested archives are read, one book per volume", func(t *testing.T) {
+		// D-70 supersedes D-10's first clause. The 1.44 GB container of 33
+		// sub-ZIPs is a series of 33 volumes, each indexed and readable; it used
+		// to be one book with `status:"empty"` and no pages at all.
 		d := detailOf(s, angelHeart)
-		if d.Status != "error" {
-			t.Errorf("%s series status = %q, want error (D-10 as narrowed by E-14)",
-				angelHeart, d.Status)
+		if d.Status != "ok" {
+			t.Errorf("%s series status = %q, want ok (D-70): %s", angelHeart, d.Status, d.Error)
 		}
-		if d.Error == "" {
-			t.Errorf("%s series status %q carries no reason; design.md 화면 2 requires one",
-				angelHeart, d.Status)
+		if len(d.Books) < 2 {
+			t.Fatalf("%s = %d books, want one per inner archive", angelHeart, len(d.Books))
 		}
-		if len(d.Books) != 1 {
-			t.Fatalf("%s = %d books, want 1", angelHeart, len(d.Books))
+		for _, b := range d.Books {
+			if b.Status != "ok" {
+				t.Errorf("%s volume %q status = %q (%s), want ok", angelHeart, b.Name, b.Status, b.Error)
+			}
+			if b.Kind != "nestedzip" {
+				t.Errorf("%s volume %q kind = %q, want nestedzip", angelHeart, b.Name, b.Kind)
+			}
+			if b.PageCount == 0 {
+				t.Errorf("%s volume %q has no pages", angelHeart, b.Name)
+			}
 		}
-		if d.Books[0].Status != "empty" {
-			t.Errorf("%s book status = %q, want empty — the book verdict is unchanged by E-14",
-				angelHeart, d.Books[0].Status)
-		}
-		// prd UI-002's 총 용량: the 1.44 GB container has no page rows at all,
-		// so a page-derived total would print 0 KB for the whole series.
-		if d.TotalBytes < d.Books[0].FileSize || d.Books[0].FileSize == 0 {
-			t.Errorf("%s total_bytes = %d with a %d byte container; 용량 must be the bytes on disk",
-				angelHeart, d.TotalBytes, d.Books[0].FileSize)
+		// prd UI-002's 총 용량: every volume lives in the one container, so the
+		// series occupies that container's bytes.
+		if d.TotalBytes == 0 {
+			t.Errorf("%s total_bytes = 0; 용량 must be the bytes on disk", angelHeart)
 		}
 	})
 

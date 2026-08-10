@@ -146,6 +146,20 @@ func BookID(rootName, relPath string) string {
 	return derive(domainBook, rootName, relPath)
 }
 
+// NestedBookID returns the identifier of one volume inside a container of
+// volumes: relPath names the container, innerPath the entry within it.
+//
+// An empty innerPath is the ordinary case and gives exactly [BookID], so a book
+// that is its own file keeps the id it has always had — reading progress for
+// the 11,340 books already in the index survives this scheme gaining a field
+// (the id is what progress is keyed by, arch §3.4).
+func NestedBookID(rootName, relPath, innerPath string) string {
+	if innerPath == "" {
+		return BookID(rootName, relPath)
+	}
+	return hash(IDVersion, domainBook, rootName, NormalizeRel(relPath), innerPath)
+}
+
 // derive implements the item-id hash input of arch §3.4: the version tag, the
 // domain tag, the root name and the normalised root-relative path,
 // NUL-separated.

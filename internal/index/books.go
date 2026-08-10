@@ -10,10 +10,15 @@ import (
 // Book mirrors one row of the `books` table: a readable unit inside a series —
 // a ZIP, a directory of images, or a PDF.
 type Book struct {
-	ID          string
-	SeriesID    string
-	RootName    string
-	RelPath     string
+	ID       string
+	SeriesID string
+	RootName string
+	RelPath  string
+	// InnerPath is the book's path *inside* its container, for a volume that
+	// lives in a nested archive (arch §4.12). Empty for every ordinary book,
+	// which is what keeps (root_name, rel_path, inner_path) a drop-in
+	// replacement for the old (root_name, rel_path) key.
+	InnerPath   string
 	DisplayName string
 	// SortKey is natsort.Key over the series-relative path; Ord is its
 	// materialised 0-based rank so the API never re-sorts.
@@ -57,7 +62,7 @@ type BookRow struct {
 }
 
 const bookColumns = `
-	b.id, b.series_id, b.root_name, b.rel_path, b.display_name, b.sort_key, b.ord,
+	b.id, b.series_id, b.root_name, b.rel_path, b.inner_path, b.display_name, b.sort_key, b.ord,
 	b.kind, b.page_count, b.total_bytes, b.file_size, b.file_mtime,
 	COALESCE(b.dir_fingerprint, ''), b.content_version, b.dims_state, b.status,
 	COALESCE(b.error, ''), b.scan_gen,
@@ -70,7 +75,7 @@ const bookJoins = `
 func scanBookRow(sc interface{ Scan(...any) error }) (BookRow, error) {
 	var r BookRow
 	var lastPage, progPages, completed, startedAt, updatedAt sql.NullInt64
-	err := sc.Scan(&r.ID, &r.SeriesID, &r.RootName, &r.RelPath, &r.DisplayName, &r.SortKey,
+	err := sc.Scan(&r.ID, &r.SeriesID, &r.RootName, &r.RelPath, &r.InnerPath, &r.DisplayName, &r.SortKey,
 		&r.Ord, &r.Kind, &r.PageCount, &r.TotalBytes, &r.FileSize, &r.FileMtime,
 		&r.DirFingerprint, &r.ContentVersion, &r.DimsState, &r.Status, &r.Error, &r.ScanGen,
 		&lastPage, &progPages, &completed, &startedAt, &updatedAt)
@@ -398,7 +403,7 @@ func (db *DB) ListContinue(ctx context.Context, limit int) ([]ContinueItem, erro
 		var seriesName, coverKind string
 		var lastPage, progPages, completed, startedAt, updatedAt sql.NullInt64
 		b := &item.Book
-		err := rows.Scan(&b.ID, &b.SeriesID, &b.RootName, &b.RelPath, &b.DisplayName, &b.SortKey,
+		err := rows.Scan(&b.ID, &b.SeriesID, &b.RootName, &b.RelPath, &b.InnerPath, &b.DisplayName, &b.SortKey,
 			&b.Ord, &b.Kind, &b.PageCount, &b.TotalBytes, &b.FileSize, &b.FileMtime,
 			&b.DirFingerprint, &b.ContentVersion, &b.DimsState, &b.Status, &b.Error, &b.ScanGen,
 			&lastPage, &progPages, &completed, &startedAt, &updatedAt,

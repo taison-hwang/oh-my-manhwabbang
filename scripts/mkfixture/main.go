@@ -144,8 +144,9 @@ func build(root string) error {
 	// 9 — AC-008 at full page count.
 	b.zipFile("배틀로얄 1~15 [완결].zip", cp949Pages(1540))
 
-	// 10 — a container of sub-archives and no images at all: status "empty",
-	// not an error, and no crash (D-10).
+	// 10 — a container of sub-archives and no images of its own. Since D-70
+	// each inner archive is a 권 of its own, so this is a series of four books
+	// rather than the one empty book D-10 used to make of it.
 	var nested []entry
 	for i := 1; i <= 4; i++ {
 		inner, err := zipBytes(cp949Pages(2), 0)
@@ -155,6 +156,13 @@ func build(root string) error {
 		nested = append(nested, entry{name: fmt.Sprintf("엔젤하트 %02d권.zip", i), data: inner})
 	}
 	b.zipFile("엔젤하트 전32권 완결.zip", nested)
+
+	// 10b — an archive that opens cleanly and holds nothing that is a page, and
+	// nothing that is a volume either: the `empty` book, and with it ruling
+	// E-14's series-level `error`, which the container above no longer
+	// demonstrates. The real collection's `비둘기.zip` is this shape — a single
+	// directory entry and 128 bytes.
+	b.zipFile("비둘기.zip", []entry{{name: "비둘기/", data: nil}})
 
 	// D-49's two extras, which the real collection has no sample of.
 	b.encryptedZip("암호화 테스트.zip", cp949Pages(3))

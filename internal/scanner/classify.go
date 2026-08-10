@@ -174,9 +174,13 @@ type bookUnit struct {
 	relPath string      // root-relative slash path
 	rel     string      // path relative to the SERIES directory; sort_key hashes this
 	name    string      // display name shown in the UI
-	kind    source.Kind // zip | dir | pdf
-	size    int64       // container size; 0 for kind=dir (arch §3.5)
-	mtime   int64
+	kind    source.Kind // zip | dir | pdf | nestedzip
+	// innerPath is the entry inside relPath that IS this book, for a volume
+	// found inside a container of volumes (source.KindNestedZIP). Empty for
+	// every book that is its own file or directory.
+	innerPath string
+	size      int64 // container size; 0 for kind=dir (arch §3.5)
+	mtime     int64
 	// fingerprint is the FR-IDX-003 digest of a directory book's children. It
 	// is computed from the ReadDir collectBooks already did, so a directory is
 	// never read twice.

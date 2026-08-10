@@ -296,8 +296,8 @@ func TestOpen_freshDirectory_appliesSchemaInWALMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SchemaVersion: %v", err)
 	}
-	if got != 1 {
-		t.Errorf("schema version = %d, want 1", got)
+	if got != 2 {
+		t.Errorf("schema version = %d, want 2", got)
 	}
 	if v, ok, _ := idx.Meta(ctx, "id_version"); !ok || v != "shelf-id/1" {
 		t.Errorf("meta id_version = %q (present %v), want shelf-id/1", v, ok)
@@ -317,7 +317,7 @@ func TestOpen_schema_matchesArchDDL(t *testing.T) {
 		"meta":     {"key", "value"},
 		"roots":    {"name", "path", "label", "enabled", "series_count", "book_count", "page_count", "total_bytes", "last_scan_start", "last_scan_end", "last_scan_error"},
 		"series":   {"id", "root_name", "rel_path", "display_name", "sort_key", "search_key", "choseong_key", "kind", "book_count", "page_count", "total_bytes", "mtime", "added_at", "cover_kind", "cover_book_id", "cover_page_no", "cover_rel_path", "status", "error", "scan_gen"},
-		"books":    {"id", "series_id", "root_name", "rel_path", "display_name", "sort_key", "ord", "kind", "page_count", "total_bytes", "file_size", "file_mtime", "dir_fingerprint", "content_version", "dims_state", "status", "error", "scan_gen"},
+		"books":    {"id", "series_id", "root_name", "rel_path", "inner_path", "display_name", "sort_key", "ord", "kind", "page_count", "total_bytes", "file_size", "file_mtime", "dir_fingerprint", "content_version", "dims_state", "status", "error", "scan_gen"},
 		"pages":    {"book_id", "page_no", "name", "entry_path", "ext", "size", "comp_size", "method", "local_hdr_off", "crc32", "mtime", "width", "height"},
 		"scan_log": {"id", "ts", "run_id", "level", "root_name", "rel_path", "message"},
 	}
@@ -2655,8 +2655,8 @@ func TestReset_emptiesTheIndexWithoutTouchingUserData(t *testing.T) {
 	if list.Total != 0 {
 		t.Errorf("series after Reset = %d, want 0", list.Total)
 	}
-	if v, err := idx.SchemaVersion(ctx); err != nil || v != 1 {
-		t.Errorf("schema version after Reset = %d (%v), want 1", v, err)
+	if v, err := idx.SchemaVersion(ctx); err != nil || v != 2 {
+		t.Errorf("schema version after Reset = %d (%v), want 2", v, err)
 	}
 	if _, err := ud.GetProgress(ctx, "b1aaaaaaaaaaaaaa"); err != nil {
 		t.Errorf("Reset destroyed reading progress: %v", err)

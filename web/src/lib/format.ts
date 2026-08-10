@@ -180,12 +180,18 @@ export function minutesSince(unixSeconds: number, nowMs: number = Date.now()): n
  * C-4 splits them: a *series* is `folder`, a *book* inside it is `dir`. The
  * badge text is `FOLDER` for both — the distinction matters to the API, not to
  * a reader.
+ *
+ * `nestedzip` is a volume that lives inside a container archive rather than in
+ * a file of its own. That is a fact about where the bytes are, not about what
+ * the reader is opening, so it wears the same `ZIP` badge.
  */
-export type FormatValue = 'zip' | 'dir' | 'folder' | 'pdf'
+export type FormatValue = 'zip' | 'nestedzip' | 'dir' | 'folder' | 'pdf'
 
 /** The `ZIP` / `FOLDER` / `PDF` badge text (FR-LIB-009). */
 export function formatLabel(format: FormatValue): string {
-  return format === 'dir' || format === 'folder' ? 'FOLDER' : format.toUpperCase()
+  if (format === 'dir' || format === 'folder') return 'FOLDER'
+  if (format === 'nestedzip') return 'ZIP'
+  return format.toUpperCase()
 }
 
 /** The subset of `ScanStatus` (arch §7.10) the sidebar indicator reads. */

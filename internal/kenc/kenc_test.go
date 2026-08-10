@@ -408,3 +408,232 @@ func FuzzDecodeEntryName(f *testing.F) {
 		}
 	})
 }
+
+// The Shift_JIS golden vectors. These are the exact central-directory bytes of
+// the four Japanese archives in the collection, not constructed examples.
+var (
+	// From `天上天下 20.zip`. CP949 reads this one too — as "밮밮-20-001.jpg" —
+	// which is the whole reason detection cannot be per-entry.
+	sjisTenjouAmbiguous = []byte("tenjou tenge v20/\x93\x56\x93\x56-20-001.jpg")
+	// From the same archive. CP949 cannot read this one, and it is what
+	// convicts the archive.
+	sjisTenjouKana = []byte("tenjou tenge v20/\x93\x56\x93\x56-20-008 \x82\xcc\x83\x52\x83\x73\x81\x5b2.jpg")
+	// From `[文月晃] 海の御先 09.zip`, where all 203 names are like this.
+	sjisUmiNoMisaki = []byte("(\x88\xea\x94\xca\x83\x52\x83\x7e\x83\x62\x83\x4e) [\x95\xb6\x8c\x8e\x8d\x57] \x8a\x43\x82\xcc\x8c\xe4\x90\xe6 \x91\xe60\x39\x8a\xaa/\x8a\x43\x82\xcc\x8c\xe4\x90\xe6_v09_#192.jpg")
+	// From `BM 넥타 09.zip`: not mis-encoded but damaged — the leading bytes of
+	// UTF-8 NFD jamo sequences are missing. No decoder reads it.
+	truncatedJamo = []byte("BM _\x82\xe1\x85\xa6_\xa8\xe1\x84\x90__09_\x80__\x86\xab 001.jpg")
+)
+
+// TestArchiveFallback_decisionTable is the archive-level half of FR-IDX-008:
+// which encoding a *set* of names is in, when one name on its own cannot say.
+func TestArchiveFallback_decisionTable(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		raws [][]byte
+		want string
+	}{
+		{
+			name: "a Shift_JIS archive is detected from the name CP949 cannot read",
+			raws: [][]byte{sjisTenjouAmbiguous, sjisTenjouKana},
+			want: kenc.EncCP932,
+		},
+		{
+			name: "an archive where every name needs Shift_JIS",
+			raws: [][]byte{sjisUmiNoMisaki},
+			want: kenc.EncCP932,
+		},
+		{
+			name: "one unreadable name vetoes the whole archive",
+			// The fallback is all-or-nothing on purpose: a set that Shift_JIS
+			// only partly reads is not a Shift_JIS archive, and rewriting the
+			// part it does read would scramble names that were fine.
+			raws: [][]byte{sjisUmiNoMisaki, truncatedJamo},
+			want: "",
+		},
+		{
+			name: "damaged names are not rescued by claiming an encoding",
+			raws: [][]byte{truncatedJamo},
+			want: "",
+		},
+		{
+			name: "no names at all is not evidence of anything",
+			raws: nil,
+			want: "",
+		},
+		{
+			name: "decoding cleanly is not enough without a Japanese character in it",
+			// 0x81 0x40 is Shift_JIS's ideographic space: it decodes, it is not
+			// halfwidth katakana, and it says nothing about the archive. Bytes
+			// like these reach the fallback only because they are not valid
+			// UTF-8, which is not a reason to relabel a whole container.
+			raws: [][]byte{[]byte("\x81\x40\x81\x40.jpg")},
+			want: "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := kenc.ArchiveFallback(tc.raws); got != tc.want {
+				t.Errorf("ArchiveFallback = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestArchiveFallback_koreanNamesAreNeverJapanese guards the direction that
+// would do real damage. CP949 archives are 1,871 of the collection against 4
+// Japanese ones, so a fallback that claimed Korean names is worse than no
+// fallback at all.
+func TestArchiveFallback_koreanNamesAreNeverJapanese(t *testing.T) {
+	t.Parallel()
+
+	// Real Korean name shapes from data-survey §3/§5.
+	names := [][]byte{cp949SuperManhwa, cp949Hangul}
+	for _, s := range []string{
+		"시티 헌터 완전판 08권/CS02-026.JPG",
+		"겟 벡커스 01권.zip",
+		"황혼소녀X암네지아 01권.zip",
+		"빌리배트 1-7/빌리배트 01.zip",
+	} {
+		names = append(names, testutil.CP949(t, s))
+	}
+	// Each name alone, so that a single ambiguous one cannot hide behind the
+	// others' veto.
+	for _, raw := range names {
+		if got := kenc.ArchiveFallback([][]byte{raw}); got != "" {
+			t.Errorf("ArchiveFallback([% x]) = %q; a Korean name was claimed as Japanese", raw, got)
+		}
+	}
+	if got := kenc.ArchiveFallback(names); got != "" {
+		t.Errorf("ArchiveFallback(all Korean names) = %q, want \"\"", got)
+	}
+}
+
+// TestDecodeEntryNameAs_cp932_readsTheNamesCP949GetsWrong is the payoff: once
+// the archive is known to be Shift_JIS, the ambiguous names decode correctly
+// too, not just the ones that failed.
+func TestDecodeEntryNameAs_cp932_readsTheNamesCP949GetsWrong(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		raw       []byte
+		wantAs949 string
+		wantAs932 string
+	}{
+		{
+			raw: sjisTenjouAmbiguous,
+			// The reading that ships today, and it is wrong.
+			wantAs949: "tenjou tenge v20/밮밮-20-001.jpg",
+			wantAs932: "tenjou tenge v20/天天-20-001.jpg",
+		},
+		{
+			raw:       sjisTenjouKana,
+			wantAs949: "", // CP949 cannot read it at all
+			wantAs932: "tenjou tenge v20/天天-20-008 のコピー2.jpg",
+		},
+		{
+			raw:       sjisUmiNoMisaki,
+			wantAs949: "",
+			wantAs932: "(一般コミック) [文月晃] 海の御先 第09巻/海の御先_v09_#192.jpg",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.wantAs932, func(t *testing.T) {
+			t.Parallel()
+
+			got, enc := kenc.DecodeEntryNameAs(tc.raw, false, kenc.EncCP932)
+			if got != tc.wantAs932 || enc != kenc.EncCP932 {
+				t.Errorf("as cp932 = (%q, %q), want (%q, %q)", got, enc, tc.wantAs932, kenc.EncCP932)
+			}
+			// And the CP949 reading of the same bytes, to pin what the
+			// archive-level decision is actually buying.
+			got949, enc949 := kenc.DecodeEntryNameAs(tc.raw, false, kenc.EncCP949)
+			if tc.wantAs949 == "" {
+				if enc949 != kenc.EncUnknown {
+					t.Errorf("as cp949 = (%q, %q), want %q", got949, enc949, kenc.EncUnknown)
+				}
+			} else if got949 != tc.wantAs949 || enc949 != kenc.EncCP949 {
+				t.Errorf("as cp949 = (%q, %q), want (%q, %q)", got949, enc949, tc.wantAs949, kenc.EncCP949)
+			}
+			// DecodeEntryName must keep meaning "as CP949": every existing
+			// caller that has not asked for an archive-level decision relies on
+			// that.
+			gotDefault, encDefault := kenc.DecodeEntryName(tc.raw, false)
+			if gotDefault != got949 || encDefault != enc949 {
+				t.Errorf("DecodeEntryName = (%q, %q), want the cp949 reading (%q, %q)",
+					gotDefault, encDefault, got949, enc949)
+			}
+		})
+	}
+}
+
+// TestDecodeEntryNameAs_utf8BranchesIgnoreTheLegacyChoice: steps 1 and 2 are
+// decided by the bytes, so the archive's legacy encoding must not reach them.
+func TestDecodeEntryNameAs_utf8BranchesIgnoreTheLegacyChoice(t *testing.T) {
+	t.Parallel()
+
+	for _, legacy := range []string{kenc.EncCP949, kenc.EncCP932, ""} {
+		for _, tc := range []struct {
+			raw      []byte
+			utf8Flag bool
+			wantName string
+			wantEnc  string
+		}{
+			{[]byte("한글.jpg"), true, "한글.jpg", kenc.EncUTF8},
+			{[]byte("한글.jpg"), false, "한글.jpg", kenc.EncUTF8},
+			{[]byte("001.jpg"), false, "001.jpg", kenc.EncUTF8},
+			{cp949Hangul, true, "�ѱ�.jpg", kenc.EncUTF8Invalid},
+		} {
+			name, enc := kenc.DecodeEntryNameAs(tc.raw, tc.utf8Flag, legacy)
+			if name != tc.wantName || enc != tc.wantEnc {
+				t.Errorf("DecodeEntryNameAs(% x, %v, %q) = (%q, %q), want (%q, %q)",
+					tc.raw, tc.utf8Flag, legacy, name, enc, tc.wantName, tc.wantEnc)
+			}
+		}
+	}
+}
+
+// FuzzArchiveFallback drives the archive-level decision from arbitrary bytes.
+// It runs over names the scanner did not write, so "no panic" and "never claims
+// bytes it cannot read" are load-bearing.
+func FuzzArchiveFallback(f *testing.F) {
+	f.Add(sjisTenjouKana, sjisTenjouAmbiguous)
+	f.Add(sjisUmiNoMisaki, truncatedJamo)
+	f.Add(cp949Hangul, cp949SuperManhwa)
+	f.Add([]byte("001.jpg"), []byte("한글.jpg"))
+	f.Add([]byte{}, []byte{0xff, 0xfe})
+	f.Add([]byte{0x80}, []byte{0x00})
+
+	f.Fuzz(func(t *testing.T, a, b []byte) {
+		raws := [][]byte{a, b}
+		before := [][]byte{append([]byte(nil), a...), append([]byte(nil), b...)}
+
+		got := kenc.ArchiveFallback(raws)
+
+		if got != "" && got != kenc.EncCP932 {
+			t.Fatalf("ArchiveFallback returned unknown label %q", got)
+		}
+		for i, raw := range raws {
+			if !bytes.Equal(raw, before[i]) {
+				t.Fatalf("input %d was modified: % x -> % x", i, before[i], raw)
+			}
+		}
+		if got == "" {
+			return
+		}
+		// A non-empty verdict is a promise that every name reads cleanly in
+		// that encoding — resolveArchiveNames rewrites names on the strength
+		// of it, so a false positive silently replaces good names with U+FFFD.
+		for _, raw := range raws {
+			name, enc := kenc.DecodeEntryNameAs(raw, false, got)
+			if enc == kenc.EncUnknown || strings.ContainsRune(name, utf8.RuneError) {
+				t.Fatalf("ArchiveFallback said %q but % x decoded to (%q, %q)", got, raw, name, enc)
+			}
+		}
+	})
+}

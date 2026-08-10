@@ -112,7 +112,13 @@ func TestScan_frIdx006_dropsEveryExcludedEntryFromBothBookKinds(t *testing.T) {
 		{Name: "vol/001.jpg", Data: jpeg(t), Flags: testutil.FlagUTF8},
 		{Name: "__MACOSX/vol/._001.jpg", Data: []byte("fork"), Flags: testutil.FlagUTF8},
 		{Name: "vol/._002.jpg", Data: []byte("fork"), Flags: testutil.FlagUTF8},
+		// A dot-name that is a page is a page (see source.Excluded): the
+		// collection's `엽기인 Girl 스나코 26권.zip` is 80 of these and nothing
+		// else. `.hidden.txt` on the next line is the half of the rule that
+		// still drops.
 		{Name: "vol/.hidden.jpg", Data: jpeg(t), Flags: testutil.FlagUTF8},
+		{Name: "vol/.hidden.txt", Data: []byte("메모"), Flags: testutil.FlagUTF8},
+		{Name: "vol/.cache/003.jpg", Data: jpeg(t), Flags: testutil.FlagUTF8},
 		{Name: "vol/Thumbs.db", Data: []byte("junk"), Flags: testutil.FlagUTF8},
 		{Name: "vol/.DS_Store", Data: []byte("junk"), Flags: testutil.FlagUTF8},
 		{Name: "vol/desktop.ini", Data: []byte("junk"), Flags: testutil.FlagUTF8},
@@ -128,6 +134,8 @@ func TestScan_frIdx006_dropsEveryExcludedEntryFromBothBookKinds(t *testing.T) {
 				"001.jpg":     jpeg(t),
 				"._002.jpg":   []byte("fork"),
 				".hidden.jpg": jpeg(t),
+				".hidden.txt": "메모",
+				".cache":      map[string]any{"003.jpg": jpeg(t)},
 				"Thumbs.db":   []byte("junk"),
 				".DS_Store":   []byte("junk"),
 				"desktop.ini": []byte("junk"),
@@ -143,11 +151,18 @@ func TestScan_frIdx006_dropsEveryExcludedEntryFromBothBookKinds(t *testing.T) {
 	if len(books) != 2 {
 		t.Fatalf("indexed %d books %v, want 2", len(books), bookNames(books))
 	}
-	if got := pageNames(h.pages(books[0].ID)); !equalStrings(got, []string{"001.jpg", "002.jpg"}) {
-		t.Errorf("zip pages = %v, want [001.jpg 002.jpg]", got)
+	// `.hidden.jpg` is listed and `.hidden.txt` / `.cache/003.jpg` are not:
+	// a leading dot no longer decides on its own, but a hidden *directory*
+	// still hides what is under it.
+	// Natural sort (FR-IDX-007) puts the digits first and the dot-name last;
+	// the collection's real book is 80 dot-names and nothing else, so they
+	// order among themselves.
+	want := []string{"001.jpg", "002.jpg", ".hidden.jpg"}
+	if got := pageNames(h.pages(books[0].ID)); !equalStrings(got, want) {
+		t.Errorf("zip pages = %v, want %v", got, want)
 	}
-	if got := pageNames(h.pages(books[1].ID)); !equalStrings(got, []string{"001.jpg", "002.jpg"}) {
-		t.Errorf("dir pages = %v, want [001.jpg 002.jpg]", got)
+	if got := pageNames(h.pages(books[1].ID)); !equalStrings(got, want) {
+		t.Errorf("dir pages = %v, want %v", got, want)
 	}
 }
 

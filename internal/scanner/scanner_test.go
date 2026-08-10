@@ -109,6 +109,18 @@ type countingSource struct {
 	boom  bool
 }
 
+// Volumes forwards source.VolumeLister through the wrapper. An embedded
+// interface only satisfies the methods that interface declares, so without
+// this the scanner's type assertion fails and a container of volumes never
+// expands — under test only, which is the worst way to find out.
+func (c *countingSource) Volumes(ctx context.Context) ([]string, error) {
+	vl, ok := c.BookSource.(source.VolumeLister)
+	if !ok {
+		return nil, nil
+	}
+	return vl.Volumes(ctx)
+}
+
 func (c *countingSource) List(ctx context.Context) (*source.Listing, error) {
 	c.owner.mu.Lock()
 	c.owner.listed = append(c.owner.listed, c.rel)
@@ -490,10 +502,15 @@ func TestScan_errorIsolation_everyPathologicalCase_completesAndReportsEachFailur
 			{Name: "001.jpg", Data: jpeg(t), Flags: testutil.FlagUTF8 | testutil.FlagEncrypted},
 		},
 	})
-	// data-survey §7 "Embedded Sub-ZIP Architecture": a container of archives,
-	// zero image entries. Decision D-10 requires 'empty', not an error.
-	containerOfZips := testutil.BuildZIP(t, testutil.ZIPSpec{
-		Entries: []testutil.Entry{{Name: "vol01.zip", Data: good, Flags: testutil.FlagUTF8}},
+	// An archive that opens cleanly and holds nothing that is a page: the
+	// `empty` verdict on its own.
+	//
+	// This used to be a container of sub-ZIPs (data-survey §7 "Embedded Sub-ZIP
+	// Architecture", decision D-10). That shape is no longer empty — its
+	// volumes become books, see nested_test.go — so the case is made with a
+	// text file, which is what `empty` still means.
+	noPages := testutil.BuildZIP(t, testutil.ZIPSpec{
+		Entries: []testutil.Entry{{Name: "readme.txt", Data: []byte("이미지가 없습니다"), Flags: testutil.FlagUTF8}},
 	})
 
 	h := newHarness(t, map[string]any{
@@ -506,13 +523,13 @@ func TestScan_errorIsolation_everyPathologicalCase_completesAndReportsEachFailur
 			"08권.zip":           noEOCD,
 			"D.N.Angel 09권.zip": []byte{}, // the real 0-byte archive
 			"암호화 10권.zip":       encrypted,
-			"엔젤하트 전32권 완결.zip":  containerOfZips,
+			"비어 있는 12권.zip":     noPages,
 			"정상 11권.zip":        good,
 		},
-		// Ruling E-14: the same container of nested archives, alone in its own
-		// series. The book is `empty`; the series must read `error`.
-		"엔젤하트 시리즈": map[string]any{
-			"엔젤하트 전32권 완결.zip": containerOfZips,
+		// Ruling E-14: the same page-less archive, alone in its own series. The
+		// book is `empty`; the series must read `error`.
+		"빈 시리즈": map[string]any{
+			"비어 있는 12권.zip": noPages,
 		},
 		"텍스트만 있는 시리즈": map[string]any{
 			"설명.txt": "이 폴더에는 이미지가 없습니다",
@@ -546,7 +563,7 @@ func TestScan_errorIsolation_everyPathologicalCase_completesAndReportsEachFailur
 		"08권.zip":           StatusError,
 		"D.N.Angel 09권.zip": StatusError,
 		"암호화 10권.zip":       StatusEncrypted,
-		"엔젤하트 전32권 완결.zip":  StatusEmpty,
+		"비어 있는 12권.zip":     StatusEmpty,
 		"정상 11권.zip":        StatusOK,
 	}
 	if len(byRel) != len(want) {
@@ -581,7 +598,7 @@ func TestScan_errorIsolation_everyPathologicalCase_completesAndReportsEachFailur
 	// Ruling E-14 / D-10: one book, `empty`, so the reader cannot open a single
 	// page — the SERIES is `error` with that book's reason, while the BOOK above
 	// stays `empty` and is still not counted as a scan failure.
-	angel := h.seriesAt("manga", "엔젤하트 시리즈")
+	angel := h.seriesAt("manga", "빈 시리즈")
 	if angel.Status != StatusError {
 		t.Errorf("a series whose only book is empty = status %q, want %q (E-14)",
 			angel.Status, StatusError)
@@ -591,7 +608,7 @@ func TestScan_errorIsolation_everyPathologicalCase_completesAndReportsEachFailur
 			angel.DisplayName, angel.Status)
 	}
 	if angel.BookCount != 1 {
-		t.Errorf("엔젤하트 시리즈 book_count = %d, want 1", angel.BookCount)
+		t.Errorf("빈 시리즈 book_count = %d, want 1", angel.BookCount)
 	}
 
 	// FR-IDX-010 also asks for one scan_log warn row per isolated failure.
@@ -619,15 +636,16 @@ func TestScan_errorIsolation_everyPathologicalCase_completesAndReportsEachFailur
 // The regression: it used to be the sum of `books.total_bytes`, which arch §4.4
 // defines as the sum of *uncompressed page* bytes. That is 0 for a PDF (pages
 // are rendered, not stored) and 0 for any book with no readable pages, so whole
-// series read `0 KB` — including the 1.44 GB 엔젤하트 container that impl-plan
-// §6.3 step 6.2 requires to sort FIRST by 용량.
+// series read `0 KB` — and impl-plan §6.3 step 6.2 requires the collection's
+// largest containers to sort FIRST by 용량.
 func TestScan_seriesTotalBytesIsTheOnDiskFootprint(t *testing.T) {
 	t.Parallel()
 	good := jpegZIP(t, "001.jpg", "002.jpg")
-	// D-10's shape again: a container of archives, zero image entries, so every
-	// page-derived total below it is zero.
+	// A book whose page-derived totals are genuinely zero. It is a text-only
+	// archive rather than the container of sub-ZIPs this test used to use: a
+	// container is now a series of volumes and has page bytes like any other.
 	container := testutil.BuildZIP(t, testutil.ZIPSpec{
-		Entries: []testutil.Entry{{Name: "vol01.zip", Data: good, Flags: testutil.FlagUTF8}},
+		Entries: []testutil.Entry{{Name: "readme.txt", Data: []byte("메모"), Flags: testutil.FlagUTF8}},
 	})
 	h := newHarness(t, map[string]any{
 		"압축 시리즈": map[string]any{
@@ -638,7 +656,7 @@ func TestScan_seriesTotalBytesIsTheOnDiskFootprint(t *testing.T) {
 			"01권": map[string]any{"001.jpg": jpeg(t), "002.jpg": jpeg(t)},
 		},
 		"페이지 없는 시리즈": map[string]any{
-			"엔젤하트 전32권 완결.zip": container,
+			"비어 있는 책.zip": container,
 		},
 	})
 	h.run(Request{})
@@ -674,7 +692,7 @@ func TestScan_seriesTotalBytesIsTheOnDiskFootprint(t *testing.T) {
 	if len(empty.Books) != 1 || empty.Books[0].TotalBytes != 0 {
 		t.Fatalf("expected one book with total_bytes 0, got %+v", empty.Books)
 	}
-	if want := onDisk("페이지 없는 시리즈/엔젤하트 전32권 완결.zip"); empty.TotalBytes != want {
+	if want := onDisk("페이지 없는 시리즈/비어 있는 책.zip"); empty.TotalBytes != want {
 		t.Errorf("page-less series total_bytes = %d, want %d — a series with no page rows still occupies its bytes",
 			empty.TotalBytes, want)
 	}

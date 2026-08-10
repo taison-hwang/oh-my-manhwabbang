@@ -31,7 +31,13 @@ export type Unix = number
 /** Matches every id the API accepts; a syntactically invalid id is `400`, unknown is `404`. */
 export const ID_PATTERN = /^[a-z2-7]{16}$/
 
-export const BOOK_KINDS = ['zip', 'dir', 'pdf'] as const
+/**
+ * `nestedzip` is a volume inside a container archive — one of the 39 books in
+ * `겟 벡커스 1~39완.zip` rather than a `.zip` of its own. It reads exactly like
+ * a `zip` book and wears the same badge; the distinction is where the bytes
+ * live, which is the server's problem.
+ */
+export const BOOK_KINDS = ['zip', 'nestedzip', 'dir', 'pdf'] as const
 export type BookKind = (typeof BOOK_KINDS)[number]
 
 /** C-4: books say `dir`, series say `folder`. The badge text is FOLDER for both. */

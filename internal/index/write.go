@@ -234,14 +234,15 @@ func (w *Writer) UpsertSeries(ctx context.Context, s Series) error {
 }
 
 const upsertBookSQL = `
-INSERT INTO books (id, series_id, root_name, rel_path, display_name, sort_key, ord,
+INSERT INTO books (id, series_id, root_name, rel_path, inner_path, display_name, sort_key, ord,
     kind, page_count, total_bytes, file_size, file_mtime, dir_fingerprint,
     content_version, dims_state, status, error, scan_gen)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET
     series_id       = excluded.series_id,
     root_name       = excluded.root_name,
     rel_path        = excluded.rel_path,
+    inner_path      = excluded.inner_path,
     display_name    = excluded.display_name,
     sort_key        = excluded.sort_key,
     ord             = excluded.ord,
@@ -264,7 +265,7 @@ func (w *Writer) UpsertBook(ctx context.Context, b Book) error {
 		dims = "none"
 	}
 	err := w.exec(ctx, upsertBookSQL,
-		b.ID, b.SeriesID, b.RootName, b.RelPath, b.DisplayName, b.SortKey, b.Ord,
+		b.ID, b.SeriesID, b.RootName, b.RelPath, b.InnerPath, b.DisplayName, b.SortKey, b.Ord,
 		b.Kind, b.PageCount, b.TotalBytes, b.FileSize, b.FileMtime,
 		nullString(b.DirFingerprint), b.ContentVersion, dims, b.Status,
 		nullString(b.Error), b.ScanGen)

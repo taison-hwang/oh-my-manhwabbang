@@ -81,6 +81,7 @@ export const SERIES = {
   misaeng: '미생 1~9 (완결 pdf)',
   battleRoyale: '배틀로얄 1~15 [완결].zip',
   angelHeart: '엔젤하트 전32권 완결.zip',
+  dove: '비둘기.zip',
 } as const
 
 /**

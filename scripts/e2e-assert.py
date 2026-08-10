@@ -50,12 +50,13 @@ CURATED = [
     "미생 1~9 (완결 pdf)",
     "배틀로얄 1~15 [완결].zip",
     "엔젤하트 전32권 완결.zip",
+    "비둘기.zip",
 ]
 SYNTHETIC_EXTRA = ["암호화 테스트.zip", "ZIP64 테스트.zip"]
 
 CLOVER, WOUNDS, SUICIDE, WHEEL = CURATED[0], CURATED[1], CURATED[2], CURATED[3]
 FMA, GUNGYE, DNANGEL, MISAENG = CURATED[4], CURATED[5], CURATED[6], CURATED[7]
-BATTLE_ROYALE, ANGEL_HEART = CURATED[8], CURATED[9]
+BATTLE_ROYALE, ANGEL_HEART, DOVE = CURATED[8], CURATED[9], CURATED[10]
 
 # arch §7.9 pins the cache-usage walk at "cached for 60 s". The bounded wait
 # below has to outlast that window rather than match it, or a check that is one
@@ -992,22 +993,36 @@ def main() -> int:
              by_name[BATTLE_ROYALE]["page_count"], 1540)
 
     # ---- FR-IDX-010: broken archives are isolated, the scan completes ----
-    # D-10 as narrowed by ruling E-14: the nested archives are out of scope, so
-    # the BOOK is `empty`; but the reader cannot open a single page of the
-    # SERIES, so it is `error` with that book's reason. `empty` is reserved for
-    # "no books at all".
+    # D-70 supersedes D-10's first clause: a container of sub-ZIPs is a series
+    # of volumes, one book per inner archive, and every one of them opens.
     ah = r.json("/api/series/" + by_name[ANGEL_HEART]["id"])
-    r.eq("엔젤하트 (a container of sub-ZIPs) is a series with status=error (E-14)",
-         ah["status"], "error")
+    r.eq("엔젤하트 (a container of sub-ZIPs) is a readable series (D-70)",
+         ah["status"], "ok")
+    r.check("every inner archive became a 권",
+            len(ah["books"]) > 1, f"{len(ah['books'])} books")
+    r.eq("every volume opens", sorted({b["status"] for b in ah["books"]}), ["ok"])
+    r.eq("every volume is kind=nestedzip", sorted({b["kind"] for b in ah["books"]}), ["nestedzip"])
+    r.check("every volume has pages",
+            all(b["page_count"] > 0 for b in ah["books"]),
+            f"page counts: {[b['page_count'] for b in ah['books']]}")
+    # The volumes all live in one file, so each carries the container's size.
+    r.check("엔젤하트 reports its bytes on disk",
+            ah["total_bytes"] > 0, f"total_bytes {ah['total_bytes']}")
+
+    # Ruling E-14 needs a series the reader cannot open a page of, which the
+    # container above no longer is. `비둘기.zip` opens cleanly and holds one
+    # directory entry: no page, and nothing that could be a volume either.
+    dove = r.json("/api/series/" + by_name[DOVE]["id"])
+    r.eq("비둘기 is a series with status=error (E-14)", dove["status"], "error")
     r.check("the error series carries a reason the UI can show (design.md 화면 2)",
-            bool(ah["error"]), f"error field: {ah['error']!r}")
-    r.eq("엔젤하트's single book stays status=empty (D-10 is unchanged at book level)",
-         [b["status"] for b in ah["books"]], ["empty"])
-    # prd UI-002's 총 용량 is what the series occupies on disk, so a container
-    # with no page rows at all must not read 0 KB.
-    r.check("엔젤하트 reports its bytes on disk, not its (zero) page bytes",
-            ah["total_bytes"] >= ah["books"][0]["file_size"] > 0,
-            f"total_bytes {ah['total_bytes']}, file_size {ah['books'][0]['file_size']}")
+            bool(dove["error"]), f"error field: {dove['error']!r}")
+    r.eq("its single book is status=empty, not an error", 
+         [b["status"] for b in dove["books"]], ["empty"])
+    # prd UI-002's 총 용량 is what the series occupies on disk, so a series with
+    # no page rows at all must not read 0 KB.
+    r.check("비둘기 reports its bytes on disk, not its (zero) page bytes",
+            dove["total_bytes"] >= dove["books"][0]["file_size"] > 0,
+            f"total_bytes {dove['total_bytes']}, file_size {dove['books'][0]['file_size']}")
 
     dn = r.json("/api/series/" + by_name[DNANGEL]["id"])
     dn_errors = [b for b in dn["books"] if b["status"] == "error"]

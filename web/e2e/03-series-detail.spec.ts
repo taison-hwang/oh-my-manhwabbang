@@ -96,13 +96,17 @@ test('6.5 · 군계 detail shows its path, and broken volumes are badged and dea
 test('6.5 (E-14) · a series with nothing readable in it is shown as broken', async ({
   page,
 }, info) => {
+  // `비둘기.zip` opens cleanly and holds one directory entry: no page, and no
+  // inner archive that could be a volume either. It is what `empty` means now
+  // that a container of sub-archives is a series of volumes (D-70) — before
+  // that, this test made the same point with 엔젤하트, which is now readable.
   const facts = await seriesFacts(page)
-  const angel = facts.get(SERIES.angelHeart)
-  expect(angel, '§6.3 row 10').toBeDefined()
-  expect(angel?.status, 'E-14: ≥1 book, none of them ok ⇒ series error').toBe('error')
+  const dove = facts.get(SERIES.dove)
+  expect(dove, '§6.3 row 10b').toBeDefined()
+  expect(dove?.status, 'E-14: ≥1 book, none of them ok ⇒ series error').toBe('error')
 
   await gotoLibrary(page)
-  await openSeries(page, SERIES.angelHeart)
+  await openSeries(page, SERIES.dove)
 
   // design.md 화면 2 "오류 상태": the reason is on screen, in the accent badge
   // + reason pairing ui-spec §2.5 allows for the 손상 family.
@@ -114,13 +118,38 @@ test('6.5 (E-14) · a series with nothing readable in it is shown as broken', as
   await expect(page.getByRole('button', { name: /읽기 시작|이어 읽기/ })).toBeDisabled()
   await expect(page.getByRole('button', { name: '처음부터 읽기' })).toBeDisabled()
 
-  // D-10: the *book* stays `empty` — a nested-archive container is not an error.
+  // The *book* is `empty`, not an error: the container is intact, it simply
+  // holds nothing to read.
   await expect(page.locator('[data-testid="volume-grid"]')).toContainText('비어 있음')
   await expect(page.locator('[data-testid="volume-grid"]')).toContainText(
     '읽을 수 있는 페이지가 없습니다',
   )
 
   await shot(page, info, 'step-06-5c-series-detail-error')
+})
+
+test('6.5 (D-70) · a container of sub-archives is a series of volumes', async ({ page }, info) => {
+  // The 1.4 GB `겟 벡커스 1~39완.zip` shape: a ZIP whose entries are all more
+  // ZIPs. It used to be one book with `status:"empty"` and no pages at all —
+  // 45 books and 623 volumes of the collection were unreachable that way.
+  const facts = await seriesFacts(page)
+  const angel = facts.get(SERIES.angelHeart)
+  expect(angel, '§6.3 row 10').toBeDefined()
+  expect(angel?.status, 'every inner volume opens, so the series is ok').toBe('ok')
+  expect(angel?.book_count, 'one book per inner archive').toBeGreaterThan(1)
+
+  await gotoLibrary(page)
+  await openSeries(page, SERIES.angelHeart)
+
+  // No 손상 banner, and the volumes are real books with page counts.
+  await expect(page.locator('[data-role="series-error"]')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /읽기 시작|이어 읽기/ })).toBeEnabled()
+
+  const grid = page.locator('[data-testid="volume-grid"]')
+  await expect(grid).not.toContainText('비어 있음')
+  await expect(grid.locator('> *')).toHaveCount(angel!.book_count)
+
+  await shot(page, info, 'step-06-5d-series-detail-nested-volumes')
 })
 
 test('6.5 (guard) · the 읽음 표시 toggle is a hit target only while it is visible', async ({
