@@ -21,23 +21,23 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # The ten series of impl-plan §6.3, exact names. Each covers something no other
 # entry does; see the table in that section for the mapping.
 CURATED=(
-  "[만화] Clover 클로버 (총4권)"                      # folder + 4 ZIPs, CP949 names
-  "[만화] 상처를 쫓는자 1-11 (완) 이케가미 료이치"     # folder of image sub-folders
-  "[만화] 자살도114-122"                              # loose images, mixed padding
-  "[만화] 바퀴.zip"                                   # single top-level ZIP
-  "[만화] 강철의 연금술사 1~27권 완결"                 # N archives + one cover image
-  "[만화] 군계 1~25"                                  # duplicates + 2 truncated
-  "[만화] 디엔엔젤 1-13권 연재중"                      # one 0-byte archive
-  "[만화] 미생 1~9 (완결 pdf)"                        # PDFs — AC-004
-  "[만화] 배틀로얄 1~15 [완결].zip"                   # 1 540 pages — AC-008
-  "[만화] 엔젤하트 전32권 완결.zip"                    # container of ZIPs — empty
+  "Clover 클로버 (총4권)"                    # folder + 4 ZIPs, CP949 names
+  "상처를 쫓는자 1-11 (완) 이케가미 료이치"  # folder of image sub-folders
+  "자살도114-122"                            # loose images, mixed padding
+  "바퀴.zip"                                 # single top-level ZIP
+  "강철의 연금술사 1~27권 완결"              # N archives + one cover image
+  "군계 1~25"                                # duplicates + 2 truncated
+  "디엔엔젤 1-13권 연재중"                   # one 0-byte archive
+  "미생 1~9 (완결 pdf)"                      # PDFs — AC-004
+  "배틀로얄 1~15 [완결].zip"                 # 1 540 pages — AC-008
+  "엔젤하트 전32권 완결.zip"                 # container of ZIPs — empty
 )
 
 # The synthetic tree carries the same ten names plus two shapes the real
 # collection has no sample of (D-49).
 SYNTHETIC_EXTRA=(
-  "[만화] 암호화 테스트.zip"
-  "[만화] ZIP64 테스트.zip"
+  "암호화 테스트.zip"
+  "ZIP64 테스트.zip"
 )
 
 synthetic=0
@@ -91,8 +91,15 @@ fi
 
 # `[` and `]` open and close a path.Match character class. `[[]` is a class
 # whose only member is `[`, so it matches a literal one; a bare `]` outside a
-# class is already literal but is escaped the same way for symmetry. This is
-# the escaping impl-plan §6.3 prescribes.
+# class is already literal and is left alone. This is the escaping impl-plan
+# §6.3 prescribes.
+#
+# The collection lost its `[만화] ` prefix in 2026-08, which took a bracket pair
+# off every name — so exactly ONE curated entry still opens a class it does not
+# mean to, `배틀로얄 1~15 [완결].zip`, and it is the one this function is still
+# load-bearing for. It stays generic regardless: the escaping is a property of
+# the pattern language, not of what today's ten names happen to contain, and a
+# pattern that compiles but matches nothing indexes an empty library.
 escape_glob() {
   printf '%s' "$1" | sed -e 's/\[/[[]/g' -e 's/\*/[*]/g' -e 's/?/[?]/g'
 }

@@ -12,9 +12,12 @@
 #  that content_version, the incremental scan and FR-THM-006 all key off
 #  (D-48).
 #
-#  `[` and `]` are path.Match character-class metacharacters, so each pattern
-#  writes the literal bracket as the one-member class `[[]`. The raw form
-#  compiles but matches nothing, which would index an empty library.
+#  `[` and `]` are path.Match character-class metacharacters, so a pattern that
+#  contains one writes the literal bracket as the one-member class `[[]`. The
+#  raw form compiles but matches nothing, which would index an empty library.
+#  Since the collection lost its `[만화] ` prefix (2026-08) that is one entry —
+#  `배틀로얄 1~15 [완결].zip` — rather than all ten; scripts/e2e-config.sh
+#  escapes every pattern the same way anyway.
 # ============================================================================
 
 server:

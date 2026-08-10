@@ -918,7 +918,7 @@ step "11b · A-11 — DELETE /api/roots/{name}"
 # curated ten), copied out of the fixture tree so that a per-root rescan gives
 # this root exactly one series to lose.
 if [ "$synthetic" -eq 1 ]; then
-  A11_FILL="$FIXTURE/[만화] 바퀴.zip"
+  A11_FILL="$FIXTURE/바퀴.zip"
   if [ ! -f "$A11_FILL" ]; then
     bad "A-11 · the fixture archive that fills the added root is missing: $A11_FILL
         (scripts/mkfixture builds it; if it was renamed, rename it here too — and in

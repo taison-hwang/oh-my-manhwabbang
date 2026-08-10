@@ -68,32 +68,32 @@ func build(root string) error {
 
 	// 1 — folder of ZIPs, CP949 entry names, four volumes (prd §2.2 row 1).
 	for i := 1; i <= 4; i++ {
-		b.zipFile(fmt.Sprintf("[만화] Clover 클로버 (총4권)/Clover 클로버 %d.zip", i),
+		b.zipFile(fmt.Sprintf("Clover 클로버 (총4권)/Clover 클로버 %d.zip", i),
 			cp949Pages(6))
 	}
 
 	// 2 — folder of image sub-folders: books of kind "dir" (prd §2.2 row 2).
 	for v := 1; v <= 3; v++ {
 		for p := 1; p <= 5; p++ {
-			b.file(fmt.Sprintf("[만화] 상처를 쫓는자 1-11 (완) 이케가미 료이치/%02d권/%03d.jpg", v, p), jpegPage())
+			b.file(fmt.Sprintf("상처를 쫓는자 1-11 (완) 이케가미 료이치/%02d권/%03d.jpg", v, p), jpegPage())
 		}
 	}
 
 	// 3 — images directly inside the series directory, with the mixed
 	// zero-padding that makes natural sort load-bearing (prd §2.2 row 3, D-8).
 	for _, n := range []int{1, 2, 3, 9, 10, 11, 99, 100, 101, 114, 122} {
-		b.file(fmt.Sprintf("[만화] 자살도114-122/%d.jpg", n), jpegPage())
+		b.file(fmt.Sprintf("자살도114-122/%d.jpg", n), jpegPage())
 	}
 
 	// 4 — a single top-level ZIP: the series is its own book (prd §2.2 row 4).
-	b.zipFile("[만화] 바퀴.zip", cp949Pages(8))
+	b.zipFile("바퀴.zip", cp949Pages(8))
 
 	// 5 — "mixed" as it actually occurs: N archives + exactly one cover image,
 	// which is a cover and not a one-page book (D-5, D-27).
 	for i := 1; i <= 6; i++ {
-		b.zipFile(fmt.Sprintf("[만화] 강철의 연금술사 1~27권 완결/강철의 연금술사 %02d권.zip", i), cp949Pages(4))
+		b.zipFile(fmt.Sprintf("강철의 연금술사 1~27권 완결/강철의 연금술사 %02d권.zip", i), cp949Pages(4))
 	}
-	b.file("[만화] 강철의 연금술사 1~27권 완결/강철의 연금술사 00 Cover.jpg", jpegPage())
+	b.file("강철의 연금술사 1~27권 완결/강철의 연금술사 00 Cover.jpg", jpegPage())
 
 	// 6 — the messy one: a named cover file, a folder *and* a zip for the same
 	// volume, three copies of 07권, and two truncated archives (D-6, FR-IDX-010).
@@ -114,35 +114,35 @@ func build(root string) error {
 	// chrome. The other 군계 volumes stay portrait: E-23 measured 01권 only, and
 	// nothing asserts the orientation of the rest.
 	const gungyeVol1Pages = 8
-	b.file("[만화] 군계 1~25/[cover].jpg", jpegPage())
+	b.file("군계 1~25/[cover].jpg", jpegPage())
 	for p := 1; p <= gungyeVol1Pages; p++ {
-		b.file(fmt.Sprintf("[만화] 군계 1~25/군계(軍鷄) 01권/%03d.jpg", p), landscapeJPEG())
+		b.file(fmt.Sprintf("군계 1~25/군계(軍鷄) 01권/%03d.jpg", p), landscapeJPEG())
 	}
-	b.zipFile("[만화] 군계 1~25/군계(軍鷄) 01권.zip", cp949LandscapePages(gungyeVol1Pages))
+	b.zipFile("군계 1~25/군계(軍鷄) 01권.zip", cp949LandscapePages(gungyeVol1Pages))
 	for i := 2; i <= 6; i++ {
-		b.zipFile(fmt.Sprintf("[만화] 군계 1~25/군계(軍鷄) %02d권.zip", i), cp949Pages(3))
+		b.zipFile(fmt.Sprintf("군계 1~25/군계(軍鷄) %02d권.zip", i), cp949Pages(3))
 	}
-	b.zipFile("[만화] 군계 1~25/군계(軍鷄) 07권.zip", cp949Pages(3))
-	b.truncatedZip("[만화] 군계 1~25/군계(軍鷄) 07권.repair.zip", cp949Pages(3))
-	b.truncatedZip("[만화] 군계 1~25/군계(軍鷄) 07권 (2).repair.zip", cp949Pages(3))
+	b.zipFile("군계 1~25/군계(軍鷄) 07권.zip", cp949Pages(3))
+	b.truncatedZip("군계 1~25/군계(軍鷄) 07권.repair.zip", cp949Pages(3))
+	b.truncatedZip("군계 1~25/군계(軍鷄) 07권 (2).repair.zip", cp949Pages(3))
 
 	// 7 — a 0-byte archive: an unopenable container the scan must isolate and
 	// carry on past (FR-IDX-010; the real D.N.Angel 08권.zip is 0 bytes).
 	for i := 1; i <= 5; i++ {
 		if i == 3 {
-			b.file("[만화] 디엔엔젤 1-13권 연재중/D.N.Angel 03권.zip", nil)
+			b.file("디엔엔젤 1-13권 연재중/D.N.Angel 03권.zip", nil)
 			continue
 		}
-		b.zipFile(fmt.Sprintf("[만화] 디엔엔젤 1-13권 연재중/D.N.Angel %02d권.zip", i), cp949Pages(3))
+		b.zipFile(fmt.Sprintf("디엔엔젤 1-13권 연재중/D.N.Angel %02d권.zip", i), cp949Pages(3))
 	}
 
 	// 8 — PDFs (prd §2.2 row 5, AC-004, FR-SRV-006).
 	for i := 1; i <= 3; i++ {
-		b.file(fmt.Sprintf("[만화] 미생 1~9 (완결 pdf)/미생 %02d권.pdf", i), pdfDocument(4))
+		b.file(fmt.Sprintf("미생 1~9 (완결 pdf)/미생 %02d권.pdf", i), pdfDocument(4))
 	}
 
 	// 9 — AC-008 at full page count.
-	b.zipFile("[만화] 배틀로얄 1~15 [완결].zip", cp949Pages(1540))
+	b.zipFile("배틀로얄 1~15 [완결].zip", cp949Pages(1540))
 
 	// 10 — a container of sub-archives and no images at all: status "empty",
 	// not an error, and no crash (D-10).
@@ -154,11 +154,11 @@ func build(root string) error {
 		}
 		nested = append(nested, entry{name: fmt.Sprintf("엔젤하트 %02d권.zip", i), data: inner})
 	}
-	b.zipFile("[만화] 엔젤하트 전32권 완결.zip", nested)
+	b.zipFile("엔젤하트 전32권 완결.zip", nested)
 
 	// D-49's two extras, which the real collection has no sample of.
-	b.encryptedZip("[만화] 암호화 테스트.zip", cp949Pages(3))
-	b.zip64("[만화] ZIP64 테스트.zip")
+	b.encryptedZip("암호화 테스트.zip", cp949Pages(3))
+	b.zip64("ZIP64 테스트.zip")
 
 	return b.err
 }

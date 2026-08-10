@@ -40,18 +40,18 @@ import urllib.request
 # The ten curated series of impl-plan §6.3, plus the two shapes the real
 # collection has no sample of, which only the synthetic tree carries (D-49).
 CURATED = [
-    "[만화] Clover 클로버 (총4권)",
-    "[만화] 상처를 쫓는자 1-11 (완) 이케가미 료이치",
-    "[만화] 자살도114-122",
-    "[만화] 바퀴.zip",
-    "[만화] 강철의 연금술사 1~27권 완결",
-    "[만화] 군계 1~25",
-    "[만화] 디엔엔젤 1-13권 연재중",
-    "[만화] 미생 1~9 (완결 pdf)",
-    "[만화] 배틀로얄 1~15 [완결].zip",
-    "[만화] 엔젤하트 전32권 완결.zip",
+    "Clover 클로버 (총4권)",
+    "상처를 쫓는자 1-11 (완) 이케가미 료이치",
+    "자살도114-122",
+    "바퀴.zip",
+    "강철의 연금술사 1~27권 완결",
+    "군계 1~25",
+    "디엔엔젤 1-13권 연재중",
+    "미생 1~9 (완결 pdf)",
+    "배틀로얄 1~15 [완결].zip",
+    "엔젤하트 전32권 완결.zip",
 ]
-SYNTHETIC_EXTRA = ["[만화] 암호화 테스트.zip", "[만화] ZIP64 테스트.zip"]
+SYNTHETIC_EXTRA = ["암호화 테스트.zip", "ZIP64 테스트.zip"]
 
 CLOVER, WOUNDS, SUICIDE, WHEEL = CURATED[0], CURATED[1], CURATED[2], CURATED[3]
 FMA, GUNGYE, DNANGEL, MISAENG = CURATED[4], CURATED[5], CURATED[6], CURATED[7]

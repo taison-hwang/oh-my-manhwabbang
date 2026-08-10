@@ -165,7 +165,7 @@ test('6.3 · 초성 search finds 군계 and highlights the matched syllables', a
   // C-10: the filtering is the server's (`GET /api/series?q=`), debounced 150 ms.
   await expect(seriesTiles(page)).toHaveCount(1)
   const only = seriesTiles(page).first()
-  await expect(only).toHaveAttribute('aria-label', '[만화] 군계 1~25')
+  await expect(only).toHaveAttribute('aria-label', SERIES.gungye)
 
   // FR-LIB-006's other half: *which* span matched. `highlightParts` splits the
   // title around it and the matched run is the card title's only child element.

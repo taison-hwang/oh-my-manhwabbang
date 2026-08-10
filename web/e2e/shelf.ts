@@ -54,23 +54,33 @@ export const SHOTS_DIR = path.resolve(HERE, '..', '..', 'docs', 'e2e-shots')
  * three more times — `scripts/e2e-config.sh:23-34` (`CURATED`, which becomes
  * `scan.include_globs`), `scripts/e2e-assert.py:27-38` (`CURATED`, the curl
  * tier's expectation) and 18 path literals in `scripts/mkfixture/main.go`,
- * which builds the synthetic twin under the same names (D-49). Nothing links
- * the four statically; they agree only because a disagreement fails the run —
+ * which builds the synthetic twin under the same names (D-49). A **fifth** copy
+ * hides in `scripts/e2e.sh:921` (`A11_FILL`, one archive by path). Nothing links
+ * the five statically; they agree only because a disagreement fails the run —
  * `e2e-assert.py` compares the indexed names against its own list, and every
  * helper here that takes a name (`seriesId`, `openSeries`) fails *by name* on a
- * series the server never heard of. Renaming one series is a four-file edit.
+ * series the server never heard of. Renaming one series is a five-file edit.
+ *
+ * All ten were renamed at once in 2026-08, when the collection on disk lost the
+ * leading `[만화] ` every entry used to carry. That is what a rename costs when
+ * nothing links the five copies: the scan matched zero of ten, and `make e2e`
+ * died at step 7 with `got 0, want 10` before a browser ever started. Two
+ * consequences outlived the edit. `scripts/e2e-config.sh`'s glob escaping is now
+ * load-bearing for exactly one name, 배틀로얄, which is the only one left holding
+ * a `[`. And `docs/e2e-shots/` still shows the old titles until the next review
+ * round retakes it.
  */
 export const SERIES = {
-  clover: '[만화] Clover 클로버 (총4권)',
-  scars: '[만화] 상처를 쫓는자 1-11 (완) 이케가미 료이치',
-  suicide: '[만화] 자살도114-122',
-  wheel: '[만화] 바퀴.zip',
-  steel: '[만화] 강철의 연금술사 1~27권 완결',
-  gungye: '[만화] 군계 1~25',
-  dnangel: '[만화] 디엔엔젤 1-13권 연재중',
-  misaeng: '[만화] 미생 1~9 (완결 pdf)',
-  battleRoyale: '[만화] 배틀로얄 1~15 [완결].zip',
-  angelHeart: '[만화] 엔젤하트 전32권 완결.zip',
+  clover: 'Clover 클로버 (총4권)',
+  scars: '상처를 쫓는자 1-11 (완) 이케가미 료이치',
+  suicide: '자살도114-122',
+  wheel: '바퀴.zip',
+  steel: '강철의 연금술사 1~27권 완결',
+  gungye: '군계 1~25',
+  dnangel: '디엔엔젤 1-13권 연재중',
+  misaeng: '미생 1~9 (완결 pdf)',
+  battleRoyale: '배틀로얄 1~15 [완결].zip',
+  angelHeart: '엔젤하트 전32권 완결.zip',
 } as const
 
 /**
@@ -84,8 +94,8 @@ export const SERIES = {
  * is the first assertion either of them has ever had in the browser tier.
  */
 export const SYNTHETIC_EXTRA = {
-  encrypted: '[만화] 암호화 테스트.zip',
-  zip64: '[만화] ZIP64 테스트.zip',
+  encrypted: '암호화 테스트.zip',
+  zip64: 'ZIP64 테스트.zip',
 } as const
 
 /**
