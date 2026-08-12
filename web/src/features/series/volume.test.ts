@@ -53,7 +53,7 @@ describe('volumeStatus / isOpenable', () => {
 describe('volumeBadge (FR-IDX-010)', () => {
   it('labels an encrypted volume 암호화 with the ZIP-password reason', () => {
     const badge = volumeBadge(book({ status: 'encrypted', error: null, page_count: 0 }))
-    expect(badge).toEqual({ label: '암호화', reason: '비밀번호가 필요한 ZIP', detail: null })
+    expect(badge).toEqual({ label: '암호화', reason: '비밀번호가 필요한 압축 파일', detail: null })
   })
 
   it('labels a truncated volume 손상 and carries the server message as detail', () => {

@@ -38,8 +38,12 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf16"
 
+	"golang.org/x/text/encoding/japanese"
 	"golang.org/x/text/encoding/korean"
+
+	"shelf/internal/testutil"
 )
 
 // fixedMtime sits inside the 2014–2018 window AC-002 is about, so the tree is
@@ -164,11 +168,138 @@ func build(root string) error {
 	// directory entry and 128 bytes.
 	b.zipFile("비둘기.zip", []entry{{name: "비둘기/", data: nil}})
 
+	// 11 — RAR, added by D-71. The real collection has 14 of these holding
+	// 2,914 pages, and until D-71 not one of them was a book.
+	//
+	// Three shapes, because three things can go wrong independently:
+	//
+	//   a. a plain RAR series, the ordinary case (12 of the 14 real archives
+	//      are stored-only like this one);
+	//   b. a container mixing ZIP and RAR volumes, which is
+	//      `사모님은 학생회장.zip` — 7 ZIPs and 8 RARs, of which D-07 indexed 7;
+	//   c. a solid RAR, which this build refuses on purpose. None of the 14 is
+	//      solid; if one ever were, a page could not be read without reading
+	//      every page before it, and NFR-PRF-006 would be a lie. The refusal
+	//      has to be `unsupported`, never `error`: the file is not damaged.
+	//
+	// The names and shapes are the real ones, down to the `(完)` on 라제폰 3권.
+	b.rarFile("라제폰 1-3권 완결/라제폰 1권[번역].rar", cp949Pages(3))
+	b.rarFile("라제폰 1-3권 완결/라제폰 2권[번역].rar", cp949Pages(3))
+	b.rarFile("라제폰 1-3권 완결/라제폰 3권[번역](完).rar", cp949Pages(3))
+
+	// 울프가이 is the shape that matters most, because it is the one no unit
+	// test can be: ZIP and RAR volumes side by side in one series folder, one
+	// level down, so the two readers have to agree on page order, on naming and
+	// on 권 numbering within a single 권 list. The RAR names are Shift_JIS,
+	// which no per-entry test can identify — kenc.ArchiveFallback has to convict
+	// the archive as a whole (the real v01 has 207 such entries).
+	const wolf = "울프가이/[일어원문] Wolf Guy1-12권(완)/"
+	b.rarFile(wolf+"Wolf_Guy_-_Wolfen_Crest_v01_JP.rar", shiftJISPages(3))
+	b.zipFile(wolf+"Wolf_Guy_-_Wolfen_Crest_v02_JP.zip", shiftJISPages(3))
+	b.rarFile(wolf+"Wolf_Guy_-_Wolfen_Crest_v03_JP.rar", shiftJISPages(3))
+
+	mixed, err := mixedVolumes()
+	if err != nil {
+		return err
+	}
+	b.zipFile("사모님은 학생회장.zip", mixed)
+
+	b.solidRar("솔리드 테스트.rar", cp949Pages(3))
+
+	// 12 — a book that is one container this build has no reader for. The real
+	// case is `펌프킨 시저스 04.zip`: 39.5 MB in a single `.hv3`, a proprietary
+	// and (measurably) encrypted format. D-72 is that such a book reports the
+	// format it holds rather than `비어 있음`, which is what 비둘기.zip above
+	// still, correctly, reports.
+	b.zipFile("펌프킨 시저스 1~13권/펌프킨 시저스 04.zip", []entry{
+		{name: "펌프킨 시저스 04.hv3", data: hv3Blob()},
+	})
+	for i := 1; i <= 2; i++ {
+		b.zipFile(fmt.Sprintf("펌프킨 시저스 1~13권/펌프킨 시저스 %02d.zip", i), cp949Pages(3))
+	}
+
 	// D-49's two extras, which the real collection has no sample of.
 	b.encryptedZip("암호화 테스트.zip", cp949Pages(3))
 	b.zip64("ZIP64 테스트.zip")
 
 	return b.err
+}
+
+// mixedVolumes builds `사모님은 학생회장.zip`'s contents: volumes of both
+// formats plus one this build cannot open, so the assertion set can see that
+// the first two become books and the third does not.
+func mixedVolumes() ([]entry, error) {
+	zipVol, err := zipBytes(cp949Pages(2), 0)
+	if err != nil {
+		return nil, err
+	}
+	rarVol, err := rarBytes(cp949Pages(3), 0)
+	if err != nil {
+		return nil, err
+	}
+	return []entry{
+		{name: "사모님은 학생회장! 11화.rar", data: rarVol},
+		{name: "사모님은 학생회장! 12화.rar", data: rarVol},
+		{name: "사모님은 학생회장! 19화.zip", data: zipVol},
+		{name: "사모님은 학생회장! 1권 (번역).zip", data: zipVol},
+		{name: "사모님은 학생회장! 특전.7z", data: []byte("7z\xbc\xaf\x27\x1cnot a real 7z")},
+	}, nil
+}
+
+// hv3Blob is the head of an HV3 container, reproduced from the real
+// `펌프킨 시저스 04.hv3` down to the chunk names: the magic, the version, the
+// declared file size, a HEAD block carrying GUID/UUID/FTIM/TITL/MAKR, and the
+// ENCR chunk that says the payload is encrypted. The body here is filler.
+//
+// Nothing in this product parses any of it — the extension is what classifies
+// the book (FR-IDX-002 forbids reading a payload at index time). It is written
+// faithfully anyway so that a future reader of this fixture can see what the
+// real file is, rather than a placeholder that would teach them nothing.
+func hv3Blob() []byte {
+	var b bytes.Buffer
+	const total = 4096
+	b.WriteString("HV30")
+	_ = binary.Write(&b, binary.LittleEndian, uint32(24))
+	_ = binary.Write(&b, binary.LittleEndian, uint32(total-40))
+	_ = binary.Write(&b, binary.LittleEndian, uint32(0))
+
+	chunk := func(tag string, payload []byte) {
+		b.WriteString(tag)
+		_ = binary.Write(&b, binary.LittleEndian, uint32(len(payload)))
+		b.Write(payload)
+	}
+	chunk("VERS", []byte{0x07, 0x04, 0x08, 0x20})
+	chunk("FSIZ", []byte{0x00, 0x10, 0x00, 0x00})
+
+	var head bytes.Buffer
+	_ = binary.Write(&head, binary.LittleEndian, uint64(18528))
+	sub := func(tag string, payload []byte) {
+		head.WriteString(tag)
+		_ = binary.Write(&head, binary.LittleEndian, uint32(len(payload)))
+		head.Write(payload)
+	}
+	sub("GUID", make([]byte, 16))
+	sub("UUID", make([]byte, 16))
+	sub("FTIM", make([]byte, 8))
+	sub("TITL", utf16le("펌프킨 시저스_Pumpkin Scissors_04"))
+	sub("MAKR", utf16le("Scan by Q.H"))
+	chunk("HEAD", head.Bytes())
+
+	chunk("ENCR", []byte{0x02, 0x00, 0x00, 0x00})
+	chunk("LIST", nil)
+
+	for b.Len() < total {
+		b.WriteByte(byte(b.Len() * 31 % 251))
+	}
+	return b.Bytes()
+}
+
+func utf16le(s string) []byte {
+	out := make([]byte, 0, len(s)*2)
+	for _, r := range utf16.Encode([]rune(s)) {
+		out = append(out, byte(r), byte(r>>8))
+	}
+	return out
 }
 
 // ---------------------------------------------------------------------------
@@ -210,6 +341,53 @@ func (b *builder) zipFile(rel string, entries []entry) {
 		return
 	}
 	b.file(rel, data)
+}
+
+// rarFile writes a RAR 4.x archive of stored entries, the shape 12 of the
+// collection's 14 real RARs have.
+//
+// The bytes come from internal/testutil, the same writer the unit fixtures use,
+// so a change to either is a change to both. Writing a second RAR writer here
+// would produce a fixture that could agree with a bug the unit tests were also
+// agreeing with.
+func (b *builder) rarFile(rel string, entries []entry) {
+	if b.err != nil {
+		return
+	}
+	data, err := rarBytes(entries, 0)
+	if err != nil {
+		b.err = err
+		return
+	}
+	b.file(rel, data)
+}
+
+// solidRar sets the archive-wide solid flag. Nothing is actually solid-packed —
+// what the indexer reads is the flag, and the flag is what makes the book
+// `status:"unsupported"` rather than `error`. Zero solid archives exist in the
+// reference collection, which is why this has to be synthetic.
+func (b *builder) solidRar(rel string, entries []entry) {
+	if b.err != nil {
+		return
+	}
+	data, err := rarBytes(entries, testutil.RARMainSolid)
+	if err != nil {
+		b.err = err
+		return
+	}
+	b.file(rel, data)
+}
+
+func rarBytes(entries []entry, mainFlags uint16) ([]byte, error) {
+	spec := testutil.RAR4Spec{MainFlags: mainFlags}
+	for _, e := range entries {
+		name := e.rawName
+		if name == nil {
+			name = []byte(e.name)
+		}
+		spec.Entries = append(spec.Entries, testutil.RAR4Entry{Name: name, Data: e.data})
+	}
+	return testutil.RAR4Bytes(spec)
 }
 
 // truncatedZip writes an archive whose tail — and therefore whose end-of-
@@ -299,6 +477,24 @@ func cp949Pages(n int) []entry { return cp949PagesOf(n, jpegPage) }
 // the one volume that has to reproduce a two-page scan (군계 01권; see build()).
 // The names are identical, so AC-002's 500-name sample is unaffected.
 func cp949LandscapePages(n int) []entry { return cp949PagesOf(n, landscapeJPEG) }
+
+// shiftJISPages is cp949Pages for a Japanese archive: the entry names are
+// Shift_JIS, which no per-entry test can identify (Shift_JIS reads Korean bytes
+// happily), so kenc.ArchiveFallback has to convict the whole archive. The
+// collection's four 울프가이 RARs are this shape.
+func shiftJISPages(n int) []entry {
+	enc := japanese.ShiftJIS.NewEncoder()
+	out := make([]entry, 0, n)
+	for i := 1; i <= n; i++ {
+		name := fmt.Sprintf("第01巻 狼の紋章/%04d頁.jpg", i)
+		raw, err := enc.Bytes([]byte(name))
+		if err != nil {
+			raw = []byte(name)
+		}
+		out = append(out, entry{rawName: raw, data: jpegPage()})
+	}
+	return out
+}
 
 func cp949PagesOf(n int, page func() []byte) []entry {
 	enc := korean.EUCKR.NewEncoder()

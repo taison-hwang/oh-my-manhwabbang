@@ -48,9 +48,10 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 export const SHOTS_DIR = path.resolve(HERE, '..', '..', 'docs', 'e2e-shots')
 
 /**
- * The ten curated series of impl-plan §6.3, by their exact directory names.
+ * The curated series of impl-plan §6.3, by their exact directory names. Ten
+ * until D-71 added the four that RAR made reachable.
  *
- * These are a *copy*, not the source. The same ten strings are written out
+ * These are a *copy*, not the source. The same strings are written out
  * three more times — `scripts/e2e-config.sh:23-34` (`CURATED`, which becomes
  * `scan.include_globs`), `scripts/e2e-assert.py:27-38` (`CURATED`, the curl
  * tier's expectation) and 18 path literals in `scripts/mkfixture/main.go`,
@@ -61,7 +62,7 @@ export const SHOTS_DIR = path.resolve(HERE, '..', '..', 'docs', 'e2e-shots')
  * helper here that takes a name (`seriesId`, `openSeries`) fails *by name* on a
  * series the server never heard of. Renaming one series is a five-file edit.
  *
- * All ten were renamed at once in 2026-08, when the collection on disk lost the
+ * All ten of the original names were renamed at once in 2026-08, when the collection on disk lost the
  * leading `[만화] ` every entry used to carry. That is what a rename costs when
  * nothing links the five copies: the scan matched zero of ten, and `make e2e`
  * died at step 7 with `got 0, want 10` before a browser ever started. Two
@@ -82,21 +83,32 @@ export const SERIES = {
   battleRoyale: '배틀로얄 1~15 [완결].zip',
   angelHeart: '엔젤하트 전32권 완결.zip',
   dove: '비둘기.zip',
+  rahxephon: '라제폰 1-3권 완결',
+  wolfGuy: '울프가이',
+  madam: '사모님은 학생회장.zip',
+  pumpkin: '펌프킨 시저스 1~13권',
 } as const
 
 /**
- * The two shapes D-49 asks the synthetic tree to carry that the real collection
- * has no sample of — an encrypted archive and a ZIP64 archive.
+ * The shapes D-49 asks the synthetic tree to carry that the real collection has
+ * no sample of — an encrypted archive, a ZIP64 archive, and (since D-71) a solid
+ * RAR, which this build refuses on purpose and which none of the collection's 14
+ * real archives is.
  *
- * A *copy* on the same terms as `SERIES` above: the same two strings are written
- * out in `scripts/e2e-config.sh:38-41` (`SYNTHETIC_EXTRA`, appended to
- * `scan.include_globs` in synthetic mode), `scripts/e2e-assert.py:39` (the curl
- * tier's expectation) and `scripts/mkfixture/main.go`, which builds them. This
- * is the first assertion either of them has ever had in the browser tier.
+ * A *copy* on the same terms as `SERIES` above: the same strings are written out
+ * in `scripts/e2e-config.sh` (`SYNTHETIC_EXTRA`, appended to
+ * `scan.include_globs` in synthetic mode), `scripts/e2e-assert.py` (the curl
+ * tier's expectation) and `scripts/mkfixture/main.go`, which builds them.
+ *
+ * Four copies of one list is three too many, and it has now drifted once: the
+ * D-71 series were added to the other three and this round failed here, in eight
+ * screenshots across four viewports, rather than anywhere nearer the change.
+ * Worth collapsing to a generated file the next time this list moves.
  */
 export const SYNTHETIC_EXTRA = {
   encrypted: '암호화 테스트.zip',
   zip64: 'ZIP64 테스트.zip',
+  solidRar: '솔리드 테스트.rar',
 } as const
 
 /**
@@ -134,7 +146,7 @@ export const ROOT_EDITING_ENABLED = SYNTHETIC
 
 /**
  * Exactly what `scan.include_globs` puts in the library for this mode: the
- * curated ten, plus the two D-49 extras in synthetic mode.
+ * curated set, plus the D-49 extras in synthetic mode.
  *
  * The same parameterisation `scripts/e2e-assert.py:253` already makes —
  * `expected = CURATED + ([] if real else SYNTHETIC_EXTRA)` — green in both modes

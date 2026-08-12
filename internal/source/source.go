@@ -1,10 +1,13 @@
-// Package source makes the three shapes a book can take — a ZIP archive, a
-// folder of images, a PDF — look identical to everything above it.
+// Package source makes every shape a book can take — an archive, a folder of
+// images, a PDF, a volume inside a container — look identical to everything
+// above it.
 //
 // prd §2.2 says a 권 is "a ZIP file, an image sub-folder, or a PDF", and AC-003
 // and AC-004 both demand that the UI flow not care which. That is this
 // package's entire job: the scanner asks a [BookSource] for its pages, the
 // HTTP layer asks it for one page's bytes, and neither contains the word "zip".
+// D-71 is the proof it works — RAR arrived as one [archive.Reader] and two
+// openers, and nothing above this package changed at all.
 //
 // It also owns two rules that are the same for every kind:
 //
@@ -33,6 +36,7 @@ import (
 	"time"
 
 	"shelf/internal/archive"
+	"shelf/internal/archive/rar4"
 	"shelf/internal/archive/zipidx"
 	"shelf/internal/config"
 	"shelf/internal/natsort"
@@ -47,10 +51,19 @@ const (
 	KindZIP Kind = "zip"
 	KindDir Kind = "dir"
 	KindPDF Kind = "pdf"
-	// KindNestedZIP is one volume inside a container of volumes — a ZIP entry
-	// that is itself a ZIP. The container is the book's RelPath and the volume
-	// is its InnerPath.
+	// KindRAR is a RAR 4.x container, `.rar` or `.cbr`. prd §7.2 and D-07 put
+	// it out of scope for v1; D-71 brought it back in after measuring that not
+	// one of the collection's 14 archives is solid, which is what a page served
+	// from a recorded offset requires (see internal/archive/rar4).
+	KindRAR Kind = "rar"
+	// KindNestedZIP is one volume inside a container of volumes — an entry that
+	// is itself a ZIP. The container is the book's RelPath and the volume is its
+	// InnerPath.
 	KindNestedZIP Kind = "nestedzip"
+	// KindNestedRAR is the same shape with a RAR volume. `사모님은 학생회장.zip`
+	// is the case it exists for: 7 ZIPs and 8 RARs in one container, and under
+	// D-07 only the 7 were books.
+	KindNestedRAR Kind = "nestedrar"
 )
 
 // Errors callers match with errors.Is.
@@ -64,9 +77,10 @@ var (
 	//
 	// It used to be what a container of nested volumes produced — the 1.44 GB
 	// `엔젤하트` archive of 33 sub-ZIPs and zero images was the standing example.
-	// That is no longer true: those containers are now series of
-	// [KindNestedZIP] books (see nestedzipsource.go), and this error is back to
-	// meaning what it says.
+	// That is no longer true: those containers are now series of nested books
+	// (see nestedsource.go). Nor is it what a book holding one unreadable
+	// format produces — that is ErrUnsupported naming the format (D-72). So
+	// this error is back to meaning what it says.
 	ErrNoPages = errors.New("no supported image entries")
 	// ErrUnknownRoot — the book names a root that is not configured or not
 	// currently reachable.
@@ -111,7 +125,7 @@ type Book struct {
 	// file for zip/pdf, the directory for dir.
 	RelPath string
 	// InnerPath is the entry path of this book inside RelPath, for
-	// [KindNestedZIP]. Empty for every other kind.
+	// [KindNestedZIP] and [KindNestedRAR]. Empty for every other kind.
 	InnerPath string
 	// FileSize and FileMtime are what the index recorded for the container.
 	// They are passed to the handle pool so a changed file can be reported as
@@ -129,14 +143,18 @@ type Page struct {
 	EntryPath string // zip: full decoded entry path · dir: name within the book dir · pdf: ""
 	Ext       string // lowercase, with dot
 
-	Size     int64  // uncompressed bytes; 0 for a pdf page, which has none until rendered
-	CompSize int64  // zip only
-	Method   uint16 // zip only: 0 stored, 8 deflate
+	Size     int64 // uncompressed bytes; 0 for a pdf page, which has none until rendered
+	CompSize int64 // archives only: bytes on disk
+	// Method is the container's own compression method, so its numbering is
+	// per format: ZIP uses 0 stored / 8 deflate, RAR uses 0x30 stored /
+	// 0x31–0x35 packed. The two ranges do not overlap, but nothing relies on
+	// that — the reader that wrote the row is the reader that reads it.
+	Method uint16
 
-	// LocalHdrOff is the ZIP local file header offset. FR-SRV-002 lives or
-	// dies on this column.
+	// LocalHdrOff is where the entry's own header starts: the ZIP local file
+	// header, or the RAR block header. FR-SRV-002 lives or dies on this column.
 	LocalHdrOff int64
-	CRC32       uint32 // zip only, free from the central directory
+	CRC32       uint32 // archives only, free from the directory read
 	Mtime       int64  // dir only: the file's own mtime
 }
 
@@ -160,6 +178,11 @@ type Listing struct {
 	NameEncoding string
 	// Excluded counts the entries dropped by FR-IDX-006, for the scan log.
 	Excluded int
+	// Foreign names the container format this book turned out to hold, when it
+	// holds one this build cannot open and no pages at all — "HV3" for
+	// `펌프킨 시저스 04.zip`. Empty for every ordinary book, including one that
+	// merely contains a stray `.7z` alongside its pages.
+	Foreign string
 	// TotalBytes is the sum of the pages' uncompressed sizes — books.total_bytes.
 	TotalBytes int64
 	// ZIP64 reports that the container used 64-bit records (FR-IDX-009).
@@ -176,10 +199,10 @@ type OpenOptions struct {
 
 // Stream is one page's bytes, ready to be written to a response.
 //
-// For stored ZIP entries, dir pages and rendered PDF pages the body also
-// implements io.ReadSeeker; use [Stream.ReadSeeker] to hand it to
-// http.ServeContent and get Range support (arch §5.3). Deflated entries are
-// forward-only by construction.
+// For stored archive entries (ZIP and RAR alike), dir pages and rendered PDF
+// pages the body also implements io.ReadSeeker; use [Stream.ReadSeeker] to hand
+// it to http.ServeContent and get Range support (arch §5.3). Compressed entries
+// are forward-only by construction.
 type Stream struct {
 	io.ReadCloser
 	ContentType string
@@ -244,8 +267,10 @@ type Options struct {
 	// Pool supplies pooled container handles (FR-SRV-004). Required for
 	// KindZIP.
 	Pool *openpool.Pool
-	// Archive is the container reader. Zero means zipidx.New().
+	// Archive is the ZIP container reader. Zero means zipidx.New().
 	Archive archive.Reader
+	// RAR is the RAR container reader. Zero means rar4.New().
+	RAR archive.Reader
 	// PDF is the rasteriser. Zero, or a build with -tags nopdf, makes every
 	// PDF book ErrUnsupported.
 	PDF *pdfium.Renderer
@@ -261,9 +286,12 @@ type Options struct {
 
 // Factory opens book sources. One value serves the whole process.
 type Factory struct {
-	roots   *RootSet
-	pool    *openpool.Pool
-	arch    archive.Reader
+	roots *RootSet
+	pool  *openpool.Pool
+	// readers is one archive.Reader per container format, keyed by the plain
+	// kind that names it. A nested book looks up two of them: one for the
+	// container it lives in and one for its own format.
+	readers map[Kind]archive.Reader
 	pdf     *pdfium.Renderer
 	pdfW    int
 	pdfMaxW int
@@ -279,26 +307,37 @@ func NewFactory(opts Options) *Factory {
 	f := &Factory{
 		roots:   opts.Roots,
 		pool:    opts.Pool,
-		arch:    opts.Archive,
+		readers: make(map[Kind]archive.Reader, 2),
 		pdf:     opts.PDF,
 		pdfW:    opts.PDFWidth,
 		pdfMaxW: opts.PDFMaxWidth,
 		pdfQ:    opts.PDFQuality,
 		log:     opts.Logger,
-		openers: make(map[Kind]Opener, 4),
+		openers: make(map[Kind]Opener, 6),
 	}
-	if f.arch == nil {
-		f.arch = zipidx.New()
+	f.readers[KindZIP] = opts.Archive
+	if f.readers[KindZIP] == nil {
+		f.readers[KindZIP] = zipidx.New()
+	}
+	f.readers[KindRAR] = opts.RAR
+	if f.readers[KindRAR] == nil {
+		f.readers[KindRAR] = rar4.New()
 	}
 	if f.log == nil {
 		f.log = slog.Default()
 	}
 	f.openers[KindZIP] = openZIP
+	f.openers[KindRAR] = openRAR
 	f.openers[KindDir] = openDir
 	f.openers[KindPDF] = openPDF
 	f.openers[KindNestedZIP] = openNestedZIP
+	f.openers[KindNestedRAR] = openNestedRAR
 	return f
 }
+
+// readerFor returns the reader for a container kind, or nil for a kind that
+// names no container format.
+func (f *Factory) readerFor(k Kind) archive.Reader { return f.readers[k] }
 
 // Register installs an opener for a container kind, replacing any existing one.
 func (f *Factory) Register(kind Kind, open Opener) {

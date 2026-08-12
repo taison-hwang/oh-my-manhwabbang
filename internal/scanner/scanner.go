@@ -1198,6 +1198,12 @@ func (s *Scanner) expandContainer(ctx context.Context, rt *rootRun, t *seriesTas
 	// Only a top-level archive expands. A volume already inside a container is
 	// not opened looking for more containers: nesting deeper than one level does
 	// not occur in the collection, and refusing it here is what bounds the work.
+	//
+	// Only a ZIP container expands, too. Every one of the 46 containers of
+	// volumes in the collection is a ZIP, and internal/archive/nested presents
+	// an inner archive by reading a ZIP local header and inflating it — so a RAR
+	// container would need that adapter generalised, not just a kind added here.
+	// Declining is the honest answer until such a file exists.
 	if u.kind != source.KindZIP || u.innerPath != "" || ctx.Err() != nil {
 		return res, false
 	}
@@ -1224,7 +1230,12 @@ func (s *Scanner) expandContainer(ctx context.Context, rt *rootRun, t *seriesTas
 	for _, name := range inner {
 		vu := u
 		vu.innerPath = name
-		vu.kind = source.KindNestedZIP
+		// The volume's own extension chooses its kind, and therefore the reader
+		// that will index it. A `.rar` recorded as nestedzip would be handed to
+		// the ZIP reader and fail as corrupt, which is the wrong story about a
+		// perfectly good file. Volumes() only returns extensions that name a
+		// reader, so this is never empty.
+		vu.kind = source.NestedKind(name)
 		// The volume's identity within the series is the container plus the
 		// entry, so sort_key orders volumes inside a container the way natural
 		// sort orders any other pair of names.

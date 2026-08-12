@@ -37,6 +37,37 @@ func SupportedExt(ext string) bool {
 // Ext returns the lowercase extension of a name, dot included, or "".
 func Ext(name string) string { return strings.ToLower(path.Ext(name)) }
 
+// foreignFormats are container formats this build recognises by name and
+// cannot open. They are still excluded as entries — they are not pages — but a
+// book whose entire contents are one of these is not empty, it is unreadable,
+// and those are different sentences to put in front of a reader.
+//
+// Ruling E-14 settled that `비둘기.zip`, which holds one directory entry and
+// nothing else, is honestly `비어 있음`. `펌프킨 시저스 04.zip` is not that. It
+// holds 39.5 MB in a single `.hv3`, and telling its owner there are "no
+// supported image entries" describes a file that does not exist.
+//
+// The value is what the reader is told. It names the format, not a remedy,
+// because there is no remedy: HV3 is a proprietary container and the one in
+// this collection is encrypted — its header carries an ENCR chunk, its LIST
+// chunk is empty, and its body measures 7.9972 bits of entropy per byte with
+// two JPEG signatures in 39.5 MB. No decoder recovers that without the key.
+var foreignFormats = map[string]string{
+	".hv3": "HV3",
+	".7z":  "7-Zip",
+	".alz": "ALZ",
+	".egg": "EGG",
+	".lzh": "LZH",
+	".tar": "TAR",
+	".gz":  "gzip",
+	".iso": "ISO",
+}
+
+// ForeignFormat names the container format of an entry this build recognises
+// but cannot open, or "" for anything else — including `.zip` and `.rar`,
+// which have readers, and `.txt`, which is not a container at all.
+func ForeignFormat(name string) string { return foreignFormats[Ext(name)] }
+
 // Exclusion reasons, used verbatim in scan-log messages so an operator can see
 // which rule dropped an entry.
 const (

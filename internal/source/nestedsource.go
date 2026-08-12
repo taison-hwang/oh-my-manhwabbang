@@ -10,7 +10,7 @@ import (
 	"shelf/internal/archive/nested"
 )
 
-// nestedZipSource serves a book that is a ZIP *inside* another ZIP.
+// nestedSource serves a book that is an archive *inside* another archive.
 //
 // 45 books in the reference collection are containers holding nothing but
 // volumes — `겟 벡커스 1~39완.zip` is 1.4 GB and 39 of them — and prd §7.2 put
@@ -18,29 +18,58 @@ import (
 // This source is what makes each inner volume its own 권.
 //
 // It is a thin wrapper on purpose. Everything below it is unchanged: the inner
-// archive is presented as an io.ReaderAt by internal/archive/nested, and the
-// same archive.Reader then indexes it and streams its entries. The exclusion
+// archive is presented as an io.ReaderAt by internal/archive/nested, and an
+// [archive.Reader] then indexes it and streams its entries. The exclusion
 // rules, the natural page order and the CP949/Shift_JIS name decoding are all
-// the ones an ordinary ZIP book gets, because they are literally the same code.
-type nestedZipSource struct {
-	zipSource
+// the ones an ordinary book gets, because they are literally the same code.
+//
+// The two readers are separate because the two containers need not be the same
+// format. `사모님은 학생회장.zip` holds 7 ZIPs and 8 RARs; each of the 15 is a
+// volume, read by whichever reader its own extension names, through one outer
+// ZIP that neither of them knows about.
+type nestedSource struct {
+	containerSource
 	// innerPath is the outer container's entry name for this volume, exactly as
 	// books.inner_path recorded it.
 	innerPath string
+	// innerArch reads the volume. containerSource.arch reads the container it
+	// sits in.
+	innerArch archive.Reader
 }
 
 func openNestedZIP(ctx context.Context, f *Factory, b Book) (BookSource, error) {
+	return openNested(ctx, f, b, KindNestedZIP)
+}
+
+func openNestedRAR(ctx context.Context, f *Factory, b Book) (BookSource, error) {
+	return openNested(ctx, f, b, KindNestedRAR)
+}
+
+// openNested builds a nested source. The outer container is opened by the
+// reader its own path names — the outer is a ZIP in all 632 nested books here,
+// and nothing assumes it — and the inner by the reader `kind` names.
+func openNested(_ context.Context, f *Factory, b Book, kind Kind) (BookSource, error) {
 	if b.InnerPath == "" {
 		return nil, fmt.Errorf("opening book %s: %w (a nested book with no inner path)", b.ID, ErrUnsupported)
 	}
-	inner, err := openZIP(ctx, f, b)
+	outerKind := ContainerKind(b.RelPath)
+	inner, err := openContainer(f, b, f.readerFor(outerKind), kind)
 	if err != nil {
 		return nil, err
 	}
-	return &nestedZipSource{zipSource: *inner.(*zipSource), innerPath: b.InnerPath}, nil
+	innerArch := f.readerFor(innerKind(kind))
+	if innerArch == nil {
+		return nil, fmt.Errorf("opening book %s: %w (no reader for nested kind %q)",
+			b.ID, ErrUnsupported, kind)
+	}
+	return &nestedSource{
+		containerSource: *inner.(*containerSource),
+		innerPath:       b.InnerPath,
+		innerArch:       innerArch,
+	}, nil
 }
 
-func (s *nestedZipSource) Kind() Kind { return KindNestedZIP }
+func (s *nestedSource) Kind() Kind { return s.kind }
 
 // VolumeLister is implemented by a source whose container may hold whole books
 // rather than pages. The scanner type-asserts for it, exactly as the HTTP layer
@@ -49,7 +78,7 @@ type VolumeLister interface {
 	Volumes(ctx context.Context) ([]string, error)
 }
 
-// Volumes lists the archive entries inside a ZIP container that are themselves
+// Volumes lists the archive entries inside a container that are themselves
 // archives this build can open, in the container's own order.
 //
 // It is what turns one `비어 있음` book into a series of volumes, and the
@@ -57,18 +86,19 @@ type VolumeLister interface {
 // an ordinary book never pays for it, and neither does an unchanged one, which
 // is not opened at all.
 //
-// `.rar`, `.7z` and friends are deliberately not returned. prd §7.2 keeps those
-// formats out and nothing here can read them; listing them would produce books
-// that cannot open. `사모님은 학생회장.zip` is the mixed case in the collection —
-// 7 ZIPs and 8 RARs — and it yields its 7 readable volumes rather than nothing.
-func (s *zipSource) Volumes(ctx context.Context) ([]string, error) {
+// An entry whose extension names no reader is not returned, because listing it
+// would produce a book that cannot open. Under D-07 that silently dropped every
+// `.rar`: `사모님은 학생회장.zip` holds 7 ZIPs and 8 RARs and yielded 7 volumes.
+// D-71 gives RAR a reader, so it now yields all 15. `.7z` and friends are still
+// dropped, and for the same reason as before.
+func (s *containerSource) Volumes(ctx context.Context) ([]string, error) {
 	ref, err := s.acquireMatching(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("listing volumes of book %s: %w", s.book.ID, err)
 	}
 	defer ref.Release()
 
-	ix, err := s.f.arch.ReadIndex(ctx, ref, ref.Size())
+	ix, err := s.arch.ReadIndex(ctx, ref, ref.Size())
 	if ix == nil {
 		return nil, fmt.Errorf("listing volumes of book %s: %w", s.book.ID, err)
 	}
@@ -78,7 +108,7 @@ func (s *zipSource) Volumes(ctx context.Context) ([]string, error) {
 		if e.Dir || e.Encrypted || e.Size == 0 {
 			continue
 		}
-		if !nestedVolumeExt(Ext(e.Name)) {
+		if !NestedVolumeExt(Ext(e.Name)) {
 			continue
 		}
 		out = append(out, e.Name)
@@ -86,10 +116,55 @@ func (s *zipSource) Volumes(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
-// nestedVolumeExt is the set of inner-archive extensions that become volumes.
-// It is ZIP and its comic-book alias only; see NestedVolumes.
-func nestedVolumeExt(ext string) bool {
-	return ext == ".zip" || ext == ".cbz"
+// NestedVolumeExt reports whether an inner-archive extension becomes a volume.
+//
+// It is exported because the scanner asks the same question about a container
+// before it opens one, and the two answers must not be able to drift: a
+// container the scanner expands into volumes the source then refuses to list
+// would produce a series of books that all fail to open.
+func NestedVolumeExt(ext string) bool {
+	return ContainerKind(ext) != ""
+}
+
+// ContainerKind maps a path or a bare extension to the book kind that reads
+// it. Empty means no reader, which is the honest answer for `.7z`.
+//
+// It is the one table that decides which container formats this build opens.
+// The scanner uses it to classify a file on disk, Volumes uses it to decide
+// which entries of a container are volumes, and openNested uses it to pick the
+// outer reader — so those three can never disagree about what a `.rar` is.
+func ContainerKind(name string) Kind {
+	switch Ext(name) {
+	case ".zip", ".cbz":
+		return KindZIP
+	case ".rar", ".cbr":
+		return KindRAR
+	}
+	return ""
+}
+
+// innerKind maps a nested kind to the plain kind that reads the same format,
+// so one extension table serves both.
+func innerKind(k Kind) Kind {
+	switch k {
+	case KindNestedZIP:
+		return KindZIP
+	case KindNestedRAR:
+		return KindRAR
+	}
+	return ""
+}
+
+// NestedKind is the book kind for a volume of format `ext` found inside a
+// container. The scanner records it in books.kind.
+func NestedKind(ext string) Kind {
+	switch ContainerKind(ext) {
+	case KindZIP:
+		return KindNestedZIP
+	case KindRAR:
+		return KindNestedRAR
+	}
+	return ""
 }
 
 // innerRef finds this volume's entry in the outer container's directory.
@@ -99,8 +174,8 @@ func nestedVolumeExt(ext string) bool {
 // holds tens of entries, against inflating the volume itself — and it keeps
 // books.inner_path the single source of truth for which volume this is, with no
 // stored offsets that a repacked container could silently invalidate.
-func (s *nestedZipSource) innerRef(ctx context.Context, r io.ReaderAt, size int64) (archive.EntryRef, error) {
-	ix, err := s.f.arch.ReadIndex(ctx, r, size)
+func (s *nestedSource) innerRef(ctx context.Context, r io.ReaderAt, size int64) (archive.EntryRef, error) {
+	ix, err := s.arch.ReadIndex(ctx, r, size)
 	if ix == nil {
 		return archive.EntryRef{}, fmt.Errorf("reading container of book %s: %w", s.book.ID, err)
 	}
@@ -122,14 +197,14 @@ func (s *nestedZipSource) innerRef(ctx context.Context, r io.ReaderAt, size int6
 // deflated inner archive has to be inflated once to reach its central
 // directory, which is at its end. Measured on the collection that is ~500 ms
 // for a 107-page volume of `겟 벡커스`, paid once per volume per scan.
-func (s *nestedZipSource) List(ctx context.Context) (*Listing, error) {
+func (s *nestedSource) List(ctx context.Context) (*Listing, error) {
 	ref, err := s.acquireMatching(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("listing book %s: %w", s.book.ID, err)
 	}
 	defer ref.Release()
 
-	l := &Listing{Kind: KindNestedZIP}
+	l := &Listing{Kind: s.kind}
 	entry, err := s.innerRef(ctx, ref, ref.Size())
 	if err != nil {
 		return l, fmt.Errorf("listing book %s: %w", s.book.ID, err)
@@ -141,13 +216,13 @@ func (s *nestedZipSource) List(ctx context.Context) (*Listing, error) {
 	}
 	defer inner.Close()
 
-	ix, readErr := s.f.arch.ReadIndex(ctx, inner, inner.Size())
+	ix, readErr := s.innerArch.ReadIndex(ctx, inner, inner.Size())
 	if ix == nil {
 		return l, fmt.Errorf("listing book %s: %w", s.book.ID, readErr)
 	}
 	l.ZIP64 = ix.ZIP64
 	if ix.Encrypted() {
-		return l, fmt.Errorf("listing book %s: %w", s.book.ID, encryptedErr())
+		return l, fmt.Errorf("listing book %s: %w", s.book.ID, encryptedErr(s.innerArch.Format()))
 	}
 
 	pagesFromIndex(l, ix)
@@ -156,7 +231,7 @@ func (s *nestedZipSource) List(ctx context.Context) (*Listing, error) {
 		return l, fmt.Errorf("listing book %s: %w", s.book.ID, readErr)
 	}
 	if len(l.Pages) == 0 {
-		return l, fmt.Errorf("listing book %s: %w", s.book.ID, ErrNoPages)
+		return l, fmt.Errorf("listing book %s: %w", s.book.ID, noPagesErr(l))
 	}
 	return l, nil
 }
@@ -169,7 +244,7 @@ func (s *nestedZipSource) List(ctx context.Context) (*Listing, error) {
 // per stream costs an inflate up to the page's offset — 13 ms for a mid-volume
 // page of `겟 벡커스`, because the inner entries are stored JPEGs and inflating
 // them is very nearly a copy.
-func (s *nestedZipSource) Open(ctx context.Context, p Page, _ OpenOptions) (*Stream, error) {
+func (s *nestedSource) Open(ctx context.Context, p Page, _ OpenOptions) (*Stream, error) {
 	ref, err := s.f.pool.Acquire(ctx, s.abs, s.book.FileMtime, s.book.FileSize)
 	if err != nil {
 		return nil, fmt.Errorf("opening page %d of book %s: %w", p.No, s.book.ID, err)
@@ -185,7 +260,7 @@ func (s *nestedZipSource) Open(ctx context.Context, p Page, _ OpenOptions) (*Str
 		ref.Release()
 		return nil, fmt.Errorf("opening page %d of book %s: %w", p.No, s.book.ID, err)
 	}
-	rc, err := s.f.arch.OpenEntry(ctx, inner, p.Ref())
+	rc, err := s.innerArch.OpenEntry(ctx, inner, p.Ref())
 	if err != nil {
 		inner.Close()
 		ref.Release()
@@ -207,7 +282,7 @@ func (s *nestedZipSource) Open(ctx context.Context, p Page, _ OpenOptions) (*Str
 }
 
 var (
-	_ BookSource   = (*nestedZipSource)(nil)
-	_ StaleChecker = (*nestedZipSource)(nil)
-	_ VolumeLister = (*zipSource)(nil)
+	_ BookSource   = (*nestedSource)(nil)
+	_ StaleChecker = (*nestedSource)(nil)
+	_ VolumeLister = (*containerSource)(nil)
 )

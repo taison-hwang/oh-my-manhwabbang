@@ -59,15 +59,15 @@ func ignoredChild(name string) (bool, string) {
 	return false, ""
 }
 
-// Container extensions. arch §4.2 names `.zip` and `.cbz`; RAR/CBR and 7z are
-// out of scope (prd §7.2, decision D-07) and fall through to "ignored" with one
-// info-level scan-log row rather than to an error.
+// Container extensions. arch §4.2 names `.zip` and `.cbz`; D-71 adds `.rar`
+// and `.cbr`. 7z and friends are still out of scope (prd §7.2) and fall through
+// to "ignored" with one info-level scan-log row rather than to an error.
+//
+// The list is source.NestedVolumeExt's, deliberately: a format is a book on
+// disk exactly when it is a volume inside a container, and two tables that
+// could disagree would eventually disagree.
 func isArchiveName(name string) bool {
-	switch source.Ext(name) {
-	case ".zip", ".cbz":
-		return true
-	}
-	return false
+	return source.NestedVolumeExt(source.Ext(name))
 }
 
 func isPDFName(name string) bool { return source.Ext(name) == ".pdf" }

@@ -32,13 +32,18 @@ CURATED=(
   "배틀로얄 1~15 [완결].zip"                 # 1 540 pages — AC-008
   "엔젤하트 전32권 완결.zip"                 # container of ZIPs — volumes (D-70)
   "비둘기.zip"                               # opens, holds no page and no volume — E-14
+  "라제폰 1-3권 완결"                        # a folder of RARs — D-71
+  "울프가이"                                 # ZIP and RAR volumes in one series
+  "사모님은 학생회장.zip"                    # container mixing ZIP, RAR and .7z
+  "펌프킨 시저스 1~13권"                     # one volume is an .hv3 — D-72
 )
 
-# The synthetic tree carries the same ten names plus two shapes the real
-# collection has no sample of (D-49).
+# The synthetic tree carries the same names plus three shapes the real
+# collection has no sample of (D-49, extended by D-71).
 SYNTHETIC_EXTRA=(
   "암호화 테스트.zip"
   "ZIP64 테스트.zip"
+  "솔리드 테스트.rar"
 )
 
 synthetic=0

@@ -121,6 +121,7 @@ FROZEN_DEPS := \
 	github.com/disintegration/imaging:v1.6.2 \
 	github.com/gen2brain/avif:v0.6.0 \
 	github.com/klippa-app/go-pdfium:v1.19.6 \
+	github.com/nwaples/rardecode/v2:v2.3.0 \
 	github.com/tetratelabs/wazero:v1.12.0 \
 	gopkg.in/yaml.v3:v3.0.1 \
 	golang.org/x/crypto:v0.54.0
@@ -283,7 +284,7 @@ tidy:
 		exit 1; \
 	fi; \
 	rm -f .go.mod.bak .go.sum.bak; \
-	echo "tidy: clean; all 9 frozen dependencies intact"
+	echo "tidy: clean; all 10 frozen dependencies intact"
 
 ## release — the seven NFR-OPS-003 targets plus SHA256SUMS, all cgo-free.
 release: web

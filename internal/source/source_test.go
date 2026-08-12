@@ -318,13 +318,18 @@ func TestFactory_registry(t *testing.T) {
 	f := newFixture(t, map[string]any{"book": map[string]any{"001.jpg": testutil.TinyJPEG(t, 8, 8)}})
 
 	kinds := f.factory.Kinds()
-	want := []source.Kind{source.KindDir, source.KindNestedZIP, source.KindPDF, source.KindZIP}
+	want := []source.Kind{
+		source.KindDir, source.KindNestedRAR, source.KindNestedZIP,
+		source.KindPDF, source.KindRAR, source.KindZIP,
+	}
 	if !slices.Equal(kinds, want) {
 		t.Errorf("Kinds() = %v, want %v", kinds, want)
 	}
 
 	// An unregistered kind is ErrUnsupported, not a panic and not a nil source.
-	_, err := f.factory.Open(t.Context(), source.Book{ID: "bk", Kind: "rar", RootName: rootName, RelPath: "book"})
+	// `7z` stands in for "a format this build has no reader for" — the role
+	// `rar` played until D-71 gave it one.
+	_, err := f.factory.Open(t.Context(), source.Book{ID: "bk", Kind: "7z", RootName: rootName, RelPath: "book"})
 	if !errors.Is(err, source.ErrUnsupported) {
 		t.Fatalf("err = %v, want source.ErrUnsupported", err)
 	}
@@ -332,24 +337,26 @@ func TestFactory_registry(t *testing.T) {
 		t.Errorf("StatusOf = %q, want %q", got, archive.StatusUnsupported)
 	}
 
-	// Registering it makes it work, with no change anywhere else.
-	f.factory.Register("rar", func(_ context.Context, _ *source.Factory, b source.Book) (source.BookSource, error) {
+	// Registering it makes it work, with no change anywhere else. This is the
+	// seam prd §7.2 asked for, and D-71 is the proof it works: RAR arrived as
+	// one archive.Reader plus two lines here.
+	f.factory.Register("7z", func(_ context.Context, _ *source.Factory, b source.Book) (source.BookSource, error) {
 		return stubSource{id: b.ID}, nil
 	})
-	src, err := f.factory.Open(t.Context(), source.Book{ID: "bk", Kind: "rar", RootName: rootName, RelPath: "book"})
+	src, err := f.factory.Open(t.Context(), source.Book{ID: "bk", Kind: "7z", RootName: rootName, RelPath: "book"})
 	if err != nil {
 		t.Fatalf("Open after Register: %v", err)
 	}
-	if src.Kind() != "rar" {
-		t.Errorf("Kind() = %q, want %q", src.Kind(), "rar")
+	if src.Kind() != "7z" {
+		t.Errorf("Kind() = %q, want %q", src.Kind(), "7z")
 	}
 }
 
 type stubSource struct{ id string }
 
-func (stubSource) Kind() source.Kind { return "rar" }
+func (stubSource) Kind() source.Kind { return "7z" }
 func (stubSource) List(context.Context) (*source.Listing, error) {
-	return &source.Listing{Kind: "rar"}, nil
+	return &source.Listing{Kind: "7z"}, nil
 }
 func (stubSource) Open(context.Context, source.Page, source.OpenOptions) (*source.Stream, error) {
 	return nil, source.ErrUnsupported

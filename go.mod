@@ -14,6 +14,7 @@ require (
 	github.com/disintegration/imaging v1.6.2 // downscaling — imaging.Lanczos (D-10)
 	github.com/gen2brain/avif v0.6.0 // AVIF decode via wazero, cgo-free
 	github.com/klippa-app/go-pdfium v1.19.6 // PDF rasterisation, webassembly mode
+	github.com/nwaples/rardecode/v2 v2.3.0 // RAR4 unpack for compressed entries only (D-71)
 	github.com/tetratelabs/wazero v1.12.0 // persistent wasm compilation cache
 	golang.org/x/crypto v0.54.0 // bcrypt for the optional password
 	golang.org/x/image v0.44.0 // bmp / tiff / webp decoders

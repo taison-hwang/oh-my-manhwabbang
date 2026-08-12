@@ -30,22 +30,30 @@ export interface VolumeBadge {
   reason: string
   /**
    * The server's own `books.error` (arch §4.11), e.g.
-   * `zip: end of central directory not found`. English and diagnostic, so it
-   * rides along as a `title` rather than replacing the Korean reason the
-   * design specifies.
+   * `zip: end of central directory not found`, or `rar: archive is
+   * password-protected`, or the name of a format this build cannot open.
+   * English and diagnostic, so it rides along as a `title` rather than
+   * replacing the Korean reason the design specifies.
    */
   detail: string | null
 }
 
 /**
  * The two statuses the design names, plus the two the contract can produce that
- * it does not (`unsupported` is a `nopdf` build, `empty` is an archive with no
- * qualifying entries — D-10's container-of-ZIPs is the real case). Leaving
- * those two unlabelled would render a dead tile with no explanation, which is
- * the exact failure FR-IDX-010 exists to prevent.
+ * it does not. Leaving those two unlabelled would render a dead tile with no
+ * explanation, which is the exact failure FR-IDX-010 exists to prevent.
+ *
+ * `unsupported` covers a `nopdf` build and, since D-72, a container holding a
+ * format this build has no reader for — `펌프킨 시저스 04.zip` is 39.5 MB of
+ * HV3. `empty` is an archive with nothing readable in it at all, which after
+ * D-70 and D-72 means what it says: `비둘기.zip` and its one directory entry.
+ *
+ * Both carry the server's own sentence as `detail`, which is where the format
+ * gets named — the Korean reason here stays general because the badge is a
+ * category, not a diagnosis.
  */
 const BADGES: Record<Exclude<ItemStatus, 'ok'>, { label: string; reason: string }> = {
-  encrypted: { label: '암호화', reason: '비밀번호가 필요한 ZIP' },
+  encrypted: { label: '암호화', reason: '비밀번호가 필요한 압축 파일' },
   error: { label: '손상', reason: '중앙 디렉터리 손상' },
   unsupported: { label: '미지원', reason: '이 빌드에서 지원하지 않는 형식' },
   empty: { label: '비어 있음', reason: '읽을 수 있는 페이지가 없습니다' },

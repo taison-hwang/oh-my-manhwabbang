@@ -51,12 +51,18 @@ CURATED = [
     "배틀로얄 1~15 [완결].zip",
     "엔젤하트 전32권 완결.zip",
     "비둘기.zip",
+    "라제폰 1-3권 완결",
+    "울프가이",
+    "사모님은 학생회장.zip",
+    "펌프킨 시저스 1~13권",
 ]
-SYNTHETIC_EXTRA = ["암호화 테스트.zip", "ZIP64 테스트.zip"]
+SYNTHETIC_EXTRA = ["암호화 테스트.zip", "ZIP64 테스트.zip", "솔리드 테스트.rar"]
 
 CLOVER, WOUNDS, SUICIDE, WHEEL = CURATED[0], CURATED[1], CURATED[2], CURATED[3]
 FMA, GUNGYE, DNANGEL, MISAENG = CURATED[4], CURATED[5], CURATED[6], CURATED[7]
 BATTLE_ROYALE, ANGEL_HEART, DOVE = CURATED[8], CURATED[9], CURATED[10]
+RAHXEPHON, WOLF_GUY, MADAM, PUMPKIN = CURATED[11], CURATED[12], CURATED[13], CURATED[14]
+SOLID_RAR = SYNTHETIC_EXTRA[2]
 
 # arch §7.9 pins the cache-usage walk at "cached for 60 s". The bounded wait
 # below has to outlast that window rather than match it, or a check that is one
@@ -1023,6 +1029,91 @@ def main() -> int:
     r.check("비둘기 reports its bytes on disk, not its (zero) page bytes",
             dove["total_bytes"] >= dove["books"][0]["file_size"] > 0,
             f"total_bytes {dove['total_bytes']}, file_size {dove['books'][0]['file_size']}")
+
+    # ---- D-71: RAR is a book format ------------------------------------
+    # prd §7.2 and D-07 kept RAR out of v1. D-71 brought it in after measuring
+    # that none of the collection's 14 archives is solid, which is the property
+    # a page served from a recorded offset depends on. These assertions are the
+    # product-level form of that: 권 that used to be invisible now open, and
+    # they open by the same rules a ZIP does.
+    rx = r.json("/api/series/" + by_name[RAHXEPHON]["id"])
+    r.eq("라제폰 (a folder of RARs) is a readable series (D-71)", rx["status"], "ok")
+    r.eq("its volumes are kind=rar", sorted({b["kind"] for b in rx["books"]}), ["rar"])
+    r.eq("every RAR volume opens", sorted({b["status"] for b in rx["books"]}), ["ok"])
+    r.check("every RAR volume has pages",
+            all(b["page_count"] > 0 for b in rx["books"]),
+            f"page counts: {[b['page_count'] for b in rx['books']]}")
+    if real:
+        r.eq("라제폰 has three volumes", rx["book_count"], 3)
+        r.eq("라제폰 holds 287 pages across them", rx["page_count"], 287)
+
+    # One series, both formats. This is the assertion that would catch a RAR
+    # read by the ZIP reader, or a 권 list that orders the two formats apart.
+    wg = r.json("/api/series/" + by_name[WOLF_GUY]["id"])
+    wg_kinds = sorted({b["kind"] for b in wg["books"]})
+    r.eq("울프가이 mixes ZIP and RAR volumes in one series", wg_kinds, ["rar", "zip"])
+    r.eq("every volume of the mixed series opens",
+         sorted({b["status"] for b in wg["books"]}), ["ok"])
+    # The RAR entry names are Shift_JIS, which is decided per archive and never
+    # per entry (kenc.ArchiveFallback). A wrong verdict shows up as a page name,
+    # so assert on one rather than on the encoding label.
+    wg_rar = next(b for b in wg["books"] if b["kind"] == "rar")
+    wg_book = r.json(f"/api/books/{wg_rar['id']}")
+    wg_names = [p["name"] for p in wg_book["pages"]]
+    r.check("its Shift_JIS page names decoded",
+            wg_names and not any("�" in n for n in wg_names),
+            f"page names: {wg_names[:3]}")
+    status, body, headers = r.get(f"/api/books/{wg_rar['id']}/pages/1?v={wg_rar['cv']}")
+    r.eq("and page 1 of the RAR volume streams", status, 200)
+    r.check("as an image",
+            str(headers.get("Content-Type", "")).startswith("image/"),
+            str(headers.get("Content-Type")))
+    r.ge("with real bytes in it", len(body), 100)
+
+    # `사모님은 학생회장.zip` is the mixed container: D-07 gave it its ZIP
+    # volumes and silently dropped every RAR. The `.7z` is still dropped, and
+    # that is the control — the rule is "a format with a reader", not "any
+    # entry that looks like an archive".
+    md = r.json("/api/series/" + by_name[MADAM]["id"])
+    md_kinds = sorted({b["kind"] for b in md["books"]})
+    r.eq("사모님은 학생회장 yields volumes of both nested kinds",
+         md_kinds, ["nestedrar", "nestedzip"])
+    r.eq("every nested volume opens", sorted({b["status"] for b in md["books"]}), ["ok"])
+    r.check("the .7z entry did not become a book",
+            not any(b["name"].endswith(".7z") for b in md["books"]),
+            f"volumes: {[b['name'] for b in md['books']]}")
+    if real:
+        r.eq("사모님은 학생회장 has all 15 volumes, not the 7 D-07 allowed",
+             md["book_count"], 15)
+
+    # ---- D-72: a book that is one format this build cannot open ---------
+    # `펌프킨 시저스 04.zip` was the last of the 48 books reporting
+    # `비어 있음 · no supported image entries`, and the only one where that
+    # sentence was false rather than merely unhelpful: it holds 39.5 MB in a
+    # single encrypted `.hv3`.
+    pk = r.json("/api/series/" + by_name[PUMPKIN]["id"])
+    hv3 = [b for b in pk["books"] if b["status"] != "ok"]
+    r.eq("펌프킨 시저스 has exactly one volume that will not open", len(hv3), 1)
+    r.eq("it is unsupported, not empty and not error (D-72)", hv3[0]["status"], "unsupported")
+    r.check("and it names the format it holds",
+            "HV3" in (hv3[0]["error"] or ""), f"error field: {hv3[0]['error']!r}")
+    r.check("the rest of the series is unaffected",
+            all(b["page_count"] > 0 for b in pk["books"] if b["status"] == "ok"),
+            "sibling volumes still open")
+
+    if not real:
+        # No solid RAR exists in the collection, so this shape is synthetic
+        # (D-49's reasoning, applied to D-71). A solid archive is readable in
+        # principle and this build declines it: page N would cost pages 1..N-1,
+        # which is exactly what NFR-PRF-006 forbids. The verdict has to be
+        # `unsupported` — calling a sound file `손상` sends its owner looking
+        # for damage that is not there.
+        sr = r.json("/api/series/" + by_name[SOLID_RAR]["id"])
+        r.eq("a solid RAR is refused as unsupported, not as corrupt",
+             [b["status"] for b in sr["books"]], ["unsupported"])
+        r.check("and says why",
+                "solid" in (sr["books"][0]["error"] or "").lower(),
+                f"error field: {sr['books'][0]['error']!r}")
 
     dn = r.json("/api/series/" + by_name[DNANGEL]["id"])
     dn_errors = [b for b in dn["books"] if b["status"] == "error"]

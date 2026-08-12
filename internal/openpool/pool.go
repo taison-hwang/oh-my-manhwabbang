@@ -174,7 +174,7 @@ var _ io.ReaderAt = (*Ref)(nil)
 // path is a new inode and this handle is the old, unlinked one, still perfectly
 // readable. That is the right answer for a reader committed to offsets the index
 // recorded before the change, and the wrong one for anybody deriving a fresh
-// verdict: source.zipSource.List treats a stale ref as a reason to Invalidate
+// verdict: source.containerSource.List treats a stale ref as a reason to Invalidate
 // and re-open rather than as a fact to report onwards (arch §4.6, §5.2).
 func (p *Pool) Acquire(ctx context.Context, path string, wantMtime, wantSize int64) (*Ref, error) {
 	if err := ctx.Err(); err != nil {

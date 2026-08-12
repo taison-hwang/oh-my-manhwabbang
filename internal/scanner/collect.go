@@ -100,7 +100,7 @@ func (s *Scanner) collectBooks(rt *rootRun, dirRel string, dirMtime int64, depth
 
 	for _, a := range archives {
 		books = append(books, bookUnit{
-			relPath: a.rel, kind: source.KindZIP, size: a.size, mtime: a.mtime,
+			relPath: a.rel, kind: source.ContainerKind(a.rel), size: a.size, mtime: a.mtime,
 		})
 	}
 	for _, p := range pdfs {

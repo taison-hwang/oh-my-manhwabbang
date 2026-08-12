@@ -240,7 +240,7 @@ func (s *Scanner) classifyChild(rt *rootRun, c childInfo) (*seriesUnit, bool) {
 func seriesKindOfFile(name string) (kind string, bookKind source.Kind, ok bool) {
 	switch {
 	case isArchiveName(name):
-		return SeriesZIP, source.KindZIP, true
+		return SeriesZIP, source.ContainerKind(name), true
 	case isPDFName(name):
 		return SeriesPDF, source.KindPDF, true
 	}

@@ -316,15 +316,18 @@ func expectedNames[T any](books []T) []string {
 }
 
 // arch §4.2: a regular file at the top of a root that is neither an archive nor
-// a PDF is not a series. The real collection has a `.rar` and a `.DS_Store`
-// there, and arch asks for exactly one info-level scan_log row.
+// a PDF is not a series, and arch asks for exactly one info-level scan_log row.
+//
+// The `.rar` that used to stand here is a series now (D-71), so the example
+// moved to `.7z` — still a real archive format, still one this build has no
+// reader for, which is the property the rule is about.
 func TestClassify_nonContainerRootChild_isIgnoredWithOneInfoLogRow(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, map[string]any{
-		"[만화] 무언가.rar": "not an archive we support",
-		"읽어보세요.txt":    "메모",
-		".DS_Store":    "junk",
-		"진짜 시리즈.zip":   jpegZIP(t, "001.jpg"),
+		"[만화] 무언가.7z": "not an archive we support",
+		"읽어보세요.txt":   "메모",
+		".DS_Store":   "junk",
+		"진짜 시리즈.zip":  jpegZIP(t, "001.jpg"),
 	})
 	h.run(Request{})
 
@@ -339,7 +342,7 @@ func TestClassify_nonContainerRootChild_isIgnoredWithOneInfoLogRow(t *testing.T)
 			info[e.RelPath]++
 		}
 	}
-	for _, want := range []string{"[만화] 무언가.rar", "읽어보세요.txt"} {
+	for _, want := range []string{"[만화] 무언가.7z", "읽어보세요.txt"} {
 		if info[want] != 1 {
 			t.Errorf("scan_log info rows for %q = %d, want exactly 1", want, info[want])
 		}

@@ -520,7 +520,7 @@ describe('volume grid (FR-LIB-009, ui-spec §5.3)', () => {
   it('badges an encrypted volume 암호화 and makes it unclickable (FR-IDX-010)', async () => {
     await setup()
     expect(screen.getByText('암호화')).toBeInTheDocument()
-    expect(screen.getByText('비밀번호가 필요한 ZIP')).toBeInTheDocument()
+    expect(screen.getByText('비밀번호가 필요한 압축 파일')).toBeInTheDocument()
     expect(
       screen.queryByRole('button', { name: /군계\(軍鷄\) 09권\.zip/ }),
     ).not.toBeInTheDocument()
