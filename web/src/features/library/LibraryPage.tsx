@@ -1,5 +1,5 @@
 import { SearchX } from 'lucide-react'
-import { useCallback } from 'react'
+import { useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { useSettings } from '../../api/queries'
@@ -71,6 +71,55 @@ export function LibraryPage() {
   const onRevealed = useCallback(() => {
     setRevealSeries(null)
   }, [setRevealSeries])
+
+  /**
+   * **The instruction outlives the pages it needs, so the screen has to fetch
+   * them back.**
+   *
+   * Both surfaces locate the series by its index in `items`, and `items` is
+   * whatever `useSeriesListInfinite` happens to be holding. That cache is
+   * **transient by construction**: `main.tsx` sets no `gcTime`, so react-query's
+   * default of five minutes applies, and the library's query has no observer at
+   * all while the reader is inside a book. **Any reading session longer than
+   * five minutes therefore collects it**, and the library remounts holding one
+   * page of 60 — measured on the real collection: parked 40 931px down with 14
+   * pages loaded, five and a half minutes in the viewer, back to `scrollTop: 0`
+   * with `GET /api/series?offset=0&limit=60` as the only list request and the
+   * series nowhere in the document.
+   *
+   * The reveal did exactly what E-34 §2 tells it to in that situation — `index
+   * === -1`, stay armed, steal no focus — and the reader still landed at the top
+   * of the shelf. Arming the instruction (`App.tsx`, `ViewerPage.tsx`) is not
+   * enough on its own: **something has to make the series reachable**, and only
+   * this screen owns the pagination.
+   *
+   * So while the instruction is armed and unsatisfied, page forward. It
+   * terminates on the two conditions that exhaust the question:
+   *
+   *  - the series appears in `items` — the surfaces take it from there;
+   *  - `hasNextPage` goes false — the whole filtered list has now been read and
+   *    the series is genuinely not in it.
+   *
+   * **The bound is one pass over the current filter, once per instruction**, and
+   * in the ordinary case it is far less: the reader is returning to a place they
+   * had already paged to, so the pass stops exactly where they were. The E-34
+   * note that called this "unbounded" was reasoning about *chasing* — refetching
+   * with no terminating condition — and about a reader whose `scope`/`q` exclude
+   * the series, which is the `hasNextPage` case above and costs one pass of a
+   * list the filter has already narrowed. `loadMore` is idempotent while a page
+   * is in flight (`useLibrary`), so this cannot stack requests.
+   *
+   * What it deliberately does **not** do is clear the instruction when the list
+   * is exhausted. E-34 §1 keeps a series that is outside the reader's filter
+   * armed rather than widening the filter to find it, and that ruling is about
+   * the reader's `scope`, not about how many pages have been fetched.
+   */
+  const { items: libraryItems, hasNextPage, loadMore } = library
+  useEffect(() => {
+    if (revealSeries === null || !hasNextPage) return
+    if (libraryItems.some((series) => series.id === revealSeries)) return
+    loadMore()
+  }, [revealSeries, libraryItems, hasNextPage, loadMore])
 
   const openSeries = useCallback(
     (sid: ID) => {

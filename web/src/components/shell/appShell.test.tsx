@@ -96,7 +96,17 @@ const LOADED_ROOTS: Pick<ShellData, 'roots' | 'rootsLoaded'> = {
 beforeEach(() => {
   stubViewport(1440)
   localStorage.clear()
-  useUiStore.setState({ theme: 'system', drawerOpen: false, overlays: [], scope: 'all' })
+  useUiStore.setState({
+    theme: 'system',
+    drawerOpen: false,
+    overlays: [],
+    scope: 'all',
+    query: '',
+    // The E-34 §2 instruction is one-shot and nothing in this file mounts the
+    // library that would consume it, so a test that arms it would leave it
+    // armed for whatever ran next.
+    revealSeries: null,
+  })
 })
 
 afterEach(() => {
@@ -172,6 +182,41 @@ describe('routing (ui-spec §3)', () => {
     await userEvent.click(screen.getByRole('button', { name: '라이브러리' }))
     expect(await screen.findByText('library')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '라이브러리' })).toBeNull()
+  })
+
+  /**
+   * E-34 §2 from the series detail screen.
+   *
+   * The ruling's reveal was wired into the viewer's own 라이브러리 button and
+   * nowhere else, so this one — the commoner path back — dropped the reader at
+   * the top of the collection every time. The scroll and the focus themselves
+   * belong to the two library surfaces and are asserted against a real
+   * virtualiser in `features/viewer/ViewerPage.test.tsx`; what is this screen's
+   * to get right is arming the instruction with the series being left, and
+   * arming *only* that.
+   */
+  it('arms the E-34 reveal with the series it is leaving', async () => {
+    renderShell(LOADED_ROOTS, '/series/abc')
+    expect(useUiStore.getState().revealSeries).toBeNull()
+
+    await userEvent.click(screen.getByRole('button', { name: '라이브러리' }))
+
+    expect(await screen.findByText('library')).toBeInTheDocument()
+    expect(useUiStore.getState().revealSeries).toBe('abc')
+  })
+
+  it('leaves the sidebar filter and the search box alone doing it (E-34 §1)', async () => {
+    // Both are A-5 write-backs — `useLibrarySettingsSync` PUTs `library_scope`
+    // to the server — so a button that "cleared the filters" to widen the shelf
+    // would unset the reader's sidebar choice on every machine, permanently.
+    useUiStore.setState({ scope: '01. mangga', query: '군계' })
+    renderShell(LOADED_ROOTS, '/series/abc')
+
+    await userEvent.click(screen.getByRole('button', { name: '라이브러리' }))
+
+    await screen.findByText('library')
+    expect(useUiStore.getState().scope).toBe('01. mangga')
+    expect(useUiStore.getState().query).toBe('군계')
   })
 
   it('renders the viewer route over the shell rather than instead of it', () => {

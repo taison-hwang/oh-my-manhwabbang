@@ -50,6 +50,7 @@ export function App() {
   const drawerOpen = useUiStore((s) => s.drawerOpen)
   const setDrawerOpen = useUiStore((s) => s.setDrawerOpen)
   const openOverlay = useUiStore((s) => s.openOverlay)
+  const setRevealSeries = useUiStore((s) => s.setRevealSeries)
 
   const isMobile = useIsMobile()
   const isRail = useIsRail()
@@ -85,6 +86,37 @@ export function App() {
   // "No roots" is only knowable once /api/roots has answered; showing
   // onboarding before that would flash it on every cold start.
   const chromeless = shell.rootsLoaded && shell.roots.length === 0
+
+  /**
+   * The series detail screen's 라이브러리 button — **E-34 §2, from the other
+   * screen that has one.**
+   *
+   * The ruling arms a *reveal*: the library scrolls the series being left into
+   * view and focuses its card, so that coming back out of a book is an
+   * orientation rather than a search. It was wired into the viewer's own
+   * 라이브러리 button (`features/viewer/ViewerPage.tsx`, `goLibrary`) and
+   * nowhere else. This button navigated bare, so the library mounted with no
+   * instruction and its virtualiser started where an unscrolled virtualiser
+   * starts — offset 0. A reader 3 000px into a 963-series shelf was returned to
+   * the first card in the collection, every time, and this is the *commoner* of
+   * the two paths: 상세화면 is where a reader who opened the wrong volume comes
+   * back from.
+   *
+   * It arms the instruction and nothing else, which is the rest of the ruling.
+   * The prototype's `goLibrary` also set `scope: 'all'` and `q: ''`; here those
+   * two are A-5 write-backs (`useLibrarySettingsSync` PUTs `library_scope` to
+   * `/api/settings`), so the same lines would read as "going back to the
+   * library permanently unset my sidebar filter".
+   *
+   * The `seriesId` guard is not the claim `showBack` makes. The button only
+   * renders on a series route, but `seriesId` is the value the store is handed:
+   * `setRevealSeries('')` would arm a target no card can match, and — the
+   * reveal being cleared only by the surface that consumes it — leave it armed.
+   */
+  const goLibrary = (): void => {
+    if (seriesId !== null) setRevealSeries(seriesId)
+    void navigate('/')
+  }
 
   const sidebar = (variant: 'full' | 'rail') => (
     <Sidebar
@@ -125,9 +157,7 @@ export function App() {
           <main className="flex min-h-0 min-w-0 flex-1 flex-col">
             <TopBar
               showBack={seriesId !== null}
-              onBack={() => {
-                void navigate('/')
-              }}
+              onBack={goLibrary}
               query={query}
               onQueryChange={setQuery}
               scanning={shell.scan.state !== 'idle'}

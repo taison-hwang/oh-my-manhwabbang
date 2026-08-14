@@ -13,6 +13,10 @@
  * grid's counterpart to 01-library.spec.ts 6.1 (overlay), and the same defect one screen
  * down: an action overlay that is a later sibling of the openable control, and
  * so wins the hit test while invisible.
+ *
+ * The fourth is the other direction: leaving this screen by its 라이브러리
+ * button, which is ruling E-34 §2 and had been wired into the viewer's copy of
+ * that button only.
  */
 
 import {
@@ -24,6 +28,8 @@ import {
   SERIES,
   seriesFacts,
   seriesId,
+  seriesTile,
+  seriesTiles,
   setView,
   shot,
   test,
@@ -254,4 +260,79 @@ test('6.5 (guard) · the 읽음 표시 toggle is a hit target only while it is v
   // and leaves the server as it found it (shelf.ts rule 2).
   expect(await hitTest(), 'a visible control must take the hit').toMatch(READ_TOGGLE)
   await toggle.click({ trial: true })
+})
+
+/**
+ * Ruling **E-34 §2** from the series screen — a regression guard, not an
+ * impl-plan assertion.
+ *
+ * The ruling's reveal — come back out of a book onto the series you left,
+ * scrolled to it and focused — was wired into the viewer's own 라이브러리 button
+ * and nowhere else, so this one navigated bare and the library's virtualiser
+ * started where an unscrolled virtualiser starts. Measured on the real
+ * collection at 1440 before the fix: parked 2 926px down, `라이브러리` came back
+ * at `scrollTop` 0 with the series' card **not in the document at all** —
+ * windowed away, ~3 000px below the fold.
+ *
+ * That defect lived in `App.tsx` while every unit test of the reveal itself was
+ * green, because those exercise the mechanism through the store, and what was
+ * missing was one screen's decision to *use* it. So the assertion belongs at
+ * this layer, in a real browser, driven by the button.
+ *
+ * **The scroll is asserted conditionally and that is deliberate.** The curated
+ * subset is ten series (`scan.include_globs`), which at 1440 all mount at once
+ * with nothing to scroll — `parked` is honestly 0 there, and demanding a
+ * non-zero offset back would be demanding a scroll the shelf cannot perform.
+ * At 768 and 400 the big-card tiers do scroll (ui-spec §7) and the guard bites.
+ * Focus and `data-revealed` carry the claim at every width: before the fix
+ * neither is true at any of the four.
+ */
+test('6.5 (regression) · 라이브러리 comes back to the series, not to the top of the shelf', async ({
+  page,
+}) => {
+  await gotoLibrary(page)
+  await setView(page, 'grid')
+
+  const scroller = page.locator('[data-testid="library-scroller"]')
+  // As deep as this shelf goes at this width — the reader's own position, and
+  // the thing the defect threw away.
+  await scroller.evaluate((el) => {
+    el.scrollTop = el.scrollHeight
+  })
+  const parked = await scroller.evaluate((el) => el.scrollTop)
+
+  const tile = seriesTiles(page).last()
+  const name = (await tile.getAttribute('aria-label')) ?? ''
+  expect(name, 'the last mounted tile names the series it opens').not.toBe('')
+
+  await tile.click()
+  await expect(page.getByRole('heading', { level: 2, name })).toBeVisible()
+
+  await page.getByRole('button', { name: '라이브러리', exact: true }).click()
+  await expect(scroller).toBeVisible()
+
+  // The reveal focuses the card one frame after the virtualiser has scrolled to
+  // it (`SeriesGrid`), so this is a poll rather than a read.
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const el = document.activeElement
+          return {
+            id: el instanceof HTMLElement ? el.id : '',
+            revealed: el instanceof HTMLElement ? el.getAttribute('data-revealed') : null,
+            label: el?.querySelector('button[aria-label]')?.getAttribute('aria-label') ?? '',
+          }
+        }),
+      { message: 'the card of the series just left must be revealed and focused' },
+    )
+    .toEqual({ id: expect.stringMatching(/^series-card-/), revealed: 'true', label: name })
+
+  await expect(seriesTile(page, name), 'and it must be on screen').toBeInViewport()
+  if (parked > 0) {
+    expect(
+      await scroller.evaluate((el) => el.scrollTop),
+      'the shelf had somewhere to be scrolled to, so it must not be back at the top',
+    ).toBeGreaterThan(0)
+  }
 })

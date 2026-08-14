@@ -25,7 +25,7 @@ import type {
 import { queryKeys } from '../../api/queries'
 import { resetBasePath } from '../../api/urls'
 import { matchRange } from '../../lib/chosung'
-import { useUiStore } from '../../store/ui'
+import { seriesCardDomId, useUiStore } from '../../store/ui'
 import { LibraryPage } from './LibraryPage'
 import { LIST_CARD_CLASS } from './useLibrary'
 
@@ -562,6 +562,9 @@ beforeEach(() => {
     paletteQuery: '',
     drawerOpen: false,
     overlays: [],
+    // The E-34 §2 instruction is consumed by whichever surface is mounted, so a
+    // test that arms it and does not reach it would arm it for the next one.
+    revealSeries: null,
   })
   stubViewport(1_440)
   stubRects(900)
@@ -2857,5 +2860,129 @@ describe('onboarding — no roots (ui-spec §4.6, C-5)', () => {
     expect(screen.getByRole('button', { name: '설정 파일 위치 보기' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '루트 추가' })).not.toBeInTheDocument()
     expect(screen.queryByLabelText('루트 경로')).not.toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Ruling E-34 §2 — the reveal has to be able to *reach* the series
+// ---------------------------------------------------------------------------
+
+/**
+ * The half of the reveal that arming alone does not buy.
+ *
+ * `App.tsx` and `ViewerPage.tsx` leave a series id in `store/ui.ts`, and both
+ * library surfaces locate it by its index in `items`. `items` is whatever
+ * `useSeriesListInfinite` is holding — and that cache is **transient**:
+ * `main.tsx` sets no `gcTime`, so react-query's five-minute default applies, and
+ * the library's query has no observer at all while the reader is inside a book.
+ *
+ * Measured on the real collection before this fix: 14 pages paged in, parked
+ * 40 931px down, five and a half minutes in the viewer, then 라이브러리 —
+ * `scrollTop: 0`, one `GET /api/series?offset=0&limit=60`, the series not in the
+ * document, nothing focused. The reveal behaved exactly as specified (`index ===
+ * -1`, stay armed, steal no focus) and the reader still lost their place.
+ *
+ * These two tests are that scenario without the five minutes: an armed
+ * instruction, a cold list, and the series on page 3.
+ */
+describe('the E-34 §2 reveal reaches a series the loaded pages do not hold', () => {
+  /** 150 series; the target sits at index 130, i.e. on the third page of 60. */
+  const PAGED_COUNT = 150
+  const TARGET_INDEX = 130
+
+  function pagedSeries(): SeriesSummary[] {
+    return Array.from({ length: PAGED_COUNT }, (_, i) =>
+      makeSeries({
+        id: makeId(4_200 + i),
+        // Zero-padded so the server's name sort and this array agree, which is
+        // what makes TARGET_INDEX mean "the 131st row" rather than "somewhere".
+        name: `[만화] 시리즈 ${String(i + 1).padStart(3, '0')}`,
+      }),
+    )
+  }
+
+  /** The offsets `GET /api/series` was asked for, in order, list calls only. */
+  function listOffsets(): number[] {
+    return seriesRequests
+      .filter((url) => url.searchParams.get('limit') !== '1')
+      .map((url) => Number(url.searchParams.get('offset') ?? '0'))
+  }
+
+  it('pages forward until it finds it, then scrolls to it and focuses it', async () => {
+    const restoreWidth = stubContentWidth(1_156)
+    const restoreScroll = stubScrolling()
+    try {
+      const series = pagedSeries()
+      const target = series[TARGET_INDEX]
+      // A throw rather than an `expect`: it narrows the type, so every use below
+      // reads `target.id` instead of an optional chain that would silently look
+      // for a card named `undefined`.
+      if (target === undefined) throw new Error('the fixture must carry the target')
+      scenario.series = series
+      // Exactly the state the shell leaves behind on the way out of a book,
+      // with nothing in the query cache — which is what five minutes of reading
+      // produces.
+      useUiStore.setState({ revealSeries: target.id })
+
+      renderLibrary()
+      await waitForLibrary()
+
+      const card = await screen.findByRole('button', { name: target.name }, { timeout: 5_000 })
+      expect(card).toBeInTheDocument()
+      const cardRoot = document.getElementById(seriesCardDomId(target.id))
+      await waitFor(() => {
+        expect(cardRoot).toHaveAttribute('data-revealed', 'true')
+      })
+      await waitFor(() => {
+        expect(document.activeElement).toBe(cardRoot)
+      })
+
+      // Three pages, in order, and no more: it stops the moment the series is in
+      // `items` rather than reading the rest of the shelf.
+      expect(listOffsets()).toEqual([0, 60, 120])
+
+      // …and the scroller actually moved. `scrollCalls` is what `virtual-core`
+      // asked the DOM for, so a reveal that "ran" but resolved to 0 fails here.
+      expect(scrollCalls.at(-1)).toBeGreaterThan(0)
+
+      // The instruction is spent, so a later mount does not re-steal focus.
+      expect(useUiStore.getState().revealSeries).toBeNull()
+    } finally {
+      restoreScroll()
+      restoreWidth()
+    }
+  })
+
+  it('stops at the end of the filtered list, and steals no focus, when it is not there', async () => {
+    // The termination condition, which is the whole answer to E-34's "unbounded"
+    // objection: `hasNextPage` going false ends it after exactly one pass. The
+    // instruction stays armed — E-34 §1 keeps a series outside the reader's
+    // filter armed rather than widening the filter to find it, and that ruling is
+    // about `scope`, not about how many pages have been fetched.
+    const restoreWidth = stubContentWidth(1_156)
+    const restoreScroll = stubScrolling()
+    try {
+      scenario.series = pagedSeries()
+      useUiStore.setState({ revealSeries: makeId(9_999) })
+
+      renderLibrary()
+      await waitForLibrary()
+      await screen.findByRole('button', { name: '[만화] 시리즈 001' })
+
+      await waitFor(() => {
+        expect(listOffsets()).toEqual([0, 60, 120])
+      })
+      // Held for a beat: a run that has not terminated issues a fourth call here.
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      })
+      expect(listOffsets()).toEqual([0, 60, 120])
+
+      expect(document.activeElement).toBe(document.body)
+      expect(useUiStore.getState().revealSeries).toBe(makeId(9_999))
+    } finally {
+      restoreScroll()
+      restoreWidth()
+    }
   })
 })
