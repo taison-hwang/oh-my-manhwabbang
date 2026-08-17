@@ -481,13 +481,31 @@ export function ViewerPage() {
   // Page turns, keys, taps, prefetch
   // -------------------------------------------------------------------------
 
+  /**
+   * Whether the reader has put the end-of-volume card away (see `NextVolumeCard`).
+   *
+   * Local, and deliberately not in the viewer store: it is not a preference and
+   * it must not outlive the situation that raised it. The effect below is that
+   * rule — leaving the last page clears it, so arriving at the end again always
+   * raises the card, and so does opening the next volume, which reaches page 1
+   * through the same route.
+   */
+  const [endCardDismissed, setEndCardDismissed] = useState(false)
+
   // `turnTo`, not `goTo`: these two are the *reading* path — the arrow keys,
   // `Space`, the side tap zones and a swipe all land here — and E-27 says
   // reading never summons the chrome. Routing them through `goTo` woke it on
   // every turn, which also took the quiet page counter below off the screen for
   // the rest of the volume.
   const goNext = useCallback(() => {
-    turnTo(nextPage(page, pageCount, mode, dims))
+    const target = nextPage(page, pageCount, mode, dims)
+    // A forward turn with nowhere to go is the reader asking for what comes
+    // after this volume, which is the card. It is the only way back to it once
+    // the scrim has been dismissed, and it is deliberately the *same* gesture
+    // that raised it in the first place — 다음 페이지 — rather than a new one to
+    // learn. `nextPage` clamps at the end, so `target === page` is that case.
+    if (target === page) setEndCardDismissed(false)
+    turnTo(target)
   }, [dims, turnTo, mode, page, pageCount])
 
   const goPrev = useCallback(() => {
@@ -774,6 +792,14 @@ export function ViewerPage() {
   const atVolumeEnd =
     detail !== undefined && pageCount > 0 && page >= pageCount && mode !== 'vertical'
 
+  // Leaving the end forgets the dismissal — see `endCardDismissed`. Keyed on the
+  // derived flag rather than on `page`/`bookId` so every way out is covered by
+  // one rule: a page turn back, a slider commit, a thumbnail, 세로 mode, and the
+  // next volume (whose page 1 makes this false before its own end can be reached).
+  useEffect(() => {
+    if (!atVolumeEnd) setEndCardDismissed(false)
+  }, [atVolumeEnd])
+
   return (
     <div
       ref={rootRef}
@@ -995,7 +1021,7 @@ export function ViewerPage() {
           whole viewer — 뒤로, the slider, 표시 모드 and the thumbnail strip all
           went under it, so the only way back from the end of a volume was the
           card's own two buttons. */}
-      {atVolumeEnd && (
+      {atVolumeEnd && !endCardDismissed && (
         <NextVolumeCard
           nextBook={nextBook}
           completed={detail.progress?.completed ?? false}
@@ -1007,6 +1033,9 @@ export function ViewerPage() {
           }}
           onBackToSeries={exit}
           onToggleCompleted={progress.setCompleted}
+          onDismiss={() => {
+            setEndCardDismissed(true)
+          }}
         />
       )}
     </div>

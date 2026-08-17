@@ -2,6 +2,7 @@ import '@testing-library/jest-dom/vitest'
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -221,6 +222,7 @@ describe('the next-volume card’s title (open item `o`, ui-spec §6.5)', () => 
         onNext={vi.fn()}
         onBackToSeries={vi.fn()}
         onToggleCompleted={vi.fn()}
+        onDismiss={vi.fn()}
       />,
     )
     const title = screen.getByText('02권.zip')
@@ -234,5 +236,44 @@ describe('the next-volume card’s title (open item `o`, ui-spec §6.5)', () => 
     // The card itself is still there and still the app theme's surface: a
     // `getByText` that matched some other node would otherwise pass quietly.
     expect(container.querySelector('[data-role="next-volume-card"]')).toContainElement(title)
+  })
+
+  /**
+   * The scrim dismisses; the card does not.
+   *
+   * Both halves matter. Without the second, a scrim that dismissed on any click
+   * inside it would take 다음 권 읽기 away from the reader between `mousedown` and
+   * the button's own handler — and the test for the first half alone cannot see
+   * that, because it never clicks the card.
+   */
+  it('dismisses on a click outside, and not on a click on the card', async () => {
+    const onDismiss = vi.fn()
+    const onNext = vi.fn()
+    const { container } = render(
+      <NextVolumeCard
+        nextBook={NEXT_VOLUME}
+        completed={false}
+        appTheme="light"
+        onNext={onNext}
+        onBackToSeries={vi.fn()}
+        onToggleCompleted={vi.fn()}
+        onDismiss={onDismiss}
+      />,
+    )
+    const user = userEvent.setup()
+    const scrim = container.querySelector('[data-role="next-volume-scrim"]')
+    const card = container.querySelector('[data-role="next-volume-card"]')
+    expect(scrim).not.toBeNull()
+    expect(card).not.toBeNull()
+
+    await user.click(card as HTMLElement)
+    expect(onDismiss, 'a click on the card is not a click outside it').not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: '다음 권 읽기' }))
+    expect(onNext).toHaveBeenCalledTimes(1)
+    expect(onDismiss, 'nor is a click on one of its buttons').not.toHaveBeenCalled()
+
+    await user.click(scrim as HTMLElement)
+    expect(onDismiss).toHaveBeenCalledTimes(1)
   })
 })

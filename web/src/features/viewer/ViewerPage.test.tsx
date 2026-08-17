@@ -2201,6 +2201,23 @@ describe('per-book preferences (FR-VWR-002 / D-35)', () => {
 // Acceptance 11 & 14 — end of volume, slider
 // ---------------------------------------------------------------------------
 
+function scrim(): HTMLElement | null {
+  return document.querySelector<HTMLElement>('[data-role="next-volume-scrim"]')
+}
+
+/**
+ * Click the scrim itself, which is what "outside the card" means.
+ *
+ * The throw is the assertion: without the card up there is nothing to dismiss,
+ * so a case that reached here by accident would otherwise click nothing and go
+ * on to pass for the wrong reason.
+ */
+async function clickOutsideTheCard(): Promise<void> {
+  const element = scrim()
+  if (element === null) throw new Error('the end-of-volume scrim must be up to be dismissed')
+  await userEvent.click(element)
+}
+
 describe('end of volume (acceptance 11; ui-spec §6.5)', () => {
   it('raises the next-volume card on the last page and follows it', async () => {
     await setup({ search: '?page=214' })
@@ -2242,6 +2259,71 @@ describe('end of volume (acceptance 11; ui-spec §6.5)', () => {
   it('never raises it in 세로, where scrolling past the end is the end', async () => {
     await setup({ prefs: { display_mode: 'vertical' }, search: '?page=214' })
     expect(screen.queryByText('권의 마지막 페이지')).not.toBeInTheDocument()
+  })
+
+  /**
+   * The scrim covers the stage, so while the card is up the last page cannot be
+   * re-read: the tap zones and the click-to-turn are underneath it and the only
+   * ways on are the card's own three buttons. Clicking outside the card gives
+   * the page back, and a forward turn — the same gesture that raised it —
+   * brings it back.
+   *
+   * This is asserted on the *screen* rather than on `NextVolumeCard`, which has
+   * its own test for the outside-click. A card that dismissed itself perfectly
+   * while `ViewerPage` re-rendered it anyway would pass that one and fail here.
+   */
+  it('puts the card away on an outside click, and a forward turn brings it back', async () => {
+    await setup({ search: '?page=214' })
+    await screen.findByText('권의 마지막 페이지')
+
+    expect(scrim()).not.toBeNull()
+
+    await clickOutsideTheCard()
+    expect(screen.queryByText('권의 마지막 페이지')).not.toBeInTheDocument()
+    expect(scrim(), 'the scrim goes with it — that is what frees the stage').toBeNull()
+    // Dismissing is not a page turn: the reader is still on the last page, now
+    // able to read it and to go back.
+    expect(useViewerStore.getState().page).toBe(214)
+
+    // …and going back is possible, which is the whole point of the dismissal.
+    act(() => {
+      useViewerStore.getState().turnTo(213)
+    })
+    expect(counter()).toBe('213 / 214')
+    expect(screen.queryByText('권의 마지막 페이지')).not.toBeInTheDocument()
+  })
+
+  it('raises the card again when the reader turns forward at the end', async () => {
+    await setup({ search: '?page=214' })
+    await screen.findByText('권의 마지막 페이지')
+    await clickOutsideTheCard()
+    expect(screen.queryByText('권의 마지막 페이지')).not.toBeInTheDocument()
+
+    // `Space` is always forward whatever the reading direction (useViewerKeys),
+    // and at the last page it has nowhere to go — which is exactly the request
+    // the card answers.
+    fireEvent.keyDown(window, { key: ' ' })
+    expect(await screen.findByText('권의 마지막 페이지')).toBeInTheDocument()
+    expect(useViewerStore.getState().page, 'and it did not move the reader').toBe(214)
+  })
+
+  it('forgets the dismissal once the reader leaves the last page', async () => {
+    await setup({ search: '?page=214' })
+    await screen.findByText('권의 마지막 페이지')
+    await clickOutsideTheCard()
+    expect(screen.queryByText('권의 마지막 페이지')).not.toBeInTheDocument()
+
+    act(() => {
+      useViewerStore.getState().turnTo(200)
+    })
+    expect(screen.queryByText('권의 마지막 페이지')).not.toBeInTheDocument()
+
+    // Coming back to the end is a fresh arrival, not a continuation of the
+    // dismissal — otherwise the card would be gone for the rest of the volume.
+    act(() => {
+      useViewerStore.getState().turnTo(214)
+    })
+    expect(await screen.findByText('권의 마지막 페이지')).toBeInTheDocument()
   })
 })
 

@@ -26,6 +26,14 @@ import type { ResolvedTheme } from '../../lib/theme'
  * 페이지` kicker), and it is a bordered `.btn-secondary` rather than a bare
  * accent `.btn-ghost`, so the card carries exactly one accent field — the
  * primary `다음 권 읽기` — as ui-spec §2.5 requires.
+ *
+ * **The scrim dismisses.** The card offers three ways onward and none back: the
+ * scrim covers the stage, so while it is up the tap zones and the click-to-turn
+ * are dead and the last page cannot be re-read. Clicking the scrim — outside the
+ * card — puts it away and gives the page back. FR-VWR-010 is untouched by that,
+ * because it asks that the next volume be *reachable*, not that it be the only
+ * thing reachable; a forward turn at the end raises the card again, so the way
+ * on is always one action away. See `ViewerPage` for the re-raise.
  */
 export interface NextVolumeCardProps {
   /** `null` when the series detail has not been fetched or this is the last volume. */
@@ -36,6 +44,8 @@ export interface NextVolumeCardProps {
   onNext: () => void
   onBackToSeries: () => void
   onToggleCompleted: (completed: boolean) => void
+  /** Raised by a click on the scrim itself, never on the card. */
+  onDismiss: () => void
 }
 
 export function NextVolumeCard({
@@ -45,12 +55,20 @@ export function NextVolumeCard({
   onNext,
   onBackToSeries,
   onToggleCompleted,
+  onDismiss,
 }: NextVolumeCardProps) {
   return (
     <div
       data-role="next-volume-scrim"
       className="absolute inset-0 flex items-center justify-center p-4"
       style={{ background: 'var(--scrim-volume-end)' }}
+      // `target === currentTarget` is the outside test, and it is exact here
+      // rather than approximate: the card is a descendant, so a click anywhere
+      // on it reports the card (or a button inside it) as the target and never
+      // this element. No ref comparison and no `closest()` needed.
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onDismiss()
+      }}
     >
       <div data-theme={appTheme}>
         <div
