@@ -153,7 +153,10 @@ test('6.5 (D-70) · a container of sub-archives is a series of volumes', async (
 
   const grid = page.locator('[data-testid="volume-grid"]')
   await expect(grid).not.toContainText('비어 있음')
-  await expect(grid.locator('> *')).toHaveCount(angel!.book_count)
+  // `toBeDefined()` above is the gate; the fallback only narrows the type, the
+  // house form (shelf.ts `seriesId`). 0 cannot pass here — the grid holds one
+  // tile per inner archive, and the count was already required to exceed 1.
+  await expect(grid.locator('> *')).toHaveCount(angel?.book_count ?? 0)
 
   await shot(page, info, 'step-06-5d-series-detail-nested-volumes')
 })

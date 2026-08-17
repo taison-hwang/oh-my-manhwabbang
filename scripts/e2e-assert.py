@@ -1049,9 +1049,19 @@ def main() -> int:
 
     # One series, both formats. This is the assertion that would catch a RAR
     # read by the ZIP reader, or a 권 list that orders the two formats apart.
+    #
+    # The two modes differ, and the difference is D-70 rather than drift. The
+    # fixture builds 울프가이 as three sibling archives that each hold pages, so
+    # synthetic sees exactly the two formats. The real collection additionally
+    # carries `[한글번역] .../울프가이 02권(연재분번역).zip`, whose entries are 9
+    # chapter ZIPs and no pages of its own — so it expands, 02권 stops being a
+    # 권, and its 9 chapters arrive as `nestedzip`. Asserting the exact set in
+    # each mode keeps the guard the comment above describes: a RAR handed to
+    # the ZIP reader still moves a kind and still fails here.
     wg = r.json("/api/series/" + by_name[WOLF_GUY]["id"])
     wg_kinds = sorted({b["kind"] for b in wg["books"]})
-    r.eq("울프가이 mixes ZIP and RAR volumes in one series", wg_kinds, ["rar", "zip"])
+    r.eq("울프가이 mixes ZIP and RAR volumes in one series",
+         wg_kinds, ["nestedzip", "rar", "zip"] if real else ["rar", "zip"])
     r.eq("every volume of the mixed series opens",
          sorted({b["status"] for b in wg["books"]}), ["ok"])
     # The RAR entry names are Shift_JIS, which is decided per archive and never
