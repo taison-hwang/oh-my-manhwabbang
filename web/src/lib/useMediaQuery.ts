@@ -65,13 +65,57 @@ export function useIsRail(): boolean {
   return atLeastTablet && !atLeastLaptop
 }
 
-/** The current tier, for the rare case that needs to branch on all four. */
-export function useBreakpoint(): Breakpoint {
-  const md = useMediaQuery(`(min-width: ${BREAKPOINTS.mobile.toString()}px)`)
-  const lg = useMediaQuery(`(min-width: ${BREAKPOINTS.tablet.toString()}px)`)
-  const xl = useMediaQuery(`(min-width: ${BREAKPOINTS.desktop.toString()}px)`)
+/**
+ * The three `min-width` queries the four tiers are cut from, narrowest first.
+ *
+ * Exported because `useGridBox` (`features/library/useLibrary.ts`) subscribes to
+ * these same three queries so that it can read the tier and the grid box's width
+ * in one pass. It has to be *this* array rather than a copy: `tokens.css`'s
+ * media queries are the source of truth for the geometry — the drift test in
+ * `useLibrary.test.ts` pins `GRID_METRICS` against them — so a second set of
+ * thresholds would be a second tier rule that nothing compares against the
+ * first.
+ */
+export const TIER_QUERIES = [
+  `(min-width: ${BREAKPOINTS.mobile.toString()}px)`,
+  `(min-width: ${BREAKPOINTS.tablet.toString()}px)`,
+  `(min-width: ${BREAKPOINTS.desktop.toString()}px)`,
+] as const
+
+/** The one tier rule: three `min-width` answers in, one tier out. */
+export function tierFor(md: boolean, lg: boolean, xl: boolean): Breakpoint {
   if (xl) return 'desktop'
   if (lg) return 'laptop'
   if (md) return 'tablet'
   return 'mobile'
+}
+
+/**
+ * The tier, read synchronously and outside React.
+ *
+ * `useBreakpoint` is the hook you want almost everywhere. This exists for the
+ * one caller that must read the tier from inside a listener — `useGridBox` —
+ * where going through `useSyncExternalStore` would put the answer in a *later*
+ * commit than the width it has to agree with.
+ *
+ * The fallback is `mobile`, which is `tierFor(false, false, false)` and so is
+ * the same answer `useMediaQuery`'s `false` server snapshot produces. The two
+ * cannot disagree about a environment without `matchMedia`.
+ */
+export function readBreakpoint(): Breakpoint {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return 'mobile'
+  return tierFor(
+    window.matchMedia(TIER_QUERIES[0]).matches,
+    window.matchMedia(TIER_QUERIES[1]).matches,
+    window.matchMedia(TIER_QUERIES[2]).matches,
+  )
+}
+
+/** The current tier, for the rare case that needs to branch on all four. */
+export function useBreakpoint(): Breakpoint {
+  return tierFor(
+    useMediaQuery(TIER_QUERIES[0]),
+    useMediaQuery(TIER_QUERIES[1]),
+    useMediaQuery(TIER_QUERIES[2]),
+  )
 }

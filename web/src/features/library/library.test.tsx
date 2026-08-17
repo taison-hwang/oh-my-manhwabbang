@@ -342,14 +342,40 @@ function stubViewport(width: number): void {
 
 /**
  * Moves the stubbed viewport and tells every `useMediaQuery` about it, then
- * fires the `resize` event `useElementWidth` falls back to when — as in jsdom —
- * there is no `ResizeObserver` (`useLibrary.ts`). One call, because a real
- * resize moves both at once and the two halves of the layout have to agree.
+ * fires the `resize` event `useMeasured` falls back to when — as in jsdom —
+ * there is no `ResizeObserver` (`useLibrary.ts`).
+ *
+ * Both signals in one call, which is the *settled* end state of a resize rather
+ * than the moment one arrives. Use `crossTier` below for the moment itself; a
+ * grid that only ever sees this helper can hide a defect that lives in the gap
+ * between the two.
  */
 function resizeViewport(width: number): void {
   viewportWidth = width
   for (const cb of [...viewportListeners]) cb()
   window.dispatchEvent(new Event('resize'))
+}
+
+/**
+ * A tier crossing as the browser actually delivers one: the media queries fire,
+ * and the element's width has **already** moved.
+ *
+ * This is the honest model and `resizeViewport` above is not, which is why both
+ * exist. The layout is CSS-driven — `base.css` gives `.sidebar` a
+ * `var(--sidebar-w)` width and `display: none` below 768 — so by the time a
+ * `matchMedia` handler runs, the grid's box in the layout tree is already the
+ * settled one. What lags is React state, never the DOM. So the caller moves
+ * `contentWidth` *before* calling this, and no `resize` event is dispatched:
+ * that event stands in for the `ResizeObserver` here, and the whole point is
+ * that a correct grid must not need it to have arrived yet.
+ *
+ * Fire this and nothing else, and a grid that reads its tier and its width
+ * through separate hooks renders the intermediate layout — new metrics, old
+ * width — for as long as it takes the observer to catch up.
+ */
+function crossTier(width: number): void {
+  viewportWidth = width
+  for (const cb of [...viewportListeners]) cb()
 }
 
 /**
@@ -1132,24 +1158,30 @@ describe('grid mode (FR-LIB-001, FR-LIB-008)', () => {
     }
   })
 
-  it('survives the intermediate commit a tier crossing renders', async () => {
-    // **One resize is not one commit.** `useBreakpoint` reads matchMedia and
-    // `useElementWidth` reads a ResizeObserver, and they answer on different
-    // ticks — measured at 31–49ms apart in Chrome — so a resize across a tier
-    // renders an intermediate layout built from the *new* metrics and the *old*
-    // measured width. This test is that sequence, in that order, which is the
-    // only reason it can reproduce it: `stubViewport` and `stubContentWidth` are
-    // separate knobs here, exactly as the two hooks are in the product.
+  it('lands the tier and the measured width in the same commit', async () => {
+    // **One resize is not one commit — unless the grid makes it one.** The tier
+    // arrives on a `matchMedia` change and the width on a `ResizeObserver`
+    // callback, 31–49ms apart in Chrome, and the tier is always first. A grid
+    // that reads them through separate hooks therefore renders an intermediate
+    // layout from the *new* metrics and the *old* width. `useGridBox` closes
+    // that by having both listeners run one reader, so this test fires only the
+    // first of the two — the case that used to break — and asserts that the
+    // commit it produces is already the settled one.
     //
     // 773px box at `tablet`  → 3 columns, 430.5px cards, 446.5 pitch.
-    // 773px box at `mobile`  → 4 columns (`--grid-min` drops to 150), 184.25px
-    //                          columns, 336.375px cards — the intermediate.
     // 312px box at `mobile`  → 2 columns, 285px cards, 297 pitch — settled.
+    // 773px box at `mobile`  → 4 columns (`--grid-min` drops to 150) — the
+    //                          intermediate, which must never be rendered.
     //
-    // The reader is on row 1, i.e. series 3. In the intermediate, series 3 is
-    // `floor(3 / 4) = 0` — the top of the library. Anchoring to that and then
-    // re-deriving from `scrollTop` on the settled commit loses the reader
-    // entirely, which is what the shipped build did: 447 → 0.
+    // The reader is on row 1, i.e. series 3, which the settled layout puts on
+    // row 1 at 297. The intermediate puts it at `floor(3 / 4) = 0`, the top of
+    // the library, and its 1 033px track also clamps the reader's 447 away
+    // before any effect can read it — the two halves of items `s` and `t`.
+    //
+    // This replaces a test that asserted the intermediate *as expected
+    // behaviour* — 4 children, then `scrollTop === 0`, then a recovery on the
+    // settled commit. That was an honest description of the defect and is the
+    // wrong assertion now.
     let contentWidth = 773
     const restoreWidth = stubContentWidth(() => contentWidth)
     const restoreScroll = stubScrolling()
@@ -1171,25 +1203,21 @@ describe('grid mode (FR-LIB-001, FR-LIB-008)', () => {
       })
       expect(rowOffset(rowAt(1))).toBe(446.5)
 
-      // The tier moves first, and the measured width has not caught up.
-      act(() => {
-        resizeViewport(354)
-      })
-      expect(
-        [...scroller.querySelectorAll('[data-index]')][0]?.children,
-      ).toHaveLength(4)
-      await waitFor(() => {
-        expect(scroller.scrollTop).toBe(0)
-      })
-
-      // …and now the ResizeObserver lands.
+      // The CSS has already moved the box — that is what makes the synchronous
+      // read in `useGridBox` correct — and only the media queries have fired.
       contentWidth = 312
       act(() => {
-        resizeViewport(354)
+        crossTier(354)
       })
 
-      // Series 3 is row 1 of a two-column grid. Re-deriving from `scrollTop`
-      // here would see 0 and keep the reader at the top forever.
+      // Two columns on the *first* commit after the crossing. Four is the
+      // defect, and this is the assertion that catches it: everything below
+      // follows from the layout being right, but this is the thing that was
+      // wrong.
+      expect([...scroller.querySelectorAll('[data-index]')][0]?.children).toHaveLength(2)
+
+      // …and with no intermediate to anchor against, the reader's own 447 is
+      // what the anchor is derived from.
       await waitFor(() => {
         expect(scroller.scrollTop).toBe(297)
       })

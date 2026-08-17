@@ -47,7 +47,7 @@ import type {
 import { SORT_KEYS } from '../../api/types'
 import { THUMB_WIDTH_FOR, type ThumbWidth } from '../../api/urls'
 import { matchRange } from '../../lib/chosung'
-import type { Breakpoint } from '../../lib/useMediaQuery'
+import { readBreakpoint, TIER_QUERIES, type Breakpoint } from '../../lib/useMediaQuery'
 import { useUiStore, type PersistedUi, type Scope, type SortKey, type ViewMode } from '../../store/ui'
 
 // ---------------------------------------------------------------------------
@@ -357,22 +357,117 @@ function useMeasured(
   return value
 }
 
+/** The two halves of a grid layout, guaranteed to have been read together. */
+export interface GridBox {
+  /**
+   * The **padding box** of the element the grid template is applied to —
+   * `clientWidth`, padding included.
+   *
+   * That distinction matters more than it looks. `columnCount` reproduces
+   * `repeat(auto-fill, minmax(--grid-min, 1fr))`, and the box CSS resolves that
+   * against is the *content* box of the grid container. Point `useGridBox` at a
+   * padded wrapper and you feed the arithmetic 32px it does not have: at 1440
+   * that is 1188 instead of 1156, which is a seventh column of 151.42px where
+   * ui-spec §7 and `library-grid-1440.png` both say six of ~180px — and 151.42px
+   * is below the 152px `--grid-min` those columns exist to honour.
+   */
+  width: number
+  /** The tier to read `GRID_METRICS` at. */
+  breakpoint: Breakpoint
+}
+
 /**
- * The width of an element's **padding box** — `clientWidth`, padding included.
+ * The grid box's width **and** the tier its metrics come from, in one commit.
  *
- * That distinction is the whole reason this doc comment exists. `columnCount`
- * reproduces `repeat(auto-fill, minmax(--grid-min, 1fr))`, and the box CSS
- * resolves that against is the *content* box of the grid container. Point this
- * hook at a padded wrapper and you feed the arithmetic 32px it does not have:
- * at 1440 that is 1188 instead of 1156, which is a seventh column of 151.42px
- * where ui-spec §7 and `library-grid-1440.png` both say six of ~180px — and
- * 151.42px is below the 152px `--grid-min` the columns are supposed to honour.
+ * `useBreakpoint()` beside `useElementWidth()` is the obvious way to write this
+ * and it is wrong, because **one resize is not one commit**. The tier comes from
+ * a `matchMedia` `change` event and the width from a `ResizeObserver` callback;
+ * those are delivered in different steps of the rendering loop — measured 31–49
+ * ms apart in Chrome — and nothing serialises them. The tier moves first, so for
+ * that gap the grid renders the *new* metrics against the *old* width, which is
+ * a layout neither the start nor the end state has. At 871 → 354 the
+ * intermediate is 4 columns (the 773px box against `mobile`'s 150px
+ * `--grid-min`) where the settled answer is 2, and it is not merely a flicker:
+ * its track is 1 033px against the 1 770px it settles at, so the browser clamps
+ * `scrollTop` to the shorter one **during layout, before any effect runs**, and
+ * a reader parked deep in the library loses their place proportionally to how
+ * deep they were. `SeriesGrid`'s anchor cannot recover what was destroyed before
+ * it was called, which is why the repair belongs here rather than there.
  *
- * So: **measure the element the grid template is applied to**, never its
- * padded parent.
+ * The fix is not a debounce — delaying both inputs does not make them agree. It
+ * is that **both listeners run the same reader**: whichever of the two fires
+ * first re-reads the width *and* the tier and commits them as one value, so
+ * there is no commit in which they disagree, and the second event finds nothing
+ * left to change.
+ *
+ * That works because the width is already settled in the DOM by the time the
+ * tier event arrives. The sidebar is CSS-driven — `base.css` gives `.sidebar`
+ * `width: var(--sidebar-w)` and `display: none` below 768 — so crossing a tier
+ * has already moved the grid's box in the layout tree; what was stale was React
+ * state, never the DOM. A synchronous `clientWidth` read returns the settled
+ * number, at the cost of one forced layout per tier crossing (a few per drag,
+ * not one per frame).
+ *
+ * The tier is read through `readBreakpoint()`, i.e. from the same three
+ * `TIER_QUERIES` as `useBreakpoint`, so `tokens.css` stays authoritative and
+ * there is exactly one tier rule. Deriving the tier from the measured element
+ * width instead would be a second rule: it would contradict rule 2 at the top of
+ * this file, break the drift test in `useLibrary.test.ts`, and disagree with
+ * `GridSkeleton`, which lays itself out with the real `auto-fill` CSS resolved
+ * against the *viewport*.
  */
-export function useElementWidth(ref: RefObject<HTMLElement | null>): number {
-  return useMeasured(ref, (element) => element.clientWidth)
+export function useGridBox(ref: RefObject<HTMLElement | null>): GridBox {
+  // Lazily seeded, so the first render already has the right tier. Dropping to
+  // a constant here would give back the flash of the wrong layout that
+  // `useMediaQuery`'s `useSyncExternalStore` was chosen to avoid. `width: 0` is
+  // the same starting point as `useMeasured` — `columnCount(0)` is 1 — and the
+  // layout effect below replaces it before the browser paints.
+  const [box, setBox] = useState<GridBox>(() => ({ width: 0, breakpoint: readBreakpoint() }))
+
+  useLayoutEffect(() => {
+    const element = ref.current
+    if (element === null) return undefined
+    const read = (): void => {
+      const width = element.clientWidth
+      const breakpoint = readBreakpoint()
+      // Same value ⇒ same object, or the second of the two events would commit
+      // an identical box and re-run `SeriesGrid`'s anchoring effect for nothing.
+      setBox((prev) =>
+        prev.width === width && prev.breakpoint === breakpoint ? prev : { width, breakpoint },
+      )
+    }
+    read()
+
+    const stop: (() => void)[] = []
+    if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+      for (const query of TIER_QUERIES) {
+        const mql = window.matchMedia(query)
+        mql.addEventListener('change', read)
+        stop.push(() => {
+          mql.removeEventListener('change', read)
+        })
+      }
+    }
+    // jsdom has no `ResizeObserver`, and a virtualised grid that throws in the
+    // test environment is a grid nobody can test.
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', read)
+      stop.push(() => {
+        window.removeEventListener('resize', read)
+      })
+    } else {
+      const observer = new ResizeObserver(read)
+      observer.observe(element)
+      stop.push(() => {
+        observer.disconnect()
+      })
+    }
+    return () => {
+      for (const off of stop) off()
+    }
+  }, [ref])
+
+  return box
 }
 
 /**

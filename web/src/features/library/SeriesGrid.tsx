@@ -2,7 +2,6 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import type { ID, SeriesSummary } from '../../api/types'
-import { useBreakpoint } from '../../lib/useMediaQuery'
 import { seriesCardDomId } from '../../store/ui'
 import { SeriesCard } from './SeriesCard'
 import {
@@ -11,7 +10,7 @@ import {
   columnWidth,
   gridCoverWidth,
   GRID_METRICS,
-  useElementWidth,
+  useGridBox,
 } from './useLibrary'
 
 /**
@@ -61,10 +60,12 @@ export function SeriesGrid({
 }: SeriesGridProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
-  const breakpoint = useBreakpoint()
+  // One hook, not two: the tier and the measured width have to arrive in the
+  // same commit or the grid renders a layout that is neither the old one nor the
+  // new one. `useGridBox` is where that is enforced, and why.
+  const { width, breakpoint } = useGridBox(gridRef)
   const metrics = GRID_METRICS[breakpoint]
 
-  const width = useElementWidth(gridRef)
   const columns = columnCount(width, metrics)
   const rowHeight = cardHeight(columnWidth(width, columns, metrics.gap))
   const rowCount = Math.ceil(items.length / columns)
@@ -219,18 +220,24 @@ export function SeriesGrid({
    *     against the virtualiser's own rendered `translateY`, so a divergence
    *     fails the guard rather than reaching a reader.
    *
-   *     **`anchorSeriesRef` exists because one resize is not one commit.**
-   *     `useBreakpoint` (matchMedia) and `useElementWidth` (ResizeObserver)
-   *     answer on different ticks, so a resize that crosses a tier renders an
-   *     intermediate commit built from the *new* metrics and the *old* measured
-   *     width — 31–49ms of it, measured. That commit is a real layout as far as
-   *     this effect can tell, and anchoring to it is not merely cosmetic: at
-   *     871 → 354 the intermediate is 4 columns (773px box against `mobile`'s
-   *     150px `--grid-min`), the reader's series 3 lands in `floor(3 / 4) = 0`,
-   *     and the scroll goes to the top. The settled commit that follows then
-   *     reads `scrollTop === 0` and concludes there is nothing to preserve — the
-   *     reader's place is gone, which is worse than the jump this effect exists
-   *     to prevent. Measured on the shipped build before this ref: 447 → 0.
+   *     **`anchorSeriesRef` no longer exists for the reason it was written for,
+   *     and this is what it does now.** It was added because one resize was not
+   *     one commit: the tier and the measured width answered on different ticks,
+   *     so crossing a tier rendered an intermediate layout from the *new* metrics
+   *     and the *old* width — 4 columns at 871 → 354, where the reader's series 3
+   *     lands in `floor(3 / 4) = 0` and the scroll goes to the top. That is
+   *     fixed upstream now: `useGridBox` reads both halves in one pass, so no
+   *     such commit is rendered and this effect never sees a layout that was
+   *     never on screen.
+   *
+   *     What it still earns its place for is the *reader-intent* question, which
+   *     has nothing to do with tiers: two resizes in a row. The first one moves
+   *     the reader, and on the second one `scrollTop` is a position **we** wrote,
+   *     not one the reader chose. Re-deriving the anchor from it would quietly
+   *     make our own correction the new intent and let the reader drift a little
+   *     further on every drag of a window edge. `lastWrittenRef` is what tells
+   *     the two apart, and the remembered series is what the answer is when the
+   *     position turns out to be ours.
    *
    *     So the anchor is *remembered* rather than re-derived each time. The test
    *     for "did the reader move, or did we move them" is `lastWrittenRef`: if
@@ -241,33 +248,34 @@ export function SeriesGrid({
    *     write the browser clamped does not match, so the next run re-derives
    *     from where the scroller actually is.
    *
-   *     **One transition this cannot rescue, because the loss happens before any
-   *     of it runs.** When the intermediate layout is much shorter than the
-   *     settled one — 871 → 354 renders 4 columns, a 1 033px track against the
-   *     1 770px it settles at — the browser clamps `scrollTop` to the
-   *     intermediate's maximum *during layout*, before this effect is called.
-   *     Instrumented in Chrome: a reader parked at 447 is already at 337 when
-   *     effect 1 first sees it, and 337 in the three-column layout genuinely is
-   *     row 0, so row 0 is faithfully anchored and the reader ends a row above
-   *     themselves.
+   *     **The clamp that used to eat the reader's place is closed, and a smaller
+   *     one is not.** The old one was pathological: the intermediate layout was
+   *     much shorter than the settled one — 871 → 354 rendered 4 columns, a
+   *     1 033px track against the 1 770px it settles at — and the browser clamped
+   *     `scrollTop` to a maximum belonging to a layout that was never shown,
+   *     *during layout*, before this effect was called. A reader parked at 447
+   *     was already at 337 by the time effect 1 first saw it, and the loss grew
+   *     with depth, because the clamp target is a fixed property of that layout
+   *     and the reader's position is not. `useGridBox` removes the layout, so it
+   *     removes the clamp.
    *
-   *     **The loss is `scrollTop − intermediateMaxScroll`, so it grows with
-   *     depth.** The clamp target is a fixed property of the intermediate
-   *     layout; the reader's position is not. Measured with 13 series at
-   *     `scrollTop` 1400, the clamp is 686 and the reader's series ends
-   *     1 235.5px below the top of the viewport. The shallow 447 above is the
-   *     benign end of that range, and there the remembered anchor does recover —
-   *     it is only once the clamp bites that there is nothing left to remember.
-   *     (An earlier version of this comment called the loss "bounded at one
-   *     row". That was measured at one shallow point, which is the same
-   *     measurement bias that hid the column-count defect above; the reviewer's
-   *     deep sample corrected it.)
+   *     What survives is that **any** resize which genuinely shortens the track
+   *     still clamps before JavaScript runs — widening from a narrow tier to a
+   *     wide one takes the same items from many rows to few, and a reader parked
+   *     below the new maximum is moved by the browser, not by us. Effect 1 reads
+   *     `scrollTop` after React's mutation phase, so it can only ever see the
+   *     post-clamp value and will faithfully anchor to it. This is smaller than
+   *     what it replaces — the target is now a layout the reader is actually
+   *     being taken to, so the residual is "this layout cannot hold you that
+   *     deep" rather than "we clamped you to a fiction" — but it is not nothing,
+   *     and it is **not measured**: the numbers above were taken against the
+   *     intermediate commit and do not transfer.
    *
-   *     Recovering it would mean recording the anchor from user-initiated
-   *     scrolls only, telling wheel and keyboard apart from the clamp's own
-   *     scroll event. The intermediate commit is an open item upstream in
-   *     `useElementWidth`, and fixing it there removes this case entirely, which
-   *     is the cheaper repair.
+   *     Closing it means anchoring from a `scrollTop` captured *before* the
+   *     commit — a passive `scroll` listener storing the reader's last position —
+   *     rather than from the live read at the top of this effect. That is a
+   *     separate change with its own test, deliberately not folded in here so
+   *     that the two are attributable.
    *
    *     **That expression re-implements `virtual-core`'s layout rule, so it
    *     inherits that rule's premises**, and they are premises about the options
@@ -409,7 +417,7 @@ export function SeriesGrid({
   // nothing is stolen.
   //
   // **`width > 0` is not defensiveness, it is the correctness of the row
-  // arithmetic.** `useElementWidth` measures in a *layout* effect, and React
+  // arithmetic.** `useGridBox` measures in a *layout* effect, and React
   // flushes a commit's pending passive effects before it runs the re-render that
   // a layout effect's `setState` scheduled — so on the commit this grid mounts,
   // this effect sees `width === 0`, and `columnCount(0)` is **1**. The reveal
