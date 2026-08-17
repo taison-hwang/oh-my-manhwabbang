@@ -190,6 +190,13 @@ func check(root string) (findings, checked []string, err error) {
 	findings = append(findings, errFindings...)
 	checked = append(checked, fmt.Sprintf("%-28s -> ERROR_CODES", "internal/httpapi/errors.go"))
 
+	kindFindings, err := checkBookKinds(root, ts)
+	if err != nil {
+		return nil, nil, err
+	}
+	findings = append(findings, kindFindings...)
+	checked = append(checked, fmt.Sprintf("%-28s -> BOOK_KINDS", "internal/source/source.go"))
+
 	paramFindings, err := checkSeriesParams(root, ts)
 	if err != nil {
 		return nil, nil, err
@@ -583,6 +590,63 @@ func checkErrorCodes(root string, ts *tsTypes) ([]string, error) {
 		if !server[c] {
 			findings = append(findings, fmt.Sprintf(
 				"web/src/api/types.ts: ERROR_CODES lists %q; internal/httpapi/errors.go defines no such code", c))
+		}
+	}
+	return findings, nil
+}
+
+var reGoKind = regexp.MustCompile(`(?m)^\s*Kind[A-Za-z0-9_]+\s+Kind\s*=\s*"([a-z]+)"`)
+
+// checkBookKinds compares the `Kind*` constants of internal/source/source.go
+// with `BOOK_KINDS` in types.ts, for the same reason checkErrorCodes exists and
+// after the same defect.
+//
+// The enum rule above can only judge a string that appears in a golden file,
+// and every golden book is a `zip` or a `dir`. So when D-71 added `rar` and
+// `nestedrar` to the server, the client enum kept its four members, tsc went on
+// believing `book.kind` could not be `nestedrar`, and the badge rendered the
+// raw wire value — NESTEDRAR on 8 volumes of the collection. Comparing the
+// declarations rather than a sample is what closes that: a kind the scanner can
+// write is a kind the client must be able to name, whether or not any fixture
+// happens to contain one.
+func checkBookKinds(root string, ts *tsTypes) ([]string, error) {
+	path := filepath.Join(root, "internal", "source", "source.go")
+	src, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+	client, ok := ts.constArrays["BOOK_KINDS"]
+	if !ok {
+		return []string{"web/src/api/types.ts: BOOK_KINDS is missing"}, nil
+	}
+	inClient := map[string]bool{}
+	for _, k := range client {
+		inClient[k] = true
+	}
+	server := map[string]bool{}
+	for _, m := range reGoKind.FindAllStringSubmatch(string(src), -1) {
+		server[m[1]] = true
+	}
+	if len(server) == 0 {
+		return nil, fmt.Errorf("no Kind* constants found in %s", path)
+	}
+
+	var findings []string
+	names := make([]string, 0, len(server))
+	for k := range server {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	for _, k := range names {
+		if !inClient[k] {
+			findings = append(findings, fmt.Sprintf(
+				"internal/source/source.go: book kind %q: the scanner can write it; types.ts BOOK_KINDS does not list it", k))
+		}
+	}
+	for _, k := range client {
+		if !server[k] {
+			findings = append(findings, fmt.Sprintf(
+				"web/src/api/types.ts: BOOK_KINDS lists %q; internal/source/source.go defines no such Kind", k))
 		}
 	}
 	return findings, nil

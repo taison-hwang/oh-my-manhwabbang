@@ -56,7 +56,9 @@ describe('enum values that bite (C-1 … C-4)', () => {
   })
 
   it('books are "dir" while series are "folder" (C-4)', () => {
-    expect([...BOOK_KINDS]).toEqual(['zip', 'nestedzip', 'dir', 'pdf'])
+    // `rar`/`nestedrar` are D-71's, and were absent here while the server was
+    // already sending them for 22 books of the collection.
+    expect([...BOOK_KINDS]).toEqual(['zip', 'nestedzip', 'rar', 'nestedrar', 'dir', 'pdf'])
     expect([...SERIES_KINDS]).toEqual(['folder', 'zip', 'pdf'])
   })
 })

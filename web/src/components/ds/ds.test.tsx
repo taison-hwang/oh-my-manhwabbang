@@ -8,6 +8,7 @@ import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
+import { BOOK_KINDS } from '../../api/types'
 import { formatLabel } from '../../lib/format'
 import { stripComments } from '../../styles/cssRules'
 import { Button } from './Button'
@@ -87,6 +88,20 @@ describe('Tag / FormatBadge (ui-spec §4.5, FR-LIB-009)', () => {
     expect(formatLabel('dir')).toBe('FOLDER')
     expect(formatLabel('zip')).toBe('ZIP')
     expect(formatLabel('pdf')).toBe('PDF')
+  })
+
+  it('a nested volume wears its twin’s badge, and no kind keeps the prefix (D-70, D-71)', () => {
+    expect(formatLabel('nestedzip')).toBe('ZIP')
+    expect(formatLabel('rar')).toBe('RAR')
+    expect(formatLabel('nestedrar')).toBe('RAR')
+
+    // Driven by BOOK_KINDS rather than a hand-written list, because the defect
+    // this closes was a kind the client had never been told about: the server
+    // sent `nestedrar` for 8 volumes and the badge read NESTEDRAR. A kind added
+    // to the enum without a badge rule fails here instead of on screen.
+    for (const kind of BOOK_KINDS) {
+      expect(formatLabel(kind), kind).not.toMatch(/nested/i)
+    }
   })
 
   it('renders the corner variant as a pill inset from the top-left (E-32)', () => {

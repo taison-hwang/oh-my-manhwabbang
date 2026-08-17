@@ -181,17 +181,25 @@ export function minutesSince(unixSeconds: number, nowMs: number = Date.now()): n
  * badge text is `FOLDER` for both — the distinction matters to the API, not to
  * a reader.
  *
- * `nestedzip` is a volume that lives inside a container archive rather than in
- * a file of its own. That is a fact about where the bytes are, not about what
- * the reader is opening, so it wears the same `ZIP` badge.
+ * A `nested*` kind is a volume that lives inside a container archive rather
+ * than in a file of its own. That is a fact about where the bytes are, not
+ * about what the reader is opening, so it wears its twin's badge.
  */
-export type FormatValue = 'zip' | 'nestedzip' | 'dir' | 'folder' | 'pdf'
+export type FormatValue = 'zip' | 'nestedzip' | 'rar' | 'nestedrar' | 'dir' | 'folder' | 'pdf'
 
-/** The `ZIP` / `FOLDER` / `PDF` badge text (FR-LIB-009). */
+/**
+ * The `ZIP` / `RAR` / `FOLDER` / `PDF` badge text (FR-LIB-009).
+ *
+ * The `nested` prefix is stripped rather than matched case by case. That is the
+ * D-70/D-71 rule itself — the prefix records where the bytes live, and the
+ * reader is the twin's — so the next nested format is right by construction.
+ * Matching `nestedzip` alone is what let `nestedrar` reach the badge as
+ * `NESTEDRAR` for 8 volumes of the collection.
+ */
 export function formatLabel(format: FormatValue): string {
   if (format === 'dir' || format === 'folder') return 'FOLDER'
-  if (format === 'nestedzip') return 'ZIP'
-  return format.toUpperCase()
+  const bare = format.startsWith('nested') ? format.slice('nested'.length) : format
+  return bare.toUpperCase()
 }
 
 /** The subset of `ScanStatus` (arch §7.10) the sidebar indicator reads. */

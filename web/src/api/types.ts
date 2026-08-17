@@ -32,12 +32,19 @@ export type Unix = number
 export const ID_PATTERN = /^[a-z2-7]{16}$/
 
 /**
- * `nestedzip` is a volume inside a container archive — one of the 39 books in
- * `겟 벡커스 1~39완.zip` rather than a `.zip` of its own. It reads exactly like
- * a `zip` book and wears the same badge; the distinction is where the bytes
- * live, which is the server's problem.
+ * The `nested*` spellings are volumes inside a container archive — one of the
+ * 39 books in `겟 벡커스 1~39완.zip` rather than an archive of their own. They
+ * read exactly like their un-nested twin and wear the same badge; the
+ * distinction is where the bytes live, which is the server's problem.
+ *
+ * `rar`/`nestedrar` arrived with D-71 and were missing here until they were
+ * measured on the wire: 14 `rar` and 8 `nestedrar` books in the collection,
+ * against a client that had never heard of either. `contractcheck`'s enum rule
+ * could not catch it, because it can only judge a string some golden file
+ * happens to contain and every golden book is a `zip` or a `dir`. It now
+ * compares this list against the `Kind*` constants themselves.
  */
-export const BOOK_KINDS = ['zip', 'nestedzip', 'dir', 'pdf'] as const
+export const BOOK_KINDS = ['zip', 'nestedzip', 'rar', 'nestedrar', 'dir', 'pdf'] as const
 export type BookKind = (typeof BOOK_KINDS)[number]
 
 /** C-4: books say `dir`, series say `folder`. The badge text is FOLDER for both. */
