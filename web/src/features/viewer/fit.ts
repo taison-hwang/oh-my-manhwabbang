@@ -369,6 +369,27 @@ export function sliderPercent(page: number, pageCount: number): number {
 }
 
 /**
+ * Thumbnail-strip slot ↔ page — a mutually inverse pair.
+ *
+ * In R→L the strip reverses its *contents* rather than its scroller, so slot 0
+ * (the leftmost cell on the track) draws the last page and the reader's page 1
+ * sits at the right end, matching the stage and the slider. See
+ * `ThumbnailStrip` for why the scroller itself stays L→R.
+ *
+ * They live here, beside `flexDirection` and `sliderPercent`, because this file
+ * is where the viewer's direction-and-geometry arithmetic is kept and tested —
+ * and because exporting them from the component would make it a mixed module
+ * that Fast Refresh cannot reload.
+ */
+export function stripPageForSlot(slot: number, pageCount: number, dir: ReadingDirection): number {
+  return dir === 'rtl' ? pageCount - slot : slot + 1
+}
+
+export function stripSlotForPage(page: number, pageCount: number, dir: ReadingDirection): number {
+  return dir === 'rtl' ? pageCount - page : page - 1
+}
+
+/**
  * A dimension lookup that prefers a measured size over the API's.
  *
  * `PageInfo.w/h` are `null` until the server's dimension pass reaches them

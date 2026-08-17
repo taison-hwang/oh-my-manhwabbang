@@ -8,6 +8,8 @@ import { act, render } from '@testing-library/react'
 import { StrictMode, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { ReadingDirection } from '../../store/viewer'
+import { stripPageForSlot, stripSlotForPage } from './fit'
 import { THUMB_SLOT_TOUCH_PX, ThumbnailStrip } from './ThumbnailStrip'
 
 /**
@@ -178,15 +180,17 @@ interface StripProps {
   bookId?: string
   pageCount?: number
   current?: number
+  dir?: ReadingDirection
 }
 
-function strip({ bookId = BOOK, pageCount = PAGES, current = 12 }: StripProps = {}) {
+function strip({ bookId = BOOK, pageCount = PAGES, current = 12, dir = 'ltr' }: StripProps = {}) {
   return wrap(
     <ThumbnailStrip
       bookId={bookId}
       cv={null}
       pageCount={pageCount}
       current={current}
+      dir={dir}
       onJump={vi.fn()}
     />,
   )
@@ -492,5 +496,96 @@ describe('the strip’s scrolling contract with the virtualiser', () => {
     // this suite stayed green, because no argument would have changed. Nothing
     // in the repo sets that property today; the pin is defence.
     expect(el?.style.scrollBehavior).toBe('auto')
+  })
+})
+
+describe('R→L reverses the contents, not the scroller', () => {
+  /**
+   * The slot↔page pair is the whole of the direction handling, so it is asserted
+   * exhaustively rather than at a couple of chosen points: every page of a book
+   * must survive the round trip, and — the half that actually catches an
+   * off-by-one — the slots a book uses must be exactly `0…pageCount-1` with no
+   * value repeated. A mapping that dropped page 1 or aimed two pages at one slot
+   * would still round-trip for most inputs.
+   */
+  it('maps every page to a distinct slot and back, both directions', () => {
+    for (const dir of ['ltr', 'rtl'] as const) {
+      const total = 184
+      const slots = new Set<number>()
+      for (let page = 1; page <= total; page++) {
+        const slot = stripSlotForPage(page, total, dir)
+        expect(stripPageForSlot(slot, total, dir), `${dir} page ${String(page)}`).toBe(page)
+        slots.add(slot)
+      }
+      expect(slots.size, `${dir}: one slot per page`).toBe(total)
+      expect(Math.min(...slots), `${dir}: slots start at 0`).toBe(0)
+      expect(Math.max(...slots), `${dir}: slots end at pageCount-1`).toBe(total - 1)
+    }
+  })
+
+  it('puts page 1 at the right end in R→L, and at the left in L→R', () => {
+    const total = 184
+    // Slot 0 is the leftmost cell on the track; the last slot is the rightmost.
+    expect(stripPageForSlot(0, total, 'ltr')).toBe(1)
+    expect(stripPageForSlot(total - 1, total, 'ltr')).toBe(total)
+    expect(stripPageForSlot(0, total, 'rtl')).toBe(total)
+    expect(stripPageForSlot(total - 1, total, 'rtl')).toBe(1)
+  })
+
+  /**
+   * The recentre has to use the same mapping the layout does.
+   *
+   * Drawing the reversed pages while scrolling to `current - 1` looks right at
+   * a glance — the cells carry the correct numbers — and puts the reader at the
+   * mirror of their page, which in a 214-page volume is 200 thumbnails away.
+   * The layout test above cannot see it, because it never scrolls.
+   *
+   * Asserted as an equality between two renders rather than against a computed
+   * offset: slot `p-1` is where L→R puts page `p` and where R→L puts page
+   * `pageCount+1-p`, so the two must ask for the *same* scroll. That pins the
+   * mapping without a second copy of `getOffsetForAlignment`'s arithmetic —
+   * which is the thing a hand-computed expectation would silently drift from.
+   */
+  it('recentres on the mapped slot, not the raw page number', () => {
+    stubLayout()
+    const page = 30
+
+    const ltr = render(strip({ dir: 'ltr', current: page }))
+    const ltrLeft = scrolls.at(-1)?.left
+    ltr.unmount()
+
+    scrolls = []
+    scrollLeft = 0
+    const mirrored = render(strip({ dir: 'rtl', current: PAGES + 1 - page }))
+    const rtlMirroredLeft = scrolls.at(-1)?.left
+    mirrored.unmount()
+
+    scrolls = []
+    scrollLeft = 0
+    const same = render(strip({ dir: 'rtl', current: page }))
+    const rtlSameLeft = scrolls.at(-1)?.left
+    same.unmount()
+
+    expect(ltrLeft, 'the harness must have recorded a recentre').toBeGreaterThan(0)
+    expect(rtlMirroredLeft, 'same slot ⇒ same scroll').toBe(ltrLeft)
+    // And the control: without it, a recentre that ignored `dir` entirely would
+    // satisfy the equality above by never moving at all.
+    expect(rtlSameLeft, 'page 30 of an R→L book is not where page 30 of an L→R one is').not.toBe(
+      ltrLeft,
+    )
+  })
+
+  it('draws the reversed pages and marks the right one current', () => {
+    stubLayout()
+    // 20 cells mount (see the harness note above), i.e. slots 0…19, which in
+    // R→L are the *last* 20 pages. Page 12 is nowhere near them, so `current`
+    // being unmarked here is the mapping working, not a missing cell.
+    const { container } = render(strip({ dir: 'rtl', current: PAGES }))
+    const labels = [...container.querySelectorAll('[data-role="thumb"]')].map((el) =>
+      el.getAttribute('data-page'),
+    )
+    expect(labels.length, 'the harness mounts a window of cells').toBeGreaterThan(0)
+    expect(labels[0], 'the leftmost slot draws the last page in R→L').toBe(String(PAGES))
+    expect(labels[1]).toBe(String(PAGES - 1))
   })
 })

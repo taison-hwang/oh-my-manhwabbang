@@ -3,6 +3,7 @@ import { PanelTop } from 'lucide-react'
 import { Button } from '../../components/ds/Button'
 import { cn } from '../../lib/cn'
 import { formatViewerCounter } from '../../lib/format'
+import type { ReadingDirection } from '../../store/viewer'
 import { PageSlider } from './PageSlider'
 import { ThumbnailStrip } from './ThumbnailStrip'
 
@@ -25,6 +26,8 @@ export interface ViewerBottomBarProps {
   cv: string | null
   page: number
   pageCount: number
+  /** Both navigators in this bar run right-to-left in an R→L volume. */
+  dir: ReadingDirection
   stripOpen: boolean
   dragging: boolean
   dragPage: number | null
@@ -41,6 +44,7 @@ export function ViewerBottomBar({
   cv,
   page,
   pageCount,
+  dir,
   stripOpen,
   dragging,
   dragPage,
@@ -73,6 +77,7 @@ export function ViewerBottomBar({
           cv={cv}
           pageCount={pageCount}
           current={page}
+          dir={dir}
           onJump={onJump}
         />
       )}
@@ -93,6 +98,7 @@ export function ViewerBottomBar({
           cv={cv}
           page={page}
           pageCount={pageCount}
+          dir={dir}
           dragging={dragging}
           dragPage={dragPage}
           onDragStart={onDragStart}

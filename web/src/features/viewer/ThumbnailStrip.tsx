@@ -2,6 +2,8 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { useEffect, useRef } from 'react'
 
 import { useIsMobile, useMediaQuery } from '../../lib/useMediaQuery'
+import type { ReadingDirection } from '../../store/viewer'
+import { stripPageForSlot, stripSlotForPage } from './fit'
 import { ThumbnailCell } from './ThumbnailCell'
 
 /**
@@ -60,6 +62,23 @@ import { ThumbnailCell } from './ThumbnailCell'
  *    `freshRef` is that guard, and its cleanup is what makes it survive
  *    StrictMode (see below).
  *
+ * **R→L reverses the *contents*, never the scroller.** In an R→L volume page 1
+ * belongs at the right end, matching the stage, the slider and the tap zones.
+ * The way that is done here is a one-line change of meaning — slot `i` holds
+ * page `pageCount - i` instead of `i + 1` — and deliberately **not**
+ * `direction: rtl` on the scroll element.
+ *
+ * The reason is that every number in this file is an LTR number. `scrollLeft`
+ * under `direction: rtl` starts at 0 on the *right* and runs negative, which
+ * `@tanstack/virtual-core` does not model: `getOffsetForIndex`, the
+ * `scrollWidth - clientWidth` clamp and the distance rule above would all be
+ * reading a coordinate system that no longer means what they were measured
+ * against — and the failure mode of getting that wrong is the AC-008 stall,
+ * which is exactly what the measurements in this header exist to prevent.
+ * Reversing the mapping leaves the scroller a plain LTR scroller, so the
+ * offsets, the clamp, the recentre and every constant above stand unchanged,
+ * and the browser's own RTL `scrollLeft` disagreements never enter.
+ *
  * **No visible scrollbar.** ui-spec §6.7 gives the strip `overflow-x:auto` and
  * the reference capture shows no bar — but that capture is macOS, where
  * scrollbars are overlays that vanish when idle. `base.css` styles a permanent
@@ -76,8 +95,11 @@ export interface ThumbnailStripProps {
   pageCount: number
   /** 1-based current page. */
   current: number
+  /** R→L puts page 1 in the rightmost slot. */
+  dir: ReadingDirection
   onJump: (page: number) => void
 }
+
 
 /**
  * Thumb + 4px gap, at both sizes (ui-spec §6.7).
@@ -99,6 +121,7 @@ export function ThumbnailStrip({
   cv,
   pageCount,
   current,
+  dir,
   onJump,
 }: ThumbnailStripProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
@@ -247,7 +270,7 @@ export function ThumbnailStrip({
    */
   useEffect(() => {
     if (pageCount <= 0) return
-    const index = Math.max(0, Math.min(pageCount - 1, current - 1))
+    const index = Math.max(0, Math.min(pageCount - 1, stripSlotForPage(current, pageCount, dir)))
 
     const el = scrollRef.current
     // `clientWidth` is the budget, and it needs no companion guard: before
@@ -273,7 +296,7 @@ export function ThumbnailStrip({
       // `scroll-behavior`, hence the explicit `auto` pinned in `style` below.
       behavior: near && !fresh && !reduceMotion ? 'smooth' : 'auto',
     })
-  }, [current, getOffsetForIndex, pageCount, reduceMotion, scrollToIndex, totalSize])
+  }, [current, dir, getOffsetForIndex, pageCount, reduceMotion, scrollToIndex, totalSize])
 
   return (
     <div
@@ -304,21 +327,25 @@ export function ThumbnailStrip({
         className="relative"
         style={{ height: `${String(track)}px`, width: `${String(totalSize)}px` }}
       >
-        {virtualizer.getVirtualItems().map((item) => (
-          <div
-            key={item.key}
-            className="absolute left-0 top-0 h-full"
-            style={{ transform: `translateX(${String(item.start)}px)` }}
-          >
-            <ThumbnailCell
-              bookId={bookId}
-              page={item.index + 1}
-              cv={cv}
-              current={item.index + 1 === current}
-              onJump={onJump}
-            />
-          </div>
-        ))}
+        {virtualizer.getVirtualItems().map((item) => {
+          // `item.index` is a slot on the track, which in R→L is not the page.
+          const cellPage = stripPageForSlot(item.index, pageCount, dir)
+          return (
+            <div
+              key={item.key}
+              className="absolute left-0 top-0 h-full"
+              style={{ transform: `translateX(${String(item.start)}px)` }}
+            >
+              <ThumbnailCell
+                bookId={bookId}
+                page={cellPage}
+                cv={cv}
+                current={cellPage === current}
+                onJump={onJump}
+              />
+            </div>
+          )
+        })}
       </div>
     </div>
   )

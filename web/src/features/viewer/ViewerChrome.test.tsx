@@ -113,6 +113,7 @@ describe('E-32 §1 — the "current" markers are --color-hot', () => {
           cv={null}
           page={110}
           pageCount={362}
+          dir="ltr"
           dragging
           dragPage={110}
           onDragStart={vi.fn()}
@@ -124,6 +125,60 @@ describe('E-32 §1 — the "current" markers are --color-hot', () => {
     const preview = container.querySelector('[data-role="slider-preview"]')
     expect(preview).toHaveClass('border-hot')
     expect(preview?.classList.contains('border-accent')).toBe(false)
+  })
+
+  /**
+   * The track and the drag preview both follow the reading direction.
+   *
+   * `dir` on the input is what mirrors the track, and the engine — not jsdom —
+   * does the mirroring, so what is asserted here is that the attribute reaches
+   * the element. The preview is the half jsdom *can* judge: it is positioned by
+   * a `left` percentage this component computes, so an unmirrored preview would
+   * sit on the opposite side of the track from the thumb it labels.
+   */
+  it('mirrors the track and the drag preview in R→L (page 1 at the right)', () => {
+    const slider = (dir: 'ltr' | 'rtl') =>
+      render(
+        wrap(
+          <PageSlider
+            bookId="b1"
+            cv={null}
+            page={174}
+            pageCount={184}
+            dir={dir}
+            dragging
+            dragPage={174}
+            onDragStart={vi.fn()}
+            onDrag={vi.fn()}
+            onCommit={vi.fn()}
+          />,
+        ),
+      )
+
+    const ltr = slider('ltr')
+    const ltrInput = ltr.container.querySelector('input[type="range"]')
+    expect(ltrInput).toHaveAttribute('dir', 'ltr')
+    const ltrLeft = ltr.container.querySelector<HTMLElement>('[data-role="slider-preview"]')?.style
+      .left
+    ltr.unmount()
+
+    const rtl = slider('rtl')
+    const rtlInput = rtl.container.querySelector('input[type="range"]')
+    expect(rtlInput).toHaveAttribute('dir', 'rtl')
+    // The value the engine mirrors is untouched: it still names the real page,
+    // which is what `aria-valuetext` and the commit handlers report.
+    expect(rtlInput).toHaveValue('174')
+    const rtlLeft = rtl.container.querySelector<HTMLElement>('[data-role="slider-preview"]')?.style
+      .left
+
+    // 174 of 184 is (173/183) = 94.54% along the track, so the mirror is 5.46%.
+    // Both are pinned, not just their sum: two wrong percentages can still add
+    // to 100, and "near the end" is the half of the claim the reader sees.
+    const ltrPct = Number.parseFloat(ltrLeft ?? '')
+    const rtlPct = Number.parseFloat(rtlLeft ?? '')
+    expect(ltrPct).toBeCloseTo(94.54, 1)
+    expect(rtlPct).toBeCloseTo(5.46, 1)
+    expect(ltrPct + rtlPct).toBeCloseTo(100, 6)
   })
 })
 

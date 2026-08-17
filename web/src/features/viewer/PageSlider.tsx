@@ -2,6 +2,7 @@ import type { ChangeEvent } from 'react'
 
 import { usePageThumbImage } from '../../api/queries'
 import { thumbWidthFor } from '../../api/urls'
+import type { ReadingDirection } from '../../store/viewer'
 import { sliderPercent } from './fit'
 
 /**
@@ -25,6 +26,22 @@ import { sliderPercent } from './fit'
  * `on-dark` is the second half of the same rule: on the reading ground
  * `--color-divider` is all but the background colour, so the viewer's track is
  * lifted to `--color-neutral-600` and the thumb has something to travel along.
+ *
+ * **The travel follows the reading direction.** In R→L the book opens at the
+ * right, so page 1 is the right end of the track and progress moves the thumb
+ * leftwards — the same axis the page stage, the arrow keys and the tap zones
+ * already flip (`fit.ts`, `useViewerKeys`, `useTouchZones`). This one control
+ * was reading left-to-right in every book, so at 174/184 of an R→L volume the
+ * thumb sat at the far right while the reader's sense of "nearly done" pointed
+ * the other way.
+ *
+ * It is done with `dir` on the input rather than by inverting `value`, so the
+ * engine owns the mirroring: the thumb geometry, the pointer mapping and the
+ * arrow keys (which per spec reverse in RTL) all move together, and `value`,
+ * `aria-valuetext` and the commit handlers keep saying the real page number.
+ * Verified in Chromium 145 against this exact styling — `appearance:none` with
+ * custom track and thumb pseudo-elements — because a mirroring the engine
+ * ignored would have been invisible in jsdom.
  */
 
 export interface PageSliderProps {
@@ -32,6 +49,8 @@ export interface PageSliderProps {
   cv: string | null
   page: number
   pageCount: number
+  /** R→L mirrors the track: page 1 sits at the right end. */
+  dir: ReadingDirection
   dragging: boolean
   /** The page under the thumb while dragging; `null` when idle. */
   dragPage: number | null
@@ -45,6 +64,7 @@ export function PageSlider({
   cv,
   page,
   pageCount,
+  dir,
   dragging,
   dragPage,
   onDragStart,
@@ -75,6 +95,7 @@ export function PageSlider({
     <div className="relative flex flex-1 items-center" data-role="page-slider">
       <input
         type="range"
+        dir={dir}
         min={1}
         max={Math.max(1, pageCount)}
         step={1}
@@ -101,8 +122,17 @@ export function PageSlider({
           // "current" signal the strip's cell carries. The accent it used to be
           // is a deep teal at 1.2:1 on the preview's own dark stripes.
           className="pointer-events-none absolute bottom-6 flex h-[102px] w-[68px] items-end overflow-hidden rounded-sm border-2 border-hot p-1 text-xs tabular-nums text-ink"
+          // The percentage is mirrored here rather than left to `dir`, because
+          // this is a `position:absolute` box on the wrapper and `left` is a
+          // physical edge: `dir` on the input does not reach it, so an R→L drag
+          // would have parked the preview on the opposite side of the track
+          // from the thumb it belongs to.
           style={{
-            left: `${String(sliderPercent(previewPage, pageCount))}%`,
+            left: `${String(
+              dir === 'rtl'
+                ? 100 - sliderPercent(previewPage, pageCount)
+                : sliderPercent(previewPage, pageCount),
+            )}%`,
             transform: 'translateX(-50%)',
           }}
         >

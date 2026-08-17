@@ -970,6 +970,7 @@ export function ViewerPage() {
         cv={cv}
         page={page}
         pageCount={pageCount}
+        dir={dir}
         stripOpen={stripOpen}
         dragging={dragging}
         dragPage={dragPage}
