@@ -3,9 +3,9 @@
  *
  * The specs in this directory are step 6 of that section — the twelve browser
  * assertions — run by `scripts/e2e.sh` step 11 against the **already running**
- * server it started in step 4, i.e. the real collection narrowed to ten series
- * by `scan.include_globs` (amendment A-3). Nothing here starts or configures a
- * server; `PLAYWRIGHT_BASE_URL` points at the one that is up.
+ * server it started in step 4, i.e. the real collection narrowed to fifteen
+ * series by `scan.include_globs` (amendment A-3). Nothing here starts or
+ * configures a server; `PLAYWRIGHT_BASE_URL` points at the one that is up.
  *
  * Three rules travel with this file.
  *
@@ -16,9 +16,10 @@
  *     its expectation from the API first.
  *
  *     What the rule does **not** say, and what a wrong sentence here cost: the
- *     synthetic tree does not carry the same ten *names*. D-49 adds an encrypted
- *     ZIP and a ZIP64 archive the real collection has no sample of, so the
- *     synthetic library holds **twelve** series — and this docblock claimed ten
+ *     synthetic tree does not carry the same fifteen *names*. D-49, as extended
+ *     by D-71, adds an encrypted ZIP, a ZIP64 archive and a solid RAR the real
+ *     collection has no sample of, so the synthetic library holds **eighteen**
+ *     series — and this docblock claimed the two libraries were the same size
  *     until 2026-07-29, which is why `toBe(CURATED_SERIES_COUNT)` stood in
  *     01-library.spec.ts for three sessions and `make e2e-synthetic` had never
  *     been run to contradict it. The library *set* is not relative and must not
@@ -49,27 +50,35 @@ export const SHOTS_DIR = path.resolve(HERE, '..', '..', 'docs', 'e2e-shots')
 
 /**
  * The curated series of impl-plan §6.3, by their exact directory names. Ten
- * until D-71 added the four that RAR made reachable.
+ * until E-14 added `비둘기.zip`, and then four more in the RAR session — three
+ * that D-71 made reachable (`라제폰`, `울프가이`, `사모님은 학생회장`) and one
+ * that D-72 gave a name to instead of `비어 있음` (`펌프킨 시저스`). Fifteen now.
  *
- * These are a *copy*, not the source. The same strings are written out
- * three more times — `scripts/e2e-config.sh:23-34` (`CURATED`, which becomes
- * `scan.include_globs`), `scripts/e2e-assert.py:27-38` (`CURATED`, the curl
- * tier's expectation) and 18 path literals in `scripts/mkfixture/main.go`,
- * which builds the synthetic twin under the same names (D-49). A **fifth** copy
- * hides in `scripts/e2e.sh:921` (`A11_FILL`, one archive by path). Nothing links
- * the five statically; they agree only because a disagreement fails the run —
- * `e2e-assert.py` compares the indexed names against its own list, and every
- * helper here that takes a name (`seriesId`, `openSeries`) fails *by name* on a
- * series the server never heard of. Renaming one series is a five-file edit.
+ * These are a *copy*, not the source. The same strings are written out three
+ * more times — `scripts/e2e-config.sh:29-43` (`CURATED`, which becomes
+ * `scan.include_globs`, and is the source of truth), `scripts/e2e-assert.py:51-65`
+ * (`CURATED`, the curl tier's expectation) and 26 path literals in
+ * `scripts/mkfixture/main.go`, which builds the synthetic twin under the same
+ * names (D-49). A **fifth** copy hides in `scripts/e2e.sh:922` (`A11_FILL`, one
+ * archive by path), and a sixth in `docs/impl-plan.md` §6.3's table, which is
+ * the *declared* source of truth and carries no code.
  *
- * All ten of the original names were renamed at once in 2026-08, when the collection on disk lost the
- * leading `[만화] ` every entry used to carry. That is what a rename costs when
- * nothing links the five copies: the scan matched zero of ten, and `make e2e`
- * died at step 7 with `got 0, want 10` before a browser ever started. Two
- * consequences outlived the edit. `scripts/e2e-config.sh`'s glob escaping is now
- * load-bearing for exactly one name, 배틀로얄, which is the only one left holding
- * a `[`. And `docs/e2e-shots/` still shows the old titles until the next review
- * round retakes it.
+ * Nothing linked the six statically until 2026-08-18, and they agreed only
+ * because a disagreement failed the run — twenty minutes in, as `got 0, want
+ * 15`, naming neither the file to fix nor the series. `contractcheck`'s
+ * `checkCuratedSeries` now compares all six every `make lint`, in seconds and by
+ * name; the doc table had already drifted when it was written. Renaming one
+ * series is still a five-file edit, but the sixth file no longer decides how you
+ * find out.
+ *
+ * All ten of the names of the day were renamed at once in 2026-08, when the
+ * collection on disk lost the leading `[만화] ` every entry used to carry. That
+ * is what a rename cost when nothing linked the copies: the scan matched zero of
+ * ten, and `make e2e` died at step 7 with `got 0, want 10` before a browser ever
+ * started. Two consequences outlived the edit. `scripts/e2e-config.sh`'s glob
+ * escaping is now load-bearing for exactly one name, 배틀로얄, which is the only
+ * one left holding a `[`. And `docs/e2e-shots/` still shows the old titles until
+ * the next review round retakes it.
  */
 export const SERIES = {
   clover: 'Clover 클로버 (총4권)',
@@ -96,14 +105,16 @@ export const SERIES = {
  * real archives is.
  *
  * A *copy* on the same terms as `SERIES` above: the same strings are written out
- * in `scripts/e2e-config.sh` (`SYNTHETIC_EXTRA`, appended to
- * `scan.include_globs` in synthetic mode), `scripts/e2e-assert.py` (the curl
+ * in `scripts/e2e-config.sh:49-51` (`SYNTHETIC_EXTRA`, appended to
+ * `scan.include_globs` in synthetic mode), `scripts/e2e-assert.py:67` (the curl
  * tier's expectation) and `scripts/mkfixture/main.go`, which builds them.
  *
- * Four copies of one list is three too many, and it has now drifted once: the
- * D-71 series were added to the other three and this round failed here, in eight
+ * Four copies of one list is three too many, and it drifted once: the D-71
+ * series were added to the other three and this round failed here, in eight
  * screenshots across four viewports, rather than anywhere nearer the change.
- * Worth collapsing to a generated file the next time this list moves.
+ * `contractcheck`'s `checkCuratedSeries` compares these three the same way it
+ * compares `SERIES`, so the next drift is a `make lint` failure by name. Still
+ * worth collapsing to a generated file the next time this list moves.
  */
 export const SYNTHETIC_EXTRA = {
   encrypted: '암호화 테스트.zip',
@@ -118,8 +129,8 @@ export const SYNTHETIC_EXTRA = {
  * environment at all. The coupling is not unchecked — that was the objection to
  * an env signal, and `expectCuratedLibrary` below is what answers it: the
  * expectation it builds is a *set of names*, so a mode that does not match the
- * server fails immediately and by name (the two D-49 extras missing, or the two
- * of them surplus) instead of silently asserting the wrong library.
+ * server fails immediately and by name (the three D-49 extras missing, or the
+ * three of them surplus) instead of silently asserting the wrong library.
  */
 export const SYNTHETIC = process.env.SHELF_E2E_MODE === 'synthetic'
 
@@ -148,16 +159,35 @@ export const ROOT_EDITING_ENABLED = SYNTHETIC
  * Exactly what `scan.include_globs` puts in the library for this mode: the
  * curated set, plus the D-49 extras in synthetic mode.
  *
- * The same parameterisation `scripts/e2e-assert.py:253` already makes —
+ * The same parameterisation `scripts/e2e-assert.py:1020` already makes —
  * `expected = CURATED + ([] if real else SYNTHETIC_EXTRA)` — green in both modes
  * since it was written. impl-plan §6.3 step 6.1's literal "10 cards" is outranked
  * by D-49 (decisions > impl-plan, §0 precedence), and §6.3's own hermetic-fallback
- * paragraph concedes the two extras in the same sentence as "the identical
+ * paragraph concedes the three extras in the same sentence as "the identical
  * assertion set": identical *assertions*, each against its own mode's expected set.
  */
 export const EXPECTED_SERIES: readonly string[] = SYNTHETIC
   ? [...Object.values(SERIES), ...Object.values(SYNTHETIC_EXTRA)]
   : Object.values(SERIES)
+
+/**
+ * Where the fifteen names live. Printed by `expectCuratedLibrary` when they
+ * disagree, because the failure it reports is almost never in this file: it is
+ * one of these copies having moved without the others.
+ *
+ * The line numbers were true when written and are the second thing to distrust
+ * (the first being this list's own count). `make lint` runs `contractcheck`,
+ * whose `checkCuratedSeries` reads all six by pattern rather than by line and
+ * names the file and the series in seconds.
+ */
+const CURATED_COPIES = [
+  'scripts/e2e-config.sh:29-43  CURATED — becomes scan.include_globs. THE SOURCE OF TRUTH.',
+  'scripts/e2e-assert.py:51-65  CURATED — the curl tier, unpacked positionally at :69-72',
+  'web/e2e/shelf.ts:84-98       SERIES — this file, the browser tier',
+  'scripts/mkfixture/main.go    26 path literals, which build the synthetic twin (D-49)',
+  'scripts/e2e.sh:922           A11_FILL — one archive by path, step 11b',
+  'docs/impl-plan.md §6.3       the curated-set table — the declared source of truth',
+].join('\n  ')
 
 /**
  * The library holds exactly the series this mode's `include_globs` names.
@@ -166,11 +196,50 @@ export const EXPECTED_SERIES: readonly string[] = SYNTHETIC
  * ten: an `include_globs` leak that swapped one curated series for another, or a
  * rescan that dropped one, passed a count and fails this by name. That matters
  * most in the browser tier, because `scripts/e2e.sh` step 10 deletes `index.db`
- * and rescans *after* the curl tier has run, and only four of the ten curated
- * names are referenced anywhere else in this directory.
+ * and rescans *after* the curl tier has run, and not every curated name is
+ * referenced anywhere else in this directory.
+ *
+ * The message is the point of the helper as much as the assertion is. Playwright
+ * would print two sorted fifteen-element arrays and leave the reader to diff
+ * Korean strings by eye; what a reader needs instead is which names are missing,
+ * which are surplus, and which file to edit — and the two shapes that mean
+ * something specific: nothing indexed at all is a glob that matched nothing, and
+ * one missing beside one surplus is a series that was renamed on disk.
  */
 export function expectCuratedLibrary(names: Iterable<string>, why: string): void {
-  expect([...names].sort(), why).toEqual([...EXPECTED_SERIES].sort())
+  const got = [...names]
+  const expected = new Set(EXPECTED_SERIES)
+  const indexed = new Set(got)
+  const missing = EXPECTED_SERIES.filter((name) => !indexed.has(name))
+  const surplus = got.filter((name) => !expected.has(name))
+
+  const lines: string[] = [why]
+  if (missing.length > 0 || surplus.length > 0) {
+    lines.push(
+      `the library holds ${String(got.length)} series; this ${SYNTHETIC ? 'synthetic' : 'real'} round expects ${String(EXPECTED_SERIES.length)}.`,
+    )
+    if (got.length === 0) {
+      lines.push(
+        'NOTHING was indexed: every scan.include_globs pattern missed. One edit to',
+        "scripts/e2e-config.sh's CURATED does exactly this — a collection-wide rename did, once.",
+      )
+    } else if (missing.length === 1 && surplus.length === 1) {
+      lines.push(
+        `one name moved: expected ${JSON.stringify(missing[0])},`,
+        `the server has ${JSON.stringify(surplus[0])}.`,
+        'that is one series renamed on disk. Fix CURATED first, then the copies below.',
+      )
+    } else {
+      if (missing.length > 0) {
+        lines.push(`expected and NOT indexed (${String(missing.length)}):`, ...missing.map((n) => `  - ${n}`))
+      }
+      if (surplus.length > 0) {
+        lines.push(`indexed and NOT expected (${String(surplus.length)}):`, ...surplus.map((n) => `  + ${n}`))
+      }
+    }
+    lines.push(`the names live in six unlinked copies:\n  ${CURATED_COPIES}`)
+  }
+  expect(got.slice().sort(), lines.join('\n')).toEqual([...EXPECTED_SERIES].sort())
 }
 
 // ---------------------------------------------------------------------------
@@ -521,11 +590,15 @@ export function seriesTile(page: Page, name: string): Locator {
  * `seriesTiles()` answers "what is in the DOM *now*", which under FR-LIB-007 is
  * not the same question as "what does the library hold". `SeriesGrid` windows
  * rows with `overscan: 2`, and ui-spec §7 gives the narrow tiers big cards
- * (`--grid-min: 224px` at 768–1023, two columns at both 768 and 400), so the
- * ten curated series are all mounted at once at 1440 and 1024 and never are at
- * 768 or 400 — 8 of 10 measured at both. A caller that wants the whole library
- * therefore has to page through it, and one that asserts a count against the
- * live locator instead is asserting its own viewport, not the product.
+ * (`--grid-min: 224px` at 768–1023, two columns at both 768 and 400), so a
+ * library this size is mounted all at once at 1440 and 1024 and never is at 768
+ * or 400. The measurement behind that sentence was taken on 2026-07-29, when the
+ * curated set was ten: 8 of 10 mounted at both narrow tiers. The set is fifteen
+ * now (eighteen synthetic) and nobody has re-measured, which makes the gap wider
+ * rather than narrower — the conclusion survives, the two numbers are of their
+ * date. A caller that wants the whole library therefore has to page through it,
+ * and one that asserts a count against the live locator instead is asserting its
+ * own viewport, not the product.
  *
  * `atEachStop` runs against the names mounted at one scroll position, **before**
  * the next step can unmount them, which is the only window in which a per-card
@@ -552,12 +625,16 @@ export async function walkLibrary(
   // Bounded rather than `while (true)`: a scroller that grows faster than it is
   // walked has to fail as a named error, not as the suite's 120 s timeout. 50 is
   // slack and says so; the measurement it is slack around is five. Counted on
-  // 2026-07-29 by driving this exact loop against the synthetic fixture's twelve
-  // series at all four projects' viewports: 그리드 takes 2 stops at desktop-1440,
-  // 3 at laptop-1024 and 5 at both tablet-768 and mobile-400, and 리스트 never
-  // exceeds 2. What stood here — "the narrowest tier needs five stops for the
-  // curated ten" — had the wrong library size and no measurement behind either
-  // number, which is the defect class of HANDOFF §6.5 in a comment.
+  // 2026-07-29 by driving this exact loop against the synthetic fixture as it
+  // stood — twelve series — at all four projects' viewports: 그리드 takes 2 stops
+  // at desktop-1440, 3 at laptop-1024 and 5 at both tablet-768 and mobile-400,
+  // and 리스트 never exceeds 2. The fixture is eighteen series now — E-14, D-71
+  // and D-72 added five curated names between them and D-71 a third synthetic
+  // extra — so those stop counts are a FLOOR of that date rather than today's
+  // reading; 50 is still slack around any of them. What stood here — "the
+  // narrowest tier needs five stops for the curated ten" — had the wrong library
+  // size and no measurement behind either number, which is the defect class of
+  // HANDOFF §6.5 in a comment.
   for (let stop = 0; stop < 50; stop += 1) {
     const why = 'the library must render at least one series'
     await expect(seriesTiles(page).first(), why).toBeVisible()

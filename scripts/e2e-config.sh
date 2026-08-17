@@ -18,8 +18,13 @@ set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# The ten series of impl-plan §6.3, exact names. Each covers something no other
-# entry does; see the table in that section for the mapping.
+# The fifteen series of impl-plan §6.3, exact names, IN THAT ORDER. Each covers
+# something no other entry does; see the table in that section for the mapping.
+#
+# This array is the source of truth: five other copies follow it, and since they
+# agreed only by luck until one of them didn't, `contractcheck`'s
+# checkCuratedSeries compares all six on every `make lint`. The order is part of
+# the contract because scripts/e2e-assert.py unpacks its copy positionally.
 CURATED=(
   "Clover 클로버 (총4권)"                    # folder + 4 ZIPs, CP949 names
   "상처를 쫓는자 1-11 (완) 이케가미 료이치"  # folder of image sub-folders
@@ -104,7 +109,7 @@ fi
 # off every name — so exactly ONE curated entry still opens a class it does not
 # mean to, `배틀로얄 1~15 [완결].zip`, and it is the one this function is still
 # load-bearing for. It stays generic regardless: the escaping is a property of
-# the pattern language, not of what today's ten names happen to contain, and a
+# the pattern language, not of what today's fifteen names happen to contain, and a
 # pattern that compiles but matches nothing indexes an empty library.
 escape_glob() {
   printf '%s' "$1" | sed -e 's/\[/[[]/g' -e 's/\*/[*]/g' -e 's/?/[?]/g'

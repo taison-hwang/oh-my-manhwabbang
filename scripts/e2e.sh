@@ -9,7 +9,7 @@
 #
 #   1. build dist/shelf (the real binary, with the SPA embedded)
 #   2. write test/shelf.e2e.yaml: a root pointed AT THE REAL COLLECTION,
-#      narrowed to ten series by scan.include_globs. Nothing is copied — that
+#      narrowed to fifteen series by scan.include_globs. Nothing is copied — that
 #      is the whole point of A-3 (D-48). data_dir and cache_dir go to a scratch
 #      directory under /tmp.
 #   3. record a marker so FR-CFG-005 can be proved afterwards
@@ -694,8 +694,8 @@ step "10 · AC-005 / AC-006 — delete the index and the cache, restart"
 # The library as it stands, name for name, so the rebuild below can be compared
 # against it rather than merely printed. `limit` is capped at 200 by arch §7.5
 # (internal/httpapi/series.go, `seriesLimitMax`); 200 outruns both modes' subset
-# (ten series real, twelve synthetic — D-49 adds an encrypted ZIP and a ZIP64
-# archive), and `sort=name` makes the two listings comparable line by line.
+# (fifteen real, eighteen synthetic — D-49 as extended by D-71 adds an encrypted
+# ZIP, a ZIP64 archive and a solid RAR), and `sort=name` makes them comparable.
 #
 # `?limit=500` stood here, and 500 is not a number this endpoint accepts: every
 # call returned 400, `curl -fsS` exited non-zero, python died on empty stdin and
@@ -775,7 +775,7 @@ if wait_for_idle 180; then
   # unconditional: `$total` was never held against anything, so a rescan that
   # silently dropped a series announced the smaller number and passed. This is
   # the only place that can catch it — step 7's curl tier ran against the index
-  # this step has just deleted, and of the ten curated names only six are
+  # this step has just deleted, and only some of the fifteen curated names are
   # referenced anywhere in web/e2e/.
   after_names=$(series_names)
   before_n=$(name_count "$before_names")
@@ -915,8 +915,9 @@ step "11b · A-11 — DELETE /api/roots/{name}"
 # that reads the library *set* — the curl tier, step 10's AC-005 comparison and
 # every browser spec — has finished by this point, so the root can be filled
 # now: one archive, whose name is in `scan.include_globs` (it is one of the
-# curated ten), copied out of the fixture tree so that a per-root rescan gives
-# this root exactly one series to lose.
+# curated fifteen — `contractcheck` proves that rather than trusting this
+# comment), copied out of the fixture tree so that a per-root rescan gives this
+# root exactly one series to lose.
 if [ "$synthetic" -eq 1 ]; then
   A11_FILL="$FIXTURE/바퀴.zip"
   if [ ! -f "$A11_FILL" ]; then

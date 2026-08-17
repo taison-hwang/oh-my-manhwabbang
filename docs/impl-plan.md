@@ -979,23 +979,37 @@ Copying is also rejected: 5 GB of duplication, and it destroys the 2012–2018 m
 (amendment A-3).** Nothing is copied, the media volume is read-only in practice (I-9 proves it), and the
 test exercises genuine CP949 bytes and genuine truncated archives.
 
-#### The curated set — 10 series, ~5.1 GB, zero bytes copied
+#### The curated set — 15 series, zero bytes copied
 
 Root: `/mnt/big-data/pds/taison-data/02. books/01. mangga`
 
+The **exact-name column is the contract**, and this table is no longer the only place it is written down: the
+same fifteen strings are `CURATED` in `scripts/e2e-config.sh` (which becomes `scan.include_globs`), `CURATED`
+in `scripts/e2e-assert.py`, `SERIES` in `web/e2e/shelf.ts`, path literals in `scripts/mkfixture/main.go` and
+`A11_FILL` in `scripts/e2e.sh`. `contractcheck`'s `checkCuratedSeries` compares all six every `make lint`, and
+it exists because this table had drifted from the other five and nothing said so — it still carried the
+`[만화] ` prefix the collection lost in 2026-08, and it was four rows short.
+
+Rows 1–10 total ~5.1 GB. The five that E-14, D-71 and D-72 added were never measured on disk, so their rows
+give the shape and no size rather than a number nobody took.
+
 | # | `include_globs` entry (exact) | Shape | Covers |
 |---|---|---|---|
-| 1 | `[만화] Clover 클로버 (총4권)` | folder + 4 ZIPs, 31 MB | prd §2.2 row 1; CP949 entry names; 4-book series |
-| 2 | `[만화] 상처를 쫓는자 1-11 (완) 이케가미 료이치` | folder + 11 image sub-folders, 183 MB | prd §2.2 row 2; `kind:"dir"` books; dir fingerprint incremental path |
-| 3 | `[만화] 자살도114-122` | folder with 181 loose images, 48 MB | prd §2.2 row 3 (the **only** instance in the collection); natural-sort stress (`1.jpg`,`10.jpg`,`100.jpg`) |
-| 4 | `[만화] 바퀴.zip` | single top-level ZIP, 4.5 MB | prd §2.2 row 4; series == its own book |
-| 5 | `[만화] 강철의 연금술사 1~27권 완결` | 27 ZIPs + `강철의 연금술사 00 Cover.jpg`, 876 MB | prd §2.2 row 6 "mixed" as it actually occurs (D-5); cover-file ladder step 1 |
-| 6 | `[만화] 군계 1~25` | `[cover].jpg` + `01권/` **and** `01권.zip` + `07권.zip`/`07권.repair.zip`/`07권 (2).repair.zip` + **2 truncated archives**, 622 MB | duplicate books (D-6); FR-IDX-010 truncated-CD isolation; cover-file rule |
-| 7 | `[만화] 디엔엔젤 1-13권 연재중` | 13 ZIPs, one of them **0 bytes**, 250 MB | FR-IDX-010 unopenable container → `status:"error"`, scan continues |
-| 8 | `[만화] 미생 1~9 (완결 pdf)` | 9 PDFs, 509 MB | prd §2.2 row 5; **AC-004**; FR-SRV-006; pdfium lazy init + render cache |
-| 9 | `[만화] 배틀로얄 1~15 [완결].zip` | one 1.34 GB ZIP, **1 540 pages** | **AC-008**; NFR-PRF-006; deflate streaming at scale |
-| 10 | `[만화] 엔젤하트 전32권 완결.zip` | 1.44 GB ZIP containing 33 sub-ZIPs, 0 images | **series `status:"ok"` with one `kind:"nestedzip"` book per inner archive, each with pages (D-70, superseding D-10's first clause)**; proves a container of volumes is read without extracting anything |
-| 10b | `비둘기.zip` | opens cleanly, one directory entry, 128 bytes | book `status:"empty"`, series **`status:"error"`** with that reason (**E-14**); the shape row 10 used to demonstrate, now that row 10 is readable — a series with nothing readable in it is visibly broken rather than greyed out |
+| 1 | `Clover 클로버 (총4권)` | folder + 4 ZIPs, 31 MB | prd §2.2 row 1; CP949 entry names; 4-book series |
+| 2 | `상처를 쫓는자 1-11 (완) 이케가미 료이치` | folder + 11 image sub-folders, 183 MB | prd §2.2 row 2; `kind:"dir"` books; dir fingerprint incremental path |
+| 3 | `자살도114-122` | folder with 181 loose images, 48 MB | prd §2.2 row 3 (the **only** instance in the collection); natural-sort stress (`1.jpg`,`10.jpg`,`100.jpg`) |
+| 4 | `바퀴.zip` | single top-level ZIP, 4.5 MB | prd §2.2 row 4; series == its own book. Also the archive `scripts/e2e.sh` step 11b copies into the A-11 root (`A11_FILL`), which only becomes a series there because this row is in `include_globs` |
+| 5 | `강철의 연금술사 1~27권 완결` | 27 ZIPs + `강철의 연금술사 00 Cover.jpg`, 876 MB | prd §2.2 row 6 "mixed" as it actually occurs (D-5); cover-file ladder step 1 |
+| 6 | `군계 1~25` | `[cover].jpg` + `01권/` **and** `01권.zip` + `07권.zip`/`07권.repair.zip`/`07권 (2).repair.zip` + **2 truncated archives**, 622 MB | duplicate books (D-6); FR-IDX-010 truncated-CD isolation; cover-file rule; the **only** curated volume whose pages are landscape (104/104 measured, ruling **E-23**), so FR-VWR-004's auto-split has a subject |
+| 7 | `디엔엔젤 1-13권 연재중` | 13 ZIPs, one of them **0 bytes**, 250 MB | FR-IDX-010 unopenable container → `status:"error"`, scan continues |
+| 8 | `미생 1~9 (완결 pdf)` | 9 PDFs, 509 MB | prd §2.2 row 5; **AC-004**; FR-SRV-006; pdfium lazy init + render cache |
+| 9 | `배틀로얄 1~15 [완결].zip` | one 1.34 GB ZIP, **1 540 pages** | **AC-008**; NFR-PRF-006; deflate streaming at scale. The one remaining name holding a `[`, so it is the only reason `scripts/e2e-config.sh`'s glob escaping is still load-bearing |
+| 10 | `엔젤하트 전32권 완결.zip` | 1.44 GB ZIP containing 33 sub-ZIPs, 0 images | **series `status:"ok"` with one `kind:"nestedzip"` book per inner archive, each with pages (D-70, superseding D-10's first clause)**; proves a container of volumes is read without extracting anything |
+| 11 | `비둘기.zip` | opens cleanly, one directory entry, 128 bytes | book `status:"empty"`, series **`status:"error"`** with that reason (**E-14**); the shape row 10 used to demonstrate, now that row 10 is readable — a series with nothing readable in it is visibly broken rather than greyed out |
+| 12 | `라제폰 1-3권 완결` | folder of 3 RARs — `라제폰 1권[번역].rar`, `2권[번역].rar`, `3권[번역](完).rar`; size not measured | **D-71** — `kind:"rar"` volumes on disk, the ordinary RAR case; the stored-entry path (2,685 of the collection's 2,914 RAR entries are stored, and none of the 14 archives is solid) |
+| 13 | `울프가이` | ZIP **and** RAR volumes side by side one level down, in `[일어원문] Wolf Guy1-12권(완)/`; Shift_JIS entry names (v01 alone carries 207); size not measured | **D-71** — one 권 list built by two readers, which have to agree on page order, naming and 권 numbering; `kenc.ArchiveFallback` convicting a whole archive rather than an entry, which no per-entry test can do |
+| 14 | `사모님은 학생회장.zip` | one ZIP holding 7 ZIP volumes, 8 RAR volumes and one `.7z`; size not measured | `kind:"nestedrar"` beside `nestedzip` (**D-71** — the 8 volumes D-07 and D-70 both had to drop); **D-72**'s "no volumes" clause, since naming the `.7z` closed this container as `unsupported` before the scanner ever looked for its volumes |
+| 15 | `펌프킨 시저스 1~13권` | folder of ZIP volumes, one of which — `펌프킨 시저스 04.zip` — holds 39.5 MB in a single `.hv3` | **D-72** — a book whose only entry is a format this build cannot open reports **that format** (`status:"unsupported"`), not `비어 있음`; the last of the 48 books for which that sentence was false rather than merely unhelpful |
 
 #### The config (`scripts/e2e-config.sh` emits this)
 
@@ -1012,24 +1026,32 @@ scan:
   on_start: false          # the script triggers the scan explicitly so it can time it
   workers: 8
   include_globs:
-    - "[만화] Clover 클로버 (총4권)"
-    - "[만화] 상처를 쫓는자 1-11 (완) 이케가미 료이치"
-    - "[만화] 자살도114-122"
-    - "[만화] 바퀴.zip"
-    - "[만화] 강철의 연금술사 1~27권 완결"
-    - "[만화] 군계 1~25"
-    - "[만화] 디엔엔젤 1-13권 연재중"
-    - "[만화] 미생 1~9 (완결 pdf)"
-    - "[만화] 배틀로얄 1~15 [완결].zip"
-    - "[만화] 엔젤하트 전32권 완결.zip"
+    - "Clover 클로버 (총4권)"
+    - "상처를 쫓는자 1-11 (완) 이케가미 료이치"
+    - "자살도114-122"
+    - "바퀴.zip"
+    - "강철의 연금술사 1~27권 완결"
+    - "군계 1~25"
+    - "디엔엔젤 1-13권 연재중"
+    - "미생 1~9 (완결 pdf)"
+    - "배틀로얄 1~15 [[]완결].zip"
+    - "엔젤하트 전32권 완결.zip"
+    - "비둘기.zip"
+    - "라제폰 1-3권 완결"
+    - "울프가이"
+    - "사모님은 학생회장.zip"
+    - "펌프킨 시저스 1~13권"
 thumbnails: { widths: [120, 240, 400, 640], workers: 4 }
 pdf: { enabled: true, workers: 1 }
 log: { level: "debug", format: "text" }
 ```
 
 `[` and `]` are `path.Match` character-class metacharacters — the config loader must therefore accept
-these patterns literally when they contain no unmatched class, and the E2E script escapes them as
-`[[]만화]` if `path.Match` rejects the raw form. **WP-01 must add a test for a glob containing `[만화]`.**
+these patterns literally when they contain no unmatched class, and `scripts/e2e-config.sh` escapes every
+pattern's brackets as the one-member class `[[]` regardless. Since the collection lost its `[만화] ` prefix
+in 2026-08 that matters to exactly **one** entry, row 9 — which is emitted as
+`배틀로얄 1~15 [[]완결].zip` above, and is why the escaping is still load-bearing rather than dead code.
+**WP-01 must add a test for a glob containing `[…]`.**
 
 #### The script (`scripts/e2e.sh`, run by `make e2e`)
 
@@ -1057,10 +1079,11 @@ these patterns literally when they contain no unmatched class, and the E2E scrip
 
 #### Hermetic fallback
 
-`scripts/e2e.sh --synthetic` builds a ~12 MB tree with `testutil.BuildTree` covering the same ten shapes
-(including a synthetic **encrypted** ZIP and a synthetic **ZIP64** archive, which the real collection does
-not contain) and runs the identical assertion set. This is the version that can run without the media
-volume mounted.
+`scripts/e2e.sh --synthetic` builds a ~12 MB tree with `scripts/mkfixture` covering the same fifteen shapes
+under the same fifteen names, plus three the real collection has no sample of — a synthetic **encrypted**
+ZIP, a synthetic **ZIP64** archive and a **solid RAR** this build refuses on purpose (D-49, extended by
+D-71) — and runs the identical assertion set against its own expected set of eighteen. This is the version
+that can run without the media volume mounted.
 
 ### 6.4 Benchmarks
 

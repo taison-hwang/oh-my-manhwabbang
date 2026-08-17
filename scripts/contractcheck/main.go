@@ -45,6 +45,12 @@
 //     `progress`, A-8's `scope`). The keys `seriesFilter` reads are compared
 //     with `SeriesListParams`, in both directions.
 //
+//  6. **The curated e2e series list, across its six copies.** Not an API
+//     contract at all, and here for the same reason the two above are: it is a
+//     declaration duplicated across languages that nothing links statically,
+//     so the only thing that noticed a disagreement was `make e2e` twenty
+//     minutes in. See `checkCuratedSeries`.
+//
 // # What is deliberately not compared
 //
 // Request bodies, status codes, and the query parameters of the other
@@ -115,21 +121,24 @@ func main() {
 		}
 	}
 	if len(findings) == 0 {
-		// `checked` is not one entry per golden file: it also carries the two
-		// checks derived from source rather than from a golden (ERROR_CODES from
-		// internal/httpapi/errors.go, SeriesListParams from series.go). Calling
-		// the total "golden files" sent a reader hunting for two files that do
-		// not exist and made them doubt the docs quoting this line — so say what
-		// it actually is.
-		fmt.Printf("contractcheck: %d contract checks agree with web/src/api/types.ts\n", len(checked))
+		// `checked` is not one entry per golden file: it also carries the checks
+		// derived from source rather than from a golden (ERROR_CODES from
+		// internal/httpapi/errors.go, SeriesListParams from series.go, and the
+		// curated e2e series list, which does not involve types.ts at all).
+		// Calling the total "golden files" sent a reader hunting for two files
+		// that do not exist and made them doubt the docs quoting this line — so
+		// say what it actually is.
+		fmt.Printf("contractcheck: %d contract checks agree (web/src/api/types.ts, and the copies of the curated e2e series list)\n", len(checked))
 		return
 	}
-	fmt.Fprintf(os.Stderr, "contractcheck: %d disagreement(s) between the server's golden JSON and web/src/api/types.ts\n\n", len(findings))
+	fmt.Fprintf(os.Stderr, "contractcheck: %d disagreement(s) between declarations that are supposed to agree\n\n", len(findings))
 	for _, f := range findings {
 		fmt.Fprintln(os.Stderr, "  "+f)
 	}
-	fmt.Fprintf(os.Stderr, "\nThe contract is arch-backend.md §7 as amended by impl-plan.md §0.3.\n"+
-		"Fix the side that disagrees with it; do not adjust this check.\n")
+	fmt.Fprintf(os.Stderr, "\nThe API contract is arch-backend.md §7 as amended by impl-plan.md §0.3.\n"+
+		"The curated e2e series are scripts/e2e-config.sh's CURATED, which is what\n"+
+		"scan.include_globs is built from; every other copy follows it.\n"+
+		"Fix the side that disagrees; do not adjust this check.\n")
 	os.Exit(1)
 }
 
@@ -203,6 +212,13 @@ func check(root string) (findings, checked []string, err error) {
 	}
 	findings = append(findings, paramFindings...)
 	checked = append(checked, fmt.Sprintf("%-28s -> SeriesListParams", "internal/httpapi/series.go"))
+
+	curatedFindings, err := checkCuratedSeries(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	findings = append(findings, curatedFindings...)
+	checked = append(checked, fmt.Sprintf("%-28s -> the curated e2e series", "scripts/e2e-config.sh"))
 	return findings, checked, nil
 }
 
@@ -742,4 +758,396 @@ func checkSeriesParams(root string, ts *tsTypes) ([]string, error) {
 		}
 	}
 	return findings, nil
+}
+
+// ---------------------------------------------------------------------------
+// The curated e2e series list
+// ---------------------------------------------------------------------------
+
+// Where the names live. Relative to the repository root, slash-separated.
+const (
+	curatedBashPath    = "scripts/e2e-config.sh"
+	curatedPyPath      = "scripts/e2e-assert.py"
+	curatedTSPath      = "web/e2e/shelf.ts"
+	curatedFixturePath = "scripts/mkfixture/main.go"
+	curatedShellPath   = "scripts/e2e.sh"
+	curatedDocPath     = "docs/impl-plan.md"
+)
+
+var (
+	// `CURATED=( … )` / `SYNTHETIC_EXTRA=( … )` in scripts/e2e-config.sh, and
+	// `CURATED = [ … ]` / `SYNTHETIC_EXTRA = [ … ]` in scripts/e2e-assert.py.
+	// The closing delimiter is anchored at column 0 so a `)` inside a name — of
+	// which there are several, `Clover 클로버 (총4권)` among them — cannot end
+	// the block early.
+	reBashList = regexp.MustCompile(`(?ms)^(CURATED|SYNTHETIC_EXTRA)=\((.*?)^\)`)
+	// Python, in both spellings the file uses: one entry per line closed by a
+	// `]` at column 0, and the three-element list written inline. The
+	// multi-line form requires the `[` to end its line, so the inline list
+	// cannot start a block that runs to some later `]`.
+	rePyList       = regexp.MustCompile(`(?ms)^(CURATED|SYNTHETIC_EXTRA)\s*=\s*\[[ \t]*$(.*?)^\]`)
+	rePyInlineList = regexp.MustCompile(`(?m)^(CURATED|SYNTHETIC_EXTRA)\s*=\s*\[(.+)\]\s*$`)
+	// `export const SERIES = { … } as const` in web/e2e/shelf.ts. The existing
+	// reConstArr above matches `[ … ] as const` only, and these two are keyed
+	// objects — the keys (`clover`, `battleRoyale`) are what the specs import.
+	reTSConstObj = regexp.MustCompile(`(?ms)^export const (SERIES|SYNTHETIC_EXTRA) = \{(.*?)^\} as const`)
+	// scripts/e2e.sh step 11b's one bare literal.
+	reA11Fill = regexp.MustCompile(`(?m)^\s*A11_FILL="([^"]*)"`)
+	// A Go string literal. Applied to comment-stripped source, so a name quoted
+	// in prose — mkfixture's own comments name four of the series — is not
+	// mistaken for the code that builds it.
+	reGoLiteral = regexp.MustCompile(`"((?:[^"\\\n]|\\.)*)"`)
+	// One row of the impl-plan table whose second column is an exact name, i.e.
+	// a whole code span. The header row (`` `include_globs` entry (exact) ``)
+	// and the `|---|` separator both fail to match, which is how they are
+	// skipped.
+	reDocRow = regexp.MustCompile("^\\|[^|]*\\|\\s*`([^`]+)`\\s*\\|")
+	// The members of one extracted block: `"…"` for shell and Python, `'…'` for
+	// the TypeScript object's values.
+	reDoubleQuoted = regexp.MustCompile(`"([^"]*)"`)
+	reSingleQuoted = regexp.MustCompile(`'([^']*)'`)
+)
+
+// curatedCopies is every copy of the list, already extracted from source text.
+// Parsing is separated from IO so the comparison can be table-tested against
+// small hand-written sources.
+type curatedCopies struct {
+	bash, bashExtra []string // scripts/e2e-config.sh — the source of truth
+	py, pyExtra     []string // scripts/e2e-assert.py
+	ts, tsExtra     []string // web/e2e/shelf.ts
+	fixtureLiterals []string // every non-comment string literal of mkfixture
+	a11Fill         string   // scripts/e2e.sh's A11_FILL, basename only
+	doc             []string // docs/impl-plan.md §6.3's table
+}
+
+// nameList is one declaration, named well enough for a finding to send the
+// reader to the right block of the right file.
+type nameList struct {
+	where string // the file, as the reader would type it
+	what  string // the declaration inside it
+	names []string
+}
+
+// checkCuratedSeries compares the six copies of the curated e2e series list.
+//
+// It is not an API contract, and it is here for exactly the reason
+// checkBookKinds is: a declaration written out in four languages with nothing
+// linking the copies, where the only thing that ever noticed a disagreement was
+// a full `make e2e` — twenty minutes in, as `got 0, want 15`, naming neither
+// the file to fix nor the series. Comparing the declarations moves that to
+// `make lint`, in seconds, by name.
+//
+// Five of the six copies are load-bearing:
+//
+//	scripts/e2e-config.sh   CURATED becomes scan.include_globs; the source of truth
+//	scripts/e2e-assert.py   CURATED is the curl tier's expectation, unpacked POSITIONALLY
+//	web/e2e/shelf.ts        SERIES is the browser tier's, and every by-name helper
+//	scripts/mkfixture/…     path literals that build the synthetic twin (D-49)
+//	scripts/e2e.sh          A11_FILL, one archive by path (step 11b)
+//
+// The sixth, the §6.3 table in docs/impl-plan.md, is the *declared* source of
+// truth and carries no code — which is precisely why it was the copy that had
+// drifted when this check was written.
+//
+// The bash and Python lists are compared as SEQUENCES, not sets: e2e-assert.py
+// unpacks its list positionally (`CLOVER, WOUNDS, … = CURATED[0], CURATED[1],
+// …`), so a reorder that leaves both lists set-equal makes every one of those
+// constants point at the wrong series while every assertion label stays right.
+// The TypeScript object and the doc table are compared as sets, because nothing
+// reads either by position — shelf.ts keys its names and sorts before comparing.
+func checkCuratedSeries(root string) ([]string, error) {
+	read := func(rel string) (string, error) {
+		b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			return "", fmt.Errorf("reading %s: %w", rel, err)
+		}
+		return string(b), nil
+	}
+	var srcs [6]string
+	for i, rel := range []string{
+		curatedBashPath, curatedPyPath, curatedTSPath,
+		curatedFixturePath, curatedShellPath, curatedDocPath,
+	} {
+		s, err := read(rel)
+		if err != nil {
+			return nil, err
+		}
+		srcs[i] = s
+	}
+	copies, err := parseCuratedCopies(srcs[0], srcs[1], srcs[2], srcs[3], srcs[4], srcs[5])
+	if err != nil {
+		return nil, err
+	}
+	return compareCurated(copies), nil
+}
+
+func parseCuratedCopies(bashSrc, pySrc, tsSrc, fixtureSrc, shellSrc, docSrc string) (*curatedCopies, error) {
+	c := &curatedCopies{}
+
+	bash := namedBlocks(reBashList, bashSrc, quotedPerLine)
+	py := namedBlocks(rePyList, pySrc, quotedPerLine)
+	for name, names := range namedBlocks(rePyInlineList, pySrc, quotedPerLine) {
+		if _, ok := py[name]; !ok {
+			py[name] = names
+		}
+	}
+	ts := namedBlocks(reTSConstObj, tsSrc, tsObjectValues)
+	for _, want := range []struct {
+		blocks map[string][]string
+		key    string
+		where  string
+		dst    *[]string
+	}{
+		{bash, "CURATED", curatedBashPath, &c.bash},
+		{bash, "SYNTHETIC_EXTRA", curatedBashPath, &c.bashExtra},
+		{py, "CURATED", curatedPyPath, &c.py},
+		{py, "SYNTHETIC_EXTRA", curatedPyPath, &c.pyExtra},
+		{ts, "SERIES", curatedTSPath, &c.ts},
+		{ts, "SYNTHETIC_EXTRA", curatedTSPath, &c.tsExtra},
+	} {
+		names, ok := want.blocks[want.key]
+		if !ok || len(names) == 0 {
+			return nil, fmt.Errorf("%s: no %s list found; contractcheck cannot compare the curated series", want.where, want.key)
+		}
+		*want.dst = names
+	}
+
+	for _, m := range reGoLiteral.FindAllStringSubmatch(stripLineComments(fixtureSrc), -1) {
+		c.fixtureLiterals = append(c.fixtureLiterals, m[1])
+	}
+	if len(c.fixtureLiterals) == 0 {
+		return nil, fmt.Errorf("%s: no string literals found", curatedFixturePath)
+	}
+
+	m := reA11Fill.FindStringSubmatch(shellSrc)
+	if m == nil {
+		return nil, fmt.Errorf(`%s: no A11_FILL="…" assignment found`, curatedShellPath)
+	}
+	c.a11Fill = m[1]
+	if i := strings.LastIndex(c.a11Fill, "/"); i >= 0 {
+		c.a11Fill = c.a11Fill[i+1:]
+	}
+
+	doc, err := docCuratedTable(docSrc)
+	if err != nil {
+		return nil, err
+	}
+	c.doc = doc
+	return c, nil
+}
+
+// namedBlocks runs one of the block regexes and reads each block's members with
+// `values`. Submatch 1 is the declaration's name, submatch 2 its body.
+func namedBlocks(re *regexp.Regexp, src string, values func(string) []string) map[string][]string {
+	out := map[string][]string{}
+	for _, m := range re.FindAllStringSubmatch(src, -1) {
+		out[m[1]] = values(m[2])
+	}
+	return out
+}
+
+// quotedPerLine reads the double-quoted strings of a shell or Python list body,
+// in order. Trailing `#` comments are dropped first: every entry of
+// scripts/e2e-config.sh's CURATED carries one describing the shape it covers.
+func quotedPerLine(block string) []string {
+	var out []string
+	for _, line := range strings.Split(block, "\n") {
+		for _, m := range reDoubleQuoted.FindAllStringSubmatch(stripHashComment(line), -1) {
+			out = append(out, m[1])
+		}
+	}
+	return out
+}
+
+// tsObjectValues reads the single-quoted values of a `{ key: 'value', … }` body
+// in source order. The keys are bare identifiers, so nothing else is quoted.
+func tsObjectValues(block string) []string {
+	var out []string
+	for _, m := range reSingleQuoted.FindAllStringSubmatch(stripLineComments(block), -1) {
+		out = append(out, m[1])
+	}
+	return out
+}
+
+// stripHashComment removes a `#` comment from one line of shell or Python. A
+// `#` inside a quoted string is left alone — no curated name contains one
+// today, and a check that silently truncated a name that did would be worse
+// than useless.
+func stripHashComment(line string) string {
+	var inDouble, inSingle bool
+	for i := 0; i < len(line); i++ {
+		switch line[i] {
+		case '"':
+			if !inSingle {
+				inDouble = !inDouble
+			}
+		case '\'':
+			if !inDouble {
+				inSingle = !inSingle
+			}
+		case '#':
+			if !inDouble && !inSingle {
+				return line[:i]
+			}
+		}
+	}
+	return line
+}
+
+// docCuratedTable reads the exact-name column of impl-plan §6.3's
+// `#### The curated set` table.
+func docCuratedTable(src string) ([]string, error) {
+	const heading = "#### The curated set"
+	start := strings.Index(src, heading)
+	if start < 0 {
+		return nil, fmt.Errorf("%s: no %q heading; contractcheck cannot compare the curated series", curatedDocPath, heading)
+	}
+	var out []string
+	for _, line := range strings.Split(src[start+len(heading):], "\n") {
+		if strings.HasPrefix(line, "#### ") || strings.HasPrefix(line, "### ") || strings.HasPrefix(line, "## ") {
+			break
+		}
+		if m := reDocRow.FindStringSubmatch(line); m != nil {
+			out = append(out, m[1])
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("%s: the %q table has no rows whose second column is an exact name", curatedDocPath, heading)
+	}
+	return out, nil
+}
+
+// compareCurated is the whole comparison: every finding names both files and
+// the series, in the voice of checkBookKinds's.
+func compareCurated(c *curatedCopies) []string {
+	bash := nameList{where: curatedBashPath, what: "CURATED", names: c.bash}
+	py := nameList{where: curatedPyPath, what: "CURATED", names: c.py}
+	ts := nameList{where: curatedTSPath, what: "SERIES", names: c.ts}
+	bashX := nameList{where: curatedBashPath, what: "SYNTHETIC_EXTRA", names: c.bashExtra}
+	pyX := nameList{where: curatedPyPath, what: "SYNTHETIC_EXTRA", names: c.pyExtra}
+	tsX := nameList{where: curatedTSPath, what: "SYNTHETIC_EXTRA", names: c.tsExtra}
+
+	var findings []string
+
+	// 1 vs 2 — and in order, because the Python side unpacks positionally.
+	findings = append(findings, bothWays(bash, py,
+		"%s: curated series %q: scan.include_globs is built from it; %s's %s does not list it, so the curl tier will not expect it",
+		"%s: %s lists %q; %s's %s does not, so scan.include_globs never matches it and the curl tier fails with `got 0, want …`")...)
+	findings = append(findings, orderDiff(bash, py)...)
+
+	// 1 vs 3.
+	findings = append(findings, bothWays(bash, ts,
+		"%s: curated series %q: scan.include_globs is built from it; %s's %s does not name it, so no browser assertion can reach it",
+		"%s: %s names %q; %s's %s does not list it, so expectCuratedLibrary asserts a series the server was never told to index")...)
+
+	// The D-49 extras, which only the synthetic round indexes.
+	findings = append(findings, bothWays(bashX, pyX,
+		"%s: synthetic-only series %q: --synthetic appends it to scan.include_globs; %s's %s does not list it",
+		"%s: %s lists %q; %s's %s does not append it to scan.include_globs")...)
+	findings = append(findings, bothWays(bashX, tsX,
+		"%s: synthetic-only series %q: --synthetic appends it to scan.include_globs; %s's %s does not name it",
+		"%s: %s names %q; %s's %s does not append it to scan.include_globs")...)
+
+	// 4 — the synthetic tree has to build every name the synthetic round asks
+	// the scanner for, or that round indexes one series fewer than it expects.
+	for _, n := range append(append([]string{}, c.bash...), c.bashExtra...) {
+		if !fixtureBuilds(c.fixtureLiterals, n) {
+			findings = append(findings, fmt.Sprintf(
+				"%s: curated series %q: %s's %s puts it in scan.include_globs, and no path literal here builds it "+
+					"(neither %q nor anything under %q/) — the synthetic round would index one series fewer",
+				curatedFixturePath, n, curatedBashPath, "CURATED", n, n))
+		}
+	}
+
+	// 5 — step 11b copies one fixture archive into the added root, and it only
+	// becomes a series there if scan.include_globs names it.
+	if !contains(c.bash, c.a11Fill) && !contains(c.bashExtra, c.a11Fill) {
+		findings = append(findings, fmt.Sprintf(
+			"%s: A11_FILL fills the A-11 root with %q; %s's CURATED does not list it, so the per-root rescan of step 11b "+
+				"gives that root no series to lose", curatedShellPath, c.a11Fill, curatedBashPath))
+	}
+
+	// 7 — the declared source of truth, which carries no code and therefore
+	// nothing but this check to keep it honest.
+	doc := nameList{where: curatedDocPath, what: "§6.3 curated-set table", names: c.doc}
+	findings = append(findings, bothWays(bash, doc,
+		"%s: curated series %q: scan.include_globs is built from it; %s's %s has no row for it",
+		"%s: the %s has a row for %q; %s's %s does not list it, so the table describes a subset the E2E round does not run")...)
+	return findings
+}
+
+// bothWays reports every name one declaration holds and the other does not.
+// Each sentence starts at the file the reader should open first, so the two
+// templates take their arguments in different orders: `missing` is formatted
+// with (a.where, name, b.where, b.what) — a holds the name, b is short of it —
+// and `surplus` with (b.where, b.what, name, a.where, a.what). The call sites
+// spell both out in full rather than sharing one vague wording.
+func bothWays(a, b nameList, missing, surplus string) []string {
+	var out []string
+	for _, n := range onlyIn(a.names, b.names) {
+		out = append(out, fmt.Sprintf(missing, a.where, n, b.where, b.what))
+	}
+	for _, n := range onlyIn(b.names, a.names) {
+		out = append(out, fmt.Sprintf(surplus, b.where, b.what, n, a.where, a.what))
+	}
+	return out
+}
+
+// orderDiff reports the first position at which two set-equal lists disagree.
+// Only reached when the sets already match: a missing or surplus name is
+// reported by bothWays and would make every later index differ for one reason.
+func orderDiff(a, b nameList) []string {
+	if len(onlyIn(a.names, b.names)) > 0 || len(onlyIn(b.names, a.names)) > 0 {
+		return nil
+	}
+	for i := range a.names {
+		if a.names[i] == b.names[i] {
+			continue
+		}
+		return []string{fmt.Sprintf(
+			"%s: %s holds %q at index %d where %s's %s holds %q: the two lists must be order-identical, because "+
+				"the `CLOVER, WOUNDS, … = CURATED[0], CURATED[1], …` unpacking just below reads them by position — "+
+				"a reorder asserts the wrong series under the right label",
+			b.where, b.what, b.names[i], i, a.where, a.what, a.names[i])}
+	}
+	return nil
+}
+
+// onlyIn returns the members of a that b does not hold, in a's order.
+func onlyIn(a, b []string) []string {
+	inB := make(map[string]bool, len(b))
+	for _, n := range b {
+		inB[n] = true
+	}
+	var out []string
+	for _, n := range a {
+		if !inB[n] {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+func contains(names []string, want string) bool {
+	for _, n := range names {
+		if n == want {
+			return true
+		}
+	}
+	return false
+}
+
+// fixtureBuilds answers whether mkfixture writes anything at or under one
+// curated name. A series is either a file the builder names outright
+// (`바퀴.zip`) or a directory every one of whose volumes is written under it
+// (`군계 1~25/군계(軍鷄) 01권.zip`), so one literal of either shape is proof the
+// synthetic tree carries that series.
+func fixtureBuilds(literals []string, name string) bool {
+	prefix := name + "/"
+	for _, lit := range literals {
+		if lit == name || strings.HasPrefix(lit, prefix) {
+			return true
+		}
+	}
+	return false
 }

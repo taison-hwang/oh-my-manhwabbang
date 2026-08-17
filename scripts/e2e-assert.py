@@ -37,8 +37,16 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-# The ten curated series of impl-plan §6.3, plus the two shapes the real
-# collection has no sample of, which only the synthetic tree carries (D-49).
+# The fifteen curated series of impl-plan §6.3, plus the three shapes the real
+# collection has no sample of, which only the synthetic tree carries (D-49, as
+# extended by D-71).
+#
+# A *copy*. scripts/e2e-config.sh's CURATED is the source of truth, and the
+# order below is part of the contract, not a formatting choice: the unpacking
+# under this list reads it POSITIONALLY, so a reorder would leave every constant
+# pointing at the wrong series while every assertion label stayed right.
+# `contractcheck` (in `make lint`) compares the two lists element by element,
+# and the four other copies against them; see `curated_copies()` below.
 CURATED = [
     "Clover 클로버 (총4권)",
     "상처를 쫓는자 1-11 (완) 이케가미 료이치",
@@ -63,6 +71,68 @@ FMA, GUNGYE, DNANGEL, MISAENG = CURATED[4], CURATED[5], CURATED[6], CURATED[7]
 BATTLE_ROYALE, ANGEL_HEART, DOVE = CURATED[8], CURATED[9], CURATED[10]
 RAHXEPHON, WOLF_GUY, MADAM, PUMPKIN = CURATED[11], CURATED[12], CURATED[13], CURATED[14]
 SOLID_RAR = SYNTHETIC_EXTRA[2]
+
+
+def curated_copies() -> str:
+    """Where the fifteen names live, for a failure that has to name a file.
+
+    The line numbers were true when written and are the second thing to distrust
+    (the first being the count in the sentence above them). `make lint` runs
+    `contractcheck`, whose `checkCuratedSeries` reads all six copies by pattern
+    rather than by line and reports the file and the series in seconds — this
+    list is for the reader who is already staring at a failed round.
+    """
+    return "\n".join(
+        "          " + line
+        for line in (
+            "the names live in six unlinked copies:",
+            "  scripts/e2e-config.sh:29-43  CURATED — becomes scan.include_globs. THE SOURCE OF TRUTH.",
+            "  scripts/e2e-assert.py:51-65  CURATED — this file, unpacked positionally at :69-72",
+            "  web/e2e/shelf.ts:84-98       SERIES — the browser tier",
+            "  scripts/mkfixture/main.go    26 path literals, which build the synthetic twin (D-49)",
+            "  scripts/e2e.sh:922           A11_FILL — one archive by path, step 11b",
+            "  docs/impl-plan.md §6.3       the curated-set table — the declared source of truth",
+        )
+    )
+
+
+def curated_detail(expected: list[str], indexed: list[str]) -> str:
+    """Both directions of the library mismatch, said so it names the fix.
+
+    `got 0, want 15` is what this replaces. It is true, it is twenty minutes into
+    a round, and it names neither the file to edit nor the series — so the two
+    shapes that mean something specific are called out by name here: an empty
+    library is a glob that matched nothing (one edit to CURATED does that to all
+    fifteen at once, and a collection-wide rename did), and one missing beside
+    one surplus is a single series renamed on disk.
+    """
+    missing = [n for n in expected if n not in set(indexed)]
+    surplus = [n for n in indexed if n not in set(expected)]
+    if not missing and not surplus:
+        return ""
+
+    lines = [f"the server indexed {len(indexed)} series; this round expects {len(expected)}."]
+    if not indexed:
+        lines += [
+            "NOTHING was indexed: every scan.include_globs pattern missed. That is one",
+            "edit to scripts/e2e-config.sh's CURATED — a collection-wide rename did it once.",
+        ]
+    elif len(missing) == 1 and len(surplus) == 1:
+        lines += [
+            f"one name moved: expected {missing[0]!r},",
+            f"the server has {surplus[0]!r}.",
+            "that is one series renamed on disk. Fix CURATED first, then the copies below.",
+        ]
+    else:
+        if missing:
+            lines.append(f"expected and NOT indexed ({len(missing)}):")
+            lines += [f"  - {n}" for n in missing]
+        if surplus:
+            lines.append(f"indexed and NOT expected ({len(surplus)}):")
+            lines += [f"  + {n}" for n in surplus]
+    detail = lines[0] + "\n" + "\n".join("          " + line for line in lines[1:])
+    return detail + "\n" + curated_copies()
+
 
 # arch §7.9 pins the cache-usage walk at "cached for 60 s". The bounded wait
 # below has to outlast that window rather than match it, or a check that is one
@@ -969,11 +1039,16 @@ def main() -> int:
 
     # ---- the library -----------------------------------------------------
     by_name, listing = series_by_name(r)
-    r.eq("the curated subset indexes exactly the include_globs entries",
-         listing["total"], len(expected))
-    missing = [n for n in expected if n not in by_name]
-    r.check("every curated series is present", not missing, f"missing: {missing}")
-    if missing:
+    indexed = list(by_name)
+    detail = curated_detail(expected, indexed)
+    r.check("the curated subset indexes exactly the include_globs entries",
+            listing["total"] == len(expected),
+            detail or f"got {listing['total']!r}, want {len(expected)!r}")
+    # Surplus counts as absent-by-name too: a series the globs never asked for is
+    # an include_globs leak, and the old check — `missing` only — would have let
+    # one through while the count check above said something true but unhelpful.
+    r.check("every curated series is present, and nothing else", not detail, detail)
+    if detail:
         return report(r)
 
     kinds: dict[str, int] = {}
