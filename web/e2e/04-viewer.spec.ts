@@ -137,6 +137,58 @@ async function firstVolume(page: import('@playwright/test').Page): Promise<{
 }
 
 /**
+ * The pages the thumbnail strip's mounted cells draw, ordered **by geometry** —
+ * left to right on the screen, which is not the same list as document order.
+ *
+ * That distinction is the whole reason this belongs in a browser. R→L reverses
+ * the strip's *contents*: slot 0 draws page `pageCount` rather than page 1
+ * (`stripPageForSlot`, fit.ts:384-386), and `ThumbnailStrip.test.tsx:578-590`
+ * already pins that in jsdom, which is the right tier for arithmetic. What no
+ * jsdom test can reach is the other shape the same requirement can break in —
+ * a `direction: rtl` on the scroller leaves every `data-page` exactly where it
+ * sits in the document and moves what the reader sees. `ThumbnailStrip.tsx:65-80`
+ * is a header arguing at length against precisely that edit, because
+ * `virtual-core`'s offsets, its `scrollWidth - clientWidth` clamp and the strip's
+ * own distance rule are all LTR numbers, and the failure mode of getting them
+ * wrong is the AC-008 stall the whole component is shaped around. Sorting by
+ * `getBoundingClientRect().x` is what holds that header to its word: it reads the
+ * laid-out strip rather than the array that produced it, so DOM order and reading
+ * order are two answers here and not one.
+ *
+ * `getVirtualItems()` hands back a contiguous slot range, so this list is always
+ * a run of consecutive pages — which is what makes the *step* between neighbours
+ * a well-formed expectation at 군계's 104 real pages and at the synthetic twin's
+ * handful alike (shelf.ts rule 1: never a page number, only the step).
+ */
+async function stripPagesLeftToRight(
+  strip: import('@playwright/test').Locator,
+): Promise<number[]> {
+  const cells = await strip.locator('[data-role="thumb"]').evaluateAll((els) =>
+    els.map((el) => ({
+      n: Number(el.getAttribute('data-page')),
+      x: el.getBoundingClientRect().x,
+    })),
+  )
+  return cells.sort((a, b) => a.x - b.x).map((cell) => cell.n)
+}
+
+/**
+ * The gaps between neighbouring cells, deduplicated and sorted: `[1]` for a strip
+ * that ascends left to right, `[-1]` for one that descends, and anything else for
+ * a strip that does neither uniformly. Reduced to a set on purpose — it is the
+ * one shape `expect.poll` can hold against a constant without knowing how many
+ * cells this viewport's strip happened to mount.
+ */
+function stripSteps(pages: readonly number[]): number[] {
+  return [...new Set(pages.slice(1).map((n, i) => n - (pages[i] ?? 0)))].sort((a, b) => a - b)
+}
+
+/** `pages` as the run it claims to be: its own head, its own length, `step` apart. */
+function stripRun(pages: readonly number[], step: number): number[] {
+  return pages.map((_, i) => (pages[0] ?? 0) + i * step)
+}
+
+/**
  * The one book, read and then resumed. `serial` because 6.7's expectation is
  * whatever 6.6 left in `user.db`, and for no wider reason: 6.6b sits outside
  * this describe on purpose, so a flake here cannot skip it.
@@ -270,6 +322,28 @@ test.describe('6.6/6.7 · one volume, read then resumed', () => {
     // ---- `R→L` puts page n on the right ------------------------------------
     await setViewerSeg(page, '표시 모드', 'spread')
     await expect(stage).toHaveAttribute('data-flow', 'row')
+
+    // The strip's L→R baseline, taken while `resetBookPrefs`'s direction is still
+    // in force. Asserted rather than inherited: without this half the R→L
+    // assertion below is satisfied just as well by a strip that is in the *same*
+    // wrong order in both directions, which is coverage that reads like coverage
+    // and is not (HANDOFF §6.5). No poll — the strip has been open and its `dir`
+    // untouched since `T` above, so nothing is in flight here; the R→L read is
+    // the one that lands on a re-render, and it polls for that reason.
+    await expect(stage, 'the baseline must be read while the book is still L→R').toHaveAttribute(
+      'data-dir',
+      'ltr',
+    )
+    const ltrCells = await stripPagesLeftToRight(strip)
+    expect(
+      ltrCells.length,
+      'a step needs two neighbours: the strip must have mounted at least two cells for an order assertion to say anything',
+    ).toBeGreaterThan(1)
+    expect(
+      ltrCells,
+      'L→R: the strip reads 1, 2, 3 … from left to right, so its mounted window is a run that steps by +1',
+    ).toEqual(stripRun(ltrCells, 1))
+
     await setViewerSeg(page, '읽기 방향', 'rtl')
     await expect(stage).toHaveAttribute('data-dir', 'rtl')
     // The rule lives entirely in `flex-direction: row-reverse` (fit.ts): the DOM
@@ -291,6 +365,51 @@ test.describe('6.6/6.7 · one volume, read then resumed', () => {
     // (HANDOFF §6.5). Where the two-frame geometry *and* the DOM order are
     // actually proved: 6.6b below on 자살도 (raster) and 05-pdf-and-large 6.8 on
     // 미생 (PDF).
+
+    // ---- …and the strip turns with it (FR-VWR-008) -------------------------
+    // The strip does **not** borrow the stage's trick. It reverses its
+    // *contents* rather than its flow, so slot 0 draws the last page and the
+    // reader's page 1 lands at the right end, matching the stage, the slider and
+    // the tap zones (fit.ts:371-386). Read by geometry rather than by document
+    // order — `stripPagesLeftToRight` above carries why that is the point here
+    // and not a detail.
+    //
+    // Polled, because the flip is two things at once: the cells re-render with
+    // new page numbers (ThumbnailStrip.tsx:332) and the recentre effect scrolls
+    // to the mapped slot (ThumbnailStrip.tsx:271-299), so a single read can land
+    // mid-commit.
+    await expect
+      .poll(async () => stripSteps(await stripPagesLeftToRight(strip)), {
+        message:
+          'R→L reverses the strip’s contents (fit.ts:371-386): read left to right by x, every neighbouring pair of mounted cells steps by -1',
+      })
+      .toEqual([-1])
+    // Then once more, plainly, so a failure prints the order the browser actually
+    // laid out instead of the set of steps that order reduces to.
+    const rtlCells = await stripPagesLeftToRight(strip)
+    expect(
+      rtlCells.length,
+      'a step needs two neighbours: the strip must have mounted at least two cells for an order assertion to say anything',
+    ).toBeGreaterThan(1)
+    expect(
+      rtlCells,
+      'R→L: page 1 belongs at the right end, so the strip descends by one from left to right (fit.ts:371-386)',
+    ).toEqual(stripRun(rtlCells, -1))
+    // …and the reader's own page is still inside that window. The run above is a
+    // *relative* fact about whichever cells happen to be mounted, so on its own it
+    // survives a strip whose scroller is looking at the wrong end of the book
+    // entirely — which is what `direction: rtl` would do to `virtual-core`'s LTR
+    // offsets (ThumbnailStrip.tsx:65-80: `scrollLeft` runs negative from the right
+    // edge there, so the positive offset `scrollToIndex` computes clamps to 0 and
+    // the window that mounts is the one for the opposite end of the volume). Only
+    // the real round can fail this line: 군계 01권's 104 cells overflow the strip at
+    // all four viewports, while the synthetic twin's handful fit in it without
+    // scrolling at any of them, so there is no recentre there to get wrong.
+    await expect(
+      strip.locator('[data-role="thumb"][data-current="true"]'),
+      'FR-VWR-008: R→L moves the current thumb to the mirrored slot, it does not lose it',
+    ).toHaveAttribute('data-page', String(landed))
+
     await shot(page, info, 'step-06-6c-viewer-rtl-spread')
 
     // Restore: reading direction and display mode are per-book server state
