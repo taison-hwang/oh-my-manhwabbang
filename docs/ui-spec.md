@@ -894,8 +894,11 @@ and the cards' own elevation (`ContinueRow.tsx`, `flex-none p-4`).
   `<h6>이어보기</h6>` + count `font-size:11px; tabular-nums; color:var(--ink-dim)` (e.g. `5개`).
 - Track: `display:flex; gap:12px; overflow-x:auto; padding-bottom:` ~~`4px`~~ **`16px`** (`pb-4`,
   `--space-4` — the hover lift needs somewhere to go or the scroller clips the card's shadow).
-  Max 5 cards.
-- Card: ~~`flex:0 0 300px`~~ **`flex:0 0 218px`, and `flex:0 0 269px` at ≥768** — see the note below;
+  Max 5 cards. **Below 768 it is also a snap scroller: `scroll-snap-type:x mandatory`, turned off
+  again at ≥768 (`snap-x snap-mandatory md:snap-none`).**
+- Card: ~~`flex:0 0 300px`~~ **`flex:0 0 100%` below 768, `flex:0 0 260px` at 768–1023, and
+  `flex:0 0 269px` at ≥1024**, plus `scroll-snap-align:start` below 768 (`md:snap-align-none`
+  above) — see the note below;
   `display:flex; gap:12px; padding:12px; background:var(--color-surface);
   cursor:pointer` ~~`; border:1px solid var(--rule)`; hover → `border-color:var(--color-accent)`~~
   **→ `--radius-lg` + `--shadow-md`, lifting to `--shadow-lg` on hover (E-32)**.
@@ -914,9 +917,14 @@ and the cards' own elevation (`ContinueRow.tsx`, `flex-none p-4`).
       `tone`). The accent itself is 1.09:1 on the trough in dark; `--accent-fill` is the token that
       moves up the ramp there (E-32).
 
-> **Amended by E-37 — the card is 218 / 269px, and `300px` never shipped a day in its life.** What ships
-> is `flex-[0_0_218px] md:flex-[0_0_269px]` — `web/src/features/library/ContinueCard.tsx`, which is the
-> source of truth for this bullet and for the 이어보기 column of the §7 matrix at ≥1024.
+> **Amended by E-37 — `300px` never shipped a day in its life; amended again when §7's bottom two cells
+> were finally built.** What ships is `flex-[0_0_100%] md:flex-[0_0_260px] lg:flex-[0_0_269px]` with
+> `snap-start md:snap-align-none` — `web/src/features/library/ContinueCard.tsx`.
+>
+> **That file is the source of truth for the ≥1024 number only.** Below 1024 the direction runs the other
+> way: §7 is specifying a responsive layer, so 260 and "one full-width card per screen, snap scroll" are
+> requirements the component was made to meet, not measurements taken off it. E-37's split still holds —
+> at and above 1024 the code is the target, below it the spec is.
 >
 > **Where the numbers actually came from, because the first draft of this note got it wrong.** 272 / 336
 > and the 96×144 thumb entered in **session 5**, applied **판정 없이** — deliberately without a ruling,
@@ -1649,13 +1657,15 @@ and their labels break to vertical). Build the layer below.
 |---|---|---|---|---|---|
 | **≥1440** | Fixed, 240px | `--grid-min: 152px` → **6 cols @1440, 8 @1760** | All 7 columns | 269px cards, horizontal scroll | Full chrome, all 3 `.seg` groups inline |
 | **1024–1439** | Fixed, 240px | `--grid-min: 150px` → **4–5 cols** | All 7 columns | 269px cards, horizontal scroll | Full chrome ([`viewer-overlay-1024.png`](./ui-shots/viewer-overlay-1024.png)) |
-| **768–1023** | **Collapsed** to a 56px icon rail; the scope name moves into the section header. Full sidebar opens as an overlay drawer from a hamburger in the top bar | `--grid-min: 224px` → **3 cols** | **Drop 수정일 + 용량** → `32px minmax(0,1fr) 66px 64px 120px`. Format tag stays (it is primary metadata) | **260px cards** — ⚠ **not built**, ships 269 | **All 3 `.seg` groups stay inline**; the bar wraps to a second row instead (**E-28**). Measured **108px @1024 · 103px @768** with 맞춤's fourth option (**E-44**; the old "~103px at 900" was a three-option figure at a width no project runs) ([`viewer-overlay-768.png`](./ui-shots/viewer-overlay-768.png) predates the ruling and shows the old overflow menu) |
-| **<768** | **Off-canvas drawer** (`position:fixed; inset:0 auto 0 0; width:280px`) over a `--scrim-modal` backdrop. Closed by default | `--grid-min: 150px; gap: 12px` → **2 cols** | **Two-line row**: line 1 = title; line 2 = tag · 권 · 용량 · progress at 11px. Grid becomes `32px minmax(0,1fr)` | **Full-width cards, one per screen, snap scroll** — ⚠ **not built**, ships a 218px scroller | Touch-first (§8.3). **All 3 `.seg` groups stay inline and the top bar wraps to three rows** — measured **232px @400** with 맞춤's fourth option (**E-44**; the old "~151px at 500" was a three-option figure, and the growth here is the largest of the four widths — 맞춤 goes from ~235px to ~312px against a 368px content box, so the fourth button is what pushes this bar onto a further row). E-44's e2e asserts the bar's own `scrollWidth` does not exceed its `clientWidth` at every project width, which is the check `noHorizontalScroll` structurally cannot make: the viewer root is `fixed inset-0 overflow-hidden`, so a control off the end of this bar never reaches `documentElement`. (**E-28** deleted the `⋯` bottom sheet this row used to require.) The bottom bar's control row wraps too, and the page slider grows to a 44px box |
+| **768–1023** | **Collapsed** to a 56px icon rail; the scope name moves into the section header. Full sidebar opens as an overlay drawer from a hamburger in the top bar | `--grid-min: 224px` → **3 cols** | **Drop 수정일 + 용량** → `32px minmax(0,1fr) 66px 64px 120px`. Format tag stays (it is primary metadata) | **260px cards** (`md:flex-[0_0_260px]`) | **All 3 `.seg` groups stay inline**; the bar wraps to a second row instead (**E-28**). Measured **108px @1024 · 103px @768** with 맞춤's fourth option (**E-44**; the old "~103px at 900" was a three-option figure at a width no project runs) ([`viewer-overlay-768.png`](./ui-shots/viewer-overlay-768.png) predates the ruling and shows the old overflow menu) |
+| **<768** | **Off-canvas drawer** (`position:fixed; inset:0 auto 0 0; width:280px`) over a `--scrim-modal` backdrop. Closed by default | `--grid-min: 150px; gap: 12px` → **2 cols** | **Two-line row**: line 1 = title; line 2 = tag · 권 · 용량 · progress at 11px. Grid becomes `32px minmax(0,1fr)` | **Full-width cards, one per screen, snap scroll** (`flex-[0_0_100%] snap-start` on the card, `snap-x snap-mandatory` on the track) | Touch-first (§8.3). **All 3 `.seg` groups stay inline and the top bar wraps to three rows** — measured **232px @400** with 맞춤's fourth option (**E-44**; the old "~151px at 500" was a three-option figure, and the growth here is the largest of the four widths — 맞춤 goes from ~235px to ~312px against a 368px content box, so the fourth button is what pushes this bar onto a further row). E-44's e2e asserts the bar's own `scrollWidth` does not exceed its `clientWidth` at every project width, which is the check `noHorizontalScroll` structurally cannot make: the viewer root is `fixed inset-0 overflow-hidden`, so a control off the end of this bar never reaches `documentElement`. (**E-28** deleted the `⋯` bottom sheet this row used to require.) The bottom bar's control row wraps too, and the page slider grows to a 44px box |
 
-> **Amended by E-37 — only the top two 이어보기 cells changed. The bottom two are requirements this
-> table is owed, and they are still open.**
+> **Amended by E-37 — only the top two 이어보기 cells changed. The bottom two were requirements this
+> table was owed, and they are now BUILT** (item `aa`, closed by moving the code to the spec, never the
+> other way). The history below is kept rather than deleted, because the useful part of it is not which
+> numbers won — it is that the column went ten sessions with nothing looking at it.
 >
-> Read the two halves of that column differently, because they have different standing:
+> Read the two halves of that column differently, because they still have different standing:
 >
 > - **≥1440 and 1024–1439 — the code is the target, so the number moves.** This table's job below 1024
 >   is to specify a layer that does not exist; at and above it, it is describing the desktop layout the
@@ -1664,26 +1674,40 @@ and their labels break to vertical). Build the layer below.
 >   now **269**). Those two cells now read 269px, sourced from
 >   `flex-[0_0_218px] md:flex-[0_0_269px]` in `web/src/features/library/ContinueCard.tsx` (§4.3).
 > - **768–1023 (260px) and `<768` (full-width, one per screen, snap scroll) — requirements, NOT spec
->   errors, and both are UNBUILT.** They belong to the responsive layer this section opens by saying
+>   errors.** They belong to the responsive layer this section opens by saying
 >   *"The prototype implements none of this … Build the layer below"*, which §0.5 lists as a thing an
 >   implementer must not get wrong, and which §0.2's own amendment tells you to read as the
 >   specification with the stylesheet behind it — **not the other way round**. They are restored and
 >   marked ⚠, not overwritten with what ships. **A previous edit of this note rewrote both cells to
 >   match the code. That was backwards** and is recorded here rather than quietly reverted, because
 >   "the code disagrees with the spec" resolving as "amend the spec" is the failure mode this whole
->   section exists to prevent.
+>   section exists to prevent. **When it was closed, the code moved.**
 >
-> **The gap, measured.** `ContinueRow.tsx` is `flex gap-3 overflow-x-auto pb-4` at **every** width and
-> `ContinueCard` has exactly one breakpoint, Tailwind's `md` (768). There is **no `scroll-snap`
-> anywhere in the tree** — zero hits for `scroll-snap` / `snap-x` / `snap-center` across `web/src` and
-> `web/e2e` — so `<768` shows most of two 218px cards on a 400px viewport instead of one, and 768–1023
-> is 9px wide of its tier.
+> **The gap, as it was measured before the fix.** `ContinueRow.tsx` was `flex gap-3 overflow-x-auto pb-4`
+> at **every** width and `ContinueCard` had exactly one breakpoint, Tailwind's `md` (768). There was **no
+> `scroll-snap` anywhere in the tree** — zero hits for `scroll-snap` / `snap-x` / `snap-center` across
+> `web/src` and `web/e2e` — so `<768` showed most of two 218px cards on a 400px viewport instead of one,
+> and 768–1023 was 9px wide of its tier.
 >
-> **Why nobody noticed for ten sessions: `web/e2e/07-responsive.spec.ts` has zero 이어보기 coverage.**
-> The file drives the sidebar, the grid, the list and the viewer through all four tiers and never once
-> mentions the shelf, so every cell in this column has been unchecked since the day it was written. A
-> check that does not look at the thing cannot report the thing missing — the §6.5 pattern again.
-> Closing this gap means a test at 400 and at 900 first, then the CSS.
+> **Why nobody noticed for ten sessions: `web/e2e/07-responsive.spec.ts` had zero 이어보기 coverage.**
+> The file drove the sidebar, the grid, the list and the viewer through all four tiers and never once
+> mentioned the shelf, so every cell in this column was unchecked from the day it was written. A check
+> that does not look at the thing cannot report the thing missing — the §6.5 pattern again.
+>
+> **How it was closed, in the order this note prescribed: the test first, then the CSS.**
+> `07-responsive.spec.ts` **6.12** now measures this column at every viewport project. It has been
+> watched failing against the pre-fix stylesheet — `260` expected and **`269`** measured at 768, `368`
+> expected and **`222`** measured at 400, the two numbers this note predicted. To be exact about the
+> order, that was a *mutation*: the unit tier (`library.test.tsx`) was the half watched red before the
+> CSS moved, and 6.12's red was reproduced afterwards by restoring the old class lists and rebuilding.
+> **The rebuild is the part worth writing down** — the SPA is embedded in the binary (`spa.go`), so
+> editing the source and re-running Playwright leaves the old bundle serving and the mutation survives
+> for no reason at all. It reads geometry rather than class names, because
+> the unit tier already pins the class list (`library.test.tsx`) and what a browser adds is the measured
+> width — plus the one thing a declaration cannot prove: it nudges the track off a snap position and
+> requires the browser to put it back, so `scroll-snap-type` being *present* is not mistaken for the
+> track *snapping*. **768 rather than 900**: 900 is not one of the four viewport projects and 768 is the
+> same tier, so the cell is checked where the suite already runs rather than by adding a fifth project.
 
 Implementation: drive `--grid-min` from a single media-query block in `tokens.css` rather than sprinkling
 Tailwind breakpoint variants across the grid class. `gap` stays `16px` down to 768 and drops to `12px` below.

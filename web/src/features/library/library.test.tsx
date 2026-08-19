@@ -2590,8 +2590,16 @@ describe('이어보기 (FR-LIB-010)', () => {
    * not to relax the assertion.
    *
    * jsdom does no layout, so this reads the class list rather than a measured
-   * width; the geometry it stands for was measured in Chrome (218 − 96 cover −
-   * 12 gap − 24 padding = an 86px text column).
+   * width; the geometry it stands for was measured in Chrome (269 − 96 cover −
+   * 12 gap − 24 padding = a 137px text column at ≥1024, 128px at 768–1023, and
+   * 236px on a 400px viewport where the card is the track).
+   *
+   * **Three variants now, not two.** The two bottom cells of §7's 이어보기
+   * column were requirements the code had never met — `<768` asks for one
+   * full-width card per screen with snap scroll and shipped a 218px scroller,
+   * 768–1023 asks for 260 and shipped 269 because the component had exactly one
+   * breakpoint, Tailwind's `md`. `07-responsive.spec.ts` 6.12 measures all three
+   * in a browser; this pins the class list they come from.
    */
   it('pins the card width so the spec cannot drift from it again (E-37)', async () => {
     scenario.continueItems = [makeContinueItem()]
@@ -2599,8 +2607,34 @@ describe('이어보기 (FR-LIB-010)', () => {
     await waitForLibrary()
 
     const card = await screen.findByRole('button', { name: /군계\(軍鷄\) 01권\.zip/ })
-    expect(card.className).toContain('flex-[0_0_218px]')
-    expect(card.className).toContain('md:flex-[0_0_269px]')
+    expect(card.className).toContain('flex-[0_0_100%]')
+    expect(card.className).toContain('md:flex-[0_0_260px]')
+    expect(card.className).toContain('lg:flex-[0_0_269px]')
+  })
+
+  /**
+   * The snap layer of the `<768` cell, pinned on the two class lists it is
+   * split across — the axis and the strictness live on the track, the stop
+   * positions on the cards, and the cell is only met when both are there.
+   *
+   * It is turned **off** at and above 768, where §7 asks for an ordinary
+   * horizontal scroller showing more than one card. A snap rule that never
+   * stopped applying would quietly change the tablet and desktop tiers too,
+   * which is why the off switch is asserted rather than assumed.
+   */
+  it('snaps one card per screen below md, and not above it (ui-spec §7)', async () => {
+    scenario.continueItems = [makeContinueItem()]
+    renderLibrary()
+    await waitForLibrary()
+
+    const track = await screen.findByTestId('continue-track')
+    expect(track.className).toContain('snap-x')
+    expect(track.className).toContain('snap-mandatory')
+    expect(track.className).toContain('md:snap-none')
+
+    const card = await screen.findByRole('button', { name: /군계\(軍鷄\) 01권\.zip/ })
+    expect(card.className).toContain('snap-start')
+    expect(card.className).toContain('md:snap-align-none')
   })
 })
 

@@ -33,7 +33,18 @@ export function ContinueRow({ suppressed, onResume }: ContinueRowProps) {
         <h6>이어보기</h6>
         <span className="text-xs tabular-nums text-ink-dim">{formatItemCount(items.length)}</span>
       </div>
-      <div className="flex gap-3 overflow-x-auto pb-4">
+      {/* Below 768 the track is a snap scroller and each card is a stop, which
+          is how ui-spec §7's `<768` cell gets "one per screen" from a card that
+          is simply as wide as the track. The axis and the strictness have to sit
+          here and the stop positions on the cards, so the cell is only met when
+          both class lists agree — `library.test.tsx` pins both, and
+          07-responsive 6.12 makes the browser prove it by undoing a nudge.
+          `md:snap-none` turns the whole layer off at 768, where §7 asks for an
+          ordinary scroller with more than one card in view. */}
+      <div
+        className="flex snap-x snap-mandatory gap-3 overflow-x-auto pb-4 md:snap-none"
+        data-testid="continue-track"
+      >
         {items.map((item) => (
           <ContinueCard
             key={item.book.id}

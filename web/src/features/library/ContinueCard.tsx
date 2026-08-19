@@ -6,14 +6,26 @@ import { ProgressBar } from '../../components/ds/ProgressBar'
 import { formatContinueCounter } from '../../lib/format'
 
 /**
- * `ContinueCard` (ui-spec §9 #3, §4.3) — one card of the 이어보기 track:
- * **218px wide below `md` (768), 269px at and above it.**
+ * `ContinueCard` (ui-spec §9 #3, §4.3) — one card of the 이어보기 track, in the
+ * three widths ui-spec §7 specifies: **the full track below `md` (768), 260px
+ * at 768–1023, 269px at and above `lg` (1024).**
  *
- * Both numbers are the *whole* card, border-box, so what the text column gets is
- * `width − 96 cover − 12 gap − 2×12 padding` = **86px** below 768 and **137px**
- * at and above (measured in Chrome, not derived). They are the previous pair,
- * 272 / 336, narrowed by 20% at the user's request (**E-37**); the cover, the
- * gap and the padding did not move.
+ * All three are the *whole* card, border-box, so what the text column gets is
+ * `width − 96 cover − 12 gap − 2×12 padding` = **137px** at ≥1024, **128px** at
+ * 768–1023, and **236px** on a 400px viewport, where the card is the track
+ * (measured in Chrome, not derived).
+ *
+ * The bottom two were requirements this component had never met. It carried
+ * exactly one breakpoint — Tailwind's `md` — so 768–1023 shipped 269, 9px wide
+ * of its tier, and `<768` shipped a 218px card that put most of a second one on
+ * a 400px screen where §7 asks for one per screen with snap scroll. Neither was
+ * a spec error to be amended away: §7's own note records a previous edit that
+ * rewrote both cells to match the code and says that was backwards. The snap
+ * half lives on `ContinueRow`'s track (`snap-x snap-mandatory md:snap-none`)
+ * against `snap-start` here; one without the other is not the cell.
+ *
+ * 269 is unchanged and stays sourced from here: below 1024 the spec is
+ * specifying a layer, at and above it the code is the target (**E-37**).
  *
  * 272 / 336 were **not** E-32's — that attribution was made up and then
  * repeated into ui-spec twice. They arrived in **session 5**, applied
@@ -66,7 +78,7 @@ export function ContinueCard({ item, onResume }: ContinueCardProps) {
       // E-32: the 1px hairline and its accent-on-hover become a raised card
       // that lifts. `hover:border-accent` could not survive the reskin anyway —
       // the accent is a deep teal and 1.2:1 against the dark surface.
-      className="flex flex-[0_0_218px] cursor-pointer gap-3 rounded-lg bg-surface p-3 text-left shadow-md transition-[box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:shadow-lg md:flex-[0_0_269px]"
+      className="flex flex-[0_0_100%] cursor-pointer snap-start gap-3 rounded-lg bg-surface p-3 text-left shadow-md transition-[box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:shadow-lg md:flex-[0_0_260px] md:snap-align-none lg:flex-[0_0_269px]"
     >
       {/* 96×144, up from 66×99: the cover is the only thing on this card that
           identifies the book at a glance, and at 66px wide a title in the art
