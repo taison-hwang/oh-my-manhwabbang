@@ -11,7 +11,7 @@
 // # Nothing is copied
 //
 // The root points at the collection itself and `scan.include_globs` narrows it
-// to the ten curated series of impl-plan §6.3 (~5.1 GB). Symlinks cannot do
+// to ten of impl-plan §6.3's curated series (~5.1 GB). Symlinks cannot do
 // this — os.Root refuses any symlink that escapes its root — and copying would
 // destroy the 2012–2018 mtimes that content_version, the incremental scan and
 // FR-THM-006 all key off (D-48). I-9 proves the collection is untouched
@@ -43,31 +43,46 @@ import (
 	"shelf/internal/config"
 )
 
-// The ten curated series of impl-plan §6.3, exact names.
+// Ten of impl-plan §6.3's curated series, exact names.
+//
+// A deliberate SUBSET of `scripts/e2e-config.sh`'s CURATED, which has grown to
+// fifteen: the rounds this suite drives — a full scan, a whole-volume stream, an
+// index-and-cache wipe — cost minutes per series, and the five it leaves out
+// (D-70/D-71/D-72's RAR, .7z, .hv3 and nested-container shapes) are covered by
+// the e2e round instead. That gap is tracked; adding them here is not free,
+// because several of them are shapes this build refuses on purpose and the
+// broken-book counts in scan_test.go are written against these ten.
+//
+// **Every name here must appear verbatim in CURATED**, and `contractcheck`'s
+// checkCuratedSeries now enforces exactly that, one way. It was added after
+// this list was found still carrying the `[만화] ` prefix the collection had
+// dropped six sessions earlier: `include_globs` matched nothing, the suite
+// indexed an empty library, and every acceptance test failed — except the
+// NFR-PRF-005 memory check, which measured a server holding nothing and passed.
 var curated = []string{
-	"[만화] Clover 클로버 (총4권)",
-	"[만화] 상처를 쫓는자 1-11 (완) 이케가미 료이치",
-	"[만화] 자살도114-122",
-	"[만화] 바퀴.zip",
-	"[만화] 강철의 연금술사 1~27권 완결",
-	"[만화] 군계 1~25",
-	"[만화] 디엔엔젤 1-13권 연재중",
-	"[만화] 미생 1~9 (완결 pdf)",
-	"[만화] 배틀로얄 1~15 [완결].zip",
-	"[만화] 엔젤하트 전32권 완결.zip",
+	"Clover 클로버 (총4권)",
+	"상처를 쫓는자 1-11 (완) 이케가미 료이치",
+	"자살도114-122",
+	"바퀴.zip",
+	"강철의 연금술사 1~27권 완결",
+	"군계 1~25",
+	"디엔엔젤 1-13권 연재중",
+	"미생 1~9 (완결 pdf)",
+	"배틀로얄 1~15 [완결].zip",
+	"엔젤하트 전32권 완결.zip",
 }
 
 const (
-	clover       = "[만화] Clover 클로버 (총4권)"
-	wounds       = "[만화] 상처를 쫓는자 1-11 (완) 이케가미 료이치"
-	suicide      = "[만화] 자살도114-122"
-	wheel        = "[만화] 바퀴.zip"
-	fma          = "[만화] 강철의 연금술사 1~27권 완결"
-	gungye       = "[만화] 군계 1~25"
-	dnangel      = "[만화] 디엔엔젤 1-13권 연재중"
-	misaeng      = "[만화] 미생 1~9 (완결 pdf)"
-	battleRoyale = "[만화] 배틀로얄 1~15 [완결].zip"
-	angelHeart   = "[만화] 엔젤하트 전32권 완결.zip"
+	clover       = "Clover 클로버 (총4권)"
+	wounds       = "상처를 쫓는자 1-11 (완) 이케가미 료이치"
+	suicide      = "자살도114-122"
+	wheel        = "바퀴.zip"
+	fma          = "강철의 연금술사 1~27권 완결"
+	gungye       = "군계 1~25"
+	dnangel      = "디엔엔젤 1-13권 연재중"
+	misaeng      = "미생 1~9 (완결 pdf)"
+	battleRoyale = "배틀로얄 1~15 [완결].zip"
+	angelHeart   = "엔젤하트 전32권 완결.zip"
 )
 
 // escapeGlob turns a literal name into a path.Match pattern. `[` opens a

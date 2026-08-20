@@ -202,6 +202,22 @@ if [ "$synthetic" -eq 1 ]; then
   A11_FILL="$FIXTURE/나 시리즈.zip"
 fi
 `
+	// The integration harness names each series twice — once in the slice that
+	// becomes its scan.include_globs, once as a by-name handle — and one region
+	// covers both. `다 시리즈` is absent on purpose: that copy is a subset.
+	sampleIntegrationCurated = `
+package integration
+
+var curated = []string{
+	"가 시리즈",
+	"나 시리즈.zip",
+}
+
+const (
+	ga = "가 시리즈"
+	na = "나 시리즈.zip"
+)
+`
 	sampleDocCurated = `
 #### The curated set — 3 series, zero bytes copied
 
@@ -215,32 +231,55 @@ fi
 `
 )
 
-type curatedSrc struct{ bash, py, ts, fixture, shell, doc string }
+type curatedSrc struct{ bash, py, ts, fixture, shell, doc, integration string }
 
 func sampleCurated() curatedSrc {
 	return curatedSrc{
-		bash:    sampleBashCurated,
-		py:      samplePyCurated,
-		ts:      sampleTSCurated,
-		fixture: sampleFixtureCurated,
-		shell:   sampleShellCurated,
-		doc:     sampleDocCurated,
+		bash:        sampleBashCurated,
+		py:          samplePyCurated,
+		ts:          sampleTSCurated,
+		fixture:     sampleFixtureCurated,
+		shell:       sampleShellCurated,
+		doc:         sampleDocCurated,
+		integration: sampleIntegrationCurated,
 	}
 }
 
 func curatedFindings(t *testing.T, s curatedSrc) []string {
 	t.Helper()
-	c, err := parseCuratedCopies(s.bash, s.py, s.ts, s.fixture, s.shell, s.doc)
+	c, err := parseCuratedCopies(s.bash, s.py, s.ts, s.fixture, s.shell, s.doc, s.integration)
 	if err != nil {
 		t.Fatalf("parseCuratedCopies: %v", err)
 	}
 	return compareCurated(c)
 }
 
-func TestCuratedSeries_sixAgreeingCopiesProduceNoFindings(t *testing.T) {
+func TestCuratedSeries_sevenAgreeingCopiesProduceNoFindings(t *testing.T) {
 	t.Parallel()
 	if got := curatedFindings(t, sampleCurated()); len(got) != 0 {
 		t.Fatalf("expected no findings, got:\n%s", strings.Join(got, "\n"))
+	}
+}
+
+// The harness is a deliberate SUBSET, so CURATED holding a name it does not is
+// silence, not a finding. Without this case the one-way rule could be tightened
+// to a both-ways one by accident and every future addition to CURATED would
+// redden `make lint` until somebody pasted it into a suite that costs minutes
+// per series to run.
+func TestCuratedSeries_theIntegrationSubsetIsNotAFinding(t *testing.T) {
+	t.Parallel()
+	s := sampleCurated()
+	s.integration = `
+var curated = []string{
+	"가 시리즈",
+}
+
+const (
+	ga = "가 시리즈"
+)
+`
+	if got := curatedFindings(t, s); len(got) != 0 {
+		t.Fatalf("a subset must be silent, got:\n%s", strings.Join(got, "\n"))
 	}
 }
 
@@ -305,6 +344,29 @@ func TestCuratedSeries_findsEveryKindOfDrift(t *testing.T) {
 			name:   "A11_FILL is not one of the curated names",
 			mutate: func(s *curatedSrc) { s.shell = strings.Replace(s.shell, "나 시리즈.zip", "바 시리즈.zip", 1) },
 			want:   []string{"scripts/e2e.sh: A11_FILL", `"바 시리즈.zip"`, "scripts/e2e-config.sh's CURATED does not list it"},
+		},
+		{
+			// The real drift this copy was added for: the collection dropped a
+			// `[만화] ` prefix and the harness kept it, so its include_globs
+			// matched nothing and the whole suite ran against an empty library.
+			name: "the integration harness keeps a name the collection renamed away",
+			mutate: func(s *curatedSrc) {
+				s.integration = strings.ReplaceAll(s.integration, `"가 시리즈"`, `"[만화] 가 시리즈"`)
+			},
+			want: []string{
+				"integration/harness_test.go: the integration harness indexes",
+				`"[만화] 가 시리즈"`,
+				"its scan.include_globs matches nothing",
+			},
+		},
+		{
+			// Both declarations hold the names; a rename applied to only one of
+			// them leaves the by-name handles pointing at nothing.
+			name: "only the harness's const block drifts",
+			mutate: func(s *curatedSrc) {
+				s.integration = strings.Replace(s.integration, "\tna = \"나 시리즈.zip\"", "\tna = \"나 시리즈\"", 1)
+			},
+			want: []string{"integration/harness_test.go", `"나 시리즈"`},
 		},
 		{
 			name: "impl-plan's table is missing a row",
@@ -391,9 +453,16 @@ func TestCuratedSeries_extractionFindsEveryCopyInTheRepository(t *testing.T) {
 	}
 	c, err := parseCuratedCopies(
 		read(curatedBashPath), read(curatedPyPath), read(curatedTSPath),
-		read(curatedFixturePath), read(curatedShellPath), read(curatedDocPath))
+		read(curatedFixturePath), read(curatedShellPath), read(curatedDocPath),
+		read(curatedIntPath))
 	if err != nil {
 		t.Fatalf("parseCuratedCopies: %v", err)
+	}
+	// Not compared against len(c.bash): this copy is a subset by design. What
+	// matters is that extraction found it at all — an empty result would make
+	// the one-way check below silently vacuous.
+	if len(c.integration) == 0 {
+		t.Errorf("no curated names extracted from %s", curatedIntPath)
 	}
 	for _, got := range []struct {
 		what  string

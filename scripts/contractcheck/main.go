@@ -772,6 +772,7 @@ const (
 	curatedFixturePath = "scripts/mkfixture/main.go"
 	curatedShellPath   = "scripts/e2e.sh"
 	curatedDocPath     = "docs/impl-plan.md"
+	curatedIntPath     = "integration/harness_test.go"
 )
 
 var (
@@ -793,6 +794,12 @@ var (
 	reTSConstObj = regexp.MustCompile(`(?ms)^export const (SERIES|SYNTHETIC_EXTRA) = \{(.*?)^\} as const`)
 	// scripts/e2e.sh step 11b's one bare literal.
 	reA11Fill = regexp.MustCompile(`(?m)^\s*A11_FILL="([^"]*)"`)
+	// integration/harness_test.go's two declarations of the same names: the
+	// `curated` slice that becomes scan.include_globs there, and the `const`
+	// block of by-name handles the acceptance tests look series up with. One
+	// region covers both — the slice closes with `}` and the const block with a
+	// `)` at column 0, so `^\)` cannot end this early on a name containing `)`.
+	reGoCuratedDecls = regexp.MustCompile(`(?ms)^var\s+curated\s*=\s*\[\]string\{.*?^\)`)
 	// A Go string literal. Applied to comment-stripped source, so a name quoted
 	// in prose — mkfixture's own comments name four of the series — is not
 	// mistaken for the code that builds it.
@@ -818,6 +825,7 @@ type curatedCopies struct {
 	fixtureLiterals []string // every non-comment string literal of mkfixture
 	a11Fill         string   // scripts/e2e.sh's A11_FILL, basename only
 	doc             []string // docs/impl-plan.md §6.3's table
+	integration     []string // integration/harness_test.go's `curated` + const block
 }
 
 // nameList is one declaration, named well enough for a finding to send the
@@ -828,7 +836,7 @@ type nameList struct {
 	names []string
 }
 
-// checkCuratedSeries compares the six copies of the curated e2e series list.
+// checkCuratedSeries compares the seven copies of the curated e2e series list.
 //
 // It is not an API contract, and it is here for exactly the reason
 // checkBookKinds is: a declaration written out in four languages with nothing
@@ -849,6 +857,13 @@ type nameList struct {
 // truth and carries no code — which is precisely why it was the copy that had
 // drifted when this check was written.
 //
+// The seventh, integration/harness_test.go, is compared ONE WAY: every name it
+// holds must be in CURATED, but CURATED may hold names it does not, because it
+// deliberately runs impl-plan §6.3's original ten rather than all fifteen. It
+// was added after that copy was found carrying the `[만화] ` prefix the
+// collection had dropped six sessions earlier — see the comment at the check
+// itself for what that cost.
+//
 // The bash and Python lists are compared as SEQUENCES, not sets: e2e-assert.py
 // unpacks its list positionally (`CLOVER, WOUNDS, … = CURATED[0], CURATED[1],
 // …`), so a reorder that leaves both lists set-equal makes every one of those
@@ -863,10 +878,11 @@ func checkCuratedSeries(root string) ([]string, error) {
 		}
 		return string(b), nil
 	}
-	var srcs [6]string
+	var srcs [7]string
 	for i, rel := range []string{
 		curatedBashPath, curatedPyPath, curatedTSPath,
 		curatedFixturePath, curatedShellPath, curatedDocPath,
+		curatedIntPath,
 	} {
 		s, err := read(rel)
 		if err != nil {
@@ -874,14 +890,14 @@ func checkCuratedSeries(root string) ([]string, error) {
 		}
 		srcs[i] = s
 	}
-	copies, err := parseCuratedCopies(srcs[0], srcs[1], srcs[2], srcs[3], srcs[4], srcs[5])
+	copies, err := parseCuratedCopies(srcs[0], srcs[1], srcs[2], srcs[3], srcs[4], srcs[5], srcs[6])
 	if err != nil {
 		return nil, err
 	}
 	return compareCurated(copies), nil
 }
 
-func parseCuratedCopies(bashSrc, pySrc, tsSrc, fixtureSrc, shellSrc, docSrc string) (*curatedCopies, error) {
+func parseCuratedCopies(bashSrc, pySrc, tsSrc, fixtureSrc, shellSrc, docSrc, intSrc string) (*curatedCopies, error) {
 	c := &curatedCopies{}
 
 	bash := namedBlocks(reBashList, bashSrc, quotedPerLine)
@@ -933,6 +949,22 @@ func parseCuratedCopies(bashSrc, pySrc, tsSrc, fixtureSrc, shellSrc, docSrc stri
 		return nil, err
 	}
 	c.doc = doc
+
+	decls := reGoCuratedDecls.FindString(intSrc)
+	if decls == "" {
+		return nil, fmt.Errorf("%s: no `var curated = []string{…}` declaration found; "+
+			"contractcheck cannot compare the integration harness's copy", curatedIntPath)
+	}
+	seen := map[string]bool{}
+	for _, m := range reGoLiteral.FindAllStringSubmatch(stripLineComments(decls), -1) {
+		if !seen[m[1]] {
+			seen[m[1]] = true
+			c.integration = append(c.integration, m[1])
+		}
+	}
+	if len(c.integration) == 0 {
+		return nil, fmt.Errorf("%s: the `curated` declaration holds no names", curatedIntPath)
+	}
 	return c, nil
 }
 
@@ -1073,6 +1105,30 @@ func compareCurated(c *curatedCopies) []string {
 	findings = append(findings, bothWays(bash, doc,
 		"%s: curated series %q: scan.include_globs is built from it; %s's %s has no row for it",
 		"%s: the %s has a row for %q; %s's %s does not list it, so the table describes a subset the E2E round does not run")...)
+
+	// 7 — the integration harness, checked ONE WAY ONLY.
+	//
+	// `integration/harness_test.go` deliberately runs a subset: impl-plan §6.3's
+	// original ten, not the fifteen CURATED has grown to, because the rounds it
+	// drives (a full scan, a whole-volume stream, a cache wipe) cost minutes per
+	// series. So a name in CURATED and not here is not a finding.
+	//
+	// A name HERE and not in CURATED is, and it is the one this check was added
+	// for: those names build the harness's own scan.include_globs, and when the
+	// collection was renamed and the dead `[만화] ` prefix stayed behind, they
+	// matched nothing. The suite indexed an EMPTY library and every acceptance
+	// test failed — except NFR-PRF-005, which measured the resident memory of a
+	// server holding nothing and passed. It stayed that way for six sessions
+	// because this file is not one of the five gates and needs SHELF_TEST_ROOT,
+	// so nobody ran it, and the six copies above never compared it.
+	for _, n := range c.integration {
+		if !contains(c.bash, n) && !contains(c.bashExtra, n) {
+			findings = append(findings, fmt.Sprintf(
+				"%s: the integration harness indexes %q; %s's CURATED does not list it, "+
+					"so its scan.include_globs matches nothing and the suite runs against an empty library",
+				curatedIntPath, n, curatedBashPath))
+		}
+	}
 	return findings
 }
 
