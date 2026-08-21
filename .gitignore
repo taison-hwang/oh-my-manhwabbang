@@ -79,3 +79,17 @@ Thumbs.db
 .idea/
 .vscode/
 .gstack/
+
+# ---- agent scratch ------------------------------------------------------------
+# `.claude/settings.local.json` is per-machine by name, and `.claude/worktrees/`
+# holds whole nested checkouts (EnterWorktree puts one there). Without this,
+# `git add -A` from the repository root stages the worktree as a gitlink — a
+# second copy of the tree pointing at a branch that may never be pushed.
+#
+# NOT the same case as the `__pycache__` note above: that one argues an
+# untracked file should stay visible because scripts/e2e.sh step 9 fails on
+# anything appearing under $repo mid-run. A worktree directory is created
+# deliberately, before a run rather than during one, and step 9's walk is
+# already scoped to the media volume and the state directory — so the signal
+# this hides is one nobody needs, and what it prevents is a real mis-commit.
+.claude/
