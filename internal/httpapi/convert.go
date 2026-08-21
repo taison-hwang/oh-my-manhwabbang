@@ -42,7 +42,7 @@ func toSeriesProgress(p index.SeriesProgress) SeriesProgress {
 		BooksTotal:     p.BooksTotal,
 		BooksCompleted: p.BooksCompleted,
 		BooksStarted:   p.BooksStarted,
-		Percent:        percent(p.BooksCompleted, p.BooksTotal),
+		Percent:        percent(p),
 		LastReadAt:     p.LastReadAt,
 	}
 	// last_book_id / last_page describe one specific book. They are null
@@ -57,19 +57,42 @@ func toSeriesProgress(p index.SeriesProgress) SeriesProgress {
 	return out
 }
 
-// percent is books_completed/books_total*100 rounded to one decimal place, and
-// exactly 0 when the series holds no books.
+// percent is pages_read/pages_total*100 rounded to one decimal place — **E-47**,
+// which replaced books_completed/books_total.
 //
-// The zero case is spelled out in the contract (arch §7.3: "*** exactly 0 when
-// books_total === 0 ***") because the obvious implementation divides by zero
-// and JSON has no way to say NaN — `encoding/json` refuses to marshal it, so
-// the whole response would 500 on an empty or broken series, which §4.11 says
-// must stay listed.
-func percent(completed, total int64) float64 {
-	if total <= 0 {
+// The old definition could only move when a whole 권 was finished, so a reader
+// three chapters into a 40-volume series read 0 %, and the shelf's 갈피 (E-46)
+// had nothing to draw. Measured on the real library before the change: of 49
+// series in 읽는 중, **3** reported anything above 0.5 %; page-weighted, **19**
+// do. Weighted by pages rather than by book, because a 3-page 설정집 and a
+// 400-page volume are not the same amount of reading (`decisions.md` E-47).
+//
+// Two edges are load-bearing rather than defensive:
+//
+//   - **100 is reserved for "every book completed".** Without the first branch,
+//     `percent` and the 완독 scope could disagree: `progress=done` is
+//     `count(completed=1) >= book_count` (index/series.go), while pages can
+//     reach the end of a book the reader never marked finished — the live
+//     library has one (`사쿠라통신`, current volume at 100 % of its pages,
+//     `completed = 0`). The frontend stamps its 完讀 seal on `percent >= 100`,
+//     so a series would carry the seal while sitting outside the 완독 shelf.
+//     The clamp to 99.9 is the same rule from the other side.
+//   - **exactly 0 when there is nothing to divide by.** Spelled out in the
+//     contract (arch §7.3) because the obvious implementation divides by zero
+//     and JSON has no way to say NaN — `encoding/json` refuses to marshal it,
+//     so the whole response would 500 on an empty or broken series, which §4.11
+//     says must stay listed. `pages_total` is 0 for a series whose books all
+//     failed to open, which `books_total` was not, so this branch is reached by
+//     more series than it used to be.
+func percent(p index.SeriesProgress) float64 {
+	if p.BooksTotal > 0 && p.BooksCompleted >= p.BooksTotal {
+		return 100
+	}
+	if p.PagesTotal <= 0 {
 		return 0
 	}
-	return math.Round(float64(completed)/float64(total)*1000) / 10
+	v := math.Round(float64(p.PagesRead)/float64(p.PagesTotal)*1000) / 10
+	return math.Min(v, 99.9)
 }
 
 // toBookSummary maps one 권, with its reading progress where it has any.

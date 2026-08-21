@@ -203,12 +203,15 @@ function detailOf(overrides: Partial<SeriesDetail> = {}): SeriesDetail {
     books: DUPLICATE_BOOKS,
     book_count: DUPLICATE_BOOKS.length,
     total_bytes: 3_650_722_201, // 3.7 GB (E-11: decimal)
-    // 6 완독 of 25 volumes, one merely started → FR-STT-002 says 24 %.
+    // 6 완독 of 25 volumes, one merely started. **The percent below deliberately
+    // disagrees with those counts**, and after E-47 that is what makes the test
+    // below sharp rather than what makes it wrong: `percent` is the server's
+    // page-weighted answer and the screen has to take it, so a header that
+    // re-derived 6/25 = 24 % locally would be caught here.
     progress: {
       books_total: 25,
       books_completed: 6,
       books_started: 1,
-      // Deliberately wrong: nothing on screen may come from this field.
       percent: 99,
       last_read_at: 1_753_600_500,
       last_book_id: 'eeeeeeeeeeeeeeee',
@@ -356,14 +359,29 @@ describe('series header (prd UI-002, ui-spec §5.1)', () => {
     expect(within(header).getByText('FOLDER')).toBeInTheDocument() // 형식 (series kind)
   })
 
-  it('aggregates 진행률 over completed volumes, not the server percent (FR-STT-002)', async () => {
+  /**
+   * **This assertion is E-47's, and it is the reverse of the one it replaces.**
+   *
+   * It used to read "aggregates over completed volumes, not the server percent":
+   * the header computed `books_completed / books_total` itself, because
+   * FR-STT-002 said 완독 수 기준 and deriving it on the screen made that
+   * assertable. E-47 rewrote the requirement to count pages, and the parts of
+   * that sum — `pages_read`, `pages_total` — are not on the wire. So the screen
+   * cannot derive it, and anything it derived would be the old rule wearing the
+   * new name while the library's card (which reads `percent`) said something
+   * else about the same series.
+   *
+   * The fixture's `percent` disagrees with its book counts on purpose, so this
+   * fails the moment the local formula comes back.
+   */
+  it('takes 진행률 from the server percent, page-weighted (FR-STT-002, E-47)', async () => {
     await setup()
-    // 6 완독 / 25권 = 24 %. The payload's `percent: 99` must not appear.
-    expect(screen.getByText('24%')).toBeInTheDocument()
-    expect(screen.queryByText('99%')).not.toBeInTheDocument()
+    expect(screen.getByText('99%')).toBeInTheDocument()
+    // 6/25 = 24 %: the pre-E-47 formula, which must not reappear.
+    expect(screen.queryByText('24%')).not.toBeInTheDocument()
     expect(
       screen.getByRole('progressbar', { name: '[만화] 군계 1~25 진행률' }),
-    ).toHaveAttribute('aria-valuenow', '24')
+    ).toHaveAttribute('aria-valuenow', '99')
   })
 
   it('offers 처음부터 읽기 / 이어 읽기 / 이 시리즈 재스캔', async () => {

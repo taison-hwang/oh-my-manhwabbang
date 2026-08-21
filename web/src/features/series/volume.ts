@@ -159,13 +159,27 @@ export function volumeStateLabel(book: BookSummary): string {
 }
 
 /**
- * FR-STT-002. Deliberately **not** `SeriesProgress.percent / 100`: the
- * requirement is "완독 수 기준", and computing it here is what makes that
- * assertable from the screen.
+ * FR-STT-002, **as amended by E-47: the server's `percent`, divided by 100.**
+ *
+ * This used to compute `books_completed / books_total` locally, and the comment
+ * said doing so was what made the requirement — "완독 수 기준" — assertable from
+ * the screen. E-47 changed the requirement to read pages, and that reasoning
+ * inverts with it: the new definition is `pages_read / pages_total`, **and the
+ * frontend has neither number.** Neither is on the wire (arch §7.3 exposes the
+ * quotient, not its parts), so a local re-derivation could only be the *old*
+ * definition wearing the new name.
+ *
+ * What that would produce is two screens disagreeing about one series. The
+ * library's card and row already read `percent` directly (`SeriesCard.tsx`,
+ * `SeriesRow.tsx`), so the 갈피 on the shelf would say 40 % of 군계 while the
+ * detail header under it said 0 % — the same defect, in the same shape, that the
+ * volume label above cites E-12 over.
+ *
+ * The clamp stays: `percent` is contractually 0..100, and a clamp is cheap
+ * insurance against a field that arrives from a different build.
  */
 export function seriesProgressRatio(progress: SeriesProgress): number {
-  if (progress.books_total <= 0) return 0
-  return Math.max(0, Math.min(1, progress.books_completed / progress.books_total))
+  return Math.max(0, Math.min(1, progress.percent / 100))
 }
 
 /** `처음부터 읽기` — the first volume that can actually be opened. */

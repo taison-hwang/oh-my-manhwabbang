@@ -510,16 +510,62 @@ func TestSeriesStatus_isTheThreeValueFold(t *testing.T) {
 	}
 }
 
-func TestSeriesProgress_percentIsZeroForAnEmptySeries(t *testing.T) {
+// E-47 — `percent` counts pages, not finished 권.
+//
+// The first case is the one the ruling exists for and the one the old formula
+// got wrong: a reader who has finished nothing is not at 0 % of a series they
+// are half way through. The last two are the edges the doc comment on `percent`
+// calls load-bearing — 100 is reserved for a series the 완독 shelf would also
+// list, and a series with no readable pages divides by zero if nothing stops it.
+func TestSeriesProgress_percentCountsPagesNotFinishedBooks(t *testing.T) {
 	t.Parallel()
-	if got := percent(0, 0); got != 0 {
-		t.Errorf("percent(0,0) = %v, want 0", got)
+
+	cases := []struct {
+		name string
+		p    index.SeriesProgress
+		want float64
+	}{
+		{
+			name: "half of one volume, nothing completed — the old formula said 0",
+			p:    index.SeriesProgress{BooksTotal: 2, PagesRead: 6, PagesTotal: 12},
+			want: 50,
+		},
+		{
+			name: "one decimal place, rounded",
+			p:    index.SeriesProgress{BooksTotal: 3, BooksCompleted: 1, PagesRead: 1, PagesTotal: 3},
+			want: 33.3,
+		},
+		{
+			name: "every book completed is exactly 100, whatever the pages say",
+			p:    index.SeriesProgress{BooksTotal: 3, BooksCompleted: 3, PagesRead: 7, PagesTotal: 9},
+			want: 100,
+		},
+		{
+			// The live library has one of these: the current volume is at its
+			// last page but was never marked finished. 100 here would stamp the
+			// 完讀 seal on a series the 완독 shelf does not list.
+			name: "pages full but a book unfinished stops at 99.9",
+			p:    index.SeriesProgress{BooksTotal: 2, BooksCompleted: 1, PagesRead: 12, PagesTotal: 12},
+			want: 99.9,
+		},
+		{
+			name: "no books at all",
+			p:    index.SeriesProgress{},
+			want: 0,
+		},
+		{
+			name: "books that hold no readable page — no denominator, not a 500",
+			p:    index.SeriesProgress{BooksTotal: 2, BooksStarted: 1, PagesRead: 0, PagesTotal: 0},
+			want: 0,
+		},
 	}
-	if got := percent(1, 3); got != 33.3 {
-		t.Errorf("percent(1,3) = %v, want 33.3 (one decimal place)", got)
-	}
-	if got := percent(3, 3); got != 100 {
-		t.Errorf("percent(3,3) = %v, want 100", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := percent(tc.p); got != tc.want {
+				t.Errorf("percent(%+v) = %v, want %v", tc.p, got, tc.want)
+			}
+		})
 	}
 }
 

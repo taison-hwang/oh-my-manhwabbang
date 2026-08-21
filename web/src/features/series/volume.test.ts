@@ -207,21 +207,43 @@ describe('volumeBytes (prd FR-LIB-009 용량)', () => {
   })
 })
 
-describe('seriesProgressRatio (FR-STT-002)', () => {
-  it('aggregates over completed volumes, not started ones', () => {
-    // 6 완독 of 25, plus one merely started — the started one must not count.
-    expect(seriesProgressRatio(progressOf({ books_completed: 6, books_started: 1 }))).toBeCloseTo(
-      6 / 25,
-    )
+describe('seriesProgressRatio (FR-STT-002, as amended by E-47)', () => {
+  /**
+   * **This block used to assert the opposite, and the reversal is the ruling.**
+   *
+   * Before E-47 the ratio was `books_completed / books_total`, computed here so
+   * that "완독 수 기준" was assertable from the screen — and one of these cases
+   * was a guard named "ignores the server percent field, so a page-weighted
+   * server cannot move it". E-47 makes the server page-weighted on purpose, so
+   * the guard now describes the defect rather than the requirement: the parts
+   * (`pages_read`, `pages_total`) are not on the wire, so anything computed here
+   * could only be the old definition under the new name, and the library's card
+   * — which reads `percent` directly — would disagree with the detail header
+   * about the same series.
+   */
+  it('follows the server percent, which is now page-weighted', () => {
+    // 6 완독 of 25 volumes, but the reader is also part-way through a seventh:
+    // the server says 26.4 % and the screen says 26.4 %.
+    const partial = progressOf({ books_total: 25, books_completed: 6, books_started: 1, percent: 26.4 })
+    expect(seriesProgressRatio(partial)).toBeCloseTo(0.264)
   })
 
-  it('ignores the server percent field, so a page-weighted server cannot move it', () => {
-    const lying = progressOf({ books_total: 25, books_completed: 6, percent: 99 })
-    expect(seriesProgressRatio(lying)).toBeCloseTo(0.24)
+  it('does not re-derive the old completed-count ratio', () => {
+    // The pre-E-47 formula would say 6/25 = 0.24 here. If this ever passes at
+    // 0.24 again, the two screens have gone back to disagreeing.
+    const partial = progressOf({ books_total: 25, books_completed: 6, percent: 99 })
+    expect(seriesProgressRatio(partial)).toBeCloseTo(0.99)
   })
 
   it('is 0 for an empty series rather than NaN', () => {
-    expect(seriesProgressRatio(progressOf({ books_total: 0, books_completed: 0 }))).toBe(0)
+    expect(seriesProgressRatio(progressOf({ books_total: 0, books_completed: 0, percent: 0 }))).toBe(
+      0,
+    )
+  })
+
+  it('clamps a value from outside the contract', () => {
+    expect(seriesProgressRatio(progressOf({ percent: 140 }))).toBe(1)
+    expect(seriesProgressRatio(progressOf({ percent: -5 }))).toBe(0)
   })
 })
 

@@ -48,10 +48,30 @@ type Series struct {
 // SeriesProgress is the FR-STT-002 rollup of a series' books, computed from
 // ud.progress. Percent is deliberately not stored here: it is presentation and
 // belongs to the HTTP layer.
+//
+// **PagesRead / PagesTotal are what E-47 turned `percent` into.** The rollup
+// used to be able to answer only "how many 권 are finished", which is a step
+// function that stays at 0 for the whole of a reader's first volume — on the
+// real library that left 46 of 49 started series reporting 0 %. These two carry
+// the finer measure the ruling asked for:
+//
+//   - PagesRead sums each book's contribution — its whole length when the book
+//     is marked completed, otherwise its last read page, clamped to the length
+//     the *index* currently reports. The clamp is E-45 §6's rule, not a defensive
+//     guard: `ud.progress.page_count` is the stale-detection baseline and can
+//     disagree with the file, in both directions;
+//   - PagesTotal is the series' own page_count, which the scanner writes as the
+//     sum of its books' (`roots.go` recount, verified against the live library:
+//     40 books, 7 823 pages, sum identical). It is filled in by scanSeriesRow
+//     from the series row, the same way BooksTotal is filled from BookCount —
+//     the join cannot supply it, because a series with no progress row at all
+//     has no row in the rollup subquery.
 type SeriesProgress struct {
 	BooksTotal     int64
 	BooksCompleted int64
 	BooksStarted   int64
+	PagesRead      int64
+	PagesTotal     int64
 	LastReadAt     *int64
 	LastBookID     string
 	LastPage       int
@@ -155,6 +175,7 @@ const seriesColumns = `
 	COALESCE(s.error, ''), s.scan_gen,
 	COALESCE(cb.content_version, ''),
 	COALESCE(pr.books_completed, 0), COALESCE(pr.books_started, 0),
+	COALESCE(pr.pages_read, 0),
 	pr.last_read_at,
 	COALESCE((SELECT q.book_id FROM ud.progress q WHERE q.series_id = s.id
 	           ORDER BY q.updated_at DESC, q.book_id LIMIT 1), ''),
@@ -181,6 +202,16 @@ const addedAtExpr = `COALESCE(sn.first_seen_at, s.added_at)`
 // be done after a LIMIT. The ATTACH is already there for ud.progress, already
 // verified under a hammered pool (arch §3.7), and costs one more LEFT JOIN on a
 // primary key.
+//
+// **The rollup joins `books` too, and that join is the point of E-47.** A page
+// count belongs to the index, the page a reader stopped on belongs to user.db,
+// and `percent` needs both in the same SUM. It is a join on the books primary
+// key inside a subquery that already scans ud.progress once per request, so it
+// adds a lookup per progress row and no extra pass. `LEFT JOIN`, not `JOIN`:
+// progress survives a book disappearing from the index (that is what makes
+// reading position reattach after a rescan), and an inner join would silently
+// drop those rows out of the rollup — including out of `books_completed`, which
+// would move a number this ruling never touched.
 const seriesJoins = `
 	FROM series s
 	JOIN roots r ON r.name = s.root_name
@@ -190,8 +221,11 @@ const seriesJoins = `
 		SELECT p.series_id,
 		       SUM(p.completed)     AS books_completed,
 		       SUM(1 - p.completed) AS books_started,
+		       SUM(CASE WHEN p.completed = 1 THEN COALESCE(b.page_count, 0)
+		                ELSE MIN(p.last_page, COALESCE(b.page_count, 0)) END) AS pages_read,
 		       MAX(p.updated_at)    AS last_read_at
 		FROM ud.progress p
+		LEFT JOIN books b ON b.id = p.book_id
 		GROUP BY p.series_id
 	) pr ON pr.series_id = s.id`
 
@@ -201,9 +235,10 @@ func scanSeriesRow(sc interface{ Scan(...any) error }) (SeriesRow, error) {
 		&r.ChoseongKey, &r.Kind, &r.BookCount, &r.PageCount, &r.TotalBytes, &r.Mtime,
 		&r.AddedAt, &r.CoverKind, &r.CoverBookID, &r.CoverPageNo, &r.CoverRelPath,
 		&r.Status, &r.Error, &r.ScanGen, &r.CoverCV,
-		&r.Progress.BooksCompleted, &r.Progress.BooksStarted, &r.Progress.LastReadAt,
-		&r.Progress.LastBookID, &r.Progress.LastPage)
+		&r.Progress.BooksCompleted, &r.Progress.BooksStarted, &r.Progress.PagesRead,
+		&r.Progress.LastReadAt, &r.Progress.LastBookID, &r.Progress.LastPage)
 	r.Progress.BooksTotal = r.BookCount
+	r.Progress.PagesTotal = r.PageCount
 	return r, err
 }
 

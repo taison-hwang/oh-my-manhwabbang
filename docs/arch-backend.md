@@ -1716,9 +1716,18 @@ interface SeriesProgress {                 // FR-STT-002, aggregated over books
   books_total: number;
   books_completed: number;
   books_started: number;   // started but not completed
-  percent: number;         // 0..100, rounded to 1 dp: books_completed/books_total*100
-                           //   *** exactly 0 when books_total === 0 *** (an empty or
-                           //   broken series, §4.11) — never NaN, never null
+  percent: number;         // 0..100, rounded to 1 dp: pages_read/pages_total*100
+                           //   (ruling E-47 — it was books_completed/books_total,
+                           //   which could not move until a whole 권 was finished).
+                           //   pages_read counts a completed book at its full length
+                           //   and a started one at its last read page, clamped to the
+                           //   length the INDEX reports (E-45 §6: never the progress
+                           //   row's stale baseline); pages_total is series.page_count.
+                           //   *** exactly 100 only when books_completed === books_total ***
+                           //   — otherwise capped at 99.9, so `percent >= 100` and the
+                           //   progress=done scope can never disagree about 완독.
+                           //   *** exactly 0 when there are no pages to divide by ***
+                           //   (an empty or broken series, §4.11) — never NaN, never null
   last_read_at: Unix | null;
   last_book_id: ID | null; // the book "Continue reading" should open
   last_page: number | null;

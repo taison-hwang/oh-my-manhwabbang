@@ -826,6 +826,13 @@ func TestListSeries_progressJoin_reportsSeriesRollup(t *testing.T) {
 		t.Errorf("rollup = total %d completed %d started %d, want 2/1/1",
 			s.Progress.BooksTotal, s.Progress.BooksCompleted, s.Progress.BooksStarted)
 	}
+	// E-47's two columns. 군계 is a 5-page volume the reader finished and a
+	// 7-page one they are on page 4 of, so the rollup reads 5 + 4 of 12 — a
+	// number the books-only rollup could not express (it says "one of two").
+	if s.Progress.PagesRead != 9 || s.Progress.PagesTotal != 12 {
+		t.Errorf("pages = %d/%d, want 9/12 (5 completed + 4 read, of 5+7)",
+			s.Progress.PagesRead, s.Progress.PagesTotal)
+	}
 	if s.Progress.LastBookID != "b2aaaaaaaaaaaaaa" {
 		t.Errorf("last book = %q, want the most recently updated one", s.Progress.LastBookID)
 	}
@@ -834,6 +841,47 @@ func TestListSeries_progressJoin_reportsSeriesRollup(t *testing.T) {
 	}
 	if s.CoverCV != "cvb1aaaaaaaaaaaaaa" {
 		t.Errorf("cover cv = %q, want the cover book's content version", s.CoverCV)
+	}
+}
+
+// E-47's two edges, both of which the real library produces.
+//
+// The rollup reads `books.page_count` — the index's *current* length — and not
+// the progress row's own `page_count`, which is E-45 §6's stale-detection
+// baseline and is allowed to disagree with the file in both directions. And it
+// LEFT JOINs, so a progress row whose book is no longer in the index (the thing
+// that makes a reading position reattach after a rescan) contributes nothing
+// rather than dropping the whole row — including out of `books_completed`,
+// which this ruling does not touch.
+func TestListSeries_progressJoin_pagesReadFollowsTheIndexNotTheBaseline(t *testing.T) {
+	t.Parallel()
+	idx, ud, _, _ := newDBsAt(t)
+	ctx := t.Context()
+	seed(t, idx, "manga", library())
+
+	// 군계 01권 is 5 pages in the index. The reader is on page 99 of a file that
+	// used to be 190 — a shrunk archive, clamped by the server to what exists.
+	mustPut(t, ud, "b1aaaaaaaaaaaaaa", "aaaaaaaaaaaaaaaa", 99, 190, false)
+	// …and a row for a book the index no longer has at all.
+	mustPut(t, ud, "b9zzzzzzzzzzzzzz", "aaaaaaaaaaaaaaaa", 4, 7, false)
+
+	got, err := idx.ListSeries(ctx, index.SeriesFilter{Roots: []string{"manga"}, Query: "군계"})
+	if err != nil {
+		t.Fatalf("ListSeries: %v", err)
+	}
+	s := got.Items[0]
+	// 5, not 99 and not 190: the whole of the volume that exists.
+	if s.Progress.PagesRead != 5 {
+		t.Errorf("pages_read = %d, want 5 (clamped to the index's page_count)", s.Progress.PagesRead)
+	}
+	if s.Progress.PagesTotal != 12 {
+		t.Errorf("pages_total = %d, want 12", s.Progress.PagesTotal)
+	}
+	// The orphan row still counts as a started book — this ruling changed the
+	// pages, not the book tally.
+	if s.Progress.BooksStarted != 2 || s.Progress.BooksCompleted != 0 {
+		t.Errorf("rollup = completed %d started %d, want 0/2",
+			s.Progress.BooksCompleted, s.Progress.BooksStarted)
 	}
 }
 
