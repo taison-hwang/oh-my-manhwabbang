@@ -57,6 +57,7 @@ import {
 import {
   clearProbes,
   combinationsOn,
+  type Declined,
   describe as describeMeasurement,
   measure,
   measureLocator,
@@ -79,17 +80,50 @@ const KNOWN_UNDER: { label: string; why: string; item: string }[] = []
 const r2 = (n: number): string => n.toFixed(2)
 
 /**
+ * How many candidates one screen may hide from the sweep before the sweep has
+ * stopped being about that screen.
+ *
+ * The honest declines are fallback cover titles under a loaded cover image —
+ * two elements per card whose thumbnail arrived, and the library shows a screen
+ * of cards. Measured against the real collection at the four viewport projects:
+ * **12, 11, 8, 4**, against 23 / 23 / 14 / 12 combinations measured.
+ *
+ * 20 is therefore headroom over the observed worst case and still under the
+ * count of combinations a screen carries, so a change that stops the sweep
+ * reaching half a screen fails here instead of showing up as a smaller number
+ * in a log nobody re-read. It is a bound on a real quantity, not a threshold
+ * tuned until it passed.
+ *
+ * **It does not apply to a screen with a modal on it,** and that exception is
+ * measured rather than assumed: with the settings dialog open, the whole shell
+ * behind the backdrop is declined — 81 candidates in the e2e round, every one
+ * of them under `div.dialog-backdrop`. Those are not marks the sweep lost, they
+ * are marks the reader is not looking at, and the dialog's own ink is swept as
+ * usual. A bound that counted them would be a number tuned to a modal rather
+ * than a statement about coverage, so the caller passes `null` there and says
+ * why. This limit was first written at 12 from a measurement of the `/settings`
+ * *route* — two candidates, no dialog — which is not the screen this spec
+ * sweeps; the e2e round is what caught that.
+ */
+const DECLINE_LIMIT = 20
+
+/**
  * Every distinct combination on the current screen, measured.
  *
  * `clearProbes` runs even when a measurement throws: the attribute is inert but
  * leaving it behind would let a later screenshot in the same round differ from
  * the baseline for a reason that has nothing to do with the product.
  */
-async function sweep(page: import('@playwright/test').Page): Promise<Measurement[]> {
-  const combos = await combinationsOn(page)
+interface Sweep {
+  measurements: Measurement[]
+  declined: Declined[]
+}
+
+async function sweep(page: import('@playwright/test').Page): Promise<Sweep> {
+  const { combinations, declined } = await combinationsOn(page)
   const out: Measurement[] = []
   try {
-    for (const combo of combos) {
+    for (const combo of combinations) {
       const locator = page.locator(`[data-contrast-probe="${combo.probe}"]`)
       if ((await locator.count()) !== 1) continue
       out.push(await measure(page, combo, locator))
@@ -97,12 +131,37 @@ async function sweep(page: import('@playwright/test').Page): Promise<Measurement
   } finally {
     await clearProbes(page)
   }
-  return out
+  return { measurements: out, declined }
 }
 
-/** The assertion every swept combination has to clear. */
-function expectAA(measurements: Measurement[], where: string): void {
+/**
+ * The assertion every swept combination has to clear — and the assertion that
+ * the sweep swept.
+ *
+ * It takes the whole `Sweep` rather than its measurements so that the declines
+ * cannot be dropped on the floor by a caller. That is not a style preference:
+ * the reason `pointer-events: none` marks sat outside this gate for as long as
+ * they did is that nothing anywhere had to look at what the enumeration
+ * refused, and `combinations measured — library 20` is a true sentence with
+ * thirteen marks missing from it.
+ */
+function expectAA({ measurements, declined }: Sweep, where: string, declineLimit: number | null = DECLINE_LIMIT): void {
   expect(measurements.length, `${where}: the sweep found no text to measure`).toBeGreaterThan(3)
+
+  // A bound, not a report. Text really can be painted over — a fallback cover
+  // title under a loaded cover image is the honest case and there are a handful
+  // of those on the library screen — but a page that starts declining half its
+  // ink is a sweep that has stopped covering the screen, and the shape of that
+  // failure is a number quietly getting smaller. Measured at the time of
+  // writing: 8 on the library screen, 0 on series detail and settings.
+  if (declineLimit !== null) {
+    const describeDeclined = (): string =>
+      declined.map((d) => `${d.label} ${JSON.stringify(d.text)} under ${d.occludedBy}`).join('\n  ')
+    expect(
+      declined.length,
+      `${where}: too much of the screen is painted over for the sweep to reach —\n  ${describeDeclined()}`,
+    ).toBeLessThanOrEqual(declineLimit)
+  }
   // Text lying over a cover thumbnail is out of this check's reach and saying
   // so is better than either failing it or dropping it silently: the ground is
   // artwork, it changes per series, and no token moves it. The count is
@@ -197,7 +256,7 @@ test('v · the scanner reads a known pair, and sees a shadow move it', async ({ 
     )
     document.body.append(probe)
   })
-  const plain = await combinationsOn(page)
+  const { combinations: plain } = await combinationsOn(page)
   const plainCombo = plain.find((c) => c.label.includes('calibration-plain') || c.declaredInk === 'rgb(118, 118, 118)')
   expect(plainCombo, 'the calibration probe entered the sweep').toBeDefined()
   if (plainCombo === undefined) return
@@ -227,7 +286,7 @@ test('v · the scanner reads a known pair, and sees a shadow move it', async ({ 
     )
     document.body.append(shadowed)
   })
-  const shadowedCombos = await combinationsOn(page)
+  const { combinations: shadowedCombos } = await combinationsOn(page)
   const shadowedCombo = shadowedCombos.find((c) => c.declaredInk === 'rgb(118, 118, 118)')
   expect(shadowedCombo, 'the shadowed probe entered the sweep').toBeDefined()
   if (shadowedCombo === undefined) return
@@ -282,11 +341,9 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
 
     const library = await sweep(page)
-    expectAA(library, `library (${theme})`)
 
     await openSeries(page, SERIES.clover)
     const series = await sweep(page)
-    expectAA(series, `series detail (${theme})`)
 
     // Back to the shell before opening the dialog, for the same drawer reason:
     // `openSeries` left the app on the series route and the settings button is
@@ -294,14 +351,57 @@ for (const theme of ['light', 'dark'] as const) {
     await gotoLibrary(page)
     await openSettings(page)
     const settings = await sweep(page)
-    expectAA(settings, `settings dialog (${theme})`)
 
-    // The count is printed so a sweep that quietly shrinks is visible in the
-    // log rather than only in a coverage claim nobody re-measured.
+    // **Printed before anything is asserted, on purpose.** These counts are the
+    // evidence of what the sweep covered, so a run that fails an assertion is
+    // exactly the run that needs them — and a `console.log` after the
+    // assertions is a `console.log` that does not happen on a red round.
+    const unclickable = library.measurements.filter((m) => m.pointerEvents === 'none')
+    const line = (name: string, s: Sweep): string =>
+      `${name} ${String(s.measurements.length)} (declined ${String(s.declined.length)})`
     console.log(
-      `[contrast:${theme}] combinations measured — library ${String(library.length)}, ` +
-        `series ${String(series.length)}, settings ${String(settings.length)}`,
+      `[contrast:${theme}] combinations measured — ${line('library', library)}, ` +
+        `${line('series', series)}, ${line('settings', settings)}; ` +
+        `pointer-events:none reached — ${String(unclickable.length)}`,
     )
+
+    expectAA(library, `library (${theme})`)
+    expectAA(series, `series detail (${theme})`)
+    // `null`: the dialog's backdrop covers the whole shell, so every mark behind
+    // it is declined and counting them says nothing about coverage. See
+    // `DECLINE_LIMIT`.
+    expectAA(settings, `settings dialog (${theme})`, null)
+
+    // **The sweep reaches ink that is not clickable.**
+    //
+    // `pointer-events: none` is the value that used to remove a mark from this
+    // gate outright — it takes an element out of hit testing and leaves it on
+    // the screen, and the enumeration used to ask the hit-test question. The
+    // library carries two such marks: the **⌘K chip** on the search field and
+    // the **format badge** on every series card.
+    //
+    // Two, not one, and the number is the assertion. Three separate things in
+    // `contrast.ts` have to hold for both to arrive, and each of them fails
+    // this differently — which is what a one-mark bound would not have caught:
+    //
+    //   * the neutralising rule, without which neither arrives (count 0);
+    //   * skipping occluders that paint nothing, without which the badge is
+    //     hidden by `SeriesCard`'s `opacity: 0` scrim and only the chip arrives;
+    //   * the shadows in the combination key, without which the chip loses its
+    //     representative slot to a sidebar count with the same declared pair at
+    //     ≥1024 and only the badge arrives.
+    //
+    // Measured at every viewport project once all three were in: 2, and the
+    // marks themselves clear their floor comfortably (chip 6.01–6.11, badge
+    // 7.16, floor 4.5). If a redesign genuinely retires one of these marks this
+    // goes red — and that is the right place to notice, because the count is
+    // this file's only evidence that the unclickable half of the screen is
+    // still being read at all.
+    expect(
+      unclickable.length,
+      `library (${theme}): ink drawn with pointer-events:none must still be swept — ` +
+        `found ${unclickable.map((m) => `${m.label} ${r2(m.measuredRatio)}`).join(', ') || 'none'}`,
+    ).toBeGreaterThanOrEqual(2)
 
     // shelf.ts rule 2: put the server back the way this spec found it.
     await page.request.put('/api/settings', { data: { theme: 'system' } })
@@ -431,7 +531,7 @@ test.describe('ap · forced-colors', () => {
     // still passes is the failure this whole file is about.
     await page.emulateMedia({ forcedColors: 'active' })
     await gotoLibrary(page)
-    const library = await sweep(page)
+    const { measurements: library } = await sweep(page)
     expect(library.length, 'the forced-colors sweep found text').toBeGreaterThan(3)
     const invisible = library.filter((m) => m.measuredRatio < 3)
     expect(
@@ -440,7 +540,7 @@ test.describe('ap · forced-colors', () => {
     ).toEqual([])
 
     await openSettings(page)
-    const settings = await sweep(page)
+    const { measurements: settings } = await sweep(page)
     const gone = settings.filter((m) => m.measuredRatio < 3)
     expect(
       gone.map((m) => describeMeasurement(m)),

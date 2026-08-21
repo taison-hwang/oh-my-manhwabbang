@@ -123,6 +123,8 @@ export interface Measurement {
   floor: number
   /** Ancestors that open a stacking context between the element and its ground. */
   isolatingAncestors: string[]
+  /** The element's computed `pointer-events`; `none` is what used to exclude it. */
+  pointerEvents: string
   /** Largest per-channel distance between the declared ground and the measured one. */
   groundDrift: number
   /** True when the box is dominated by something that is not the declared surface. */
@@ -151,6 +153,37 @@ export interface Combination {
    * removed by `clearProbes` and paints nothing while it is there.
    */
   probe: string
+  /**
+   * The representative element's computed `pointer-events`.
+   *
+   * Carried so the spec can assert that the sweep still reaches `none` — the
+   * value that used to remove an element from it entirely. See the occlusion
+   * note in the enumeration below.
+   */
+  pointerEvents: string
+}
+
+/** A candidate the enumeration photographed nothing for, and why. */
+export interface Declined {
+  label: string
+  /** The text that will not be measured. */
+  text: string
+  /** The painting element the reader sees at that point instead. */
+  occludedBy: string
+}
+
+/**
+ * What one pass of the enumeration found: the combinations to measure, and the
+ * candidates it declined.
+ *
+ * The second half is returned rather than dropped because a sweep that reports
+ * only what it measured cannot report that it shrank. `swept 20 combinations`
+ * is a true sentence whether the page has twenty pieces of text on it or fifty,
+ * and the count is the only thing the log used to carry.
+ */
+export interface Enumeration {
+  combinations: Combination[]
+  declined: Declined[]
 }
 
 /**
@@ -162,8 +195,51 @@ export interface Combination {
  * node would be the same assertion hundreds of times and slow enough that the
  * spec would end up sampling, which is how coverage claims stop being true.
  * Grouping makes the sweep exhaustive over the thing that can actually fail.
+ *
+ * ---------------------------------------------------------------------------
+ * Occlusion, and the two ways of getting it wrong
+ * ---------------------------------------------------------------------------
+ * A candidate has to be dropped when something else is painted over its box,
+ * because the screenshot would then be a photograph of that other thing. The
+ * question is how to ask *what the reader sees at this point*, and the first
+ * answer here asked a different one: `elementFromPoint`, which is **hit
+ * testing** — what a click would hit. The two differ by exactly one property.
+ *
+ * `pointer-events: none` takes an element out of hit testing and leaves it on
+ * the screen. So every mark drawn with it came back as *the thing underneath*,
+ * failed `el === top || el.contains(top)`, and left the sweep — silently, with
+ * the count of what remained still printed as the coverage claim. Measured on
+ * the library screen before this: **13 of 83 candidates**, among them the
+ * format badge on every series card and the ⌘K chip, which is the case this
+ * file's own header cites as the reason the bitmap layer exists (ⓐ, `declares
+ * 5.65 and renders 4.55`). `elementsFromPoint`, the plural form, is blind in
+ * the same way and is not the fix.
+ *
+ * So the hit test is made to answer the paint question, in two steps, and both
+ * are needed — the first alone was measured and was not enough:
+ *
+ *  1. **`pointer-events` is neutralised for the duration of the enumeration.**
+ *     A stylesheet, removed in `finally`. It matches `*` and deliberately
+ *     **not** `*::before, *::after`: `body::after` is a fixed, full-viewport
+ *     paper-grain layer (`base.css`) that is `pointer-events: none` precisely
+ *     so it does not swallow input. Neutralising pseudo-elements hands it every
+ *     hit test, and because the browser answers with the *originating* element,
+ *     every point on the page returns `body`. That was measured too: with the
+ *     pseudo-element half in, **all 67** candidates dropped instead of 13.
+ *  2. **An occluder that paints nothing does not occlude.** Once hit testing is
+ *     honest, the invisible overlays start winning it — `SeriesCard`'s
+ *     `cover-scrim` is `opacity: 0` until hover and covers the whole cover, so
+ *     the format badge simply changed which rule dropped it. The stack is
+ *     walked from the top and entries whose effective opacity is 0, or which
+ *     are `visibility: hidden`, are stepped over. That is the same test this
+ *     function already applies to the candidate itself a few lines above,
+ *     applied to the thing on top of it.
+ *
+ * What survives both is a real cover image over a fallback title: opacity 1,
+ * painting, correctly dropped. That case is why the check exists and it still
+ * fires.
  */
-export async function combinationsOn(page: Page): Promise<Combination[]> {
+export async function combinationsOn(page: Page): Promise<Enumeration> {
   return page.evaluate(() => {
     const STACKING = (s: CSSStyleDeclaration): string | null => {
       if (s.isolation === 'isolate') return 'isolation:isolate'
@@ -178,6 +254,24 @@ export async function combinationsOn(page: Page): Promise<Combination[]> {
 
     const opaque = (c: string): boolean =>
       c !== '' && c !== 'transparent' && !/rgba\([^)]*,\s*0\s*\)$/.test(c)
+
+    /**
+     * Whether this node puts anything on the screen where it sits.
+     *
+     * Read up the chain, not on the node: `opacity` composites a whole subtree,
+     * so a child of an `opacity: 0` wrapper reports `opacity: 1` and paints
+     * nothing. This is the test applied to the candidate below; it is applied
+     * to occluders too, which is what keeps an invisible scrim from hiding the
+     * mark it is drawn over.
+     */
+    const paints = (node: Element): boolean => {
+      for (let a: Element | null = node; a !== null; a = a.parentElement) {
+        const s = getComputedStyle(a)
+        if (s.visibility === 'hidden' || s.display === 'none') return false
+        if (s.opacity !== '' && Number(s.opacity) === 0) return false
+      }
+      return true
+    }
 
 
     /** A human-readable name: the role attribute if there is one, else the class. */
@@ -196,111 +290,176 @@ export async function combinationsOn(page: Page): Promise<Combination[]> {
       fontSizePx: number
       fontWeight: number
       isolatingAncestors: string[]
+      pointerEvents: string
       probe: string
       el: Element
     }
     const out = new Map<string, Found>()
+    const declined: { label: string; text: string; occludedBy: string }[] = []
 
-    for (const el of document.querySelectorAll<HTMLElement>('body *')) {
-      // Direct text only: a wrapper inherits its child's ink and would enter the
-      // sweep as a duplicate with a bigger, emptier box.
-      const text = [...el.childNodes]
-        .filter((n) => n.nodeType === Node.TEXT_NODE)
-        .map((n) => n.textContent ?? '')
-        .join('')
-        .trim()
-      if (text === '') continue
+    // Hit testing is turned into a paint question for the length of the walk,
+    // and turned back after it. `*` only — see the header: `body::after` is a
+    // full-viewport grain layer whose `pointer-events: none` is load-bearing,
+    // and neutralising pseudo-elements makes every point on the page answer
+    // `body`.
+    const neutralise = document.createElement('style')
+    neutralise.textContent = '* { pointer-events: auto !important }'
+    document.head.append(neutralise)
+    try {
 
-      const style = getComputedStyle(el)
-      if (style.visibility === 'hidden' || style.display === 'none') continue
-      // Opacity and visibility have to be read **up the chain**, not on the
-      // element. A series card's hover overlay is laid out at all times and
-      // faded in by an ancestor's `opacity`, so its buttons report
-      // `opacity: 1` while nothing of them is on screen — and a screenshot of
-      // one is a photograph of the cover art behind it. The first run of this
-      // sweep reported `.btn-primary` as cream ink on a **green** ground at
-      // 2.83, which is a picture of a gradient thumbnail and not a defect.
-      let hidden = false
-      for (let a: HTMLElement | null = el; a !== null; a = a.parentElement) {
-        const as = getComputedStyle(a)
-        if (as.visibility === 'hidden' || as.display === 'none') { hidden = true; break }
-        if (as.opacity !== '' && Number(as.opacity) === 0) { hidden = true; break }
-      }
-      if (hidden) continue
-      const box = el.getBoundingClientRect()
-      if (box.width < 4 || box.height < 4) continue
-      // Off-screen: nothing to photograph.
-      if (box.bottom < 0 || box.right < 0) continue
-      if (box.top > window.innerHeight || box.left > window.innerWidth) continue
+      for (const el of document.querySelectorAll<HTMLElement>('body *')) {
+        // Direct text only: a wrapper inherits its child's ink and would enter the
+        // sweep as a duplicate with a bigger, emptier box.
+        const text = [...el.childNodes]
+          .filter((n) => n.nodeType === Node.TEXT_NODE)
+          .map((n) => n.textContent ?? '')
+          .join('')
+          .trim()
+        if (text === '') continue
 
-      // **Occlusion.** An element behind an open dialog is laid out, visible by
-      // every computed-style test, and photographed as the dialog on top of it.
-      // The settings sweep reported fourteen labels as "over artwork" for
-      // exactly this reason — they were the library underneath.
-      //
-      // `elementFromPoint` at the box's centre is the browser's own answer to
-      // "what would a click here hit", which is the same question as "what does
-      // the reader see here". Descendants count: a label whose own text node is
-      // wrapped in a `<span>` returns the span, and that is still this label.
-      const cx = Math.round(box.left + box.width / 2)
-      const cy = Math.round(box.top + box.height / 2)
-      const top = document.elementFromPoint(cx, cy)
-      if (top === null || !(el === top || el.contains(top))) continue
-
-      // Walk to the nearest painted ancestor, noting anything that isolates on
-      // the way — that walk is blind spot ⓓ.
-      let ground = ''
-      const isolating: string[] = []
-      let node: HTMLElement | null = el
-      while (node !== null) {
-        const s = getComputedStyle(node)
-        if (node !== el) {
-          const why = STACKING(s)
-          if (why !== null) isolating.push(`${labelFor(node)} {${why}}`)
+        const style = getComputedStyle(el)
+        if (style.visibility === 'hidden' || style.display === 'none') continue
+        // Opacity and visibility have to be read **up the chain**, not on the
+        // element. A series card's hover overlay is laid out at all times and
+        // faded in by an ancestor's `opacity`, so its buttons report
+        // `opacity: 1` while nothing of them is on screen — and a screenshot of
+        // one is a photograph of the cover art behind it. The first run of this
+        // sweep reported `.btn-primary` as cream ink on a **green** ground at
+        // 2.83, which is a picture of a gradient thumbnail and not a defect.
+        let hidden = false
+        for (let a: HTMLElement | null = el; a !== null; a = a.parentElement) {
+          const as = getComputedStyle(a)
+          if (as.visibility === 'hidden' || as.display === 'none') { hidden = true; break }
+          if (as.opacity !== '' && Number(as.opacity) === 0) { hidden = true; break }
         }
-        if (opaque(s.backgroundColor)) {
-          ground = s.backgroundColor
-          break
-        }
-        node = node.parentElement
-      }
-      if (ground === '') ground = getComputedStyle(document.body).backgroundColor
+        if (hidden) continue
+        const box = el.getBoundingClientRect()
+        if (box.width < 4 || box.height < 4) continue
+        // Off-screen: nothing to photograph.
+        if (box.bottom < 0 || box.right < 0) continue
+        if (box.top > window.innerHeight || box.left > window.innerWidth) continue
 
-      const fontSizePx = Number.parseFloat(style.fontSize)
-      const fontWeight = Number(style.fontWeight === 'normal' ? '400' : style.fontWeight === 'bold' ? '700' : style.fontWeight)
-      const key = `${style.color}|${ground}|${String(fontSizePx)}|${String(fontWeight)}|${isolating.join(',')}`
-      if (out.has(key)) continue
-      out.set(key, {
-        key,
-        label: labelFor(el),
-        declaredInk: style.color,
-        declaredGround: ground,
-        fontSizePx,
-        fontWeight,
-        isolatingAncestors: isolating,
-        probe: '',
-        el,
-      })
+        // **Occlusion.** An element behind an open dialog is laid out, visible by
+        // every computed-style test, and photographed as the dialog on top of it.
+        // The settings sweep reported fourteen labels as "over artwork" for
+        // exactly this reason — they were the library underneath.
+        //
+        // The stack at the box's centre, topmost first, with everything that
+        // paints nothing stepped over. `pointer-events` has already been
+        // neutralised for the whole enumeration, so what comes back is what is
+        // *drawn* here rather than what a click would hit — the header above this
+        // function is the account of why those are not the same question.
+        // Descendants count: a label whose own text node is wrapped in a `<span>`
+        // returns the span, and that is still this label.
+        const cx = Math.round(box.left + box.width / 2)
+        const cy = Math.round(box.top + box.height / 2)
+        let top: Element | null = null
+        for (const hit of document.elementsFromPoint(cx, cy)) {
+          if (paints(hit)) {
+            top = hit
+            break
+          }
+        }
+        if (top === null || !(el === top || el.contains(top))) {
+          declined.push({
+            label: labelFor(el),
+            text: text.slice(0, 40),
+            occludedBy: top === null ? '(nothing painting)' : labelFor(top),
+          })
+          continue
+        }
+
+        // Walk to the nearest painted ancestor, noting anything that isolates on
+        // the way — that walk is blind spot ⓓ.
+        let ground = ''
+        let groundShadow = 'none'
+        const isolating: string[] = []
+        let node: HTMLElement | null = el
+        while (node !== null) {
+          const s = getComputedStyle(node)
+          if (node !== el) {
+            const why = STACKING(s)
+            if (why !== null) isolating.push(`${labelFor(node)} {${why}}`)
+          }
+          if (opaque(s.backgroundColor)) {
+            ground = s.backgroundColor
+            groundShadow = s.boxShadow
+            break
+          }
+          node = node.parentElement
+        }
+        if (ground === '') ground = getComputedStyle(document.body).backgroundColor
+
+        const fontSizePx = Number.parseFloat(style.fontSize)
+        const fontWeight = Number(style.fontWeight === 'normal' ? '400' : style.fontWeight === 'bold' ? '700' : style.fontWeight)
+        // **The shadows are part of the key, and this is blind spot ⓐ.**
+        //
+        // Two elements with the same declared pair do not have the same
+        // *rendered* pair when one of them sits on a surface with an inset
+        // shadow — that is the whole reason the bitmap layer exists, and the
+        // header's own example is the ⌘K chip, which declares 5.65 and renders
+        // 4.55 because `--shadow-control-inset` darkens the field under it.
+        //
+        // Measured, before the shadows went in: at 1440 the chip's key was
+        // identical to a sidebar count's — `rgb(86, 77, 66)` on
+        // `rgb(239, 233, 220)`, 11px, 400 — and the count comes first in
+        // document order, so the count became the representative and the chip
+        // left the sweep. Same ink, same ground, no shadow: the one element of
+        // the pair that cannot exhibit the defect stood in for the one that
+        // does. The chip only reached the sweep at 768 and 400, where there is
+        // no sidebar to collide with. A dedupe that keeps the safe twin is a
+        // check watching the wrong thing.
+        const key = `${style.color}|${ground}|${String(fontSizePx)}|${String(fontWeight)}|${isolating.join(',')}|${style.boxShadow}|${groundShadow}`
+        if (out.has(key)) continue
+        out.set(key, {
+          key,
+          label: labelFor(el),
+          declaredInk: style.color,
+          declaredGround: ground,
+          fontSizePx,
+          fontWeight,
+          isolatingAncestors: isolating,
+          // Filled in below, *after* the neutralising rule comes off: read here
+          // it would be `auto` for every element on the page, which is the one
+          // answer this field must not give.
+          pointerEvents: '',
+          probe: '',
+          el,
+        })
+      }
+    } finally {
+      // Removed here rather than after the walk: a throw inside it would
+      // otherwise leave the rule in the document, and every screenshot taken
+      // later in the round would be of a page whose hit testing this file
+      // changed. `clearProbes` is in a `finally` for the same reason.
+      neutralise.remove()
     }
     const list = [...out.values()]
     for (const [i, combo] of list.entries()) {
       const probe = `c${String(i)}`
       combo.el.setAttribute('data-contrast-probe', probe)
       combo.probe = probe
+      // The document is back to its own hit testing by now, so this reads what
+      // the product declares rather than what the walk above needed.
+      combo.pointerEvents = getComputedStyle(combo.el).pointerEvents
     }
     // The element reference is the one field that must not cross the bridge:
     // `page.evaluate` structured-clones its return value and a DOM node is not
     // cloneable, so returning it throws rather than degrading.
-    return list.map((combo) => ({
-      key: combo.key,
-      label: combo.label,
-      declaredInk: combo.declaredInk,
-      declaredGround: combo.declaredGround,
-      fontSizePx: combo.fontSizePx,
-      fontWeight: combo.fontWeight,
-      isolatingAncestors: combo.isolatingAncestors,
-      probe: combo.probe,
-    }))
+    return {
+      combinations: list.map((combo) => ({
+        key: combo.key,
+        label: combo.label,
+        declaredInk: combo.declaredInk,
+        declaredGround: combo.declaredGround,
+        fontSizePx: combo.fontSizePx,
+        fontWeight: combo.fontWeight,
+        isolatingAncestors: combo.isolatingAncestors,
+        pointerEvents: combo.pointerEvents,
+        probe: combo.probe,
+      })),
+      declined,
+    }
   })
 }
 
@@ -453,6 +612,7 @@ export async function measure(
     fontWeight: combo.fontWeight,
     floor: floorFor(combo.fontSizePx, combo.fontWeight),
     isolatingAncestors: combo.isolatingAncestors,
+    pointerEvents: combo.pointerEvents,
     groundDrift,
     overImagery: groundDrift > GROUND_DRIFT_LIMIT,
     width: box.width,
@@ -510,6 +670,9 @@ export async function measureLocator(
       fontSizePx: facts.fontSizePx,
       fontWeight: facts.fontWeight,
       isolatingAncestors: [],
+      // `measureLocator` is handed the element by the caller, so it never asks
+      // the hit-test question the enumeration asks and has no answer to carry.
+      pointerEvents: '',
       probe: '',
     },
     locator,
