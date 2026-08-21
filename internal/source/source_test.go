@@ -319,7 +319,7 @@ func TestFactory_registry(t *testing.T) {
 
 	kinds := f.factory.Kinds()
 	want := []source.Kind{
-		source.KindDir, source.KindNestedRAR, source.KindNestedZIP,
+		source.KindDir, source.KindNestedDir, source.KindNestedRAR, source.KindNestedZIP,
 		source.KindPDF, source.KindRAR, source.KindZIP,
 	}
 	if !slices.Equal(kinds, want) {

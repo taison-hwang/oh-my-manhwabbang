@@ -343,16 +343,30 @@ test('6.8 · a PDF volume renders image/jpeg in the same viewer, and R→L flips
   await expect(viewer(page)).toHaveCount(0)
 })
 
+/**
+ * §6.3 row 9's archive is still 1.34 GB and still holds 1 540 pages, but since
+ * D-73 it is the **fifteen volumes** its directories say it is rather than one
+ * book of 1 540 pages. The jump this step is about — an arbitrary page out of a
+ * 1.34 GB deflate stream — is therefore made in the *last* volume, whose pages
+ * sit at the far end of the file.
+ *
+ * One claim did lose its subject here and is not quietly kept: the strip's
+ * "must not mount 1 540 cells" is vacuous against a ~100-page volume, because
+ * the curated subset no longer contains a book with more pages than the cell
+ * budget. `이누야샤 01~56권 완결/이누야샤(1~56권)(완).zip` — 7 480 pages, 1.40 GB,
+ * measured flat — is the replacement subject if the subset is ever re-based;
+ * see the handoff.
+ */
 test('6.9 · a jump into the 1 540-page archive loads, and the strip is virtualised', async ({
   page,
 }, info) => {
   const sid = await seriesId(page, SERIES.battleRoyale)
   const books = await booksOf(page, sid)
-  const book = books[0]
+  const book = books[books.length - 1]
   expect(book, '§6.3 row 9: one 1.34 GB ZIP').toBeDefined()
   const bid = book?.id ?? ''
   const total = book?.page_count ?? 0
-  expect(total, 'D-9: this is the 1 540-page volume').toBeGreaterThan(500)
+  expect(total, 'D-73: the last of the archive’s volumes').toBeGreaterThan(20)
 
   await resetBookPrefs(page, bid)
   await page.request.put(`/api/books/${bid}/progress`, { data: { page: 1 } })
@@ -401,7 +415,19 @@ test('6.9 · a jump into the 1 540-page archive loads, and the strip is virtuali
   const cells = strip.locator('[data-role="thumb"]')
   await expect(cells.first()).toBeVisible()
   const mounted = await cells.count()
-  expect(mounted, 'the strip must not mount 1 540 cells').toBeLessThan(STRIP_CELL_BUDGET)
+  // Windowing is only *tested* here when the book has more pages than the
+  // budget; below that this asserts nothing, and says so rather than passing
+  // quietly. The synthetic round's own large book is what carries the claim
+  // until the curated subset gains a book bigger than the window again.
+  if (total <= STRIP_CELL_BUDGET) {
+    info.annotations.push({
+      type: 'coverage-gap',
+      description: `strip virtualisation is untested here: the volume has ${String(total)} pages, under the ${String(STRIP_CELL_BUDGET)}-cell budget (D-73 split the 1 540-page book)`,
+    })
+  }
+  expect(mounted, 'the strip must not mount every cell of a long book').toBeLessThan(
+    STRIP_CELL_BUDGET,
+  )
   expect(mounted).toBeGreaterThan(0)
   await expect(strip.locator('[data-role="thumb"][data-current="true"]')).toHaveAttribute(
     'data-page',

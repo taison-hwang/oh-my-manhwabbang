@@ -22,6 +22,7 @@ Sources: `prd.md` (URD, authoritative) · `design.md` · `ui-spec.md` · `arch-b
 | D-07 | ~~Nested archives (a ZIP of ZIPs)~~, ~~RAR/CBR~~, 7z **out**; `internal/archive.Reader` stays an interface. | prd §7.2. **Nested ZIPs are now IN — see D-70. RAR/CBR are now IN — see D-71.** 7z and friends remain out. The clause that survives all of it is the last one, and it is the reason the other two were cheap: the interface was kept. |
 | D-70 | **Nested ZIPs are in, as books.** A ZIP whose entries are ZIPs becomes a series of `kind:"nestedzip"` volumes, one per inner archive. Supersedes the first clause of D-07 and narrows E-14. | 45 books — 623 volumes, 16.9 GB — were unreachable, `겟 벡커스 1~39완.zip` among them, and "the container is `empty`" was a true statement about a library the reader could not open. The cost turned out to be small: the inner archive is presented as an `io.ReaderAt` (`internal/archive/nested`), so the existing reader indexes and streams it unchanged, and the entries are stored JPEGs whose deflate ratio is measured at 1.0000, making the inflate very nearly a copy. Nothing is extracted and no cache is added. Only a book that produced **no pages of its own** is ever opened looking for volumes, so the ordinary path is untouched. |
 | D-71 | **RAR 4 is in, as a book format.** `.rar`/`.cbr` on disk are `kind:"rar"`; inside a container they are `kind:"nestedrar"`. New package `internal/archive/rar4` implements `archive.Reader`. Supersedes D-07's RAR/CBR clause. **Solid archives, multi-volume sets, split entries, encrypted entries and RAR 5 are refused by name**, not attempted. | The measurement decided it, and it is the number a reader should check first if this is ever revisited. Across all **14** RAR archives in the collection (**2,914** entries, ~1.1 GB, none of them a book until now): **solid archives 0, solid entries 0, multi-volume 0, encrypted 0, RAR 5 0**; **2,685 entries stored, 229 packed** (method 0x31, in 3 books); packing ratio **1.0000**, because they are JPEGs. Solid is the one that matters — in a solid archive page N cannot be produced without decompressing 1..N-1, so FR-SRV-002's "one page, one seek" would be a lie and the format could not be admitted at all. None of these is solid, and 92% of their entries are *stored*, which is byte-for-byte the access pattern of a stored ZIP entry. So the stored path takes no dependency at all (an `io.SectionReader` over the container, seekable, so Range still works); only the packed 8% reaches `rardecode`. Indexing reads block headers only (FR-IDX-002), and serving reaches a packed entry by splicing `signature + the container's own main header + this entry's block` into a one-file archive — valid RAR, correct because non-solid, **O(1)** rather than O(entries), and needing no new column: `LocalHdrOff` keeps exactly the meaning FR-SRV-002 gives it. Measured: reaching entry 826 of a 385 MB archive costs **6 ms**. Verified against a whole-archive `rardecode` oracle over the real collection — 14 archives, 2,914 entries, every name, length and CRC-32 agreeing. Also in: `사모님은 학생회장.zip`'s 8 RAR volumes, which D-70 had to drop. |
+| D-73 | **An archive whose pages live in per-chapter directories is one 권 per directory.** `books.kind:"nesteddir"`, `inner_path` = the directory inside the container; the container stops being a book. The rule fires only when, after the longest shared directory prefix is stripped, **two or more** directories remain; pages left at the container's top level become one more 권 (`inner_path:"."`, `… (loose pages)`, sorted first). Extends D-70's move to the case where the inner 권 are folders rather than archives. | **484 of the collection's 11,153 archives (4.3%) are this, holding 279,541 pages** — `여자친구 만들고파! 01~08권.zip` is 842 pages in eight per-volume folders, `배틀로얄 1~15 [완결].zip` 1,540 in fifteen, `암살교실 1~180화.zip` 3,534 in **182** folders literally named 화. Each was one book: a 권 list with a single unnavigable entry, and 6,097 volumes the reader could not address. **prd §2.2 row 2 had already decided this** for the same tree on disk — one 권 per image sub-folder — so the archive was the odd one out, not the folder. The cost is a pass over a page list the scan already holds (no extra read, no payload) plus one central-directory read per chapter, and it is paid only by a book that has the shape; each chapter goes through `indexUnit`, so FR-IDX-003 still skips an unchanged one and the 6,097 page-row sets are not rewritten every scan. The partition is **total** — measured 1,540 pages before and after on 배틀로얄 — which is why the loose cover image beside 29 volume folders in `야와라!` becomes a 권 rather than a dropped page, and why the one ambiguous shape (a shared wrapper folder *and* loose pages, which no archive in the collection has) is left unsplit rather than guessed at. An index that already exists splits on a **full** scan only: E-39 skips a container recorded `ok`. |
 | D-72 | **A book that is one format this build cannot open reports the format, not `empty`.** `status:"unsupported"` with the format named in `books.error`, for a container whose entries are all foreign (`.hv3`, `.7z`, `.alz`, `.egg`, `.lzh`, …) — but **only when there are no pages and no volumes**, so a foreign entry beside readable content stays a footnote. Narrows D-29 and E-14. | `펌프킨 시저스 04.zip` was the last of the 48 books reporting `비어 있음 · no supported image entries`, and the only one where that sentence was **false** rather than merely unhelpful: it holds 39.5 MB in a single `.hv3`. HV3 is a proprietary container and this one is *encrypted* — the header carries an `ENCR` chunk (value 2), the `LIST` chunk is empty, and the body measures **7.9972 bits of entropy per byte** with **2** JPEG signatures in 39.5 MB. Nothing recovers that without the key and nothing here tries. What was wrong was the explanation: `비어 있음` sends an owner looking for damage in a file that is intact. E-14's `비둘기.zip` — one directory entry, 128 bytes — keeps `empty`, which is what it is. The "no volumes" half of the rule is not decoration: naming the `.7z` inside `사모님은 학생회장.zip` closed the container as `unsupported` before the scanner ever looked for its 15 volumes, and the e2e round caught it two tiers from the change. |
 
 ## Architecture & dependencies
@@ -2560,3 +2561,90 @@ true를 false로 바꾸는 방향뿐이다.
 **새 테스트가 이 어긋남을 침묵으로 승인했다.** `volume.test.ts:126-133`은 `완독`만 단언하고 tone은
 단언하지 않는다 — **바로 위 두 케이스에서는 tone을 단언하는데 여기만 빠졌다.** 검사가 결함을 통과시킨
 것이 아니라, 검사가 결함을 **기록**한 것이다.
+
+## E-46 — **서고 스킨을 전면 채택한다.** 제품명은 `석교만화방`, 서체는 명조, 인주는 액센트이자 마커다 (사용자, 2026-08-21) — BINDING
+
+**출처.** 사용자가 Claude Design 프로젝트의 `만화방 v3 서고.dc.html`을 지목하며 *"이 디자인을 반영해
+주세요. 오직 디자인만 반영해주세여. 기능은 현재 구현을 그대로 사용하여 주세요"* 라고 지시했고, 이어서
+폰트(고운바탕 Regular/Bold)와 제품명(`석교만화방`)을 지정했다. 다크 램프의 처리는 그 자리에서 물어
+**"어두운 종이로 새로 유도"** 로 판정받았다.
+
+**이 판정은 E-32를 대체한다 — 폐기가 아니라 색과 서체에 한해서다.** E-32가 세운 것 중 살아남는 것이
+많다: 컨트롤이 **절대값**이라는 E-42 §2, 그림자가 테마가 아니라 **표면**을 따른다는 규칙, 램프가
+절대 밝기 척도라는 것, 그리고 *"프로토타입과 측정이 어긋나면 측정이 이긴다"* 는 E-32 §4의 관행.
+바뀌는 것은 팔레트·서체·기하, 그리고 아래 §1의 한 가지 되돌림이다.
+
+### 1. `--color-hot`은 이제 액센트 **자신**이다 — E-32 §1을 의도적으로 뒤집는다
+
+E-32 §1은 둘을 떼어 놓았고 `tokens.test.ts`는 *"같아지는 순간 브랜드 레드가 되돌아온 것"* 이라며
+**분리를 단언**했다. 근거는 그 팔레트의 사정이었다: 액센트가 짙은 청록이고 마커가 은퇴한 브랜드 레드
+`#EC3013`이었으므로, 둘이 같다는 것은 빨강이 다시 브랜드 색으로 새어 들어왔다는 뜻일 수밖에 없었다.
+
+서고 스킨에는 빨강이 **하나**고 두 일을 모두 시킨다. 그래서 테스트는 이제 **동일성을 단언**한다 —
+바뀐 쪽을 못박아야 다음에 사고로 되돌아가지 않는다. 같은 보호를 반대 방향으로 거는 것이다.
+
+### 2. `--on-hot`이 뒤집힌다. 그리고 E-43의 그레인 면제는 **가독성 근거를 잃는다**
+
+E-43은 `--on-hot`을 순검정으로 못박아야 했다. `#EC3013`은 밝아서 밝은 잉크가 AA에 **닿지도 못했고**
+(`#F6F2E9`가 3.76, 순백조차 4.20), 검정이 씻긴 상태에서 겨우 0.23의 여유로 통과했다. 그래서 칩을
+바의 그레인 위로 들어 올리는 면제가 **가독성의 유일한 근거**였다.
+
+`#A2382A`에서는 위치가 정확히 반대다. **검정이 2.88 씻김으로 명백히 실패**하고, 실패하던 크림이
+**5.62**로 1.12의 여유를 가진다. 그래서:
+
+- `--on-hot`은 `--on-accent`와 **같은 크림**이 된다(마커와 액센트가 한 색이므로 당연한 귀결이다).
+- `base.css`의 그레인 면제 규칙은 **남긴다.** 다만 이유가 바뀐다 — 대비가 아니라 **모양**이다.
+  낙관은 종이 위에 눌린 인주지 종이의 결 밑에 깔린 것이 아니다. `tokens.test.ts`의 해당 테스트는
+  *"씻김이 이 쌍을 AA 아래로 끌지 못한다"* 를 단언하도록 뒤집혔고, 규칙이 왜 남는지를 본문에 적었다.
+  **자기 조건이 성립하면 지우라고 스스로 적어 둔 테스트였고, 그 조건이 성립했다.**
+
+### 3. 다크 램프는 **어두운 종이**로 새로 유도했다 — E-32가 쓴 방법 그대로
+
+프로토타입은 `:root` 하나뿐이고 다크 블록이 없다. E-32도 같은 상황에서 *"다크 램프는 새로 유도한다"*
+고 판정했으므로 그 방법을 그대로 쓴다: **지면은 라이트의 잉크(`#221E1A`), 잉크는 라이트의 지면
+(`#DED5C4`)**, 나머지 의미 토큰을 그 위에 다시 뒤집는다. 램프는 그대로 둔다.
+
+다크를 **없애는 것은 선택지가 아니었다.** 그것은 기능 제거이고, 사용자는 기능을 그대로 두라고 했다.
+
+### 4. 서체 — 고운바탕을 **벤더링한다.** 한글이 처음으로 벤더 서체로 그려진다
+
+프로토타입은 Google Fonts를 부른다. NFR-OPS-001/002가 런타임 외부 의존을 금하고 빌드 단언이
+`dist/`에서 폰트 CDN URL을 찾으므로 그 `<link>`는 삭제한다. 대신 사용자가 지정한 저장소에서
+고운바탕 Regular/Bold를 받아 서브셋한다.
+
+**크기 예측이 틀렸고, 틀린 방향이 좋았다.** `fonts.css`는 오래도록 *"서브셋한 Pretendard/Noto Sans KR은
+1.5–4 MB"* 라며 한글 서체를 벤더링하지 않는 이유로 삼았고, 그 결과 *"크로스플랫폼 타이포그래피 편차"* 를
+알려진 이슈로 안고 있었다. 실측: **현대 한글 11,172자 전부 + 라틴 + CJK 문장부호**를 두 굵기에 담아
+**888 KB**다. 바이너리는 26.47 MB → **27.19 MB**.
+
+이 스킨에서는 그 차이가 지난 스킨보다 크다. **명조가 곧 디자인**이고, 시스템 산세리프 대체는 조금 다른
+서고가 아니라 **다른 제품**이다.
+
+**낙관의 藏은 따로 벤더링한다 — 2,148 바이트.** 고운바탕에는 **한자가 0자**다(서브셋 선택이 아니라
+원본이 그렇다). 그대로 두면 CJK 세리프가 없는 기기에서 브랜드 마크가 두부(tofu) 상자가 된다. 한 글자를
+위해 한자 서체 전체를 넣지도, 디자이너의 글자를 한글로 슬쩍 바꾸지도 않고, 본명조에서 그 한 글자만 뽑았다.
+
+### 5. 측정이 프로토타입을 이긴 자리 — E-32 §4의 관행대로 적어 둔다
+
+| 자리 | 프로토타입 | 실측 | 채택 |
+|---|---|---|---|
+| 스크롤바 썸 | neutral-400 | 지면 대비 **1.40** | neutral-500 (거부) |
+| `--control-border` | `--color-divider` | 표면 대비 **1.92**, 직전 스킨은 2.32 | `#A5967E`로 직전 수치 유지 |
+| ⌘K 칩 잉크 | neutral-600 | 최대 그레인에서 **4.39** (AA 미달) | `--on-control-dim` (6.37) |
+| 낙관 색 | `--color-accent` | 라이트 4.33 씻김 / **다크 2.15** | `--accent-text` (6.18 / 6.00) |
+
+마지막 행은 프로토타입이 답한 적 없는 경우다 — 라이트 전용 문서에는 다크의 낙관이 없다.
+**e2e 대비 스캐너가 찾았다**(항목 `v`·`ar`, 같은 세션에 처음 선 장치다).
+
+### 6. 이 판정이 만든 결함 셋, 그리고 무엇이 잡았나
+
+전부 이 세션에 고쳤고, **셋 다 화면을 보고는 알 수 없는 것**이었다.
+
+1. **다크에서 `text-ink`가 액센트 채움 위 4.33** (`PageError.tsx`, `ViewerPage.tsx`) — 옛 다크의
+   `--ink`는 청록 위에서 통과했다. `--on-accent`가 이 자리를 위해 존재한다. **유닛 티어의 컴포넌트
+   스캐너가 잡았다.**
+2. **낙관이 다크에서 2.15** — 위 §5. **e2e 대비 스캐너가 잡았다.**
+3. **藏 서브셋이 CSP에 막혀 로드되지 않았다.** Vite가 2,148바이트 파일을 `data:` URI로 인라인했고
+   arch §8.4의 `default-src 'self'`가 그것을 거부한다. 화면에는 藏이 **보였다** — 시스템 본명조가
+   대신 그렸을 뿐이고, 정확히 벤더링으로 막으려던 실패가 조용히 성립해 있었다. **e2e의 콘솔 가드가
+   잡았다.** `vite.config.ts`에 `assetsInlineLimit: 0`.

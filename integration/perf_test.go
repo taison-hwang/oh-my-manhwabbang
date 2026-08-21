@@ -33,8 +33,14 @@ func TestI7_NFRPRF004_aNoChangeRescanIsUnder30Seconds(t *testing.T) {
 	}
 }
 
-// I-8 / AC-008 / NFR-PRF-001 — fifty random page jumps in the 1 540-page volume
-// have a p95 time-to-first-byte under 100 ms once warm.
+// I-8 / AC-008 / NFR-PRF-001 — fifty random page jumps into the 1 540-page,
+// 1.34 GB archive have a p95 time-to-first-byte under 100 ms once warm.
+//
+// The jumps are spread over the archive's fifteen volumes rather than one book's
+// pages: D-73 made `배틀로얄 1~15 [완결].zip` the fifteen 권 its directories say
+// it is. What NFR-PRF-001 measures is untouched by that — a jump is still one
+// seek to a recorded local-header offset somewhere in 1.34 GB, and a jump into
+// the last volume is a seek to the far end of it.
 func TestI8_AC008_randomJumpsInA1540PageVolumeAreFast(t *testing.T) {
 	s := sharedServer(t)
 
@@ -42,23 +48,33 @@ func TestI8_AC008_randomJumpsInA1540PageVolumeAreFast(t *testing.T) {
 	if len(d.Books) == 0 {
 		t.Fatal("배틀로얄 has no book")
 	}
-	b := d.Books[0]
-	var book bookDetail
-	s.get("/api/books/"+b.ID, &book)
-	if book.PageCount < 500 {
-		t.Fatalf("AC-008 needs a 500+ page volume; this one has %d", book.PageCount)
+	type target struct {
+		id, cv string
+		page   int
 	}
-	t.Logf("AC-008: %s has %d pages, and GET /api/books/{bid} returned all %d PageInfo in one request",
-		b.Name, book.PageCount, len(book.Pages))
-	if len(book.Pages) != book.PageCount {
-		t.Errorf("a jump must need no extra round trip: got %d of %d PageInfo",
-			len(book.Pages), book.PageCount)
+	var targets []target
+	for _, b := range d.Books {
+		var book bookDetail
+		s.get("/api/books/"+b.ID, &book)
+		if len(book.Pages) != book.PageCount {
+			t.Errorf("%s: a jump must need no extra round trip: got %d of %d PageInfo",
+				b.Name, len(book.Pages), book.PageCount)
+		}
+		for _, p := range book.Pages {
+			targets = append(targets, target{id: b.ID, cv: b.CV, page: p.N})
+		}
 	}
+	if len(targets) < 500 {
+		t.Fatalf("AC-008 needs a 500+ page archive; this one has %d", len(targets))
+	}
+	t.Logf("AC-008: 배틀로얄 has %d pages across %d volumes, and GET /api/books/{bid} returned "+
+		"every PageInfo in one request per volume", len(targets), len(d.Books))
 
 	// Warm the archive handle pool: NFR-PRF-001 is about a warm cached page,
 	// and the first request of all also pays for opening a 1.34 GB file.
+	first := d.Books[0]
 	for range 3 {
-		s.bodyOf(fmt.Sprintf("/api/books/%s/pages/1?v=%s", b.ID, b.CV))
+		s.bodyOf(fmt.Sprintf("/api/books/%s/pages/1?v=%s", first.ID, first.CV))
 	}
 
 	// A fixed seed: the fifty jumps are the same fifty on every run, so a
@@ -66,10 +82,11 @@ func TestI8_AC008_randomJumpsInA1540PageVolumeAreFast(t *testing.T) {
 	rng := rand.New(rand.NewPCG(0x5EEDBEEF, 42))
 	samples := make([]time.Duration, 0, 50)
 	for range 50 {
-		n := rng.IntN(book.PageCount) + 1 // 1-based; there is no page 0
+		tgt := targets[rng.IntN(len(targets))]
+		n := tgt.page
 		start := time.Now()
 		status, body, hdr := s.do(http.MethodGet,
-			fmt.Sprintf("/api/books/%s/pages/%d?v=%s", b.ID, n, b.CV), "")
+			fmt.Sprintf("/api/books/%s/pages/%d?v=%s", tgt.id, n, tgt.cv), "")
 		elapsed := time.Since(start)
 		if status != http.StatusOK {
 			t.Fatalf("page %d returned %d", n, status)

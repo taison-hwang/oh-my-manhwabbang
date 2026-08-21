@@ -91,6 +91,12 @@ type VolumeLister interface {
 // `.rar`: `사모님은 학생회장.zip` holds 7 ZIPs and 8 RARs and yielded 7 volumes.
 // D-71 gives RAR a reader, so it now yields all 15. `.7z` and friends are still
 // dropped, and for the same reason as before.
+//
+// A source narrowed to one chapter directory answers about that directory only
+// (D-73). The scanner never asks one — a chapter is made of pages, so it is
+// never the `empty` book that triggers the question — but a source that
+// answered about its container's *other* chapters would be a trap for the next
+// caller.
 func (s *containerSource) Volumes(ctx context.Context) ([]string, error) {
 	ref, err := s.acquireMatching(ctx)
 	if err != nil {
@@ -105,6 +111,9 @@ func (s *containerSource) Volumes(ctx context.Context) ([]string, error) {
 	var out []string
 	for i := range ix.Entries {
 		e := &ix.Entries[i]
+		if s.chapter != "" && !inChapter(e.Name, s.chapter) {
+			continue
+		}
 		if e.Dir || e.Encrypted || e.Size == 0 {
 			continue
 		}
@@ -225,7 +234,10 @@ func (s *nestedSource) List(ctx context.Context) (*Listing, error) {
 		return l, fmt.Errorf("listing book %s: %w", s.book.ID, encryptedErr(s.innerArch.Format()))
 	}
 
-	pagesFromIndex(l, ix)
+	// s.chapter is empty for every nested volume: a chapter *inside* a volume
+	// inside a container needs two inner paths and books.inner_path is one
+	// column, so the scanner does not produce that book (D-73).
+	pagesFromIndex(l, ix, s.chapter)
 
 	if readErr != nil {
 		return l, fmt.Errorf("listing book %s: %w", s.book.ID, readErr)

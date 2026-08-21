@@ -145,8 +145,12 @@ func build(root string) error {
 		b.file(fmt.Sprintf("미생 1~9 (완결 pdf)/미생 %02d권.pdf", i), pdfDocument(4))
 	}
 
-	// 9 — AC-008 at full page count.
-	b.zipFile("배틀로얄 1~15 [완결].zip", cp949Pages(1540))
+	// 9 — AC-008 at full page count, in the shape the real archive turned out to
+	// have: fifteen directories of ~103 pages, one per volume (D-73), not one
+	// flat run of 1 540. The twin has to carry that, or the synthetic round is
+	// permanently green on a shape it never builds — which is the one way these
+	// two rounds stop being the same gate.
+	b.zipFile("배틀로얄 1~15 [완결].zip", cp949ChapterPages(15, 103))
 
 	// 10 — a container of sub-archives and no images of its own. Since D-70
 	// each inner archive is a 권 of its own, so this is a series of four books
@@ -492,6 +496,27 @@ func shiftJISPages(n int) []entry {
 			raw = []byte(name)
 		}
 		out = append(out, entry{rawName: raw, data: jpegPage()})
+	}
+	return out
+}
+
+// cp949ChapterPages is one container holding `chapters` per-volume directories
+// of `each` pages — the D-73 shape, and 4.3% of the real collection. The
+// directory names carry Hangul for the same reason the page names do: the
+// decoded name is what becomes books.inner_path and the volume's title, so a
+// CP949 directory that decodes wrong is a 권 nobody can identify.
+func cp949ChapterPages(chapters, each int) []entry {
+	enc := korean.EUCKR.NewEncoder()
+	out := make([]entry, 0, chapters*each)
+	for c := 1; c <= chapters; c++ {
+		for i := 1; i <= each; i++ {
+			name := fmt.Sprintf("배틀로얄 %02d권/페이지%04d.jpg", c, i)
+			raw, err := enc.Bytes([]byte(name))
+			if err != nil {
+				raw = []byte(name)
+			}
+			out = append(out, entry{rawName: raw, data: jpegPage()})
+		}
 	}
 	return out
 }

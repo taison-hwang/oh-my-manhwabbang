@@ -27,6 +27,10 @@ type containerSource struct {
 	// inside a ZIP is nine books in the reference collection.
 	arch archive.Reader
 	kind Kind
+	// chapter narrows the source to one directory inside the container, for a
+	// [KindNestedDir] book (D-73). Empty — the ordinary case — is the whole
+	// container.
+	chapter string
 }
 
 func openZIP(_ context.Context, f *Factory, b Book) (BookSource, error) {
@@ -80,7 +84,7 @@ func (s *containerSource) List(ctx context.Context) (*Listing, error) {
 		return l, fmt.Errorf("listing book %s: %w", s.book.ID, encryptedErr(s.arch.Format()))
 	}
 
-	pagesFromIndex(l, ix)
+	pagesFromIndex(l, ix, s.chapter)
 
 	// A partially readable directory is reported *with* the pages that did
 	// parse: the truncated `군계 07권.zip` still shows most of its volume, and
@@ -189,7 +193,12 @@ func (s *containerSource) Stale(ctx context.Context) (bool, error) {
 // is its own file, and a RAR by the same rules as a ZIP, down to which entries
 // are dropped and why. `Thumbs.db` is excluded from a RAR because it is the
 // identical predicate, not because anyone remembered to add it twice.
-func pagesFromIndex(l *Listing, ix *archive.Index) {
+//
+// chapter, when set, is the one directory of the container this book is
+// (D-73). Entries outside it are not this book's business at all — not its
+// pages, not its Excluded count, and not evidence about what format it holds —
+// so they are dropped before any of those are decided.
+func pagesFromIndex(l *Listing, ix *archive.Index, chapter string) {
 	encodings := make(map[string]int, 4)
 	// Bytes per foreign container format, so that a book which is nothing but
 	// one of them can say which one. Sized by bytes rather than by count
@@ -203,6 +212,9 @@ func pagesFromIndex(l *Listing, ix *archive.Index) {
 	pages := make([]Page, 0, len(ix.Entries))
 	for i := range ix.Entries {
 		e := &ix.Entries[i]
+		if chapter != "" && !inChapter(e.Name, chapter) {
+			continue
+		}
 		if drop, _ := Excluded(e.Name, e.Size, e.Dir); drop {
 			l.Excluded++
 			if !e.Dir && e.Size > 0 && !e.Encrypted {

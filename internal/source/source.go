@@ -64,6 +64,11 @@ const (
 	// is the case it exists for: 7 ZIPs and 8 RARs in one container, and under
 	// D-07 only the 7 were books.
 	KindNestedRAR Kind = "nestedrar"
+	// KindNestedDir is one chapter *directory* inside a container: the container
+	// is the book's RelPath and the directory is its InnerPath (D-73). The
+	// container may be a ZIP or a RAR — a directory has no format of its own, so
+	// unlike the two kinds above this one does not name the reader.
+	KindNestedDir Kind = "nesteddir"
 )
 
 // Errors callers match with errors.Is.
@@ -124,8 +129,10 @@ type Book struct {
 	// RelPath is a slash-separated path relative to the root: the container
 	// file for zip/pdf, the directory for dir.
 	RelPath string
-	// InnerPath is the entry path of this book inside RelPath, for
-	// [KindNestedZIP] and [KindNestedRAR]. Empty for every other kind.
+	// InnerPath is the path of this book inside RelPath: the entry that is the
+	// volume for [KindNestedZIP] and [KindNestedRAR], the chapter directory for
+	// [KindNestedDir] (`.` = the container's top level). Empty for every other
+	// kind.
 	InnerPath string
 	// FileSize and FileMtime are what the index recorded for the container.
 	// They are passed to the handle pool so a changed file can be reported as
@@ -332,6 +339,7 @@ func NewFactory(opts Options) *Factory {
 	f.openers[KindPDF] = openPDF
 	f.openers[KindNestedZIP] = openNestedZIP
 	f.openers[KindNestedRAR] = openNestedRAR
+	f.openers[KindNestedDir] = openNestedDir
 	return f
 }
 

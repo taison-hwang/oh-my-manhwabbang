@@ -90,10 +90,13 @@ describe('Tag / FormatBadge (ui-spec §4.5, FR-LIB-009)', () => {
     expect(formatLabel('pdf')).toBe('PDF')
   })
 
-  it('a nested volume wears its twin’s badge, and no kind keeps the prefix (D-70, D-71)', () => {
+  it('a nested volume wears its twin’s badge, and no kind keeps the prefix (D-70, D-71, D-73)', () => {
     expect(formatLabel('nestedzip')).toBe('ZIP')
     expect(formatLabel('rar')).toBe('RAR')
     expect(formatLabel('nestedrar')).toBe('RAR')
+    // D-73's chapter directory. Its twin is `dir`, so the folder rule has to be
+    // reached *after* the prefix comes off — the other order says DIR.
+    expect(formatLabel('nesteddir')).toBe('FOLDER')
 
     // Driven by BOOK_KINDS rather than a hand-written list, because the defect
     // this closes was a kind the client had never been told about: the server

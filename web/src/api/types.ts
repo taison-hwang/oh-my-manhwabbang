@@ -37,6 +37,11 @@ export const ID_PATTERN = /^[a-z2-7]{16}$/
  * read exactly like their un-nested twin and wear the same badge; the
  * distinction is where the bytes live, which is the server's problem.
  *
+ * `nesteddir` is D-73's: one chapter *directory* inside a container, which is
+ * how the 484 archives that hold nothing but per-화 folders became 6,097 볼륨
+ * instead of 484 unnavigable ones. Its twin is `dir` — it is a folder of
+ * images, and the only unusual thing about it is that the folder is packed.
+ *
  * `rar`/`nestedrar` arrived with D-71 and were missing here until they were
  * measured on the wire: 14 `rar` and 8 `nestedrar` books in the collection,
  * against a client that had never heard of either. `contractcheck`'s enum rule
@@ -44,7 +49,7 @@ export const ID_PATTERN = /^[a-z2-7]{16}$/
  * happens to contain and every golden book is a `zip` or a `dir`. It now
  * compares this list against the `Kind*` constants themselves.
  */
-export const BOOK_KINDS = ['zip', 'nestedzip', 'rar', 'nestedrar', 'dir', 'pdf'] as const
+export const BOOK_KINDS = ['zip', 'nestedzip', 'rar', 'nestedrar', 'nesteddir', 'dir', 'pdf'] as const
 export type BookKind = (typeof BOOK_KINDS)[number]
 
 /** C-4: books say `dir`, series say `folder`. The badge text is FOLDER for both. */

@@ -204,6 +204,35 @@ func TestI10_classification_matchesTheRealShapes(t *testing.T) {
 		}
 	})
 
+	t.Run("D-73 a container of chapter directories is one book per directory", func(t *testing.T) {
+		// `배틀로얄 1~15 [완결].zip` is 1 540 pages in fifteen directories of ~100,
+		// one per volume, and it indexed as a single 1 540-page book that no
+		// reader could navigate. 484 archives of the collection are this shape.
+		d := detailOf(s, battleRoyale)
+		if d.Status != "ok" {
+			t.Errorf("%s series status = %q, want ok: %s", battleRoyale, d.Status, d.Error)
+		}
+		if len(d.Books) != 15 {
+			t.Fatalf("%s = %d books, want 15 — one per chapter directory", battleRoyale, len(d.Books))
+		}
+		var pages int
+		for _, b := range d.Books {
+			if b.Status != "ok" {
+				t.Errorf("%s volume %q status = %q (%s), want ok", battleRoyale, b.Name, b.Status, b.Error)
+			}
+			if b.Kind != "nesteddir" {
+				t.Errorf("%s volume %q kind = %q, want nesteddir", battleRoyale, b.Name, b.Kind)
+			}
+			pages += b.PageCount
+		}
+		// The partition is total. A split that lost pages would be a worse answer
+		// than the lump it replaced, and this is the number that proves it did
+		// not: 1 540 before, 1 540 after.
+		if pages != 1540 {
+			t.Errorf("%s holds %d pages across its volumes, want all 1 540", battleRoyale, pages)
+		}
+	})
+
 	t.Run("D-7 nothing readable is silently dropped", func(t *testing.T) {
 		// Every curated series has to be listed whatever its status; hiding a
 		// directory the user can see in their file manager is worse than

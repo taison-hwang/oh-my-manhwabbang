@@ -588,7 +588,9 @@ CREATE TABLE IF NOT EXISTS books (
     rel_path        TEXT NOT NULL,          -- slash path, relative to the ROOT
     inner_path      TEXT NOT NULL DEFAULT '',
                                             -- the entry INSIDE rel_path that is this
-                                            --   book, for kind='nestedzip' (§4.5.1).
+                                            --   book, for kind='nestedzip' (§4.5.1) or the
+                                            --   chapter directory for kind='nesteddir'
+                                            --   ('.' = the container's top level, §4.5.2).
                                             --   '' for every other book, which is what
                                             --   keeps its id unchanged
     display_name    TEXT NOT NULL,          -- name shown in the UI
@@ -596,7 +598,9 @@ CREATE TABLE IF NOT EXISTS books (
     ord             INTEGER NOT NULL,       -- 0-based position within the series,
                                             --   materialised from sort_key so the
                                             --   API never has to re-sort
-    kind            TEXT NOT NULL,          -- 'zip' | 'dir' | 'pdf'
+    kind            TEXT NOT NULL,          -- the source.Kind* constants: 'zip' | 'dir' |
+                                            --   'pdf' | 'rar' | 'nestedzip' | 'nestedrar' |
+                                            --   'nesteddir' (D-70, D-71, D-73)
     page_count      INTEGER NOT NULL DEFAULT 0,
     total_bytes     INTEGER NOT NULL DEFAULT 0,   -- sum of uncompressed page bytes
     file_size       INTEGER NOT NULL DEFAULT 0,   -- container size; 0 for kind='dir'
@@ -1104,6 +1108,30 @@ The deflated case is far cheaper than it sounds because the entries are already-
 **Bounds.** Only one level: a volume inside a container is not itself opened looking for containers. Only `.zip`/`.cbz`: prd §7.2 keeps RAR/7z out and this build cannot read them, so listing them would produce books that cannot open — `사모님은 학생회장.zip` (7 ZIPs + 8 RARs) yields its 7 readable volumes rather than nothing, and a container holding *only* RARs stays `empty`, exactly as D-07 says.
 
 The container itself stops being a book. A 권 list reading "39 volumes, plus one broken volume, which is the thing holding the other 39" is a worse answer than the one the reader asked for.
+
+#### 4.5.2 Chapter directories — a container of 권 that are folders (D-73)
+
+484 of the collection's 11,153 archives (4.3%) hold **nothing but per-chapter directories**: `여자친구 만들고파! 01~08권.zip` is 842 pages in eight of them, `배틀로얄 1~15 [완결].zip` is 1,540 in fifteen, and `암살교실 1~180화.zip` is 3,534 in 182 directories literally named 화. 279,541 pages are in this shape. Each indexed as **one** book — a 842-page 권 that no reader can navigate and no 권 list can describe.
+
+This is not a new rule. prd §2.2 row 2 already says that a *folder* whose sub-folders hold images is one 권 per sub-folder; `collectBooks` has done that since wave 1. An archive of exactly that tree behaved differently only because nothing had ever looked inside one for directories. §4.5.2 makes the two agree.
+
+Each directory is its own 권, `books.kind='nesteddir'`, identified by `(root_name, rel_path, inner_path)` — the container plus the directory path. The kind does not name a format, because a directory has no format: the reader comes from the *container's* extension, so a chapter of a `.rar` works by construction.
+
+**The partition.** `source.Chapters` runs over the page list the book has already produced — no extra read, no payload:
+
+1. strip the longest directory prefix every page shares (a container packed with one wrapper folder is one volume, not one chapter);
+2. group by the first path element after it; pages left at the top level form the group `.`;
+3. **two or more directory groups** → split; otherwise the book is unchanged.
+
+It is **total**: every page belongs to exactly one 권 and none is dropped. That is why the stray cover image beside 29 volume directories in `야와라! - YAWARA! (1-29).zip` becomes a 권 of its own — `inner_path='.'`, named `… (loose pages)`, sorted first, which is also what lets the cover ladder (§4.10 rule 3) pick it up. `.` rather than `''`: an empty inner path is what every non-nested book has, so the two would collide on one id.
+
+**Refused, by measurement.** A wrapper directory *and* loose pages together is the one shape where "which directory is this page's chapter" has two defensible answers; no archive in the collection is it, so it stays one book. Paths separated by `\` are not split — the prefixes would match no entry name. Only a top-level container splits: a chapter inside a nested volume needs two inner paths and `books.inner_path` is one column.
+
+**What it costs.** Detection is one pass over a slice. Indexing is one central-directory read per chapter, through the handle the pool already holds, because each chapter goes back through `indexUnit` — which is where FR-IDX-003 lives, so an unchanged chapter is recognised by the container's `(size, mtime)` and its page rows are never touched. Deriving the chapters in place instead would have rewritten every page row of a 6,097-book library on every scan.
+
+**Migration.** A container already recorded `status='ok'` is skipped by §4.6/E-39 on an incremental scan, so an existing index only splits on a **full** scan (`--rebuild-index`, or `POST /api/scan {"full": true}`). The 재스캔 button does not send it — see the E-39 note below.
+
+Reading progress recorded against the *container* does not move to a chapter, and cannot: the book it was about — one 842-page volume — no longer exists, and there is no page number in it that means anything in the eight books that replaced it. The `user.db` row is orphaned rather than destroyed (§3.6: nothing there is ever rewritten by a scan), so it costs the reader their place in that one archive and nothing else. `index.db` is derived and disposable; `user.db` is not, and this is the one case where that distinction is visible to a reader rather than only to an operator.
 
 ### 4.6 Incremental scan (FR-IDX-003)
 

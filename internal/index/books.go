@@ -24,7 +24,12 @@ type Book struct {
 	// materialised 0-based rank so the API never re-sorts.
 	SortKey []byte
 	Ord     int
-	// Kind is "zip", "dir" or "pdf" (conflict resolution C-4).
+	// Kind is one of the `source.Kind*` constants — "zip", "dir", "pdf" and the
+	// nested spellings D-70/D-71/D-73 added (conflict resolution C-4: a *book*
+	// that is a directory is "dir"; a *series* that is one is "folder").
+	// internal/source is the authority, and `contractcheck` compares those
+	// constants against the client's `BOOK_KINDS`; enumerating them here as well
+	// is how this comment went three decisions out of date.
 	Kind       string
 	PageCount  int64
 	TotalBytes int64

@@ -185,7 +185,15 @@ export function minutesSince(unixSeconds: number, nowMs: number = Date.now()): n
  * than in a file of its own. That is a fact about where the bytes are, not
  * about what the reader is opening, so it wears its twin's badge.
  */
-export type FormatValue = 'zip' | 'nestedzip' | 'rar' | 'nestedrar' | 'dir' | 'folder' | 'pdf'
+export type FormatValue =
+  | 'zip'
+  | 'nestedzip'
+  | 'rar'
+  | 'nestedrar'
+  | 'nesteddir'
+  | 'dir'
+  | 'folder'
+  | 'pdf'
 
 /**
  * The `ZIP` / `RAR` / `FOLDER` / `PDF` badge text (FR-LIB-009).
@@ -195,10 +203,15 @@ export type FormatValue = 'zip' | 'nestedzip' | 'rar' | 'nestedrar' | 'dir' | 'f
  * reader is the twin's — so the next nested format is right by construction.
  * Matching `nestedzip` alone is what let `nestedrar` reach the badge as
  * `NESTEDRAR` for 8 volumes of the collection.
+ *
+ * Stripping happens *before* the folder test, not after, which is what makes
+ * that claim true for D-73's `nesteddir`: its twin is `dir`, so its badge is
+ * FOLDER. The other order left the rule one kind short of general and would
+ * have put `DIR` on 6,097 volumes.
  */
 export function formatLabel(format: FormatValue): string {
-  if (format === 'dir' || format === 'folder') return 'FOLDER'
   const bare = format.startsWith('nested') ? format.slice('nested'.length) : format
+  if (bare === 'dir' || bare === 'folder') return 'FOLDER'
   return bare.toUpperCase()
 }
 

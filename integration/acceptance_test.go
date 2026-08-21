@@ -128,9 +128,17 @@ func TestI4_AC004_pdfSeriesRendersThroughTheSameFlow(t *testing.T) {
 	t.Logf("AC-004: the cached re-render took %s", time.Since(warm))
 }
 
-// I-5 / AC-001 / NFR-PRF-006 — read every page of the 1 540-page volume: the
+// I-5 / AC-001 / NFR-PRF-006 — read all 1 540 pages of the 1.34 GB archive: the
 // resident set must not grow with the archive, and nothing may be written
 // outside cache_dir.
+//
+// The 1 540 pages used to be one book and are now fifteen, because D-73 found
+// what `배틀로얄 1~15 [완결].zip` actually holds: fifteen directories of ~100
+// pages, one per volume. The claim is unchanged and so is the file — every page
+// still comes out of one 1.34 GB deflate stream at a recorded offset — so the
+// test reads the container's volumes end to end instead of one book's pages, and
+// measures across the lot. It is a slightly stronger version of itself: fifteen
+// books open on one pooled descriptor is also what must not grow.
 func TestI5_AC001_readingAWholeVolumeStreamsAndWritesNothing(t *testing.T) {
 	s := sharedServer(t)
 
@@ -138,11 +146,17 @@ func TestI5_AC001_readingAWholeVolumeStreamsAndWritesNothing(t *testing.T) {
 	if len(d.Books) == 0 {
 		t.Fatal("배틀로얄 has no book")
 	}
-	b := d.Books[0]
-	var book bookDetail
-	s.get("/api/books/"+b.ID, &book)
-	if len(book.Pages) < 1000 {
-		t.Fatalf("배틀로얄 has %d pages; the AC-001 case needs the 1 540-page volume", len(book.Pages))
+	volumes := make([]bookDetail, 0, len(d.Books))
+	pageTotal := 0
+	for _, b := range d.Books {
+		var book bookDetail
+		s.get("/api/books/"+b.ID, &book)
+		volumes = append(volumes, book)
+		pageTotal += len(book.Pages)
+	}
+	if pageTotal < 1000 {
+		t.Fatalf("배틀로얄 has %d pages in %d volumes; the AC-001 case needs the 1 540-page archive",
+			pageTotal, len(volumes))
 	}
 
 	marker := filepath.Join(t.TempDir(), "marker")
@@ -173,14 +187,17 @@ func TestI5_AC001_readingAWholeVolumeStreamsAndWritesNothing(t *testing.T) {
 
 	before := residentKB(t)
 	bytesRead := 0
-	for _, p := range book.Pages {
-		body, _ := s.bodyOf(fmt.Sprintf("/api/books/%s/pages/%d?v=%s", b.ID, p.N, b.CV))
-		bytesRead += len(body)
+	for i, book := range volumes {
+		b := d.Books[i]
+		for _, p := range book.Pages {
+			body, _ := s.bodyOf(fmt.Sprintf("/api/books/%s/pages/%d?v=%s", b.ID, p.N, b.CV))
+			bytesRead += len(body)
+		}
 	}
 	after := residentKB(t)
 
-	t.Logf("NFR-PRF-006: streamed %d pages (%.1f MiB) — test-process RSS %d KB → %d KB",
-		len(book.Pages), float64(bytesRead)/(1<<20), before, after)
+	t.Logf("NFR-PRF-006: streamed %d pages in %d volumes (%.1f MiB) — test-process RSS %d KB → %d KB",
+		pageTotal, len(volumes), float64(bytesRead)/(1<<20), before, after)
 	// The measurement is of the *test* process, which holds every response body
 	// only transiently; the server is in-process too, so its buffers are
 	// included. A per-page buffer of the whole archive would show as hundreds

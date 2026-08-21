@@ -1096,7 +1096,12 @@ func (s *Scanner) indexUnit(ctx context.Context, rt *rootRun, t *seriesTask, u b
 				append(logAttrs(rt.runID, rt.cfg.Name, u.relPath),
 					"book_id", res.id, "panic", fmt.Sprint(r))...)
 		}
-		if !res.aborted {
+		// A container that turned out to hold books is not one of them, and it
+		// has already told progress how many it became (expandContainer,
+		// expandChapters). Counting it too would put `done` past `total` — one
+		// extra per container under D-70, and 6,097 extra under D-73, which is a
+		// progress bar that runs past its own end.
+		if !res.aborted && len(res.expanded) == 0 {
 			s.progress.bookDone(rt.cfg.Name, res.pageCount, res.skipped, res.status, res.errMsg)
 		}
 	}()
@@ -1177,6 +1182,14 @@ func (s *Scanner) indexUnit(ctx context.Context, rt *rootRun, t *seriesTask, u b
 		res.status = StatusEmpty
 		res.errMsg = "no supported image entries"
 		res.logs = append(res.logs, rt.entry(index.LevelWarn, u.relPath, res.errMsg))
+		return res
+	}
+	// A container *with* pages can still be several books: 484 archives in the
+	// collection hold nothing but per-chapter directories (D-73). The question
+	// is asked of the listing already in hand, so it costs one pass over a slice
+	// and never a second read of the file.
+	if expanded, ok := s.expandChapters(ctx, rt, t, res, listing); ok {
+		return expanded
 	}
 	return res
 }
@@ -1225,6 +1238,12 @@ func (s *Scanner) expandContainer(ctx context.Context, rt *rootRun, t *seriesTas
 		return res, false
 	}
 
+	// The walker counted this container as one book. It is about to become
+	// len(inner) of them, so the estimate is corrected before the first one
+	// finishes — FR-IDX-004's `total` is a running figure, not a promise made at
+	// the start.
+	s.progress.discovered(rt.cfg.Name, 0, len(inner)-1)
+
 	out := res
 	out.expanded = make([]bookResult, 0, len(inner))
 	for _, name := range inner {
@@ -1245,6 +1264,80 @@ func (s *Scanner) expandContainer(ctx context.Context, rt *rootRun, t *seriesTas
 	}
 	out.logs = append(out.logs, rt.entry(index.LevelInfo, u.relPath,
 		fmt.Sprintf("container of %d volumes: indexed each one as a book", len(inner))))
+	return out, true
+}
+
+// expandChapters turns a container whose pages live in per-chapter
+// sub-directories into one result per directory (decision D-73).
+//
+// It is the same move expandContainer makes and for the same reason, one level
+// down: what the reader is looking at is not a 842-page 권, it is eight of them.
+// `여자친구 만들고파! 01~08권.zip` is the file that prompted it, and 484 archives
+// of the collection — 279,541 pages — are the shape.
+//
+// The partition itself is [source.Chapters], computed from the listing this
+// book has already produced. What is *not* free is the indexing: each chapter is
+// sent back through indexUnit, which reads the container's directory again to
+// list that chapter's pages. That is deliberate. indexUnit is where FR-IDX-003
+// lives, so on a rescan an unchanged chapter is recognised by its own
+// (size, mtime) and its page rows are never touched — and a chapter re-derived
+// here instead would rewrite every page row of a 6,097-book library on every
+// scan, which is the cost that actually matters. A second central-directory read
+// is two ReadAt calls against a handle the pool already has open.
+//
+// Like expandContainer, the container stops being a book: it is not recorded as
+// a 842-page volume beside the eight it turned out to hold.
+func (s *Scanner) expandChapters(ctx context.Context, rt *rootRun, t *seriesTask,
+	res bookResult, l *source.Listing,
+) (bookResult, bool) {
+	u := res.unit
+	// Only a container that is its own file splits. A chapter inside a volume
+	// inside a container would need two inner paths and books.inner_path is one
+	// column (arch §3.5) — and no such file exists in the collection. A `dir`
+	// book is already split by collectBooks, one book per image sub-folder
+	// (prd §2.2 row 2), and a PDF has no directories at all.
+	if u.innerPath != "" || ctx.Err() != nil {
+		return res, false
+	}
+	switch u.kind {
+	case source.KindZIP, source.KindRAR:
+	default:
+		return res, false
+	}
+	chapters := source.Chapters(l.Pages)
+	if len(chapters) == 0 {
+		return res, false
+	}
+
+	// One book in the walker's count is about to become len(chapters) of them.
+	s.progress.discovered(rt.cfg.Name, 0, len(chapters)-1)
+
+	out := res
+	// The container's own page list is dropped rather than carried: every page
+	// in it is about to be listed again under the chapter that owns it, and
+	// these are the biggest books in the library to be holding twice.
+	out.pages, out.pageCount, out.totalBytes = nil, 0, 0
+	out.expanded = make([]bookResult, 0, len(chapters))
+	for _, ch := range chapters {
+		cu := u
+		cu.kind = source.KindNestedDir
+		cu.innerPath = ch.Path
+		if ch.Path == source.ChapterRoot {
+			// The pages that were loose at the top of the archive. They keep the
+			// container's own sort key so they sort before every chapter, and
+			// they say what they are — the same sentence collectBooks puts on the
+			// same shape one level up (arch §4.2 step 5).
+			cu.rel = u.rel
+			cu.name = baseName(u.rel) + looseBookSuffix
+		} else {
+			cu.rel = path.Join(u.rel, ch.Path)
+			cu.name = baseName(ch.Path)
+		}
+		out.expanded = append(out.expanded, s.indexUnit(ctx, rt, t, cu))
+	}
+	out.logs = append(out.logs, rt.entry(index.LevelInfo, u.relPath,
+		fmt.Sprintf("container of %d chapter directories: indexed each one as a book",
+			len(chapters))))
 	return out, true
 }
 
@@ -1476,6 +1569,41 @@ func diskBytes(r *bookResult) int64 {
 	return r.totalBytes
 }
 
+// seriesDiskBytes is the same quantity for a whole series: the bytes it occupies
+// on disk, counting each file once.
+//
+// Once is the whole point. Every 권 that lives inside a container records that
+// *container's* size (arch §3.5 — the volume has no file of its own), so a plain
+// sum multiplies it by the number of volumes: the 1.55 GB `엔젤하트 전32권 완결.zip`
+// reported **51 GB** in the grid card, the list column, the series header and the
+// settings total, and D-73 would have taken `암살교실 1~180화.zip` — 588 MB — to
+// **107 GB**. Ruling E-11's finding is what applies: a silently wrong 용량 is the
+// worst of the available answers, and it is worst of all in `sort=size`, where
+// the ordering it produces is a ranking by volume count wearing a byte unit.
+//
+// The de-duplication key is the book's path, and only for a book that names a
+// container. A `kind='dir'` book has `size == 0` and contributes its pages'
+// bytes, which are its own; ruling E-5's duplicates (`01권/` beside `01권.zip`)
+// are different paths and are still counted twice, because they are two files.
+func seriesDiskBytes(results []bookResult) int64 {
+	var total int64
+	var counted map[string]struct{}
+	for i := range results {
+		r := &results[i]
+		if r.unit.size > 0 {
+			if counted == nil {
+				counted = make(map[string]struct{}, len(results))
+			}
+			if _, seen := counted[r.unit.relPath]; seen {
+				continue
+			}
+			counted[r.unit.relPath] = struct{}{}
+		}
+		total += diskBytes(r)
+	}
+	return total
+}
+
 // writeSeries persists one finished series: the series row, then its books and
 // their pages, then the generation stamp for everything the incremental path
 // skipped, then the scan-log rows, and finally an enqueue of the cover that
@@ -1502,15 +1630,15 @@ func (s *Scanner) writeSeries(ctx context.Context, w *index.Writer, rt *rootRun,
 		status, message = StatusError, u.err.Error()
 	}
 
-	var pageCount, totalBytes int64
+	var pageCount int64
 	mtime := u.mtime
 	for i := range t.results {
 		pageCount += t.results[i].pageCount
-		totalBytes += diskBytes(&t.results[i])
 		if m := t.results[i].unit.mtime; m > mtime {
 			mtime = m
 		}
 	}
+	totalBytes := seriesDiskBytes(t.results)
 
 	cover := chooseCover(u, t.results)
 	now := s.now().Unix()

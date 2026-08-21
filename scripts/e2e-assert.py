@@ -1067,11 +1067,16 @@ def main() -> int:
         r.eq("자살도 holds 181 loose pages", by_name[SUICIDE]["page_count"], 181)
         r.eq("강철의 연금술사 has 27 volumes and no one-page book (D-5)",
              by_name[FMA]["book_count"], 27)
-        r.eq("배틀로얄 is one 1 540-page volume (AC-008)",
+        r.eq("배틀로얄 holds 1 540 pages (AC-008)",
              by_name[BATTLE_ROYALE]["page_count"], 1540)
     else:
         r.ge("배틀로얄 carries the AC-008 page count",
              by_name[BATTLE_ROYALE]["page_count"], 1540)
+    # D-73: those pages are in fifteen per-volume directories, so they are
+    # fifteen 권. The archive is one file and its page total is unchanged —
+    # asserted just above — which is what makes this a split rather than a loss.
+    r.eq("배틀로얄's fifteen chapter directories are fifteen 권 (D-73)",
+         by_name[BATTLE_ROYALE]["book_count"], 15)
 
     # ---- FR-IDX-010: broken archives are isolated, the scan completes ----
     # D-70 supersedes D-10's first clause: a container of sub-ZIPs is a series
@@ -1125,18 +1130,28 @@ def main() -> int:
     # One series, both formats. This is the assertion that would catch a RAR
     # read by the ZIP reader, or a 권 list that orders the two formats apart.
     #
-    # The two modes differ, and the difference is D-70 rather than drift. The
-    # fixture builds 울프가이 as three sibling archives that each hold pages, so
-    # synthetic sees exactly the two formats. The real collection additionally
-    # carries `[한글번역] .../울프가이 02권(연재분번역).zip`, whose entries are 9
-    # chapter ZIPs and no pages of its own — so it expands, 02권 stops being a
-    # 권, and its 9 chapters arrive as `nestedzip`. Asserting the exact set in
-    # each mode keeps the guard the comment above describes: a RAR handed to
-    # the ZIP reader still moves a kind and still fails here.
+    # The two modes differ, and the difference is D-70/D-73 rather than drift.
+    # The fixture builds 울프가이 as three sibling archives that each hold pages,
+    # so synthetic sees exactly the two formats. The real collection carries two
+    # more shapes under `[한글번역] …`:
+    #
+    #   * `울프가이 02권(연재분번역).zip` — 9 chapter ZIPs and no pages of its own,
+    #     so it expands (D-70), 02권 stops being a 권, and its 9 chapters arrive
+    #     as `nestedzip`;
+    #   * `울프가이 08권 [일부번역].zip` — 195 pages in ten directories named
+    #     `Wolf_Guy_v05c68[kr]` … `c77`, one per 화, so it splits (D-73) into ten
+    #     `nesteddir` 권. One of them, `c75`, nests a further folder inside
+    #     itself; those 20 pages stay in `c75` rather than becoming an
+    #     eleventh chapter.
+    #
+    # Asserting the exact set in each mode keeps the guard the comment above
+    # describes: a RAR handed to the ZIP reader still moves a kind and still
+    # fails here.
     wg = r.json("/api/series/" + by_name[WOLF_GUY]["id"])
     wg_kinds = sorted({b["kind"] for b in wg["books"]})
     r.eq("울프가이 mixes ZIP and RAR volumes in one series",
-         wg_kinds, ["nestedzip", "rar", "zip"] if real else ["rar", "zip"])
+         wg_kinds,
+         ["nesteddir", "nestedzip", "rar", "zip"] if real else ["rar", "zip"])
     r.eq("every volume of the mixed series opens",
          sorted({b["status"] for b in wg["books"]}), ["ok"])
     # The RAR entry names are Shift_JIS, which is decided per archive and never
@@ -1294,25 +1309,41 @@ def main() -> int:
 
     # ---- AC-008: an arbitrary jump deep into a 1 540-page volume ---------
     br = r.json("/api/series/" + by_name[BATTLE_ROYALE]["id"])
-    b = br["books"][0]
-    book = r.json(f"/api/books/{b['id']}")
-    r.eq("AC-008 · every page is returned in one request, so a jump needs no round trip",
-         len(book["pages"]), b["page_count"])
+    vols = br["books"]
+    b = vols[0]
+    # Since D-73 the 1 540 pages are fifteen 권 of one 1.34 GB file rather than
+    # one book of 1 540. Nothing physical changed — a page is still one seek to a
+    # local-header offset somewhere in that file, and the archive's 900th page is
+    # at the same offset it always was — so the measurement is made over the
+    # archive's whole page sequence and the volume boundaries are bookkeeping.
+    served = sum(len(r.json(f"/api/books/{v['id']}")["pages"]) for v in vols)
+    pc = sum(v["page_count"] for v in vols)
+    r.eq("AC-008 · every page is returned in one request per 권, so a jump needs no round trip",
+         served, pc)
     # AC-008 (prd §4) is 페이지 임의 점프 — an ARBITRARY jump, in a 500-page-plus
-    # volume. So the page under measurement has to be one the server has never
+    # archive. So the page under measurement has to be one the server has never
     # served, and the page count the jump set is derived from is a precondition,
     # not an assumption: assert it rather than hard-coding around it.
-    pc = b["page_count"]
-    r.ge("AC-008 · the volume under measurement is the 500+-page one AC-008 names", pc, 500)
+    r.ge("AC-008 · the archive under measurement is the 500+-page one AC-008 names", pc, 500)
     # impl-plan §6.3 step 5 (docs/impl-plan.md:966) is the binding description of
     # THIS script — scripts/e2e.sh:531 names the step `7 · curl assertions
     # (impl-plan §6.3 step 5)` — and it spells out one page by number:
     # `GET /api/books/{battle_royale}/pages/900` returns `200 image/jpeg` in
-    # < 200 ms. So page 900 joins the measured set unconditionally below, and
-    # "the volume is deep enough to have a page 900" becomes a precondition to
-    # assert. Guarding the page instead (`{900} if pc >= 900 else set()`) would
-    # make a named requirement disappear on exactly the volume that broke it.
-    r.ge("impl-plan §6.3 step 5 · the volume reaches the page 900 that step names", pc, 900)
+    # < 200 ms. So the archive's 900th page joins the measured set
+    # unconditionally below, and "the archive is deep enough to have a page 900"
+    # becomes a precondition to assert. Guarding the page instead
+    # (`{900} if pc >= 900 else set()`) would make a named requirement disappear
+    # on exactly the archive that broke it.
+    r.ge("impl-plan §6.3 step 5 · the archive reaches the page 900 that step names", pc, 900)
+
+    def locate(n):
+        """The archive's nth page, as (volume, page number within it)."""
+        seen = 0
+        for v in vols:
+            if n <= seen + v["page_count"]:
+                return v, n - seen
+            seen += v["page_count"]
+        raise AssertionError(f"page {n} is past the {pc} this archive holds")
 
     # There is nothing per page to warm. A ZIP page is streamed straight out of
     # the archive at a stored offset (serveArchivePage, internal/httpapi/pages.go)
@@ -1344,14 +1375,16 @@ def main() -> int:
     jumps = sorted({(pc * k) // 5 for k in (1, 2, 3, 4, 5)} | {900})
     worst = 0.0
     for n in jumps:
+        v, within = locate(n)
         t0 = time.monotonic()
-        status, body, headers = r.get(f"/api/books/{b['id']}/pages/{n}?v={b['cv']}")
+        status, body, headers = r.get(f"/api/books/{v['id']}/pages/{within}?v={v['cv']}")
         elapsed = (time.monotonic() - t0) * 1000
         worst = max(worst, elapsed)
         # Unconditional: a check that is only recorded when it fails makes the
         # assertion count report() prints depend on the outcome, and a passing
         # run then leaves no evidence that the jumped-to pages streamed at all.
-        r.check(f"AC-008 · page {n} of {pc} streams on its first request ({elapsed:.0f} ms)",
+        r.check(f"AC-008 · page {n} of {pc} ({v['name']} page {within}) streams on its "
+                f"first request ({elapsed:.0f} ms)",
                 status == 200
                 and str(headers.get("Content-Type", "")).startswith("image/")
                 and len(body) > 0,
