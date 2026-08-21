@@ -2724,6 +2724,53 @@ describe('이어보기 (FR-LIB-010)', () => {
     expect(card.className).toContain('flex-[0_0_100%]')
     expect(card.className).toContain('md:flex-[0_0_260px]')
     expect(card.className).toContain('lg:flex-[0_0_269px]')
+    // `min-w-0` is not decoration next to the three above — it is what makes
+    // them apply. A flex item's `min-width` defaults to `auto`, which floors the
+    // used width at min-content, so the basis is a *floor* until this class
+    // takes the automatic minimum off. Measured before it was added: a card
+    // whose filename is `기동전사 건담 외전 - 우주, 섬광의 끝에서 01권 [번역본].zip`
+    // was **413px** on a 269px shelf, and 413px inside a 368px track at 400,
+    // where §7 asks for one card per screen. jsdom does not lay out, so what is
+    // asserted here is the class; `07-responsive` 6.12 measures the consequence
+    // over every card on the shelf.
+    expect(card.className).toContain('min-w-0')
+  })
+
+  /**
+   * The filename wraps instead of running the card sideways.
+   *
+   * Two classes, and neither is a restatement of the other. `line-clamp-2`
+   * replaces `truncate` (`white-space: nowrap`), which is the property that made
+   * the card's min-content the width of the whole string — with it the name
+   * takes a second line the way the title above always has, and the card keeps
+   * its tier. `break-words` covers the shape wrapping alone cannot: the
+   * collection's `Wolf_Guy_-_Wolfen_Crest_v12_JP_完.rar` is a single unbreakable
+   * 36-character token, and without `overflow-wrap` a line break has nowhere to
+   * go, so the token is clipped mid-word rather than broken.
+   *
+   * The bound matters as much as the wrap. An unclamped name would take five or
+   * six lines on a 127px column and push the card past the 180px the 144px
+   * cover sets, so 이어보기 cards would stop being one height. Two lines is the
+   * title's own treatment, one row above.
+   */
+  it('wraps a long filename instead of widening the card', async () => {
+    scenario.continueItems = [makeContinueItem()]
+    renderLibrary()
+    await waitForLibrary()
+
+    const card = await screen.findByRole('button', { name: /군계\(軍鷄\) 01권\.zip/ })
+    const filename = within(card).getByText('군계(軍鷄) 01권.zip')
+    expect(filename.className).toContain('line-clamp-2')
+    expect(filename.className).toContain('break-words')
+    // The property that caused the defect, asserted as absent by name.
+    expect(filename.className).not.toContain('truncate')
+    expect(filename.className).not.toContain('whitespace-nowrap')
+
+    // The title was already clamped; it gains the same escape for a long
+    // unbreakable token, and keeps its two-line bound.
+    const title = within(card).getByText('[만화] 군계 1~25')
+    expect(title.className).toContain('line-clamp-2')
+    expect(title.className).toContain('break-words')
   })
 
   /**

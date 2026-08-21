@@ -67,6 +67,40 @@ import { formatContinueCounter } from '../../lib/format'
  * changes, this comment and ui-spec §4.3 / §7 change in the same edit, and
  * `library.test.tsx` will fail until they do.
  *
+ * ---------------------------------------------------------------------------
+ * The width above was declared for ten sessions and did not hold
+ * ---------------------------------------------------------------------------
+ * `flex: 0 0 269px` is not a width. It is a *basis*, and a flex item's
+ * `min-width` defaults to `auto`, which floors the used size at the item's
+ * **min-content** size — so a card whose content cannot be made narrower than
+ * 271px is 271px wide no matter what the basis says. The filename below used
+ * to be `truncate`, which is `white-space: nowrap`, and the min-content width
+ * of a nowrap line is the whole string. So the E-37 width applied to every
+ * card whose filename happened to be short and to none of the others.
+ *
+ * Measured on the real collection at 1440 before the fix: four cards at 269 and
+ * `기동전사 건담 외전 - 우주, 섬광의 끝에서 01권 [번역본].zip` at **413** — 144px
+ * over its tier, one card in five on that shelf. The instructive width is 400,
+ * where the same card is 413px inside a 368px track: §7's `<768` cell asks for
+ * one card per screen with snap scroll, and a card wider than the track cannot
+ * be one screen. The cell was met by the class list and not by the layout.
+ *
+ * Two edits, and they answer different halves. `min-w-0` on the button is what
+ * makes the basis load-bearing — it takes the automatic minimum off, so 269 /
+ * 260 / 100 % are the used sizes rather than floors. `line-clamp-2` on the
+ * filename is what makes the text survive that: the previous `truncate` put the
+ * whole name on one clipped line, and clamping wraps it to two the way the
+ * title above has always wrapped. `break-words` covers the one shape wrapping
+ * alone does not — an unbreakable Latin token such as the collection's
+ * `Wolf_Guy_-_Wolfen_Crest_v12_JP_完.rar`, which is one 36-character word and
+ * would otherwise be clipped mid-token rather than broken.
+ *
+ * The basis numbers are untouched, so E-37 and ui-spec §4.3 / §7 are unchanged;
+ * what changed is that the product now measures what they say. `07-responsive`
+ * 6.12 asserts the geometry over **every** card on the shelf rather than the
+ * first one, which is the assertion shape that would have caught this: the old
+ * one measured a card and this defect needs a card *with a long name in it*.
+ *
  * Clicking it resumes that **book** at its saved page, not the series: the whole
  * point of the shelf is that it is one click from where the reader stopped
  * (FR-LIB-010).
@@ -108,7 +142,7 @@ export function ContinueCard({ item, onResume }: ContinueCardProps) {
       // E-32 turned a 1px hairline into a raised card that lifts; E-46 keeps the
       // lift and moves the ground under it (see the header). The radius goes
       // with the skin: `--radius-lg` is 3px now, and this card is a sheet.
-      className="relative flex flex-[0_0_100%] cursor-pointer snap-start gap-3 rounded-md bg-fill-track pb-5 pl-[22px] pr-3 pt-4 text-left shadow-md transition-[box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:shadow-lg md:flex-[0_0_260px] md:snap-align-none lg:flex-[0_0_269px]"
+      className="relative flex min-w-0 flex-[0_0_100%] cursor-pointer snap-start gap-3 rounded-md bg-fill-track pb-5 pl-[22px] pr-3 pt-4 text-left shadow-md transition-[box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:shadow-lg md:flex-[0_0_260px] md:snap-align-none lg:flex-[0_0_269px]"
     >
       {/* The punch hole. `--color-bg` and no shadow: the hole is the *ground*
           showing through the card, so it is painted in the ground rather than in
@@ -148,10 +182,10 @@ export function ContinueCard({ item, onResume }: ContinueCardProps) {
 
       <span className="relative z-content flex min-w-0 flex-1 flex-col gap-[5px]">
         {/* E-32: card titles drop from 800 to 700. Section headings do not. */}
-        <span className="line-clamp-2 font-heading text-base font-bold leading-[1.2]">
+        <span className="line-clamp-2 break-words font-heading text-base font-bold leading-[1.2]">
           {item.series_name}
         </span>
-        <span className="truncate whitespace-nowrap text-xs text-ink-muted">{item.book.name}</span>
+        <span className="line-clamp-2 break-words text-xs text-ink-muted">{item.book.name}</span>
         <span className="flex-1" />
         {/* Stamped, and stamped at the *right* edge of the card the way a page
             number is stamped at the edge of a page. */}

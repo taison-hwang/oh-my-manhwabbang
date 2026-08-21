@@ -191,12 +191,29 @@ test('6.12 · the 이어보기 shelf obeys the §7 tier it is in', async ({ page
   // two, and "one card per screen" would be asserted against a track that only
   // ever held one. The first draft of this test did exactly that and failed
   // here rather than on the geometry, which is the useful way round.
+  //
+  // **울프가이 is the third, and it is here for its filename.** The card's width
+  // was declared and did not hold for ten sessions (see `ContinueCard`'s header)
+  // because a flex item's automatic minimum floors it at min-content, and the
+  // filename was `nowrap` — so the tier applied to cards whose name was short
+  // and to no others. A shelf of short names cannot see that, which is what
+  // this test used to be. 울프가이's volumes are
+  // `Wolf_Guy_-_Wolfen_Crest_v0N_JP.{zip,rar}` in **both rounds** — the real
+  // collection carries them and `scripts/mkfixture` builds the same three names
+  // — so the longest of them is a long name that is also a single unbreakable
+  // 34-character Latin token, which is the harder half of the same defect.
   const opened: { sid: string; bookId: string }[] = []
-  for (const name of [SERIES.clover, SERIES.gungye]) {
+  for (const name of [SERIES.clover, SERIES.gungye, SERIES.wolfGuy]) {
     const sid = await seriesId(page, name)
-    const first = (await booksOf(page, sid)).find((book) => book.status === 'ok')
-    expect(first, `${name} must have a readable volume to put on the shelf`).toBeDefined()
-    opened.push({ sid, bookId: first?.id ?? '' })
+    const readable = (await booksOf(page, sid)).filter((book) => book.status === 'ok')
+    expect(readable.length, `${name} must have a readable volume to put on the shelf`).toBeGreaterThan(0)
+    // The *longest* name, not the first: which volume lands on the shelf is what
+    // decides whether this test can see the defect at all.
+    const pick =
+      name === SERIES.wolfGuy
+        ? readable.reduce((a, b) => (b.name.length > a.name.length ? b : a))
+        : readable[0]
+    opened.push({ sid, bookId: pick?.id ?? '' })
   }
 
   // shelf.ts rule 2: this spec invents the progress rows that put the shelf on
@@ -237,10 +254,10 @@ test('6.12 · the 이어보기 shelf obeys the §7 tier it is in', async ({ page
         },
         {
           timeout: 15_000,
-          message: 'FR-LIB-010: both opened series must reach /api/continue',
+          message: 'FR-LIB-010: all three opened series must reach /api/continue',
         },
       )
-      .toBeGreaterThanOrEqual(2)
+      .toBeGreaterThanOrEqual(3)
 
     await gotoLibrary(page)
     const track = page.locator('[data-testid="continue-track"]')
@@ -249,9 +266,25 @@ test('6.12 · the 이어보기 shelf obeys the §7 tier it is in', async ({ page
     await expect(card).toBeVisible()
 
     const trackWidth = await track.evaluate((el) => el.clientWidth)
-    const cardWidth = Math.round((await card.boundingBox())?.width ?? 0)
     const snapType = await track.evaluate((el) => getComputedStyle(el).scrollSnapType)
     const snapAlign = await card.evaluate((el) => getComputedStyle(el).scrollSnapAlign)
+
+    // **Every card, not the first one.** The tier is a property of the shelf and
+    // the old form of this assertion — one `boundingBox()` on `.first()` — is
+    // what let a 413px card ship on a 269px shelf: the first card's filename was
+    // short, so the measurement was of the one card that was never wrong. The
+    // spread also tells the failure message which card broke, by name.
+    const cards = await track.evaluate((el) =>
+      [...el.querySelectorAll<HTMLElement>(':scope > button')].map((b) => ({
+        aria: b.getAttribute('aria-label') ?? '',
+        width: Math.round(b.getBoundingClientRect().width),
+      })),
+    )
+    expect(cards.length, 'the shelf holds the three series this test opened').toBeGreaterThanOrEqual(3)
+    const widths = [...new Set(cards.map((c) => c.width))]
+    const describeCards = (): string => cards.map((c) => `${String(c.width)}px ${c.aria}`).join('\n  ')
+    expect(widths, `ui-spec §7: one width per tier, not one per filename —\n  ${describeCards()}`).toHaveLength(1)
+    const cardWidth = widths[0] ?? 0
 
     if (width < 768) {
       // "Full-width cards, one per screen, snap scroll."
@@ -286,6 +319,40 @@ test('6.12 · the 이어보기 shelf obeys the §7 tier it is in', async ({ page
       expect(cardWidth, 'ui-spec §7 ≥1024: 269px cards').toBe(CONTINUE_CARD_DESKTOP_PX)
       expect(snapType, 'ui-spec §7 ≥1024: no snap').toBe('none')
     }
+
+    // **The long name wraps rather than widening the card.** The width assertion
+    // above is only meaningful while a long name is on the shelf, and "a long
+    // name is on the shelf" is a property of the fixture, not of the code under
+    // test — a future rename could make every assertion above pass by making the
+    // defect unreachable. So the premise is asserted too: one of these cards
+    // carries a filename that needs a second line, and takes one.
+    const names = await track.evaluate((el) =>
+      [...el.querySelectorAll<HTMLElement>(':scope > button')].map((b) => {
+        // The filename is the second child of the text column; the title is the
+        // first and is clamped the same way.
+        const column = b.querySelector<HTMLElement>('span.min-w-0')
+        const file = column?.children[1] as HTMLElement | undefined
+        if (file === undefined) return null
+        const cs = getComputedStyle(file)
+        const lineHeight = Number.parseFloat(cs.lineHeight)
+        return {
+          text: file.textContent ?? '',
+          lines: Math.round(file.getBoundingClientRect().height / lineHeight),
+          whiteSpace: cs.whiteSpace,
+          overflowsSideways: file.scrollWidth > file.clientWidth + 1,
+        }
+      }),
+    )
+    const measuredNames = names.filter((n) => n !== null)
+    expect(measuredNames.length, 'every card exposes its filename to be measured').toBe(cards.length)
+    for (const name of measuredNames) {
+      expect(name.whiteSpace, `the filename wraps: ${name.text}`).not.toBe('nowrap')
+      expect(name.overflowsSideways, `the filename is not clipped sideways: ${name.text}`).toBe(false)
+    }
+    expect(
+      measuredNames.some((n) => n.lines >= 2),
+      `one card must carry a filename long enough to have widened the card —\n  ${measuredNames.map((n) => `${String(n.lines)} line(s) ${n.text}`).join('\n  ')}`,
+    ).toBe(true)
 
     // The shelf is the widest thing on the library screen below 768 now, so it
     // is the most likely thing to push the page. NFR-CMP-002 either way.
