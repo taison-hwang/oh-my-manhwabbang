@@ -790,7 +790,7 @@ describe('E-36 §3.7 / E-42 §3 — the control absolutes are pinned, not invent
     for (const [frozen] of PINNED) {
       expect(light.get(frozen), `${frozen} is a reference, not a literal`).not.toContain('var(')
     }
-    expect(light.get('--control-fill-hover')).toBe('#F8F4EC')
+    expect(light.get('--control-fill-hover')).toBe('#F6F2E9')
     expect(light.get('--control-fill-hover')).not.toContain('var(')
   })
 
@@ -850,7 +850,13 @@ describe('E-42 §5 — the declined rows stay declined', () => {
     // E-32 kept 800. `.tag`'s 600 is a different row and *is* adopted, so the
     // two are asserted together — a blanket "weights match the prototype" would
     // be wrong in one direction and a blanket "they do not" wrong in the other.
-    expect(decl('.btn', 'font-weight')).toBe('800')
+    // E-46: the literal moved to the token layer, because 고운바탕 has no 800
+    // and a browser asked for one smears the outlines. The row is still
+    // declined — the prototype's 600 is not adopted — but "the heading weight"
+    // is now stated once next to the face that constrains it, and this
+    // assertion follows it there rather than pinning a number the face cannot
+    // draw.
+    expect(decl('.btn', 'font-weight')).toBe('var(--font-heading-weight)')
     expect(decl('.tag', 'font-weight')).toBe('600')
   })
 
@@ -880,7 +886,7 @@ describe('E-42 §5 — the declined rows stay declined', () => {
     const backdrop = rule('.dialog-backdrop')
     expect(backdrop).toMatch(/backdrop-filter:\s*blur\(2px\)/)
     expect(backdrop).toMatch(/-webkit-backdrop-filter:\s*blur\(2px\)/)
-    expect(light.get('--scrim-modal')).toBe('rgb(38 59 56 / 0.5)')
+    expect(light.get('--scrim-modal')).toBe('rgb(34 30 26 / 0.5)')
     expect(dark.get('--scrim-modal')).toBe('rgb(0 0 0 / 0.6)')
     // ...and the drawer keeps a plain scrim, which is the reason the alpha stayed.
     expect(rule('.drawer-backdrop')).not.toContain('backdrop-filter')

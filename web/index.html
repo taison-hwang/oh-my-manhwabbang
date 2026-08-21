@@ -6,7 +6,7 @@
       Base-path placeholder (NFR-SEC-003).
 
       The server rewrites this href to "{base_path}/" as it serves index.html,
-      so the same built asset works whether SHELF is mounted at "/" or under a
+      so the same built asset works whether 석교만화방 is mounted at "/" or under a
       reverse proxy at "/reader/". Nothing in src/ may hard-code a leading "/":
       src/lib/basePath.ts reads this element, and the router takes its basename
       from it. Keep the trailing slash — a base href without one drops the last
@@ -16,11 +16,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
     <meta name="description" content="아카이브 기반 만화·도서 웹 뷰어" />
-    <title>Oh My Manhwa-bbang</title>
+    <title>석교만화방</title>
     <!--
       No <link> to an external font service. NFR-OPS-001/002 forbid a runtime
-      external dependency, so Archivo is vendored through @fontsource and
-      Hangul falls back to the system stack (decisions.md E-7).
+      external dependency, and the 서고 prototype's remote webfont stylesheet
+      is deleted for that reason. (Not even the host name is written here: the
+      build assertion greps dist/ for it as a literal, and a comment that names
+      it would fail the check it exists to pass.) 고운바탕 is vendored instead —
+      both weights, all 11 172 modern Hangul syllables, 888 KB — so the Korean
+      is the face the design specifies rather than whatever the reader's system
+      happens to have (decisions.md E-7, as amended by E-46).
     -->
   </head>
   <body>

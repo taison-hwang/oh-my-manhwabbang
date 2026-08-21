@@ -96,8 +96,16 @@
   h6 {
     font-family: var(--font-heading);
     font-weight: var(--font-heading-weight);
-    line-height: 1.12;
-    letter-spacing: -0.015em;
+    /* E-46: 1.45, not 1.12. 명조 has long ascenders and descenders and a
+       heading set at the Modernist leading collides with itself. */
+    line-height: 1.45;
+    /* **Zero, and never negative.** The 서고 prototype writes
+       `letter-spacing: 0 !important` on every heading, and it is not a
+       preference: 명조 strokes are thin where they leave the stem, and pulling
+       the letters together closes the counters and turns 한글 syllables into
+       blots at display size. The outgoing skin set -0.015em here because
+       Archivo is a grotesque and wanted it. */
+    letter-spacing: 0;
     margin: 0;
   }
 
@@ -118,7 +126,6 @@
   }
   h6 {
     font-size: 16px;
-    letter-spacing: -0.01em;
   }
 
   p {
@@ -180,34 +187,36 @@
        stock slider in the accent rather than the browser's own blue. */
     accent-color: var(--color-accent);
   }
+  /* E-46: a 2px rule and a rectangular slug, not a 6px pill and a disc.
+     The 서고 slider is a ruler with a marker on it — the same move the rest of
+     the skin makes, where a soft floating object becomes a printed mark. No
+     `box-shadow` on the thumb: a flat drop under a 12px slug is a smudge at
+     this size, and the thumb already separates from the rail by colour. */
   input[type='range']::-webkit-slider-runnable-track {
-    height: 6px;
-    border-radius: var(--radius-full);
+    height: 2px;
     background: var(--fill-track);
   }
   input[type='range']::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    width: 18px;
+    width: 12px;
     height: 18px;
-    margin-top: -6px;
+    /* Half the thumb's height less half the track's: (18 - 2) / 2. */
+    margin-top: -8px;
     background: var(--accent-fill);
     border: 0;
-    border-radius: 50%;
-    box-shadow: var(--shadow-sm);
+    border-radius: 0;
   }
   input[type='range']::-moz-range-track {
-    height: 6px;
-    border-radius: var(--radius-full);
+    height: 2px;
     background: var(--fill-track);
   }
   input[type='range']::-moz-range-thumb {
-    width: 18px;
+    width: 12px;
     height: 18px;
     background: var(--accent-fill);
     border: 0;
-    border-radius: 50%;
-    box-shadow: var(--shadow-sm);
+    border-radius: 0;
   }
 
   /* On the viewer's reading ground the ordinary trough is 1.6:1 and the rail
@@ -229,13 +238,14 @@
       height: var(--touch-min);
     }
     input[type='range']::-webkit-slider-thumb {
-      width: 26px;
-      height: 26px;
-      margin-top: -10px;
+      width: 16px;
+      height: 28px;
+      /* (28 - 2) / 2, the same derivation as above. */
+      margin-top: -13px;
     }
     input[type='range']::-moz-range-thumb {
-      width: 26px;
-      height: 26px;
+      width: 16px;
+      height: 28px;
     }
   }
 
@@ -485,11 +495,17 @@
      changes nothing a touch rule depends on. It also makes the viewer's
      `border-neutral-700` colour overrides inert, which is what E-36 §5.3 wants.
 
-     **`font-weight` stays 800 — table row 3 is NOT adopted.** The prototype
-     says 600. ui-spec §2.3's `.btn` row is one of the rows E-36 did *not* mark
-     ⟳, so it is still the contract, and it pins 800; button labels are set in
-     the heading family and E-32 kept them at the heading weight. Taking the
-     prototype's 600 here would be adopting an unamended row by accident.
+     **`font-weight` is the heading weight, and E-46 moves that to 700.**
+     ui-spec §2.3's `.btn` row pins 800 and E-36 did not mark it ⟳, so it stood
+     for two skins; it cannot stand for this one, because **고운바탕 has no 800
+     and no variable axis**. A browser asked for it synthesises the weight by
+     smearing the outlines, which closes 한글 counters at label size — the one
+     thing 명조 will not take. So the literal is replaced by
+     `var(--font-heading-weight)` here and at every other 800 in this sheet:
+     the weight is now stated once, in the token layer, next to the face that
+     constrains it. The prototype's own 600 is still not adopted — labels stay
+     at the heading weight, which is the part of the old reasoning that
+     survives.
 
      **The transition covers four properties, not one.** `box-shadow`,
      `color` and `transform` are all animated now because the variants below
@@ -502,7 +518,7 @@
     justify-content: center;
     gap: 6px;
     font-family: var(--font-heading);
-    font-weight: 800;
+    font-weight: var(--font-heading-weight);
     font-size: 14px;
     line-height: 1.2;
     color: var(--color-text);
@@ -924,7 +940,16 @@
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-md);
   }
+  /* E-46 hands every uppercase micro-label to `--font-ui`. 명조 has no caps
+     design of its own, so the browser scales the lowercase forms, and at .08em
+     or more of tracking the result is a row of unrelated marks rather than a
+     word. The prototype states the rule as a blanket
+     `[style*="text-transform: uppercase"] { font-family: var(--font-ui) }`;
+     stated per-rule here, because a blanket attribute selector would also
+     catch anything a component sets inline and this sheet does not reach
+     into components. */
   .card-kicker {
+    font-family: var(--font-ui);
     font-size: 10px;
     letter-spacing: 0.1em;
     text-transform: uppercase;
@@ -932,7 +957,7 @@
   }
   .card-title {
     font-family: var(--font-heading);
-    font-weight: 800;
+    font-weight: var(--font-heading-weight);
     font-size: 17px;
     line-height: 1.2;
   }
@@ -969,7 +994,7 @@
   }
   .nav-brand {
     font-family: var(--font-heading);
-    font-weight: 800;
+    font-weight: var(--font-heading-weight);
     font-size: 18px;
     margin-right: auto;
   }
@@ -982,6 +1007,7 @@
   }
   .table th {
     text-align: left;
+    font-family: var(--font-ui);
     font-size: 11px;
     font-weight: 400;
     letter-spacing: 0.08em;
@@ -1038,7 +1064,7 @@
   }
   .dialog-title {
     font-family: var(--font-heading);
-    font-weight: 800;
+    font-weight: var(--font-heading-weight);
     font-size: 20px;
     line-height: 1.12;
   }

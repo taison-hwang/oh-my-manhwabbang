@@ -61,39 +61,53 @@ var loginPageTemplate = template.Must(template.New("login").Parse(`<!doctype htm
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex, nofollow" />
-<title>Oh My Manhwa-bbang</title>
+<title>석교만화방</title>
 <style>
+/* E-46's 서고 palette, restated rather than referenced.
+   This page is served *before* the SPA and deliberately depends on nothing: no
+   stylesheet, no script, no webfont. The vendored 고운바탕 is same-origin and
+   would pass the CSP, but its filename is fingerprinted by Vite at build time
+   and this Go template cannot know it — so the face is a system 명조 stack and
+   the colours are literals. Two copies of a palette is a cost; a gate page that
+   can fail to render because an asset moved is a larger one.
+   The values are tokens.css's light and dark grounds, ink and 인주. */
 :root { color-scheme: light dark; }
-* { box-sizing: border-box; border-radius: 0; }
+* { box-sizing: border-box; border-radius: 2px; }
 body {
   margin: 0; min-height: 100vh; display: flex; align-items: center;
   justify-content: center; padding: 24px;
-  font-family: Pretendard, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif;
-  background: #fff; color: #111;
+  font-family: "Gowun Batang", "Noto Serif KR", "Apple SD Gothic Neo", batang, serif;
+  background: #DED5C4; color: #221E1A;
 }
 main { width: 100%; max-width: 320px; }
-/* A proper noun, so neither uppercased nor letter-spaced the way the old
-   all-caps mark was — at 320px those two turn the name into two ragged lines. */
-h1 { font-size: 20px; letter-spacing: -.01em; margin: 0 0 4px; }
-p { font-size: 13px; line-height: 1.5; margin: 0 0 20px; color: #666; }
-p.error { color: #c0392b; }
-label { display: block; font-size: 12px; margin-bottom: 6px; color: #666; }
+/* A proper noun, and 명조 will not take negative tracking — the strokes close
+   up and the syllables blot. Zero here for the same reason base.css pins zero
+   on every heading. */
+h1 { font-size: 22px; font-weight: 700; letter-spacing: 0; margin: 0 0 4px; }
+p { font-size: 13px; line-height: 1.5; margin: 0 0 20px; color: #564D42; }
+p.error { color: #7A281D; }
+label { display: block; font-size: 12px; margin-bottom: 6px; color: #564D42; }
 input, button {
   width: 100%; font: inherit; font-size: 14px; padding: 10px 12px;
-  border: 1px solid #111; background: #fff; color: #111;
+  border: 1px solid #A5967E; background: #EFE9DC; color: #221E1A;
 }
-button { margin-top: 12px; background: #111; color: #fff; cursor: pointer; }
+button {
+  margin-top: 12px; background: #A2382A; color: #F6F2E9; cursor: pointer;
+  border-color: #A2382A; font-weight: 700;
+}
 @media (prefers-color-scheme: dark) {
-  body { background: #111; color: #f5f5f5; }
-  p { color: #999; }
-  input { background: #111; color: #f5f5f5; border-color: #f5f5f5; }
-  button { background: #f5f5f5; color: #111; }
+  body { background: #221E1A; color: #DED5C4; }
+  p { color: #B7A78B; }
+  p.error { color: #D3A79D; }
+  label { color: #B7A78B; }
+  input { background: #302A24; color: #DED5C4; border-color: #6E6355; }
+  button { background: #A2382A; color: #F6F2E9; border-color: #A2382A; }
 }
 </style>
 </head>
 <body>
 <main>
-<h1>Oh My Manhwa-bbang</h1>
+<h1>석교만화방</h1>
 {{if .Message}}<p class="error" role="alert">{{.Message}}</p>{{else}}<p>계속하려면 비밀번호를 입력하세요.</p>{{end}}
 <form method="post" action="{{.Action}}">
 <label for="password">비밀번호</label>

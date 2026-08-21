@@ -21,7 +21,7 @@ import { Radio } from './Radio'
 import { Seg } from './Seg'
 import { Skeleton } from './Skeleton'
 import { Tag } from './Tag'
-import { BRAND_NAME, BRAND_TAGLINE, Wordmark } from './Wordmark'
+import { BRAND_NAME, BRAND_TAGLINE, SEAL_GLYPH, Wordmark } from './Wordmark'
 
 describe('Button (ui-spec §2.3)', () => {
   it('is a real button and defaults to type="button"', () => {
@@ -535,29 +535,54 @@ describe('Wordmark', () => {
     expect(screen.queryByText(BRAND_TAGLINE)).toBeNull()
   })
 
-  it('keeps the bars out of the accessible tree — they are a picture, not the name', () => {
+  it('keeps the seal out of the accessible tree — it is a picture, not the name', () => {
+    // E-46 replaces the five-bar shelf mark with the 낙관 the prototype draws.
+    // The accessibility contract is unchanged and is the half worth pinning:
+    // the mark carries no text a reader needs, and the name beside it (or, in
+    // the rail, `VisuallyHidden`) is what gets announced.
     const { container } = render(<Wordmark variant="hero" />)
     const mark = container.querySelector('[aria-hidden="true"]')
     expect(mark).not.toBeNull()
-    // Five bars, and exactly one of them is the accent field (ui-spec §2.5).
-    expect(mark?.children).toHaveLength(5)
-    expect(mark?.querySelectorAll('.bg-accent')).toHaveLength(1)
+    expect(mark?.textContent).toBe(SEAL_GLYPH)
+    // The glyph is 藏 and it is vendored on its own (fonts.css): 고운바탕 has
+    // no 한자 at all, so a mark drawn in the body face is a tofu box on any
+    // machine without a CJK serif installed.
+    expect(SEAL_GLYPH).toBe('藏')
+    expect(mark).toHaveClass('font-seal')
   })
 
-  it('stands the bars on a small raised card, at both sizes (E-32)', () => {
+  it('presses the seal four degrees off square, at both sizes (E-46)', () => {
+    // The tilt is the mark rather than an effect: a seal printed exactly square
+    // reads as a logo, and four degrees off reads as ink pressed onto paper.
     const { container: hero, unmount } = render(<Wordmark variant="hero" />)
-    expect(hero.querySelector('[aria-hidden="true"]')).toHaveClass(
-      'bg-surface',
-      'rounded-pill',
-      'shadow-md',
+    const heroMark = hero.querySelector('[aria-hidden="true"]')
+    // `accent-text`, not `accent`: the base accent is 2.15 on the dark ground.
+    expect(heroMark).toHaveClass(
+      'size-16',
+      'rounded-md',
+      'border-2',
+      'border-accent-text',
+      'text-accent-text',
     )
+    expect(heroMark).toHaveStyle({ transform: 'rotate(-4deg)' })
     unmount()
 
     const { container: compact } = render(<Wordmark variant="compact" />)
-    expect(compact.querySelector('[aria-hidden="true"]')).toHaveClass(
-      'bg-surface',
-      'rounded-md',
-      'shadow-sm',
-    )
+    const compactMark = compact.querySelector('[aria-hidden="true"]')
+    expect(compactMark).toHaveClass('size-[30px]', 'rounded-sm', 'border-[1.5px]', 'border-accent-text')
+    expect(compactMark).toHaveStyle({ transform: 'rotate(-4deg)' })
+  })
+
+  it('sets the lockup in 명조 with no negative tracking (E-46)', () => {
+    // 명조 loses its strokes when the letters are pulled together, which is why
+    // E-46 pins `letter-spacing: 0` on headings — the outgoing lockup carried
+    // -.02em on the hero name and -.01em compact. The descriptor goes the other
+    // way and is handed to the sans, because caps at .2em of tracking in a
+    // serif come apart.
+    const { container } = render(<Wordmark variant="hero" />)
+    const name = screen.getByText(BRAND_NAME)
+    expect(name).toHaveClass('font-heading', 'font-bold', 'tracking-normal')
+    expect(name.className).not.toMatch(/tracking-\[-/)
+    expect(container.querySelector('.uppercase')).toHaveClass('font-ui')
   })
 })

@@ -73,6 +73,22 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
     sourcemap: false,
+    // **Never inline an asset as a `data:` URI.** Vite inlines anything under
+    // 4096 bytes by default, and the product's own CSP is `default-src 'self'`
+    // with no `font-src` or `img-src` of its own (arch §8.4) — so a `data:`
+    // URI is refused by the page that asked for it.
+    //
+    // This was not theoretical. E-46 vendors the 藏 of the 낙관 as its own
+    // 2 148-byte subset, precisely so the mark is not a tofu box on a machine
+    // with no CJK serif installed; Vite inlined it, the CSP blocked it, and the
+    // seal rendered from a *system* font on the one machine that had one. The
+    // e2e console guard is what surfaced it — "Loading the font 'data:font/…'
+    // violates the following Content Security Policy directive" — and nothing
+    // on screen looked wrong, which is the whole reason that guard exists.
+    //
+    // `0` rather than a threshold: any inlined asset is the same defect, and a
+    // number invites the next small file to sit under it.
+    assetsInlineLimit: 0,
     // The library and viewer are both virtualised; chunks stay small. Warn
     // early rather than discover a 2 MB bundle in the 20 MB binary budget.
     chunkSizeWarningLimit: 600,

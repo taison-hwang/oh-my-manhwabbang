@@ -1,5 +1,6 @@
 /*
- * SHELF design tokens — ui-spec §1.2 (light) + §1.4 (dark), as amended by E-32.
+ * 석교만화방 design tokens — ui-spec §1.2 (light) + §1.4 (dark), as amended by
+ * E-32 and superseded for colour by **E-46, the 서고 skin**.
  *
  * Imported once from main.tsx, before Tailwind's layers. Nothing else in the
  * app may contain a colour literal; every hex in the product is in this file.
@@ -19,32 +20,50 @@
  * next-volume card of ui-spec §6.5 needs.
  *
  * ---------------------------------------------------------------------------
- * E-32 — the soft-UI skin
+ * E-46 — the 서고 skin (`만화방 v3 서고.dc.html`)
  * ---------------------------------------------------------------------------
- * The ground is warm cream, the accent a deep teal, the ramps warm ochre, and
- * elevation is dual-light (highlight up-left, shadow down-right) rather than a
- * single ink drop. Three consequences run through the whole file:
+ * The ground is document beige, the ink a warm near-black, the accent 인주 —
+ * the vermilion of a seal — and elevation is a single flat drop rather than
+ * soft-UI's dual light. Type is 명조: 고운바탕 with 본명조 behind it, with
+ * numerals and uppercase micro-labels handed to a sans so they stay aligned.
+ * Geometry collapses to 2–3px. Four consequences run through this file:
  *
- *  1. `--color-hot` (#EC3013, the retired brand red) is NOT a brand colour any
- *     more. It marks "current / selected / focused" and nothing else. The
- *     moment it is used as an accent again this decision has been undone.
+ *  1. **`--color-hot` is now the accent itself.** E-32 §1 kept them apart
+ *     because its accent was a deep teal and its marker a retired brand red;
+ *     this design has one red and uses it for both. That is a deliberate
+ *     reversal of E-32 §1, not a drift, and tokens.test.ts asserts the new
+ *     identity rather than the old separation so the change cannot happen by
+ *     accident a second time.
  *
- *  2. The accent is a *dark* teal, so it can no longer double as ink on a dark
- *     ground and `--color-bg` can no longer double as its foreground. Two
- *     tokens exist for that: `--accent-text` (the accent when it is ink, flips
- *     with the theme) and `--on-accent` (the ink that sits on an accent fill,
- *     constant because the accent is constant). `--accent-fill` is the accent
- *     when it is a fill that must read against the ground — on dark it moves up
- *     the ramp, because #17595B tops out at 2.6:1 against *any* darker ground.
+ *  2. **`--on-hot` inverts.** E-43 had to pin it to pure black, because
+ *     #EC3013 is bright and light ink topped out at 4.20. #A2382A is dark, and
+ *     black on it is **2.88 washed** — a clear fail. The marker now takes the
+ *     same cream every accent fill takes, at 5.62 washed, which also retires
+ *     the grain exemption E-43 needed: that pair had 0.23 of headroom and this
+ *     one has 1.12. The exemption is kept in `base.css` for the chip's *ground*,
+ *     and the reason is restated there.
  *
- *  3. `soft-ui.css` has no dark palette, so the dark block below is derived,
- *     not copied: a teal-ink ground seeded on the light theme's #263B38, with
- *     every semantic token re-flipped onto it. The ramps stay put — they are an
- *     absolute lightness scale, and inlining raw ramp steps the way the
- *     prototype does is exactly what breaks contrast when the theme flips.
+ *  3. The accent is a *dark* red, so it still cannot double as ink on a dark
+ *     ground: `--accent-text` (the accent when it is ink, flips with the theme)
+ *     and `--on-accent` (the ink on an accent fill, constant because the accent
+ *     is) both survive from E-32, with new values.
  *
- * Every ratio quoted below is WCAG 2.1 relative luminance, computed, not eyed;
- * the same numbers are re-derived and asserted in tokens.test.ts.
+ *  4. The prototype ships light only, so the dark block is **derived, not
+ *     copied** — the same method E-32 used: the ground is the light theme's ink
+ *     (#221E1A) and the ink is the light theme's ground, every semantic token
+ *     re-flipped onto it. The ramps stay put; they are an absolute lightness
+ *     scale.
+ *
+ * Where the prototype and a measurement disagree, the measurement wins and the
+ * disagreement is written down — the practice E-32 §4 established when it
+ * refused three of its own prototype's colours. Two are refused here: the
+ * scrollbar thumb (the prototype's neutral-400 is 1.40 on the ground) and
+ * `--control-border` (its divider tone is 1.92 on the surface against the
+ * 2.32 the outgoing skin measured, so it is held at the outgoing number).
+ *
+ * Every ratio quoted below is WCAG 2.1 relative luminance after the paper wash,
+ * worst of the three grain tones, computed and not eyed; the same numbers are
+ * re-derived and asserted in tokens.test.ts.
  */
 
 :root,
@@ -52,91 +71,100 @@
   color-scheme: light;
 
   /* ---- roles ---------------------------------------------------------- */
-  --color-bg: #EAE3D4;
-  --color-surface: #F3EEE3;
-  --color-text: #263B38;
-  --color-accent: #17595B;
-  /* E-32: the secondary accent collapses into the accent. The tokens survive
-     because `.tag-accent-2` and the Tailwind mapping still name them. */
+  --color-bg: #DED5C4;
+  --color-surface: #EFE9DC;
+  --color-text: #221E1A;
+  --color-accent: #A2382A;
+  /* The secondary accent collapses into the accent, as it did under E-32. The
+     tokens survive because `.tag-accent-2` and the Tailwind mapping name them. */
   --color-accent-2: var(--color-accent);
-  --color-divider: #DDD3C0;
+  --color-divider: #B7A78B;
 
-  /* The retired brand red, kept for ONE job: "current / selected / focused".
-     Theme-invariant — it is a marker, not part of either palette. */
-  --color-hot: #EC3013;
+  /* 인주 — and in this skin it is the accent, not a separate marker. See §1 of
+     the header: E-32 kept these apart, E-46 joins them on purpose. Still
+     theme-invariant: a seal does not change colour at night. */
+  --color-hot: #A2382A;
 
   /* ---- semantic, theme-flipping (ui-spec §1.4) ------------------------ */
-  --ink: var(--color-text); /* 9.31 on bg / 10.28 on surface */
-  --ink-muted: rgb(38 59 56 / 0.8); /* 5.47 / 5.84 */
-  --ink-dim: #5F5849; /* neutral-700 — 5.52 / 6.09. The prototype's
-                         neutral-600 is 3.31 on this ground: an AA fail at the
-                         10–12px this token is used at (E-32 §4). */
-  --ink-faint: #68604F; /* 4.87 / 5.23 — neutral-600 lifted toward 700 until it
-                           clears AA on the *bg*, the harder of the two grounds.
-                           neutral-500 is 2.37 on surface (E-32 §4).
-                           Lifted a second time for the paper grain: #6C6453 was
-                           4.58 dry and **4.47 washed**, i.e. the texture put an
-                           AA pass into an AA fail. Now 4.74 washed at mean grain
-                           and 4.63 at the mask's peak. */
-  --ink-label: rgb(38 59 56 / 0.78); /* .field > label — 5.18 / 5.52 */
-  --ink-meta: rgb(38 59 56 / 0.75); /* .card-meta, 11px — 4.79 / 5.07 */
-  --ink-th: rgb(38 59 56 / 0.76); /* .table th, 11px — 4.92 / 5.22 */
+  --ink: var(--color-text); /* 10.12 on bg / 12.14 on surface */
+  --ink-muted: rgb(34 30 26 / 0.8); /* 6.25 / 7.08 */
+  --ink-dim: #564D42; /* neutral-700 — 5.31 / 6.37. neutral-600 is **3.84** on
+                         the bg, an AA fail at the 10–12px this token is used
+                         at, so the ramp step below it is not available here —
+                         the same shape of refusal E-32 §4 made of its own
+                         prototype's neutral-600. */
+  --ink-faint: #5F5549; /* 4.71 / 5.65 (peak 4.46 / 5.33) — solved, not picked:
+                           the fainter quiet ink has to clear AA on the *bg*,
+                           the harder of the two light grounds, once the grain
+                           is on it. This palette's neutral ramp jumps straight
+                           from 500 (1.62, invisible) to 600 (3.84, failing) to
+                           700 (5.31, the dim ink), so there is no step between
+                           `--ink-dim` and unreadable and this value is
+                           interpolated to land 0.21 over the floor. */
+  --ink-label: rgb(34 30 26 / 0.78); /* .field > label — 5.92 / 6.67 */
+  --ink-meta: rgb(34 30 26 / 0.75); /* .card-meta, 11px — 5.46 / 6.09 */
+  --ink-th: rgb(34 30 26 / 0.76); /* .table th, 11px — 5.61 / 6.28 */
   --rule: var(--color-divider); /* 1px hairlines */
-  --rule-strong: #CFC5B0; /* neutral-400 — the 2px structural rules */
-  --control-border: #A79B84; /* neutral-500 — 2.14 / 2.37. The soft divider is
-                                1.16 on the ground; a control boundary drawn in
-                                it is not a boundary. */
-  --control-border-hover: #857A66; /* neutral-600 — 3.31 / 3.65 */
-  --fill-subtle: #EFE9DC; /* neutral-200 */
-  --fill-track: #E2DACA; /* neutral-300 — progress troughs */
-  --fill-track-2: #CFC5B0; /* neutral-400 — troughs over imagery */
-  --hover-tint: rgb(38 59 56 / 0.07);
-  --press-tint: rgb(38 59 56 / 0.14);
-  --row-hover: rgb(38 59 56 / 0.05);
-  --row-hover-table: rgb(38 59 56 / 0.04);
-  --nav-hover: rgb(38 59 56 / 0.06);
-  --nav-active: rgb(23 89 91 / 0.1);
-  --scrim-cover: rgb(38 59 56 / 0.72);
-  --scrim-modal: rgb(38 59 56 / 0.5);
+  --rule-strong: #C4B497; /* neutral-400 — the 2px structural rules */
+  --control-border: #A5967E; /* 2.34 on the surface. The prototype draws its
+                                control edges in `--color-divider`, which here
+                                is **1.92** — below the 2.32 the outgoing skin
+                                measured, i.e. adopting it verbatim would make a
+                                boundary fainter than the one it replaces. Held
+                                at the outgoing number instead, between
+                                neutral-500 and neutral-600. */
+  --control-border-hover: #807362; /* 3.66 on the surface — the same step up the
+                                      outgoing skin had (3.65). */
+  --fill-subtle: #E4DBCB; /* neutral-200 */
+  --fill-track: #D5C4A4; /* neutral-300 — progress troughs */
+  --fill-track-2: #C4B497; /* neutral-400 — troughs over imagery */
+  --hover-tint: rgb(34 30 26 / 0.07);
+  --press-tint: rgb(34 30 26 / 0.14);
+  --row-hover: rgb(34 30 26 / 0.05);
+  --row-hover-table: rgb(34 30 26 / 0.04);
+  --nav-hover: rgb(34 30 26 / 0.06);
+  --nav-active: rgb(162 56 42 / 0.1);
+  --scrim-cover: rgb(34 30 26 / 0.72);
+  --scrim-modal: rgb(34 30 26 / 0.5);
   /* The three stops of `.cover-scrim`'s hover gradient, bottom to top. A
-     gradient is not a colour, so these were approximated out of the two scrims
-     above plus `--hover-tint` — .72 / .50 / .07 against the prototype's
-     .92 / .55 / .15, i.e. the top of the card carried half the wash it should
-     and the bottom two thirds of it. Three tokens is what makes it exact. */
-  --scrim-cover-base: rgb(38 59 56 / 0.92);
-  --scrim-cover-mid: rgb(38 59 56 / 0.55);
-  --scrim-cover-top: rgb(38 59 56 / 0.15);
-  --accent-hover: #135052; /* accent-600 — one step past base on light */
-  --accent-press: #114547; /* accent-700 */
-  --accent-text: #114547; /* accent-700 — the accent at paragraph size, 8.36 */
-  --accent-fill: var(--color-accent); /* 5.78 on --fill-track (floor is 3) */
-  --scrollbar-thumb: #A79B84; /* neutral-500. The prototype's neutral-400 is
-                                 1.34 on the ground and the thumb is 4px wide
+     gradient is not a colour, so three tokens is what makes it exact. */
+  --scrim-cover-base: rgb(34 30 26 / 0.92);
+  --scrim-cover-mid: rgb(34 30 26 / 0.55);
+  --scrim-cover-top: rgb(34 30 26 / 0.15);
+  --accent-hover: #8E2F22; /* accent-600 — one step past base on light */
+  --accent-press: #7A281D; /* accent-700 */
+  --accent-text: #7A281D; /* accent-700 — the accent at paragraph size, 6.18 on
+                             the bg / 7.41 on the surface. accent-500 itself is
+                             **4.33** on the bg, so the base accent cannot be
+                             ink here any more than the teal could. */
+  --accent-fill: var(--color-accent); /* 4.06 on --fill-track (floor is 3) */
+  --scrollbar-thumb: #B7A78B; /* neutral-500. The prototype's neutral-400 is
+                                 1.40 on the ground and the thumb is 4px wide
                                  once the 3px transparent border is cut. */
-  --scrollbar-thumb-hover: #857A66; /* neutral-600 */
-  --ghost-hover: rgb(23 89 91 / 0.1);
-  --ghost-press: rgb(23 89 91 / 0.18);
-  --selection-bg: rgb(23 89 91 / 0.22); /* ink stays at 6.68 on the selection */
+  --scrollbar-thumb-hover: #6E6355; /* neutral-600 */
+  --ghost-hover: rgb(162 56 42 / 0.1);
+  --ghost-press: rgb(162 56 42 / 0.18);
+  --selection-bg: rgb(162 56 42 / 0.22); /* ink stays at 7.51 on the selection */
 
   /* ---- ramps — constant across themes (an absolute lightness scale) --- */
-  --color-neutral-100: #F7F3EA;
-  --color-neutral-200: #EFE9DC;
-  --color-neutral-300: #E2DACA;
-  --color-neutral-400: #CFC5B0;
-  --color-neutral-500: #A79B84;
-  --color-neutral-600: #857A66;
-  --color-neutral-700: #5F5849;
-  --color-neutral-800: #3B3730;
-  --color-neutral-900: #23211D;
-  --color-accent-100: #E4EEEC;
-  --color-accent-200: #C7DCDA;
-  --color-accent-300: #9BC3C1;
-  --color-accent-400: #5E9B9B;
-  --color-accent-500: #17595B;
-  --color-accent-600: #135052;
-  --color-accent-700: #114547;
-  --color-accent-800: #0D3436;
-  --color-accent-900: #082325;
+  --color-neutral-100: #EFE9DC;
+  --color-neutral-200: #E4DBCB;
+  --color-neutral-300: #D5C4A4;
+  --color-neutral-400: #C4B497;
+  --color-neutral-500: #B7A78B;
+  --color-neutral-600: #6E6355;
+  --color-neutral-700: #564D42;
+  --color-neutral-800: #39332B;
+  --color-neutral-900: #221E1A;
+  --color-accent-100: #F0E2DC;
+  --color-accent-200: #E3C8C0;
+  --color-accent-300: #D3A79D;
+  --color-accent-400: #BE6E5F;
+  --color-accent-500: #A2382A;
+  --color-accent-600: #8E2F22;
+  --color-accent-700: #7A281D;
+  --color-accent-800: #5C1D15;
+  --color-accent-900: #3E140E;
   --color-accent-2-100: var(--color-accent-100);
   --color-accent-2-200: var(--color-accent-200);
   --color-accent-2-300: var(--color-accent-300);
@@ -148,121 +176,68 @@
   --color-accent-2-900: var(--color-accent-900);
 
   /* ---- absolutes — not theme-relative ---------------------------------- */
-  /* The viewer ground is #263B38 in both app themes, so the scrims painted on
+  /* The viewer ground is #221E1A in both app themes, so the scrims painted on
      top of it are constants rather than `text @ N%`. So are the two foregrounds
-     below: the surfaces they sit on (the accent, the hot marker) do not flip. */
-  --scrim-volume-end: rgb(38 59 56 / 0.92);
-  --scrim-broken: rgb(8 35 37 / 0.82); /* accent-900 @ 82% */
-  --on-accent: #F6F2E9; /* 7.18 on the accent, 8.18 on accent-600 */
-  --on-hot: #000000; /* 4.9988 on --color-hot, and it has to be *pure* black.
-                        Light ink cannot get there at all: #F6F2E9 is 3.76
-                        (E-32 §4) and even pure white is 4.20. Dark ink can, but
-                        barely — black is this palette's absolute ceiling here,
-                        so the hot marker only ever had 0.50 of headroom over AA
-                        and the paper grain costs 0.27 of it. The shipped
-                        #1B0B07 was 4.55 dry and **4.33 washed**: a fail the
-                        contrast tests could not see because they did not model
-                        the texture. Black is 4.73 washed, which clears AA with
-                        0.23 to spare.
-
-                        At the mask's *peak* alpha it is 4.46–4.51 depending on
-                        how the peak is defined, i.e. on the wrong side of 4.5
-                        under two of the four definitions. tokens.test.ts
-                        reports that number and does not gate on it, and says
-                        why. The honest reading is that this token has run out
-                        of room: the next 0.04 of margin has to come from
-                        **`--color-hot`** — about +4 % relative luminance — and
-                        changing the retired brand red E-32 §1 pinned is a
-                        ruling, not a side effect of adding a texture. */
+     below: the surfaces they sit on (the accent, the seal) do not flip. */
+  --scrim-volume-end: rgb(34 30 26 / 0.92);
+  --scrim-broken: rgb(62 20 14 / 0.82); /* accent-900 @ 82% */
+  --on-accent: #F6F2E9; /* 5.62 on the accent, 6.75 on accent-600 */
+  --on-hot: #F6F2E9; /* The same cream, because the marker and the accent are
+                        now one colour. This is the inversion of E-43's ruling
+                        and it is an improvement rather than a compromise: on
+                        #EC3013 light ink could not clear AA at all (pure white
+                        was 4.20) and pure black cleared it by 0.23 with the
+                        grain on. On #A2382A the position is reversed — black is
+                        **2.88 washed**, and this cream is **5.62**, with 1.12 of
+                        headroom instead of 0.23. E-43 §2 argued that moving the
+                        brand red was a ruling and not a side effect; E-46 is
+                        that ruling, and the exemption it forced is no longer
+                        load-bearing for legibility. */
 
   /* ---- controls — absolute (E-36 §4, E-42 §2) --------------------------- */
   /* A control is a *raised cream surface*, and it is the same cream in all
-     three scopes: app light, app dark, and the viewer. E-36 §4 pinned that for
-     the viewer; E-42 §2 promotes it to a global rule, because a custom property
-     cannot tell scopes apart — there is no honest way to write "cream in the
-     viewer, whatever the theme says elsewhere" without a `:root[data-theme]` vs
-     `[data-theme]:not(:root)` split, and that split is exactly what E-42 rules
-     out. So the control fills and the inks that sit on them join the family
-     above: `--on-accent` and `--on-hot` are foregrounds on a surface that never
-     flips, and a cream pill is the same shape of problem.
+     three scopes: app light, app dark, and the viewer. E-42 §2 promotes that to
+     a global rule, because a custom property cannot tell scopes apart — there is
+     no honest way to write "cream in the viewer, whatever the theme says
+     elsewhere" without a `:root[data-theme]` vs `[data-theme]:not(:root)` split.
+     E-46 keeps the rule and moves the cream: the 서고 surface is #EFE9DC.
+     `.input` and the `.seg` track keep their recessed inset — the prototype
+     redefines `--shadow-sm/md/lg` flat but leaves `--shadow-inset` alone, so the
+     wells stay wells while the lifts go flat.
 
      **These nine have no `[data-theme='dark']` counterpart, and adding one is
      what would stop them being absolutes.** The moment a dark block re-declares
-     `--control-fill`, a control in the viewer is a deep-teal pill on a deep-teal
-     bar — a dark button on a dark ground, which is the exact defect E-36 §4 was
-     written to stop. The same goes for the inks: `--ink` on dark is #EAE3D4,
-     which measures **1.10** on this cream, and `--accent-text` on dark is
-     #9BC3C1, which measures **1.65**. Both letters simply vanish.
+     `--control-fill`, a control in the viewer is a near-black pill on a
+     near-black bar. The same goes for the inks: `--ink` on dark is #DED5C4,
+     which measures **1.06** on this cream.
 
-     Provenance of the cream itself: 9th session measured the prototype's `뒤로`
-     button directly, and left the reading in two places (full text in E-36 §4).
-     `docs/ui-shots/README.md` §"The viewer's bars are not cream" — the
-     prototype's button interior is (235, 230, 220) while its bar is (37, 57, 55),
-     whereas in the product that same pixel is (37, 58, 55), i.e. the bar itself,
-     with a fill of `rgba(0,0,0,0)`; that file's own delta reads "컨트롤: 테두리
-     고스트 → 크림 채움" and calls it the largest difference in the set, at all
-     four widths. `design-v2/MEASURED.md` records the button as `bg #F3EEE3`,
-     `color rgb(13,52,54)` (= accent-800), `border-radius 7px`, and concludes
-     that the delta is not "the viewer gets brighter" — the ground stays dark and
-     what changes is the control going from a border ghost to a cream fill.
-
-     Every ratio below is worst-of-three-tones after the paper wash, quoted the
-     way the rest of this file quotes them: dry → **washed** (peak). They are
-     E-42 §3's table, re-derived here, not restated from it. */
-  --control-fill: #F3EEE3; /* The raised control surface — the light theme's
+     Every ratio below is worst-of-three-tones after the paper wash. */
+  --control-fill: #EFE9DC; /* The raised control surface — the light theme's
                               `--color-surface` pinned to a literal so it cannot
-                              flip. `--on-control` on it is 11.62 → **11.02**
-                              (10.54). As a *fill* it also has to separate from
-                              the ground it sits on, and both grounds clear the
-                              3:1 non-text floor with room to spare: 10.28 →
-                              **9.80** (9.40) against the viewer ground #263B38,
-                              8.29 → **7.96** (7.69) against the dark surface
-                              #2F4A46. The accent fill reads on it at 6.94 →
-                              **6.69** (6.49) and the hot marker ring at 3.63 →
-                              **3.58** (3.54), over the 3:1 marker floor. */
-  --control-fill-hover: #F8F4EC; /* The prototype's hover cream. Until now it had
-                              no corresponding token at all — E-36 §4 counted it
-                              zero times across tokens.css and base.css, which is
-                              why `.btn-secondary:hover` had nothing to move to.
-                              `--on-control` on it is 12.26 → **11.62** (11.11),
-                              `--on-control-accent` 7.32 → **7.06** (6.84). */
-  --control-well: #EFE9DC; /* The *recessed* track: `.seg`. The value is the
-                              light theme's `--fill-subtle` (= neutral-200)
-                              pinned. Not written as `var(--fill-subtle)` —
-                              that flips to #2F4A46 on dark and the track would
-                              go teal inside a cream control; not written as
-                              `var(--color-neutral-200)` either, because the ramp
-                              step is a coincidence of value, and what this token
-                              *is* is "the light control track, held still".
-                              On it: `--on-control` 11.12 → **10.55** (10.09),
-                              `--on-control-dim` (the unselected seg option)
-                              5.83 → **5.65** (5.50), `--on-control-accent`
-                              (hover) 6.63 → **6.41** (6.22). The selected
-                              option's accent fill separates at 6.63 → **6.41**
-                              (6.22) and its hot ring at 3.47 → **3.43** (3.39),
-                              both over 3:1; the well itself separates from the
-                              viewer ground at 9.83 → **9.37** (9.00). */
-  --on-control: #0D3436; /* accent-800 pinned — the ink on cream, and the colour
-                            9th session read straight off the prototype's `뒤로`
-                            label. 11.62 → **11.02** (10.54) on the fill, 12.26 →
-                            **11.62** (11.11) on the hover cream, 11.12 →
-                            **10.55** (10.09) on the well. Absolute because the
-                            cream is: `--ink` would flip to #EAE3D4 here and land
-                            at 1.10. */
-  --on-control-accent: #17595B; /* The accent when it is ink *on cream* — the
+                              flip. `--on-control` on it is **9.38** washed. As a
+                              *fill* it also has to separate from the ground it
+                              sits on: **10.79** against the viewer ground
+                              #221E1A and **9.28** against the dark surface
+                              #302A24, both far over the 3:1 non-text floor. */
+  --control-fill-hover: #F6F2E9; /* The hover cream. `--on-control` on it is
+                              **10.15** washed, `--on-control-accent` **5.98**. */
+  --control-well: #E4DBCB; /* The *recessed* track: `.seg`. The light theme's
+                              neutral-200 pinned. Not written as
+                              `var(--fill-subtle)` — that flips on dark and the
+                              track would go near-black inside a cream control. */
+  --on-control: #5C1D15; /* accent-800 pinned — the ink on cream. Absolute
+                            because the cream is: `--ink` would flip to #DED5C4
+                            here and land at 1.06. */
+  --on-control-accent: #A2382A; /* The accent when it is ink *on cream* — the
                             hovered `.btn-secondary` label, the viewer bottom
-                            bar's strip-open control. 7.32 → **7.06** (6.84) on
-                            the hover cream, 6.63 → **6.41** (6.22) on the well.
-                            `--accent-text` cannot do this job: it flips to
-                            accent-300 on dark, which is 1.65 on the cream. */
-  --on-control-dim: #5F5849; /* neutral-700 pinned — placeholders and unselected
-                            seg options, i.e. the ink that is *meant* to be quiet
-                            and therefore has the least room. 6.09 → **5.90**
-                            (5.75) on the fill, 5.83 → **5.65** (5.50) on the
-                            well. `--ink-dim` flips to #B9C8C4 on dark: 1.50. */
+                            bar's strip-open control. `--accent-text` cannot do
+                            this job: it flips to accent-300 on dark, which is
+                            1.55 on the cream. */
+  --on-control-dim: #564D42; /* neutral-700 pinned — placeholders and unselected
+                            seg options. `--ink-dim` flips to neutral-400 on
+                            dark: 1.48 on this cream. */
 
-  /* The rule this ruling establishes, and the sentence the next person needs:
-     **a shadow does not follow the theme, it follows the surface it falls on.**
+  /* **a shadow does not follow the theme, it follows the surface it falls on.**
 
        | where the shadow falls                      | token                    |
        |---------------------------------------------|--------------------------|
@@ -271,43 +246,45 @@
        | *on top of* a cream control (absolute)      | --shadow-control-raised  |
        | *inside* an accent fill (absolute)          | --shadow-accent-inset    |
 
-     The middle two are the light set's values held still, and the last one is
-     the *dark* set's value held still — which is the whole point: the accent is
-     a dark teal in both themes, so a recess cut into it is a dark-ground recess
-     even when the app is light. Each is a literal copy, never `var(--shadow-…)`;
-     a reference resolves in the scope it is *used* in, so it would flip with the
-     theme, and not flipping is the only reason these three exist. */
+     Each is a literal copy, never `var(--shadow-…)`; a reference resolves in the
+     scope it is *used* in, so it would flip with the theme, and not flipping is
+     the only reason these three exist. */
   --shadow-control-inset:
     inset 3px 3px 7px rgb(150 128 96 / 0.28),
-    inset -3px -3px 7px rgb(255 253 246 / 0.85); /* = light --shadow-inset. The
-      recess cut into cream: `.input`, the `.seg` track, `.btn-secondary:active`.
-      Resolved as `var(--shadow-inset)` in the viewer it would become the dark
-      block's inset — black plus an accent-300 highlight — which is a recess for
-      a teal surface painted onto a cream one. */
-  --shadow-control-raised:
-    3px 3px 8px rgb(150 128 96 / 0.22),
-    -3px -3px 8px rgb(255 253 246 / 0.9); /* = light --shadow-sm. What sits *on*
-      cream: the selected `.seg-opt` lifted out of the cream track. On dark,
-      `--shadow-sm` leads with a `0 0 0 1px #3E5B57` hairline, and that hairline
-      is 6.39 → **6.19** (6.01) against this cream — i.e. not a soft lift at all
-      but a hard teal box drawn around the option. */
+    inset -3px -3px 7px rgb(255 253 246 / 0.85); /* The recess cut into cream:
+      `.input`, the `.seg` track, `.btn-secondary:active`. Carried over from the
+      soft-UI skin unchanged, and deliberately: the 서고 prototype redefines the
+      three *outset* shadows flat and leaves `--shadow-inset` untouched, so its
+      wells are still soft-UI wells. */
+  --shadow-control-raised: 0 1px 3px rgb(34 30 26 / 0.13); /* = light
+      --shadow-sm. What sits *on* cream: the selected `.seg-opt` lifted out of
+      the cream track. On dark, `--shadow-sm` leads with a hairline, and a
+      hairline drawn on cream is a hard box rather than a lift. */
   --shadow-accent-inset:
     inset 3px 3px 7px rgb(0 0 0 / 0.5),
-    inset -3px -3px 7px rgb(155 195 193 / 0.12); /* = **dark** --shadow-inset, on
-      purpose. The pressed state of an accent-filled control (`.btn-primary:active`).
-      The light inset's up-left lobe is rgb(255 253 246 / 0.85); on a #17595B fill
-      that is a cream smear across the button, not a recess. The accent is the
-      one fill in this palette that is dark in the light theme, so it takes the
-      dark theme's elevation — the table above, read literally. */
+    inset -3px -3px 7px rgb(211 167 157 / 0.12); /* = **dark** --shadow-inset, on
+      purpose. The pressed state of an accent-filled control. The light inset's
+      up-left lobe is a cream smear on a #A2382A fill; the accent is the one
+      fill in this palette that is dark in the light theme, so it takes the dark
+      theme's elevation. */
 
   /* ---- type ------------------------------------------------------------ */
-  /* Archivo is vendored latin-only (C-14 / decisions E-7); it has no Hangul
-     coverage, so the Korean fallback stack is explicit and ordered. */
-  --font-heading:
-    'Archivo', 'Pretendard Variable', Pretendard, 'Apple SD Gothic Neo', 'Malgun Gothic',
-    'Noto Sans KR', system-ui, sans-serif;
-  --font-heading-weight: 800;
+  /* 고운바탕, vendored regular + bold (fonts.css). It covers all 11 172 modern
+     Hangul syllables plus latin, so unlike Archivo before it the Korean is the
+     *vendored* face rather than whatever the system had. 본명조 sits behind it
+     for 한자 and 가나, which the subset deliberately does not carry.
+
+     Numerals and uppercase micro-labels go to `--font-ui`, and that is the
+     prototype's own rule rather than a preference: 명조 numerals are
+     proportional, so a tabular column drawn in them does not line up. */
+  --font-heading: 'Gowun Batang', 'Noto Serif KR', 'Apple SD Gothic Neo', batang, serif;
+  /* 400 and 700 only. 명조 breaks up under synthetic weights and negative
+     tracking — the prototype pins both, and 800 does not exist in this face. */
+  --font-heading-weight: 700;
   --font-body: var(--font-heading);
+  --font-ui: ui-sans-serif, 'Helvetica Neue', Arial, sans-serif;
+  /* The 藏 seal. One Han glyph, added to the vendored subset for it. */
+  --font-seal: 'Gowun Batang', 'Noto Serif KR', serif;
 
   /* ---- space + radius -------------------------------------------------- */
   --space-1: 4px;
@@ -316,37 +293,30 @@
   --space-4: 16px;
   --space-6: 24px;
   --space-8: 32px;
-  /* E-32 retires D-40's zero-radius rule. The ban did not go away with it: the
-     hygiene whitelist is now *bound to these five values*, so an arbitrary px
-     radius is still a build failure. Add a step here, not at a call site. */
-  --radius-sm: 3px;
-  --radius-md: 4px;
-  --radius-lg: 6px;
-  --radius-pill: 7px;
+  /* E-32 retired D-40's zero-radius rule and E-46 all but returns to it: the
+     서고 skin is a letterpress geometry, 2px on everything and 3px on the one
+     step above. The ban did not go away — the hygiene whitelist is bound to
+     these five values, so an arbitrary px radius is still a build failure. Add
+     a step here, not at a call site. */
+  --radius-sm: 2px;
+  --radius-md: 2px;
+  --radius-lg: 3px;
+  --radius-pill: 2px;
   --radius-full: 999px;
 
-  /* ---- elevation — dual light on a warm ground ------------------------- */
-  /* Down-right lobe = ochre shadow, up-left lobe = the cream highlight. The
-     highlight is what makes the skin read as soft; it is also what makes this
-     shadow unusable on a dark ground, where it becomes a white outline. The
-     dark block re-derives all four. */
-  --shadow-sm:
-    3px 3px 8px rgb(150 128 96 / 0.22),
-    -3px -3px 8px rgb(255 253 246 / 0.9);
-  --shadow-md:
-    6px 6px 16px rgb(150 128 96 / 0.26),
-    -5px -5px 14px rgb(255 253 246 / 0.92);
-  --shadow-lg:
-    12px 14px 34px rgb(150 128 96 / 0.3),
-    -8px -8px 22px rgb(255 253 246 / 0.9);
+  /* ---- elevation — one flat drop on a paper ground ---------------------- */
+  /* soft-UI's dual light is gone: the 서고 skin casts a single ink shadow, the
+     way a sheet lying on a desk does. The dark block still re-derives all four,
+     because even a flat ink drop is invisible on an ink ground. */
+  --shadow-sm: 0 1px 3px rgb(34 30 26 / 0.13);
+  --shadow-md: 0 2px 10px rgb(34 30 26 / 0.16);
+  --shadow-lg: 0 10px 22px rgb(34 30 26 / 0.22);
   --shadow-inset:
     inset 3px 3px 7px rgb(150 128 96 / 0.28),
     inset -3px -3px 7px rgb(255 253 246 / 0.85);
   /* The sidebar's right edge, and the one elevation that is not on the sm/md/lg
-     scale: it is horizontal only. `--shadow-md` stood in for it, but that lobe
-     is `6px 6px 16px … / 0.26` — a 6px *downward* offset on a full-height panel
-     puts a shadow under its top edge, where there is nothing to cast one, and
-     at an alpha meant for a card that floats rather than an edge that abuts. */
+     scale: it is horizontal only. The prototype writes this value inline on its
+     own aside, warm lobe and all, and it is kept verbatim. */
   --shadow-sidebar: 4px 0 18px rgb(150 128 96 / 0.16);
 
   /* ---- paper grain ------------------------------------------------------ */
@@ -357,51 +327,31 @@
      one binary and even the font is vendored), its canvas fallback costs 21.7 ms
      of synchronous main thread and lands as a ~198 KB inline `style` attribute,
      and it ignores its own `seed` attribute in favour of `Math.random()`, so a
-     plain reload changes 89.1 % of the pixels. `docs/ui-shots/` is a human
-     review-reference set; a grain that is different every load makes it useless.
+     plain reload changes 89.1 % of the pixels.
 
      `feTurbulence` is the deterministic route: the SVG spec pins the generator,
      so a fixed `seed` gives the same bytes on every load and in every engine,
-     and `stitchTiles` is what lets the 200px tile repeat without a seam.
+     and `stitchTiles` is what lets the 200px tile repeat without a seam. That
+     determinism is now load-bearing twice over — `scripts/pixelbaseline` holds
+     the render to it byte for byte.
 
      The filter writes **alpha and nothing else** — the colour matrix zeroes RGB
      and scales the noise's red channel into the alpha channel. That is what
      keeps the tone a token: the image is a mask, `--paper-tone` is the fill, and
-     no colour is buried inside the data URI where nothing could re-theme it.
-
-     0.126 is the prototype's own amplitude, read off its fallback tile
-     (`(Math.random()*0.5 + fiber*0.12) * 52` into alpha, i.e. 0…32/255).
-     Measured here: mean 16.05/255, max 29/255, which over the cream ground moves
-     the average pixel **12.7/255** darker at the shipped `--paper-intensity`.
-     That used to read 6.2 and cite the prototype for it — true while the
-     intensity was the prototype's 0.5, and doubled by E-43. The render agrees:
-     the library ground measured 227.2 → 221.0 across that change. */
+     no colour is buried inside the data URI where nothing could re-theme it. */
   --paper-grain: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='200'%20height='200'%3E%3Cfilter%20id='grain'%20x='0'%20y='0'%20width='100%25'%20height='100%25'%20color-interpolation-filters='sRGB'%3E%3CfeTurbulence%20type='fractalNoise'%20baseFrequency='.9'%20numOctaves='3'%20seed='4'%20stitchTiles='stitch'/%3E%3CfeColorMatrix%20type='matrix'%20values='0%200%200%200%200%200%200%200%200%200%200%200%200%200%200%20.126%200%200%200%200'/%3E%3C/filter%3E%3Crect%20width='200'%20height='200'%20filter='url(%23grain)'/%3E%3C/svg%3E");
-  /* The tone the grain washes in. The prototype's is #201E1D;
-     `--color-neutral-900` is #23211D, three units away on two channels — through
-     a mask that peaks at 0.114 alpha that is 0.35/255 of difference at the
-     shipped intensity (0.17 at the 0.5 this was written under), so the ramp step
-     *is* the prototype's colour and does not add a literal to this file. */
+  /* The tone the grain washes in — the ramp's dark end, which in this palette
+     *is* the ink. */
   --paper-tone: var(--color-neutral-900);
-  /* **1, not the prototype's 0.5 (E-43).** The user was shown four intensities
-     rendered on the real screens and chose this one: at 0.5 the cream reads as
-     almost smooth and the grain is only findable up close; at 1 the individual
-     grains resolve and the ground drops a visible tone (measured on the render:
-     mean 227.2 → 221.0, spread 10 → 21 of 255). Two steps were left on the
-     table — 0.75, which is where the texture first becomes visible at all, and
-     an amplitude of .20, which the same render showed tipping from "paper" into
-     "blemish".
-     **What it cost is recorded rather than hidden:** three pairs went under AA
-     and were re-derived here (dark `--ink-faint`, dark `--ink-th`) or exempted
-     from the wash entirely (the hot marker — see `base.css`, and E-43 §2 for
-     why that exemption is the honest repair and moving the brand red is not). */
+  /* 1, chosen by the user at E-43 from four intensities rendered on the real
+     screens, and carried into this skin unchanged: the 서고 ground is a shade
+     darker than the cream it replaces, so the same mask lands slightly softer
+     rather than harder. Every pair in this file is measured *after* it. */
   --paper-intensity: 1;
-  /* An absolute, like the two viewer scrims above: the viewer ground is #263B38
+  /* An absolute, like the two viewer scrims above: the viewer ground is #221E1A
      in **both** app themes (NFR-CMP-003), so its grain cannot flip with the
-     app's. This is the one paper value that is a literal, because no ramp step
-     is anywhere near it — `--color-accent-900` is as dark as the palette goes
-     and its relative luminance is still 3.7× this. The reading screen's grain is
-     soot, not more of the ground's own green. */
+     app's. The reading screen's grain is soot, not more of the ground's own
+     brown. */
   --paper-tone-viewer: #0D0C0C;
 
   /* ---- z-index ladder (ui-spec §3) ------------------------------------- */
@@ -411,8 +361,7 @@
   --z-overlay: 80;
   /* One step above the overlay, and deliberately the top of the ladder: the
      paper grain is a property of the screen, so a dialog is printed on it too.
-     The prototype writes a bare `z-index: 900`, which is the same intent with
-     the ladder abandoned. Mirrored in tailwind.config.ts. */
+     Mirrored in tailwind.config.ts. */
   --z-texture: 90;
 
   /* ---- misc ------------------------------------------------------------ */
@@ -424,111 +373,93 @@
 [data-theme='dark'] {
   color-scheme: dark;
 
-  /* Derived, not copied: soft-ui.css ships light only. The ground is the light
-     theme's ink (#263B38) and the ink is the light theme's ground, the same
-     swap the Modernist palette used, carried onto the teal. */
-  --color-bg: #263B38; /* was --color-text */
-  --color-surface: #2F4A46; /* one step up, 1.24 against the ground —
-                               the same separation the old #201e1d/#2d2b2b had */
-  --color-text: #EAE3D4; /* was --color-bg */
-  --color-accent: #17595B; /* brand constant */
+  /* Derived, not copied: the 서고 prototype ships light only. The ground is the
+     light theme's ink (#221E1A) and the ink is the light theme's ground — the
+     same swap E-32 made, carried onto the seal red. Read it as the same
+     document under a reading lamp rather than as a second design. */
+  --color-bg: #221E1A; /* was --color-text */
+  --color-surface: #302A24; /* one step up, 1.17 against the ground — the same
+                               order of separation the outgoing dark had (1.24) */
+  --color-text: #DED5C4; /* was --color-bg */
+  --color-accent: #A2382A; /* the seal is a constant */
   --color-accent-2: var(--color-accent);
-  --color-divider: #3E5B57; /* SOLID — the viewer chrome rule */
+  --color-divider: #4A4139; /* SOLID — the viewer chrome rule */
 
-  --ink: var(--color-text); /* 9.31 on bg / 7.51 on surface */
-  --ink-muted: rgb(234 227 212 / 0.78); /* 6.36 / 5.29 */
-  --ink-dim: #B9C8C4; /* 6.87 / 5.54 */
-  --ink-faint: #AFC0BC; /* 6.28 / 5.07 — on dark the *surface* is the harder
-                           ground, and the shipped dark faint was 3.27 on it.
-                           Lifted two steps at E-43: #A9BAB6 was 4.75 dry and,
-                           once `--paper-intensity` went to 1, **4.42 washed** on
-                           the surface — the texture turned a pass into a fail,
-                           which is the same failure E-35 §4 found and the same
-                           repair. Now 4.71 washed at mean grain, 4.43 at peak. */
-  --ink-label: rgb(234 227 212 / 0.75); /* 6.01 / 5.03 */
-  /* Was 0.7 — 4.61 on the surface dry and **4.45 washed**. On dark the surface
-     is the harder ground (the note on --ink-faint above says why), and this is
-     the token that sits on it most: `.card-meta` at 11px. 0.75 puts it level
-     with --ink-label rather than one step under it, which is the price of
-     clearing AA with the paper on: 4.85 washed, 4.71 at peak. */
-  --ink-meta: rgb(234 227 212 / 0.75); /* 6.01 / 5.03 — 5.76 was a slip, since E-35 */
-  /* 0.75, not the 0.72 that shipped: at `--paper-intensity: 1` that alpha was
-     **4.45 washed** on the surface (E-43). The wash finds the 11px tokens first,
-     because they had the least room to begin with — the same thing that moved
-     `--ink-meta` at E-35, and 0.75 is where that one landed. **Level with it and
-     with `--ink-label`, not past them**: 0.76 also clears the floor but puts
-     table headers *above* labels in the dark theme while the light theme has
-     them below, and nothing wanted that. Alphas that mean the same thing in the
-     hierarchy stay equal. */
-  --ink-th: rgb(234 227 212 / 0.75); /* 6.01 / 5.03 — 4.68 washed, 4.39 peak */
-  --rule: #3E5B57;
-  --rule-strong: #4A6B66;
-  --control-border: #5A7C77; /* the viewer's button/seg borders */
-  --control-border-hover: #79A09A;
-  --fill-subtle: #2F4A46;
-  --fill-track: #3E5B57;
-  --fill-track-2: #5A7C77;
-  --hover-tint: rgb(234 227 212 / 0.08);
-  --press-tint: rgb(234 227 212 / 0.16);
-  --row-hover: rgb(234 227 212 / 0.06);
-  --row-hover-table: rgb(234 227 212 / 0.05);
-  --nav-hover: rgb(234 227 212 / 0.07);
-  /* Tinting a teal ground with the teal accent does nothing — the two are the
-     same hue at nearly the same lightness. The active row is washed with
-     accent-300 instead. */
-  --nav-active: rgb(155 195 193 / 0.16);
+  --ink: var(--color-text); /* 10.12 on bg / 8.76 on surface */
+  --ink-muted: rgb(222 213 196 / 0.8); /* 7.14 / 6.18 */
+  --ink-dim: #C4B497; /* neutral-400 — 7.31 / 6.32 */
+  --ink-faint: #B7A78B; /* neutral-500 — 6.33 / 5.48. On dark the *surface* is
+                           the harder ground, which is why the faint ink is read
+                           against it rather than against the bg. */
+  --ink-label: rgb(222 213 196 / 0.78); /* 6.87 / 5.95 */
+  --ink-meta: rgb(222 213 196 / 0.75); /* 6.48 / 5.62 — 11px, the token with the
+                                          least room, so it is held level with
+                                          the label rather than one step under */
+  --ink-th: rgb(222 213 196 / 0.76); /* 6.61 / 5.74 */
+  --rule: #4A4139;
+  --rule-strong: #584D45;
+  --control-border: #6E6355; /* neutral-600 — the viewer's button/seg borders */
+  --control-border-hover: #B7A78B; /* neutral-500 */
+  --fill-subtle: #302A24;
+  --fill-track: #4A4139;
+  --fill-track-2: #6E6355;
+  --hover-tint: rgb(222 213 196 / 0.08);
+  --press-tint: rgb(222 213 196 / 0.16);
+  --row-hover: rgb(222 213 196 / 0.06);
+  --row-hover-table: rgb(222 213 196 / 0.05);
+  --nav-hover: rgb(222 213 196 / 0.07);
+  /* Tinting a near-black ground with a dark red does almost nothing, so the
+     active row is washed with accent-300 instead — the same repair the outgoing
+     dark made with accent-300 teal. */
+  --nav-active: rgb(211 167 157 / 0.16);
   --scrim-cover: rgb(0 0 0 / 0.72);
   --scrim-modal: rgb(0 0 0 / 0.6);
   --scrim-cover-base: rgb(0 0 0 / 0.92);
   --scrim-cover-mid: rgb(0 0 0 / 0.55);
   --scrim-cover-top: rgb(0 0 0 / 0.15);
   /* Up the ramp, but only as far as the cream label on the fill still clears
-     AA: accent-400 would take #F6F2E9 down to 2.6. */
-  --accent-hover: #256668; /* label 5.91 */
-  --accent-press: #2C6D6E; /* label 5.34 */
-  --accent-text: #9BC3C1; /* accent-300 — 6.21 / 5.01 */
-  --accent-fill: #9BC3C1; /* 3.86 on --fill-track; --color-accent is 1.09 */
-  --scrollbar-thumb: rgb(234 227 212 / 0.4);
-  --scrollbar-thumb-hover: rgb(234 227 212 / 0.55);
-  --ghost-hover: rgb(155 195 193 / 0.12);
-  --ghost-press: rgb(155 195 193 / 0.2);
-  --selection-bg: rgb(155 195 193 / 0.32);
+     AA. Solved rather than stepped: accent-400 is where the ramp would go next
+     and it takes `--on-accent` to **3.24**, so the ceiling is short of it and
+     these two sit under the ceiling. */
+  --accent-hover: #A94537; /* label 4.94 */
+  --accent-press: #AC4C3E; /* label 4.62 */
+  --accent-text: #D3A79D; /* accent-300 — 6.93 / 6.00 */
+  --accent-fill: #D3A79D; /* 4.55 on --fill-track; --color-accent is 1.28 */
+  --scrollbar-thumb: rgb(222 213 196 / 0.4);
+  --scrollbar-thumb-hover: rgb(222 213 196 / 0.55);
+  --ghost-hover: rgb(211 167 157 / 0.12);
+  --ghost-press: rgb(211 167 157 / 0.2);
+  --selection-bg: rgb(211 167 157 / 0.32);
 
-  /* Elevation on a dark ground = hairline edge + ambient darkness. The light
-     block's up-left lobe is rgb(255 253 246 / 0.9); painted here it is a white
-     outline around every card, not a highlight. The inset keeps the dual-light
-     *shape* — dark down-left, light up-right — at an alpha a dark ground can
-     carry. */
+  /* Elevation on a dark ground = hairline edge + ambient darkness. A flat ink
+     drop is invisible here — the ground is already the ink — so the three
+     outsets state the edge instead. The inset keeps the dual-light *shape* at an
+     alpha a dark ground can carry. */
   --shadow-sm:
-    0 0 0 1px #3E5B57,
+    0 0 0 1px #4A4139,
     0 1px 2px rgb(0 0 0 / 0.5);
   --shadow-md:
-    0 0 0 1px #3E5B57,
+    0 0 0 1px #4A4139,
     0 3px 10px rgb(0 0 0 / 0.55);
   --shadow-lg:
-    0 0 0 1px #3E5B57,
+    0 0 0 1px #4A4139,
     0 12px 32px rgb(0 0 0 / 0.6);
   --shadow-inset:
     inset 3px 3px 7px rgb(0 0 0 / 0.5),
-    inset -3px -3px 7px rgb(155 195 193 / 0.12);
-  /* Same derivation as the three above, and for the same reason the sidebar
-     needs one at all: the panel is `--color-surface` on `--color-bg`, which is
-     1.24:1 here. The ochre lobe is a light-ground device and vanishes on this
-     ground, so the edge is stated as a hairline — `1px 0 0`, the right side
-     only, because that is the only side of a full-height panel that shows. */
+    inset -3px -3px 7px rgb(211 167 157 / 0.12);
+  /* Same derivation as the three above: the panel is `--color-surface` on
+     `--color-bg`, which is 1.17:1 here, so the edge is stated as a hairline —
+     `1px 0 0`, the right side only, because that is the only side of a
+     full-height panel that shows. */
   --shadow-sidebar:
-    1px 0 0 #3E5B57,
+    1px 0 0 #4A4139,
     4px 0 18px rgb(0 0 0 / 0.5);
 
-  /* The grain's tone follows the ground it washes over: the warm near-black on
-     cream, the ramp's cool end on teal. Stated plainly, on today's numbers this
-     is worth under 1/255 — a dark ground is already most of the way to the tone,
-     so both washes land in nearly the same place, and the measured max channel
-     delta between the two in the viewer is 1. It is declared anyway because the
-     tone is the one part of this texture that is *paint*: raise
-     `--paper-intensity`, or move the tone off near-black, and a warm wash over a
-     teal ground is immediately a brown cast. Paint that does not flip with the
-     theme is how a token quietly stops being one. */
+  /* The grain's tone follows the ground it washes over. On today's numbers this
+     is worth under 1/255 — a dark ground is already most of the way to the tone
+     — but it is declared anyway, because the tone is the one part of this
+     texture that is *paint*. Paint that does not flip with the theme is how a
+     token quietly stops being one. */
   --paper-tone: var(--color-accent-900);
 }
 

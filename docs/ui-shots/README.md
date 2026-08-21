@@ -1,12 +1,37 @@
 # docs/ui-shots — the review reference set
 
-## Nothing in this repository compares these images to anything
+## What is checked now, and what still is not
 
-`scripts/e2e.sh` step 11 writes the round's screenshots into `docs/e2e-shots/` and says *"review against
-docs/ui-shots/"*. **No gate performs that comparison.** Playwright has no pixel baselines here
-(`toHaveScreenshot` appears nowhere), so the diff is a person's eyes, and this directory can go stale
-without anything turning red. It has, twice: once at E-32 and again at session 10. Assume the same of
-whatever you find here — check the dates and the derivation before you trust a file as a target.
+Two different comparisons are easy to confuse, so they are separated here.
+
+**The product against itself — checked exactly, for most of the set, since session 22.**
+`scripts/e2e.sh` step 11c runs `scripts/pixelbaseline`, which holds the SHA-256 of every PNG the synthetic
+round writes that was *measured* reproducible, and fails the round when one of them renders differently.
+The comparison is byte-exact rather than tolerant, and the exactness is affordable because most of the
+render is deterministic: fixed-seed `feTurbulence` grain, a fixture built with a fixed mtime and no `rand`.
+
+**Not all of it, and the tool says so on every run.** Three full rounds were compared: 76 of 121 shots
+were byte-identical, 34 carry a value that changes every round (the settings dialog's cache usage and scan
+log, a relative time on the series and 이어보기 rows — the product telling the truth about a clock), and
+11 differ by 3–18 of 255 across a wide area, which is image decode variance a reader cannot see. A
+tolerance loose enough to pass the second group would pass most colour changes too, so those 45 are
+excluded **by name, with the measured delta attached**, and the count of what is not being watched is
+printed every time. `scripts/pixelbaseline` carries the full derivation.
+
+`docs/pixel-baseline/` holds the manifest and a 320px thumbnail of each watched shot, so a red gate says
+*what* moved and not only *that* something did. This is open item `x`; items `bs` (the 45) and `aj`
+(below) are what it leaves behind.
+
+**This directory against the product — still a person's eyes.** It cannot be otherwise: the two sides show
+different content on purpose (see *What the v3 set covers* below), so there is no pixel comparison to make.
+What used to be missing was any way to know this set had gone stale, and that part is now derived rather
+than remembered — `docs/pixel-baseline/reference.json` records the renders `built/v3-*.png` was captured
+from, and step 11c prints `BUT docs/ui-shots/built/ was captured from different renders and is stale` the
+moment the product's renders move past it. It is a line of output and not a failure, because this directory
+is gitignored and nothing in a checkout can confirm it exists. That is open item `aj`.
+
+This set has gone stale four times — E-32, session 10, E-42 and E-44 — and each time nothing turned red and
+a person had to notice. Check the dates and the derivation before you trust a file as a target.
 
 > **STALE AGAIN — session 14 (2026-08-08), ruling E-42.** Every control in the product changed shape:
 > `.btn-secondary`, `.input` and `.seg` are now raised/recessed **cream** surfaces in *both* themes and in

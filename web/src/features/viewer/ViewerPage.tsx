@@ -984,7 +984,9 @@ export function ViewerPage() {
               : 'absolute inset-x-0 top-14',
           )}
         >
-          <span className="bg-accent px-[7px] py-[3px] text-3xs uppercase tracking-[.1em] text-ink">
+          {/* `text-on-accent`: the dark theme's `--ink` is 4.33 washed on this
+              fill under E-46's palette. See the longer note in PageError.tsx. */}
+          <span className="bg-accent px-[7px] py-[3px] font-ui text-3xs uppercase tracking-[.1em] text-on-accent">
             파일이 변경되었습니다
           </span>
         </div>

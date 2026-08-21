@@ -28,7 +28,7 @@ applyTheme(useUiStore.getState().theme)
 
 const container = document.getElementById('root')
 if (container === null) {
-  throw new Error('mounting SHELF: #root is missing from index.html')
+  throw new Error('mounting 석교만화방: #root is missing from index.html')
 }
 
 const queryClient = new QueryClient({

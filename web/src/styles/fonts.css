@@ -1,26 +1,71 @@
 /*
- * Archivo, vendored (C-14 / decisions.md E-7 / NFR-OPS-001, NFR-OPS-002).
+ * 고운바탕, vendored (C-14 / decisions.md E-7 / NFR-OPS-001, NFR-OPS-002).
  *
- * The Modernist stylesheet shipped an `@import` of the Google Fonts CSS API.
- * That is a runtime external dependency and is deleted; these are the same
- * three weights served from node_modules, fingerprinted by Vite into
- * dist/assets/ and swallowed by `//go:embed all:dist`. A build assertion greps
- * dist/ for a font-CDN URL — if this file ever regrows a remote @import, it
- * fails.
+ * The 서고 prototype loads its faces from `fonts.googleapis.com`. That is a
+ * runtime external dependency and is deleted, the same way the Modernist
+ * sheet's `@import` was: this product ships as one binary, a build assertion
+ * greps dist/ for a font-CDN URL, and a reader with no network is the normal
+ * case rather than the edge one.
  *
- * Only the weights the DS uses (400 body, 600, 800 headings) and only the latin
- * + latin-ext subsets. Archivo has **no Hangul coverage**: every Korean glyph
- * in the product is rendered by the system fallback stack declared in
- * tokens.css. No Korean face is vendored in this build — a subsetted
- * Pretendard/Noto Sans KR is 1.5–4 MB against an ~18 MB binary, and the
- * resulting cross-platform typography variance is a documented known issue.
+ * ---------------------------------------------------------------------------
+ * What changed at E-46, and why it is not the compromise it was
+ * ---------------------------------------------------------------------------
+ * Archivo shipped latin-only and had **no Hangul coverage at all**, so every
+ * Korean glyph in the product was drawn by whatever the reader's system
+ * happened to have — the "cross-platform typography variance" this file used to
+ * record as a known issue. The reason was size: a subsetted Pretendard or Noto
+ * Sans KR was measured at 1.5–4 MB.
  *
- * Each @fontsource file declares `font-display: swap` already.
+ * 고운바탕 subsets much smaller than that estimate. Both weights, carrying all
+ * **11 172** modern Hangul syllables plus latin, CJK punctuation and the
+ * fullwidth forms, come to **888 KB** — against a ~26 MB binary. So the Korean
+ * is now the vendored face rather than a hope, which matters more for this skin
+ * than it did for the last one: 명조 is the design, and a system sans-serif
+ * substitute is not a slightly different 서고, it is a different product.
+ *
+ * The face carries **no 한자 and no 가나** (the source has zero Han glyphs, not
+ * a subsetting choice), so 본명조 stays behind it in the stack for series titles
+ * that contain them. That is the one place the old variance survives.
+ *
+ * ---------------------------------------------------------------------------
+ * The seal
+ * ---------------------------------------------------------------------------
+ * The 藏 of the 낙관 is a Han glyph and 고운바탕 does not have it — the mark
+ * would have rendered as a tofu box on any machine without a CJK serif. Rather
+ * than vendor a whole Han face for one character, or quietly swap the
+ * designer's glyph for a Hangul one, the single glyph is subsetted out of Noto
+ * Serif CJK KR: **2 148 bytes**, and the mark is exactly the one the prototype
+ * draws.
+ *
+ * `font-display: swap` on all three: the paper ground is legible with the
+ * fallback and a blocked first paint is the worse trade.
  */
 
-@import '@fontsource/archivo/latin-400.css';
-@import '@fontsource/archivo/latin-600.css';
-@import '@fontsource/archivo/latin-800.css';
-@import '@fontsource/archivo/latin-ext-400.css';
-@import '@fontsource/archivo/latin-ext-600.css';
-@import '@fontsource/archivo/latin-ext-800.css';
+@font-face {
+  font-family: 'Gowun Batang';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../assets/fonts/gowun-batang-regular.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Gowun Batang';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('../assets/fonts/gowun-batang-bold.woff2') format('woff2');
+}
+
+/* One glyph — U+85CF 藏 — so the seal is drawn rather than boxed. Declared
+   under the same family name and restricted by `unicode-range`, so it joins the
+   stack instead of competing with it: the browser reaches for this file only
+   when that character is asked for. */
+@font-face {
+  font-family: 'Gowun Batang';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  unicode-range: U+85CF;
+  src: url('../assets/fonts/seal-han-bold.woff2') format('woff2');
+}

@@ -169,6 +169,16 @@ export default {
       fontFamily: {
         sans: 'var(--font-body)',
         heading: 'var(--font-heading)',
+        /* E-46: 명조 numerals are proportional, so a tabular column drawn in
+           them does not line up, and uppercase micro-labels at .1–.28em
+           tracking come apart. The prototype hands both to a sans and so does
+           this — `font-ui` is that sans, and it is the only place a
+           sans-serif is allowed in the 서고 skin. */
+        ui: 'var(--font-ui)',
+        /* The 낙관's 藏. Its own family because the glyph is vendored on its
+           own (fonts.css), and naming it here keeps the one call site in
+           Wordmark.tsx from reaching for a raw `style`. */
+        seal: 'var(--font-seal)',
       },
 
       fontSize: {

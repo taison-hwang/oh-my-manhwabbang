@@ -32,10 +32,18 @@ export function PageError({ name, cause, onRetry }: PageErrorProps) {
       data-role="page-error"
       className="absolute inset-0 flex flex-col items-start justify-center gap-2 bg-bg p-6"
     >
-      {/* ui-spec §6.4 writes `color: var(--color-bg)` against the prototype's
-          manual inversion; inside `data-theme="dark"` the same light ink is
-          `--color-text`. See the note at the top of ViewerPage. */}
-      <span className="flex items-center gap-[6px] bg-accent px-2 py-1 text-3xs uppercase tracking-[.1em] text-ink">
+      {/* `text-on-accent`, not `text-ink`. ui-spec §6.4 writes
+          `color: var(--color-bg)` against the prototype's manual inversion, and
+          inside `data-theme="dark"` the light ink used to be near enough the
+          same cream that the two were interchangeable. E-46 ends that: on the
+          seal red the dark theme's `--ink` measures **4.33 washed**, an AA
+          fail, while `--on-accent` — the token that exists for exactly this
+          job — measures 5.62. (No hex here: hygiene.test.ts greps this file
+          for colour literals and a value quoted in a comment is still a second
+          place the palette is written down.) The component scanner in tokens.test.ts caught both
+          call sites; `font-ui` is here because 명조 at .1em of tracking in caps
+          comes apart (E-46). */}
+      <span className="flex items-center gap-[6px] bg-accent px-2 py-1 font-ui text-3xs uppercase tracking-[.1em] text-on-accent">
         <TriangleAlert size={12} aria-hidden={true} />
         이미지 로드 실패
       </span>

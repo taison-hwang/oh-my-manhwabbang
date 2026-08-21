@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 
 import tailwindConfig from '../../tailwind.config'
 import { allRules, customProperties, findRule, topLevelRules, type CssRule } from './cssRules'
+import { contrast, luminance, over, parseColour, type Rgba } from './contrast'
 
 // `import.meta.url` is an http URL under the jsdom environment, so the source
 // is located from the vitest root (web/) instead.
@@ -31,18 +32,23 @@ const dark = customProperties(darkRule.body)
 //
 // E-32 §4 rejects three of the prototype's colour choices on *measured* AA
 // failures, so the floors it sets can only be checked by measuring. This is
-// WCAG 2.1 relative luminance, inline because the token layer may not grow a
-// module and a "checked" contrast rule that trusts a hand-written table is the
-// failure mode the ruling is about. `reproduces the four ratios E-32 measured`
-// below is the calibration test for everything here.
+// WCAG 2.1 relative luminance.
+//
+// The arithmetic used to be inline here, under a comment saying the token layer
+// may not grow a module. That reasoning was about the *product* — `tokens.css`
+// is the authority on colour and a runtime companion would give it a rival —
+// and it stopped applying the moment a second tier had to measure. `web/e2e/
+// contrast.ts` reads rendered pixels (items `v` and `ar`), and two tiers each
+// holding their own copy of a contrast function is a way for them to disagree
+// quietly: this one would go on calling the ⌘K chip 5.65 while the browser
+// rendered 4.55, and nothing would say which number was the formula and which
+// was the paint. One module, imported by both, leaves them able to disagree
+// only about inputs.
+//
+// The calibration test stays here. `reproduces the four ratios E-32 measured`
+// below is what makes the shared module trustworthy, and it belongs next to the
+// ruling it reproduces rather than next to the code it checks.
 // ---------------------------------------------------------------------------
-
-interface Rgba {
-  r: number
-  g: number
-  b: number
-  a: number
-}
 
 /** Follows `var(--x)` chains to the literal a token finally resolves to. */
 function resolveToken(map: Map<string, string>, name: string): string {
@@ -56,48 +62,6 @@ function resolveToken(map: Map<string, string>, name: string): string {
     value = next
   }
   throw new Error(`${name} is a var() cycle`)
-}
-
-/** `#rrggbb` or the space-separated `rgb(r g b / a)` the sheet uses. */
-function parseColour(raw: string): Rgba {
-  const value = raw.trim()
-  const hex = /^#([0-9a-fA-F]{6})$/.exec(value)
-  if (hex !== null) {
-    const n = parseInt(hex[1] ?? '', 16)
-    return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255, a: 1 }
-  }
-  const fn = /^rgb\(\s*(\d+)\s+(\d+)\s+(\d+)\s*(?:\/\s*([\d.]+)\s*)?\)$/.exec(value)
-  if (fn === null) throw new Error(`cannot parse colour ${raw}`)
-  return {
-    r: Number(fn[1]),
-    g: Number(fn[2]),
-    b: Number(fn[3]),
-    a: fn[4] === undefined ? 1 : Number(fn[4]),
-  }
-}
-
-function luminance({ r, g, b }: Rgba): number {
-  const channel = (c: number): number => {
-    const s = c / 255
-    return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
-  }
-  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
-}
-
-/** Composites a possibly-translucent foreground onto an opaque ground. */
-function over(fg: Rgba, ground: Rgba): Rgba {
-  return {
-    r: fg.a * fg.r + (1 - fg.a) * ground.r,
-    g: fg.a * fg.g + (1 - fg.a) * ground.g,
-    b: fg.a * fg.b + (1 - fg.a) * ground.b,
-    a: 1,
-  }
-}
-
-function contrast(fg: Rgba, ground: Rgba): number {
-  const a = luminance(over(fg, ground))
-  const b = luminance(ground)
-  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
 }
 
 /** Contrast of one token against another, within one theme block. */
@@ -355,11 +319,12 @@ const INK_TOKENS = [
 
 describe('tokens.css — light ground (ui-spec §1.2, E-32 §1)', () => {
   it('declares the role tokens verbatim', () => {
-    expect(light.get('--color-bg')).toBe('#EAE3D4')
-    expect(light.get('--color-surface')).toBe('#F3EEE3')
-    expect(light.get('--color-text')).toBe('#263B38')
-    expect(light.get('--color-accent')).toBe('#17595B')
-    expect(light.get('--color-divider')).toBe('#DDD3C0')
+    // E-46, `만화방 v3 서고.dc.html`: document beige, warm near-black ink, 인주.
+    expect(light.get('--color-bg')).toBe('#DED5C4')
+    expect(light.get('--color-surface')).toBe('#EFE9DC')
+    expect(light.get('--color-text')).toBe('#221E1A')
+    expect(light.get('--color-accent')).toBe('#A2382A')
+    expect(light.get('--color-divider')).toBe('#B7A78B')
   })
 
   it('collapses the secondary accent into the accent (E-32 §1)', () => {
@@ -372,21 +337,32 @@ describe('tokens.css — light ground (ui-spec §1.2, E-32 §1)', () => {
     }
   })
 
-  it('keeps --color-hot as the retired brand red, not the accent (E-32 §1)', () => {
-    // The whole point of the token: #EC3013 marks "current / selected /
-    // focused". The moment it equals the accent it is a brand colour again and
-    // E-32 has been silently undone.
-    expect(light.get('--color-hot')).toBe('#EC3013')
-    expect(light.get('--color-hot')).not.toBe(light.get('--color-accent'))
-    // It is a marker, not a palette member, so it does not flip with the theme.
+  it('joins --color-hot to the accent — E-46 reverses E-32 §1 on purpose', () => {
+    // E-32 §1 held these apart and this test asserted the separation: its
+    // accent was a deep teal and its marker the retired brand red #EC3013, so
+    // the two being equal could only mean the red had crept back into use as a
+    // brand colour.
+    //
+    // E-46 has one red and spends it on both jobs. That is a reversal of a
+    // BINDING ruling, so it is asserted rather than merely allowed — the
+    // identity is now the thing that would have to break for the change to be
+    // undone by accident, which is the same protection pointing the other way.
+    expect(light.get('--color-hot')).toBe('#A2382A')
+    expect(light.get('--color-hot')).toBe(light.get('--color-accent'))
+    // Still a marker rather than a palette member, so it does not flip.
     expect(dark.has('--color-hot')).toBe(false)
   })
 
-  it('carries the E-32 radius scale — sm 3 / md 4 / lg 6 / pill 7 / full 999', () => {
-    expect(light.get('--radius-sm')).toBe('3px')
-    expect(light.get('--radius-md')).toBe('4px')
-    expect(light.get('--radius-lg')).toBe('6px')
-    expect(light.get('--radius-pill')).toBe('7px')
+  it('carries the E-46 radius scale — sm 2 / md 2 / lg 3 / pill 2 / full 999', () => {
+    // Letterpress geometry: the 서고 prototype writes 2px on everything and 3px
+    // on the one step above it, which is most of the way back to D-40's zero
+    // rule that E-32 retired. `--radius-pill` keeps its name and stops being a
+    // pill — the button is square now, and renaming the token at every call
+    // site would be a larger diff than the design change it describes.
+    expect(light.get('--radius-sm')).toBe('2px')
+    expect(light.get('--radius-md')).toBe('2px')
+    expect(light.get('--radius-lg')).toBe('3px')
+    expect(light.get('--radius-pill')).toBe('2px')
     expect(light.get('--radius-full')).toBe('999px')
     // The scale is theme-invariant geometry, not paint.
     expect([...dark.keys()].filter((k) => k.startsWith('--radius-'))).toEqual([])
@@ -403,33 +379,53 @@ describe('tokens.css — light ground (ui-spec §1.2, E-32 §1)', () => {
     ])
   })
 
-  it('names Archivo first and the Korean fallbacks in the E-7 order', () => {
+  it('names 고운바탕 first, then the 한자 fallback (E-7 as amended by E-46)', () => {
+    // The order changed *and* so did what it means. Under E-7 the vendored face
+    // was latin-only, so everything after Archivo was the stack that actually
+    // drew the Korean and the order mattered enormously. 고운바탕 is vendored
+    // with all 11 172 modern Hangul syllables, so the fallbacks now only ever
+    // draw 한자 and 가나 — which is why 본명조 comes second and there is no
+    // sans anywhere in the stack.
     const stack = light.get('--font-heading') ?? ''
-    const order = [
-      'Archivo',
-      'Pretendard',
-      'Apple SD Gothic Neo',
-      'Malgun Gothic',
-      'Noto Sans KR',
-      'system-ui',
-    ]
+    const order = ['Gowun Batang', 'Noto Serif KR', 'Apple SD Gothic Neo', 'serif']
     let cursor = -1
     for (const face of order) {
       const at = stack.indexOf(face, cursor + 1)
       expect(at, `${face} missing or out of order in ${stack}`).toBeGreaterThan(cursor)
       cursor = at
     }
+    // 명조 is the design. A sans in the heading stack is the skin coming undone.
+    expect(stack).not.toMatch(/sans-serif|system-ui/)
+    // The two faces the skin keeps apart, and the one place a sans is allowed.
+    expect(light.get('--font-body')).toBe('var(--font-heading)')
+    expect(light.get('--font-ui') ?? '').toMatch(/sans-serif/)
+    expect(light.get('--font-seal') ?? '').toContain('Gowun Batang')
+    // 고운바탕 has 400 and 700 and no more; 800 would be synthesised and 명조
+    // loses its strokes when it is.
+    expect(light.get('--font-heading-weight')).toBe('700')
   })
 
-  it('paints elevation with both lobes of the dual light (E-32 §1)', () => {
-    // Down-right ochre shadow + up-left cream highlight. Losing the second lobe
-    // turns the soft skin back into the Modernist ink drop.
-    for (const step of ['--shadow-sm', '--shadow-md', '--shadow-lg', '--shadow-inset']) {
+  it('drops one flat ink shadow, and keeps the wells soft (E-46)', () => {
+    // soft-UI's dual light is gone from the three *outsets*: a sheet lying on a
+    // desk casts one shadow, not a shadow and a highlight. The 서고 prototype
+    // redefines exactly those three.
+    for (const step of ['--shadow-sm', '--shadow-md', '--shadow-lg']) {
       const value = light.get(step) ?? ''
-      expect(value, `${step} lost its shadow lobe`).toContain('rgb(150 128 96 /')
-      expect(value, `${step} lost its highlight lobe`).toContain('rgb(255 253 246 /')
+      expect(value, `${step} is not a single ink drop`).toMatch(
+        /^0 \d+px \d+px rgb\(34 30 26 \/ 0\.\d+\)$/,
+      )
+      expect(value, `${step} kept a soft-UI highlight lobe`).not.toContain('rgb(255 253 246 /')
     }
-    expect(light.get('--shadow-inset')).toContain('inset')
+    // The *inset* is untouched, and that is the prototype's own doing rather
+    // than an oversight here: it overrides --shadow-sm/md/lg and leaves
+    // --shadow-inset alone, so `.input` and the `.seg` track are still soft-UI
+    // wells inside a flat skin. Recording it as an assertion is what stops the
+    // next reader "finishing the job" and flattening a recess the design keeps.
+    const inset = light.get('--shadow-inset') ?? ''
+    expect(inset).toContain('inset')
+    expect(inset).toContain('rgb(150 128 96 /')
+    expect(inset).toContain('rgb(255 253 246 /')
+    expect(light.get('--shadow-control-inset')).toBe(inset)
   })
 
   it('gives the sidebar an elevation with no vertical lobe (open item p)', () => {
@@ -450,9 +446,9 @@ describe('tokens.css — light ground (ui-spec §1.2, E-32 §1)', () => {
     // They were approximated with the three tokens that happened to exist
     // (.72 / .50 / .07), so the buttons at the bottom of a hovered card sat on
     // two thirds of their ground and the top of the card had almost no wash.
-    expect(light.get('--scrim-cover-base')).toBe('rgb(38 59 56 / 0.92)')
-    expect(light.get('--scrim-cover-mid')).toBe('rgb(38 59 56 / 0.55)')
-    expect(light.get('--scrim-cover-top')).toBe('rgb(38 59 56 / 0.15)')
+    expect(light.get('--scrim-cover-base')).toBe('rgb(34 30 26 / 0.92)')
+    expect(light.get('--scrim-cover-mid')).toBe('rgb(34 30 26 / 0.55)')
+    expect(light.get('--scrim-cover-top')).toBe('rgb(34 30 26 / 0.15)')
     // Each must differ from the token it replaced, or nothing changed.
     expect(light.get('--scrim-cover-base')).not.toBe(light.get('--scrim-cover'))
     expect(light.get('--scrim-cover-mid')).not.toBe(light.get('--scrim-modal'))
@@ -499,12 +495,16 @@ describe('tokens.css — dark ramp (ui-spec §1.4, NFR-CMP-003, E-32 §3)', () =
     ]) {
       expect(dark.has(role), `${role} is missing from the dark block`).toBe(true)
     }
-    expect(dark.get('--color-bg')).toBe('#263B38')
-    expect(dark.get('--color-text')).toBe('#EAE3D4')
-    expect(dark.get('--color-surface')).toBe('#2F4A46')
-    expect(dark.get('--color-divider')).toBe('#3E5B57')
-    expect(dark.get('--rule')).toBe('#3E5B57')
-    expect(dark.get('--control-border')).toBe('#5A7C77')
+    // The swap E-32 made, carried onto the 서고 palette: the ground is the
+    // light theme's ink and the ink is the light theme's ground.
+    expect(dark.get('--color-bg')).toBe('#221E1A')
+    expect(dark.get('--color-text')).toBe('#DED5C4')
+    expect(dark.get('--color-bg')).toBe(light.get('--color-text'))
+    expect(dark.get('--color-text')).toBe(light.get('--color-bg'))
+    expect(dark.get('--color-surface')).toBe('#302A24')
+    expect(dark.get('--color-divider')).toBe('#4A4139')
+    expect(dark.get('--rule')).toBe('#4A4139')
+    expect(dark.get('--control-border')).toBe('#6E6355')
   })
 
   it('swaps the ground and the ink of the light theme', () => {
@@ -515,7 +515,7 @@ describe('tokens.css — dark ramp (ui-spec §1.4, NFR-CMP-003, E-32 §3)', () =
   it('keeps the accent constant and moves hover/press up the ramp', () => {
     expect(dark.get('--color-accent')).toBe(light.get('--color-accent'))
     expect(resolveToken(dark, '--color-accent-2')).toBe(resolveToken(light, '--color-accent-2'))
-    expect(dark.get('--accent-text')).toBe('#9BC3C1') // accent-300
+    expect(dark.get('--accent-text')).toBe('#D3A79D') // accent-300
     // Lighter than the base, unlike the light theme where hover/press go down.
     const lum = (theme: Map<string, string>, token: string): number =>
       luminance(parseColour(resolveToken(theme, token)))
@@ -526,9 +526,9 @@ describe('tokens.css — dark ramp (ui-spec §1.4, NFR-CMP-003, E-32 §3)', () =
   })
 
   it('washes the active row with accent-300, not the accent (E-32 §3.2)', () => {
-    // A teal tint on a teal ground is not a tint. The shipped file used the old
-    // red at 14 %; the same alpha in #17595B is invisible here.
-    expect(dark.get('--nav-active')).toBe('rgb(155 195 193 / 0.16)')
+    // A dark red on a near-black ground is not a tint, the same way a teal on
+    // teal was not one. The repair is the same and so is the ramp step.
+    expect(dark.get('--nav-active')).toBe('rgb(211 167 157 / 0.16)')
     expect(dark.get('--nav-active')).not.toBe(light.get('--nav-active'))
   })
 
@@ -612,9 +612,9 @@ describe('tokens.css — dark ramp (ui-spec §1.4, NFR-CMP-003, E-32 §3)', () =
   ]
 
   it('leaves the absolutes alone — they paint on a ground that never flips', () => {
-    // The viewer ground is #263B38 in both app themes, and the accent and the
-    // hot marker are theme-invariant, so their foregrounds are too. Flipping
-    // any of these would repaint the viewer's scrims when the app theme changed.
+    // The viewer ground is #221E1A in both app themes, and the accent and the
+    // seal are theme-invariant, so their foregrounds are too. Flipping any of
+    // these would repaint the viewer's scrims when the app theme changed.
     for (const token of [
       '--scrim-volume-end',
       '--scrim-broken',
@@ -633,8 +633,8 @@ describe('tokens.css — dark ramp (ui-spec §1.4, NFR-CMP-003, E-32 §3)', () =
       expect(light.has(token), `${token} missing from the light block`).toBe(true)
       expect(dark.has(token), `${token} must not flip with the theme`).toBe(false)
     }
-    expect(light.get('--scrim-volume-end')).toBe('rgb(38 59 56 / 0.92)')
-    expect(light.get('--scrim-broken')).toBe('rgb(8 35 37 / 0.82)') // accent-900 @ 82 %
+    expect(light.get('--scrim-volume-end')).toBe('rgb(34 30 26 / 0.92)')
+    expect(light.get('--scrim-broken')).toBe('rgb(62 20 14 / 0.82)') // accent-900 @ 82 %
   })
 
   it('counts nine control absolutes — not eight, and not a family that grew', () => {
@@ -654,18 +654,23 @@ describe('tokens.css — dark ramp (ui-spec §1.4, NFR-CMP-003, E-32 §3)', () =
     expect(dark.has('--control-border')).toBe(true)
   })
 
-  it('re-derives the accent tints off the new ramp, not the retired red', () => {
-    // These carried `rgb(236 48 19 / …)` — the old accent's channels. On a teal
-    // accent an unexplained red wash is what "we forgot this one" looks like.
+  it('re-derives the accent tints off the new ramp, not a retired one', () => {
+    // Two retired accents to check for now, and the reason is the same both
+    // times: a tint whose channels belong to a palette the product has left is
+    // what "we forgot this one" looks like. `236 48 19` is E-32's brand red,
+    // `23 89 91` its teal.
     for (const token of ['--nav-active', '--ghost-hover', '--ghost-press', '--selection-bg']) {
       for (const [name, theme] of themes) {
-        expect(theme.get(token), `${token} still carries the old red in ${name}`).not.toContain(
-          '236 48 19',
-        )
+        for (const retired of ['236 48 19', '23 89 91', '155 195 193']) {
+          expect(
+            theme.get(token),
+            `${token} still carries ${retired} in ${name}`,
+          ).not.toContain(retired)
+        }
       }
     }
-    expect(light.get('--ghost-hover')).toContain('23 89 91') // the accent
-    expect(dark.get('--ghost-hover')).toContain('155 195 193') // accent-300
+    expect(light.get('--ghost-hover')).toContain('162 56 42') // the accent
+    expect(dark.get('--ghost-hover')).toContain('211 167 157') // accent-300
   })
 
   it('paints elevation as a hairline edge plus ambient darkness', () => {
@@ -681,7 +686,7 @@ describe('tokens.css — dark ramp (ui-spec §1.4, NFR-CMP-003, E-32 §3)', () =
     ]) {
       expect(dark.get(step), `${step} kept the cream highlight lobe`).not.toContain('255 253 246')
     }
-    expect(dark.get('--shadow-lg')).toContain('#3E5B57')
+    expect(dark.get('--shadow-lg')).toContain('#4A4139')
     expect(dark.get('--shadow-lg')).toContain('rgb(0 0 0 / 0.6)')
     expect(dark.get('--shadow-inset')).toContain('inset')
     // The sidebar's dark form keeps the hairline the other three use, but only
@@ -689,11 +694,11 @@ describe('tokens.css — dark ramp (ui-spec §1.4, NFR-CMP-003, E-32 §3)', () =
     // panel, where `0 0 0 1px` would ring three edges that are off-screen. The
     // ochre lobe is gone for the reason the whole dark block exists — it is a
     // light-ground device.
-    expect(dark.get('--shadow-sidebar')).toContain('1px 0 0 #3E5B57')
+    expect(dark.get('--shadow-sidebar')).toContain('1px 0 0 #4A4139')
     expect(dark.get('--shadow-sidebar')).not.toContain('150 128 96')
   })
 
-  it('turns the grain to the cool end of the ramp on a teal ground', () => {
+  it('turns the grain to the ramp\u2019s dark end on an ink ground', () => {
     // Worth <1/255 at today's intensity — a dark ground is already most of the
     // way to a near-black tone — and declared anyway, because the tone is the
     // one part of the texture that is paint. The failure it forecloses is the
@@ -702,8 +707,8 @@ describe('tokens.css — dark ramp (ui-spec §1.4, NFR-CMP-003, E-32 §3)', () =
     // `DARK_CASCADE`, not `dark`: the dark block does not re-declare the ramps,
     // so the step this points at is reached by inheritance — the same hole the
     // scanner further down exists to close.
-    expect(resolveToken(light, '--paper-tone')).toBe('#23211D') // neutral-900
-    expect(resolveToken(DARK_CASCADE, '--paper-tone')).toBe('#082325') // accent-900
+    expect(resolveToken(light, '--paper-tone')).toBe('#221E1A') // neutral-900
+    expect(resolveToken(DARK_CASCADE, '--paper-tone')).toBe('#3E140E') // accent-900
     expect(dark.get('--paper-tone')).not.toBe(light.get('--paper-tone'))
   })
 })
@@ -770,21 +775,26 @@ describe('contrast floors (E-32 §4)', () => {
     ['dark table headers on the surface', dark, '--ink-th', '--color-surface'],
   ]
 
-  it('lifts the hot marker out of the wash rather than moving the brand red', () => {
-    // The pair that cannot be repaired by moving a token — `--on-hot` is
-    // `#000000` and there is no darker ink — so E-43 exempts the marker from the
-    // wash instead. Five facts have to hold together, and any one alone is a lie.
+  it('keeps the marker above the wash, now for its edges and not its legibility', () => {
+    // **This test used to assert the opposite and it was right to.** Under
+    // E-43's palette `--on-hot` was pure black on #EC3013, the pair washed to
+    // 4.46, and the exemption in base.css was the only reason the marker
+    // cleared AA at all. The comment here said, in as many words: if the wash
+    // ever stops taking this pair under AA, the exemption has stopped being
+    // necessary and somebody should delete it.
     //
-    // 1. Washed, this pair fails: `--on-hot` on `--color-hot` is 4.46 at the
-    //    shipped intensity. The number is stated here so that a future change to
-    //    `--paper-intensity` cannot make this test vacuous — if the wash ever
-    //    stops taking it under AA, the exemption has stopped being necessary and
-    //    somebody should delete it.
-    // 2. Dry, it passes at 4.9988 — the ceiling — and the *only* thing that
-    //    makes the dry number the true one is the rule in `base.css` that paints
-    //    the chip above its bar's grain layer.
-    expect(washedRatio(light, '--on-hot', '--color-hot')).toBeLessThan(4.5)
+    // E-46 is that moment. #A2382A takes a cream ink at **5.62 washed**, so the
+    // pair clears AA with the grain fully on it and the lift is no longer
+    // load-bearing for legibility. The first assertion below is therefore
+    // reversed: it now pins the headroom rather than the failure.
+    expect(washedRatio(light, '--on-hot', '--color-hot')).toBeGreaterThanOrEqual(4.5)
     expect(ratio(light, '--on-hot', '--color-hot')).toBeGreaterThanOrEqual(4.5)
+
+    // The rule stays, and the reason it stays is now a visual one rather than a
+    // contrast one: the marker is a seal, and a seal is pressed ink that sits
+    // *on* the paper rather than under its grain. Everything below still holds
+    // it in place, because a rule kept for a softer reason is exactly the kind
+    // that gets deleted by someone who only reads the first paragraph.
 
     // 3. The rule exists, **unconditionally and at exactly this selector**.
     //
@@ -988,12 +998,18 @@ describe('contrast floors (E-32 §4)', () => {
     )
   })
 
-  it('puts dark ink on the hot marker — no light one can clear AA', () => {
-    // E-32 §4 asks for the override chip's foreground to be fixed. #F6F2E9 is
-    // 3.76 and even pure white is 4.20, so the fix has to be a dark ink.
+  it('puts light ink on the hot marker — the dark one no longer clears AA', () => {
+    // The exact inversion of the E-43 position, and worth stating as one. On
+    // #EC3013 a light ink could not clear AA at all (#F6F2E9 was 3.76, pure
+    // white 4.20) so the marker took pure black with 0.50 of dry headroom. On
+    // #A2382A the palette's ceiling is at the other end: black is **3.14 dry**
+    // and 2.88 washed, and the cream that used to fail is the one that works.
     const hot = parseColour(light.get('--color-hot') ?? '')
     expect(contrast(parseColour(light.get('--on-hot') ?? ''), hot)).toBeGreaterThanOrEqual(4.5)
-    expect(contrast(parseColour('#FFFFFF'), hot)).toBeLessThan(4.5)
+    expect(contrast(parseColour('#000000'), hot)).toBeLessThan(4.5)
+    // And it is the same cream that sits on an accent fill, because the marker
+    // and the accent are one colour now.
+    expect(light.get('--on-hot')).toBe(light.get('--on-accent'))
   })
 })
 
@@ -1310,13 +1326,15 @@ describe('the pairs components actually paint (E-32 §1)', () => {
     // before `bg`/`surface` joined `FILL`, and one of them was a real defect.
     expect(seen).toContain(join('components', 'ds', 'FormatBadge.tsx') + ' bg-surface text-accent-text')
     expect(seen).toContain(join('features', 'viewer', 'ViewerPage.tsx') + ' bg-bg text-neutral-400')
-    // The one the cream fills bought (E-42). It is the ⌘K hint chip on the
-    // library's search field: an absolute ground with an absolute ink, which is
-    // the pairing that has no theme to fall back on if it is wrong. The ink is
-    // `--on-control` and not the dim one — see the note above the `FILL` regex
-    // for why the dim ink measured a pass here and failed in a browser.
+    // The one the cream fills bought (E-42), as E-46 leaves it. It was the ⌘K
+    // hint chip painting `bg-control-well text-on-control`; the chip is an
+    // outlined box now, so it paints no fill of its own and drops out of this
+    // scan — its ground is the `.input` it sits on and `soft-ui.test.ts` holds
+    // that. What is checked here instead is that the *other* absolute pairing
+    // on the same screen is still found, so the entry did not simply vanish
+    // along with the coverage it stood for.
     expect(seen).toContain(
-      join('components', 'shell', 'TopBar.tsx') + ' bg-control-well text-on-control',
+      join('features', 'viewer', 'ViewerTopBar.tsx') + ' bg-hot text-on-hot',
     )
     // The pair the scan below exempts from the wash, and the file it is keyed to.
     // Two failure directions, both silent without this.
@@ -1615,7 +1633,11 @@ describe('the style layer holds every colour literal', () => {
     // D-40's zero-radius rule is retired but its enforcement is not (E-32 §2):
     // every corner in the sheet is a `--radius-*` token, a true circle, or the
     // pill. `src/lib/hygiene.test.ts` holds the same line across all of src/.
-    const allowed = new Set(['50%', '9999px'])
+    // `0` is on the list for the same reason `9999px` is: both are ends of the
+    // scale rather than points on it. E-46's slider slug is square on purpose,
+    // and `border-radius: 0` is what `rounded-none` compiles to — a corner
+    // nobody has to look up a token for.
+    const allowed = new Set(['0', '50%', '9999px'])
     for (const key of light.keys()) if (key.startsWith('--radius-')) allowed.add(`var(${key})`)
     const offenders = allRules(BASE)
       .filter((r) => !r.body.includes('{'))
@@ -1655,23 +1677,30 @@ describe('the style layer holds every colour literal', () => {
     expect(exactRule('*')?.body).toMatch(/scrollbar-width:\s*thin/)
   })
 
-  it('gives the slider a 6px pill trough and a round thumb', () => {
+  it('gives the slider a 2px rule and a rectangular slug (E-46)', () => {
+    // The 서고 slider is a ruler with a marker on it, not a pill with a disc:
+    // 2px of rail and a 12×18 slug with square corners. Both engines, because
+    // the two pseudo-element families are separate rules and a change made to
+    // one of them silently ships half a design.
     for (const track of [
       "input[type='range']::-webkit-slider-runnable-track",
       "input[type='range']::-moz-range-track",
     ]) {
       const body = exactRule(track)?.body ?? ''
-      expect(body, track).toMatch(/height:\s*6px/)
-      expect(body, track).toMatch(/border-radius:\s*var\(--radius-full\)/)
+      expect(body, track).toMatch(/height:\s*2px/)
+      expect(body, track).not.toMatch(/border-radius/)
     }
     for (const thumb of [
       "input[type='range']::-webkit-slider-thumb",
       "input[type='range']::-moz-range-thumb",
     ]) {
       const body = exactRule(thumb)?.body ?? ''
-      expect(body, thumb).toMatch(/width:\s*18px/)
+      expect(body, thumb).toMatch(/width:\s*12px/)
       expect(body, thumb).toMatch(/height:\s*18px/)
-      expect(body, thumb).toMatch(/border-radius:\s*50%/)
+      expect(body, thumb).toMatch(/border-radius:\s*0/)
+      // No lift on the slug: a flat drop under a 12px mark is a smudge, and the
+      // slug already separates from the rail by colour.
+      expect(body, thumb).not.toMatch(/box-shadow/)
     }
   })
 })
@@ -1733,14 +1762,14 @@ describe('the paper grain (tokens.css)', () => {
   })
 
   it('takes the app tone off the ramp, and the intensity from E-43 — not the prototype', () => {
-    // `--color-neutral-900` is #23211D against the prototype's #201E1D: three
-    // units on two channels, which at ≤0.115 alpha and full intensity is
-    // 0.35/255 of difference. Same colour, one fewer literal in the file.
+    // `--color-neutral-900` is the 서고 ramp's dark end, and in this palette it
+    // *is* the ink — so the wash and the text are the same colour and the tone
+    // costs the file no literal at all.
     //
     // The intensity is no longer the prototype's either. 0.5 was carried across
     // untouched and nobody had asked whether it was right for this product;
     // E-43 rendered four amplitudes on the real screens and the user chose 1.
-    expect(resolveToken(light, '--paper-tone')).toBe('#23211D')
+    expect(resolveToken(light, '--paper-tone')).toBe('#221E1A')
     // Pinned rather than ranged: the value is a user's choice between four
     // rendered options, so a drift back to 0.5 is a decision being undone, not a
     // tuning. The **two** tokens re-derived for it — dark `--ink-faint` and dark
@@ -2155,7 +2184,9 @@ describe('touch targets below 768 (ui-spec §7, WP-05 acceptance 9)', () => {
     // minimum but made the bottom bar 12px taller than the design on a desktop.
     expect(findRule(allRules(BASE), "input[type='range']")?.body).toMatch(/height:\s*24px/)
     expect(mobileRule("input[type='range']")).toMatch(/height:\s*var\(--touch-min\)/)
-    expect(mobileRule("input[type='range']::-webkit-slider-thumb")).toMatch(/height:\s*26px/)
+    // E-46's slug is 16×28 below 768 — taller than the 26px disc it replaces,
+    // so the finger target grew rather than shrank when the shape changed.
+    expect(mobileRule("input[type='range']::-webkit-slider-thumb")).toMatch(/height:\s*28px/)
   })
 
   it('covers every control the shell puts on a phone', () => {

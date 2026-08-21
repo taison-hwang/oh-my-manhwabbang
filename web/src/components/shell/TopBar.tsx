@@ -135,30 +135,38 @@ export function TopBar({
           aria-label="시리즈 검색 (초성 가능)"
           className="pl-[34px] pr-[52px]"
         />
-        {/* The hint is a **recessed chip**, not an outlined one. `border-rule`
-            was a theme-relative hairline drawn on a fill that no longer flips
-            with it: barely visible in light, a hard dark line in dark, so the
-            same chip read as two different things. `--control-well` is the
-            recess the segmented track uses, and the well is only 1.04:1 against
-            the fill — the *shadow* is what makes it a dent, so the inset comes
-            with the fill or the chip is invisible. Both tokens are absolute, so
-            this now looks identical in both themes, which a hint sitting inside
-            an absolute control should.
+        {/* E-46 turns the hint back into an **outlined chip**, and the reason
+            the outline works now is the reason it did not before.
 
-            **The ink is `--on-control`, not the dim one, and the reason is that
-            the token pair was the wrong thing to measure.** `--shadow-control-
-            inset` is sized for a 36px control: 3px offset plus 7px blur, so it
-            eats 10px in from each edge. This chip is 14.8px tall, so the lobes
-            meet in the middle and no pixel of it is actually `--control-well` —
-            the top-left is ochre, the bottom-right near-white. Against the real
-            top-left pixels the dim ink measures **4.55 washed and 4.44 at peak
-            grain**, i.e. under AA at 11px, while the declared pair reads 5.65
-            and looks fine. A shadow moved the floor and a pair scanner cannot
-            see shadows. The full ink clears it everywhere on the gradient
-            (10.4 at the darkest pixel), and a keycap is allowed to be a keycap. */}
+            E-42 made it a recess because `border-rule` was a theme-relative
+            hairline drawn on a fill that no longer flipped with it: barely
+            visible in light, a hard dark line in dark, so the same chip read as
+            two different things in the two themes. `--control-border` is an
+            absolute, like the fill it is drawn on, so that split cannot happen
+            — the chip looks identical in both themes, which is what a hint
+            sitting inside an absolute control should do.
+
+            The recess also carried a defect worth not re-introducing.
+            `--shadow-control-inset` is sized for a 36px control (3px offset,
+            7px blur) and this chip is 14.8px tall, so the two lobes met in the
+            middle and no pixel of it was actually `--control-well`: the
+            top-left was ochre and the bottom-right near-white. Against the real
+            top-left pixels the dim ink measured 4.55 washed — under AA — while
+            the declared pair read 5.65 and looked fine. A flat 1px box has one
+            ground and the declared pair is the real one, so that whole class of
+            gap closes with it.
+
+            **The ink is `--on-control-dim` and not the prototype's
+            neutral-600.** On this field neutral-600 is 4.60 washed and **4.39
+            at peak grain**, i.e. under AA at 11px — the same measured refusal
+            E-32 §4 made of three of its own prototype's colours. The dim
+            control ink is 6.37 washed with 5.97 at peak.
+
+            `font-ui`, because a keycap is a keycap: the prototype sends `.kbd`
+            to the sans for the same reason it sends every numeral there. */}
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute right-[9px] top-1/2 -translate-y-1/2 rounded-sm bg-control-well px-[5px] text-xs tracking-[.04em] text-on-control shadow-control-inset"
+          className="pointer-events-none absolute right-[9px] top-1/2 -translate-y-1/2 border border-control-border px-[5px] font-ui text-xs tracking-[.04em] text-on-control-dim"
         >
           {commandKeyHint()}
         </span>
@@ -174,7 +182,7 @@ export function TopBar({
       )}
 
       <div className="flex items-center gap-2">
-        <span className="hidden items-center gap-[6px] text-3xs uppercase tracking-[.1em] text-ink-dim md:inline-flex">
+        <span className="hidden items-center gap-[6px] font-ui text-3xs uppercase tracking-[.1em] text-ink-dim md:inline-flex">
           <ArrowDownNarrowWide size={13} aria-hidden={true} />
           Sort
         </span>
