@@ -198,6 +198,34 @@ describe('TopBar (ui-spec §4.2)', () => {
     await userEvent.click(screen.getByRole('button', { name: '라이브러리 탐색 열기' }))
     expect(props.onOpenDrawer).toHaveBeenCalledOnce()
   })
+
+  /**
+   * The sort group and the view toggle are pinned to the **right** edge of the
+   * bar, and they are one box while doing it.
+   *
+   * jsdom does no layout, so this reads the classes the alignment is made of
+   * rather than a measured x. Measured in Chrome at 1440 / 1024 / 768 / 400 /
+   * 320: the toggle's right edge is the bar's own 16px padding at every one of
+   * them, and `body.scrollWidth === clientWidth` at every one of them.
+   *
+   * Both halves are asserted because each fails on its own:
+   *
+   *  - without `ml-auto` the pair trails the search field, which is capped at
+   *    400px, across a bar three times that wide — where they had been sitting;
+   *  - without the wrapper they are independent items of a *wrapping* bar, so at
+   *    768 the sort group ends line 1 flush right and the toggle opens line 2
+   *    flush left, 520px away from it.
+   */
+  it('pins the sort group and the view toggle to the right edge, as one box', () => {
+    renderTopBar()
+    const sortGroup = screen.getByRole('combobox', { name: '정렬' }).parentElement
+    const controls = sortGroup?.parentElement
+
+    expect(controls).toHaveClass('ml-auto', 'flex-wrap', 'justify-end')
+    // The toggle is inside the same box, not a sibling of it.
+    expect(controls?.querySelector('.seg')).not.toBeNull()
+    expect(sortGroup?.nextElementSibling).toHaveClass('seg')
+  })
 })
 
 describe('MobileDrawer (ui-spec §7, D-42)', () => {

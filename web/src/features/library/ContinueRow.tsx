@@ -1,6 +1,7 @@
 import type { ContinueItem } from '../../api/types'
 import { formatItemCount } from '../../lib/format'
 import { ContinueCard } from './ContinueCard'
+import { SectionRule } from './SectionHeader'
 import { useContinueItems } from './useLibrary'
 
 /**
@@ -29,8 +30,11 @@ export function ContinueRow({ suppressed, onResume }: ContinueRowProps) {
        ContinueCard has somewhere to go and its shadow is not clipped by the
        scroller. */
     <section className="flex-none p-4" aria-label="이어보기">
+      {/* The same masthead the shelf header below carries (`SectionHeader`):
+          name, latin, rule, count. E-46 — the two bands are one document. */}
       <div className="mb-3 flex items-baseline gap-2">
         <h6>이어보기</h6>
+        <SectionRule word="Continue" />
         <span className="text-xs tabular-nums text-ink-dim">{formatItemCount(items.length)}</span>
       </div>
       {/* Below 768 the track is a snap scroller and each card is a stop, which

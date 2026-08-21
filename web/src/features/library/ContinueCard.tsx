@@ -2,6 +2,7 @@ import { useCoverImage } from '../../api/queries'
 import type { ContinueItem } from '../../api/types'
 import { THUMB_WIDTH_FOR } from '../../api/urls'
 import { FallbackCover } from '../../components/ds/FallbackCover'
+import { PageStamp } from '../../components/ds/PageStamp'
 import { ProgressBar } from '../../components/ds/ProgressBar'
 import { formatContinueCounter } from '../../lib/format'
 
@@ -10,10 +11,39 @@ import { formatContinueCounter } from '../../lib/format'
  * three widths ui-spec §7 specifies: **the full track below `md` (768), 260px
  * at 768–1023, 269px at and above `lg` (1024).**
  *
- * All three are the *whole* card, border-box, so what the text column gets is
- * `width − 96 cover − 12 gap − 2×12 padding` = **137px** at ≥1024, **128px** at
- * 768–1023, and **236px** on a 400px viewport, where the card is the track
- * (measured in Chrome, not derived).
+ * ---------------------------------------------------------------------------
+ * E-46 — the card is a filing card now, not a tile
+ * ---------------------------------------------------------------------------
+ * The 서고 prototype draws this one thing differently from every other card in
+ * the product: it is not a raised surface, it is **a sheet out of a 서류철**.
+ * Four marks make it that, and all four are the prototype's:
+ *
+ *  - **kraft, not cream.** `--fill-track` resolves to the very ramp step the
+ *    prototype paints this card in (neutral-300, and unlike a raw ramp step it
+ *    flips with the theme), which is a shade *below* the surface the shelf uses.
+ *    The 이어보기 band stops being a row of tiles and becomes paper on a desk;
+ *  - **a punch hole** in the left gutter, in the ground's own colour, so the
+ *    gutter reads as the bound edge of a card rather than as padding;
+ *  - **ruled lines** behind the text at a 22px pitch. They are `--fill-track-2`,
+ *    which lands within three points of the ink-at-9 % the prototype washes them
+ *    in, on either theme;
+ *  - **the counter is stamped**, not typed (`PageStamp`), and the progress is a
+ *    2px rule along the foot rather than a pill (`ProgressBar track="rule"`).
+ *
+ * The **widths are untouched** by all of it: they are E-37's, `library.test.tsx`
+ * pins the class list, and `07-responsive.spec.ts` 6.12 measures the result in a
+ * browser. What the skin costs is 10px of text column — the left gutter that
+ * holds the punch hole is 22px where the old symmetric padding was 12 — so what
+ * the text column gets is now `width − 22 gutter − 96 cover − 12 gap − 12
+ * padding` = **127px** at ≥1024, **118px** at 768–1023, and **226px** on a 400px
+ * viewport, where the card is the track.
+ *
+ * The gutter is 22 and not the prototype's 34 for the same reason the cover
+ * stays 96 rather than dropping to the prototype's 52: this card is 269px wide
+ * where the prototype's is 336, and the two numbers that would have to give to
+ * hold the prototype's proportions are both pinned by rulings that were made
+ * against measurements — E-37 on the width, and the note below on the cover.
+ * A 34px gutter here is a 115px text column, which is under two lines of title.
  *
  * The bottom two were requirements this component had never met. It carried
  * exactly one breakpoint — Tailwind's `md` — so 768–1023 shipped 269, 9px wide
@@ -75,15 +105,36 @@ export function ContinueCard({ item, onResume }: ContinueCardProps) {
       type="button"
       onClick={onResume}
       aria-label={`${item.series_name} ${item.book.name}`}
-      // E-32: the 1px hairline and its accent-on-hover become a raised card
-      // that lifts. `hover:border-accent` could not survive the reskin anyway —
-      // the accent is a deep teal and 1.2:1 against the dark surface.
-      className="flex flex-[0_0_100%] cursor-pointer snap-start gap-3 rounded-lg bg-surface p-3 text-left shadow-md transition-[box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:shadow-lg md:flex-[0_0_260px] md:snap-align-none lg:flex-[0_0_269px]"
+      // E-32 turned a 1px hairline into a raised card that lifts; E-46 keeps the
+      // lift and moves the ground under it (see the header). The radius goes
+      // with the skin: `--radius-lg` is 3px now, and this card is a sheet.
+      className="relative flex flex-[0_0_100%] cursor-pointer snap-start gap-3 rounded-md bg-fill-track pb-5 pl-[22px] pr-3 pt-4 text-left shadow-md transition-[box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:shadow-lg md:flex-[0_0_260px] md:snap-align-none lg:flex-[0_0_269px]"
     >
+      {/* The punch hole. `--color-bg` and no shadow: the hole is the *ground*
+          showing through the card, so it is painted in the ground rather than in
+          a darker step of the card, and that reading survives the theme flip
+          without a second token. */}
+      <span
+        aria-hidden="true"
+        className="absolute left-[7px] top-4 block h-[9px] w-[9px] rounded-full bg-bg"
+      />
+
+      {/* The ruled lines, at the prototype's 22px pitch: one 21px band of nothing
+          and one 1px line. They run the width of the content — behind the cover
+          as well as behind the text — because that is where they would be on a
+          card somebody wrote on, and the cover's own ground hides the part it
+          covers. Stopping short of the foot leaves the progress rule alone on
+          its line. */}
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute bottom-[26px] left-[22px] right-3 top-[38px] bg-[repeating-linear-gradient(to_bottom,transparent_0_21px,var(--fill-track-2)_21px_22px)]"
+      />
+
       {/* 96×144, up from 66×99: the cover is the only thing on this card that
           identifies the book at a glance, and at 66px wide a title in the art
-          was unreadable. The 2:3 ratio is unchanged. */}
-      <span className="relative block h-[144px] w-[96px] flex-[0_0_96px] overflow-hidden rounded-md bg-fill-track shadow-inset">
+          was unreadable. The 2:3 ratio is unchanged, and E-46 does not shrink it
+          back to the prototype's 52 for the reason the header gives. */}
+      <span className="relative z-content block h-[144px] w-[96px] flex-[0_0_96px] overflow-hidden rounded-sm bg-fill-track-2 shadow-sm">
         <FallbackCover title={item.series_name} format={item.book.kind} size="row" />
         {cover.status === 'ready' && (
           <img
@@ -95,17 +146,24 @@ export function ContinueCard({ item, onResume }: ContinueCardProps) {
         )}
       </span>
 
-      <span className="flex min-w-0 flex-1 flex-col gap-[5px]">
+      <span className="relative z-content flex min-w-0 flex-1 flex-col gap-[5px]">
         {/* E-32: card titles drop from 800 to 700. Section headings do not. */}
         <span className="line-clamp-2 font-heading text-base font-bold leading-[1.2]">
           {item.series_name}
         </span>
         <span className="truncate whitespace-nowrap text-xs text-ink-muted">{item.book.name}</span>
         <span className="flex-1" />
-        <span className="text-sm tabular-nums text-accent-text">
+        {/* Stamped, and stamped at the *right* edge of the card the way a page
+            number is stamped at the edge of a page. */}
+        <PageStamp className="self-end">
           {formatContinueCounter(item.progress.last_page, total)}
-        </span>
-        <ProgressBar value={ratio} label={item.series_name} />
+        </PageStamp>
+      </span>
+
+      {/* The foot rule spans the content, not the card: it starts where the
+          ruled lines start, so the punch-hole gutter stays margin. */}
+      <span className="absolute bottom-[14px] left-[22px] right-3 block">
+        <ProgressBar value={ratio} height={2} track="rule" label={item.series_name} />
       </span>
     </button>
   )

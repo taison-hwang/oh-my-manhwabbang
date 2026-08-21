@@ -31,7 +31,35 @@ export function SectionHeader({ label, count }: SectionHeaderProps) {
   return (
     <div className="sticky top-0 z-sticky flex flex-none items-baseline gap-3 bg-bg px-4 pb-3 pt-4">
       <h6>{label}</h6>
+      <SectionRule word="Shelf" />
       <span className="text-xs tabular-nums text-ink-dim">{formatSeriesCount(count)}</span>
     </div>
+  )
+}
+
+/**
+ * The latin word and the hairline that E-46 rules between a section's name and
+ * its count — the 서고 prototype's masthead, on both of the library's bands
+ * (`ContinueRow` draws the other one).
+ *
+ * Neither half is decoration exactly. The rule is what turns two spans that
+ * happened to be near each other into a heading with a right edge, and the word
+ * is the letterpress convention the skin is quoting: the Korean name set large,
+ * the latin translation set tiny and widely tracked beside it. It is
+ * `aria-hidden` because it says nothing the heading beside it has not already
+ * said, in a language the rest of this screen is not in.
+ *
+ * `font-ui`, `--ink-dim`, `.34em`: the tracking is the prototype's and the face
+ * is the one `tokens.css` sends every uppercase micro-label to — 명조 at .34em
+ * comes apart into unrelated letters.
+ */
+export function SectionRule({ word }: { word: string }) {
+  return (
+    <>
+      <span aria-hidden="true" className="font-ui text-2xs uppercase tracking-[.34em] text-ink-dim">
+        {word}
+      </span>
+      <span aria-hidden="true" className="h-px flex-1 bg-rule" />
+    </>
   )
 }

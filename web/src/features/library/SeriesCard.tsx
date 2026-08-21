@@ -2,9 +2,10 @@ import { useCoverImage } from '../../api/queries'
 import type { SeriesSummary } from '../../api/types'
 import type { ThumbWidth } from '../../api/urls'
 import { Button } from '../../components/ds/Button'
+import { DoneSeal } from '../../components/ds/DoneSeal'
 import { FallbackCover } from '../../components/ds/FallbackCover'
 import { FormatBadge } from '../../components/ds/FormatBadge'
-import { ProgressBar } from '../../components/ds/ProgressBar'
+import { ReadRibbon } from '../../components/ds/ReadRibbon'
 import { cn } from '../../lib/cn'
 import { formatBytes, formatVolumeCount } from '../../lib/format'
 import { seriesCardDomId } from '../../store/ui'
@@ -14,8 +15,18 @@ import { CARD_TEXT_HEIGHT, highlightParts } from './useLibrary'
  * `SeriesCard` (ui-spec §9 #1, §4.5 "Grid mode") — one cell of the cover grid.
  *
  * The four absolute layers over a `aspect-ratio:2/3` box, bottom to top:
- * striped fallback → cover image → badges + progress → hover/focus action
- * overlay. The fallback is **always rendered beneath the image** (FR-LIB-008),
+ * striped fallback → cover image → badges → hover/focus action overlay, all four
+ * inside the 7px cream mat E-46 wraps the cover in.
+ *
+ * **The progress is no longer one of those layers.** It used to be a 5px rail
+ * lying across the foot of the cover; the 서고 skin hangs a 갈피 out of the top
+ * of the book instead, as long as the part that has been read (`ReadRibbon`),
+ * and marks a finished one with a 完讀 seal rather than a 완독 pill (`DoneSeal`).
+ * Both are drawn *outside* the mat's window so the ribbon can overhang and the
+ * seal can sit on the mat, which is why the `overflow-hidden` that used to be on
+ * the card box is now one level in.
+ *
+ * The fallback is **always rendered beneath the image** (FR-LIB-008),
  * never swapped in on failure: that is what makes a cover arriving late — or a
  * `202` while the thumbnail is still queued — a cross-fade rather than a layout
  * shift (UI-5.3).
@@ -76,8 +87,11 @@ export function SeriesCard({
     >
       <div
         // E-32: a 1px hairline becomes a rounded, raised cover that lifts 3px
-        // under the pointer.
-        className="group relative aspect-[2/3] overflow-hidden rounded-md bg-surface shadow-md transition-[box-shadow,transform] duration-150 hover:-translate-y-[3px] hover:shadow-lg"
+        // under the pointer. **E-46 mats it**: the card is a 7px cream border
+        // with the cover inside it, the way a print is mounted, and the clip
+        // moves off this box onto that window — the ribbon below hangs 4px over
+        // the top edge and `overflow-hidden` here would cut it off.
+        className="group relative aspect-[2/3] rounded-md bg-surface p-[7px] shadow-md transition-[box-shadow,transform] duration-150 hover:-translate-y-[3px] hover:shadow-lg"
         // An **inset** ring (E-34 §2): the cover is `overflow-hidden` inside a
         // grid cell with no room around it, so an outset ring would be clipped
         // by the cell and overlap its neighbours.
@@ -92,43 +106,31 @@ export function SeriesCard({
           ? { style: { boxShadow: 'var(--shadow-md), inset 0 0 0 2px var(--color-hot)' } }
           : {})}
       >
-        <button
-          type="button"
-          className="absolute inset-0 block h-full w-full cursor-pointer"
-          aria-label={series.name}
-          onClick={onOpen}
-        >
-          <FallbackCover title={series.name} format={series.kind} size="card" />
-          {cover.status === 'ready' && (
-            <img
-              src={cover.url}
-              alt=""
-              className="absolute inset-0 h-full w-full object-cover"
-              draggable={false}
-            />
-          )}
-        </button>
+        {/* The window in the mat. **This** is what clips — the cover art, the
+            badge and the hover scrim all live inside it, while the two marks
+            that hang off the card (the ribbon, the seal) are siblings of it and
+            are not cut. The hairline is the prototype's `0 0 0 1px` around the
+            window, in the token the product draws hairlines in. */}
+        <div className="absolute inset-[7px] border border-rule">
+          <div className="absolute inset-0 overflow-hidden">
+            <button
+              type="button"
+              className="absolute inset-0 block h-full w-full cursor-pointer"
+              aria-label={series.name}
+              onClick={onOpen}
+            >
+              <FallbackCover title={series.name} format={series.kind} size="card" />
+              {cover.status === 'ready' && (
+                <img
+                  src={cover.url}
+                  alt=""
+                  className="absolute inset-0 h-full w-full object-cover"
+                  draggable={false}
+                />
+              )}
+            </button>
 
-        <FormatBadge format={series.kind} variant="corner" className="pointer-events-none" />
-
-        {/* E-32: a pill inset 8px from the corner, like the format badge
-            opposite it. `--on-accent`, not `--color-bg`: the ground is the
-            accent fill, and `--color-bg` on it is 1.48:1 in the dark theme. */}
-        {done && (
-          <span className="pointer-events-none absolute right-2 top-2 rounded-full bg-accent px-2 py-[3px] text-2xs font-semibold tracking-[.06em] text-on-accent shadow-sm">
-            완독
-          </span>
-        )}
-
-        {!done && ratio > 0 && (
-          <ProgressBar
-            value={ratio}
-            height={5}
-            track="over-art"
-            label={series.name}
-            className="pointer-events-none absolute inset-x-0 bottom-0"
-          />
-        )}
+            <FormatBadge format={series.kind} variant="corner" className="pointer-events-none" />
 
         {/* Hidden by opacity, never by `display`, so the buttons keep their
             geometry and the reveal is a 120ms fade (ui-spec §4.5).
@@ -193,6 +195,24 @@ export function SeriesCard({
             상세
           </Button>
         </div>
+          </div>
+        </div>
+
+        {/* E-46 — the two marks the 서고 skin puts *on* a book rather than
+            beside it. Both are siblings of the window above, so neither is cut
+            by its clip: the ribbon hangs 4px over the top edge of the mat and
+            the seal is pressed onto the mat's own margin at the foot.
+
+            The ribbon replaces the 5px rail that used to lie across the bottom
+            of the cover; it carries the same `role="progressbar"` and the same
+            `aria-valuenow`, so nothing that was not looking at it can tell the
+            difference (`ReadRibbon.tsx`). */}
+        {!done && ratio > 0 && <ReadRibbon value={ratio} label={series.name} />}
+
+        {/* 완독 is stamped now, not labelled (`DoneSeal.tsx`). The word 완독 is
+            still in the DOM — it is the seal's accessible name — so the catalogue
+            copy and everything that reads for it are unchanged. */}
+        {done && <DoneSeal className="absolute bottom-3 right-3 z-sticky" />}
       </div>
 
       <div

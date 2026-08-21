@@ -644,7 +644,8 @@ describe('grid mode (FR-LIB-001, FR-LIB-008)', () => {
   })
 
   /**
-   * E-32's structural swap on the card, asserted on the class list.
+   * E-32's structural swap on the card, asserted on the class list, **as
+   * re-cut by E-46's mat.**
    *
    * The 1px hairline round every cover became elevation plus a hover lift. What
    * is worth pinning is not the look but the pair of things that were *removed*:
@@ -652,16 +653,87 @@ describe('grid mode (FR-LIB-001, FR-LIB-008)', () => {
    * and reads as a mis-render, and `hover:border-accent` — which is what the
    * continue card and the volume tile used to do — is a deep teal at ~1.2:1
    * against the surface in the dark theme, i.e. a hover state that does nothing.
+   *
+   * E-46 wraps the cover in a 7px cream mat and cuts a window in it, and the
+   * window carries the prototype's `0 0 0 1px` hairline. **That is not the
+   * border E-32 removed**: E-32's ruling is about the card's own boundary — the
+   * thing the reader sees as the edge of the object — and the card is still a
+   * raised surface with no edge drawn on it. The hairline is one level in, on
+   * the mount around the artwork, where the alternative is artwork bleeding into
+   * cream with nothing to say where one stops.
+   *
+   * The clip moved with it, and that half is load-bearing rather than cosmetic:
+   * `overflow-hidden` on the card box cuts the 4px of ribbon that hangs over the
+   * top edge, so the assertion below is what stops it coming back.
    */
-  it('gives the cover elevation and a lift instead of a hairline (E-32)', async () => {
+  it('mats the cover: raised card, hairline on the window, no clip on the box (E-32, E-46)', async () => {
     renderLibrary()
     await waitForLibrary()
 
     const cover = await screen.findByRole('button', { name: MONSTER.name })
-    const box = cover.parentElement
-    expect(box).toHaveClass('rounded-md', 'shadow-md', 'hover:shadow-lg')
+    // cover button → the window's clip → the window → the card box
+    const window_ = cover.parentElement?.parentElement
+    const box = window_?.parentElement
+    expect(box).toHaveClass('rounded-md', 'shadow-md', 'hover:shadow-lg', 'bg-surface', 'p-[7px]')
     expect(box?.classList.contains('border')).toBe(false)
     expect(box?.classList.contains('border-rule')).toBe(false)
+    expect(box?.classList.contains('overflow-hidden')).toBe(false)
+
+    expect(window_).toHaveClass('border', 'border-rule')
+    expect(window_?.firstElementChild).toHaveClass('overflow-hidden')
+  })
+
+  /**
+   * FR-LIB-005's progress, in the shape E-46 draws it: a 갈피 hanging out of the
+   * top of the book rather than a rail lying across the foot of the cover.
+   *
+   * The **information** is what this pins. The rail was a `role="progressbar"`
+   * and so is the ribbon, with the same rounded percentage and the same
+   * accessible name, because a reader who cannot see the ribbon has to be told
+   * the same number the sighted reader is being shown. The test above
+   * ("badges format and 완독…") already reads this element as *the* progress bar
+   * of the grid; what is added here is that the mark is the ribbon — outside the
+   * window, overhanging the top edge — and not something drawn over the artwork.
+   */
+  it('hangs a ribbon as long as the part that has been read (E-46)', async () => {
+    renderLibrary()
+    await waitForLibrary()
+
+    const cover = await screen.findByRole('button', { name: MONSTER.name })
+    const box = cover.parentElement?.parentElement?.parentElement
+    const ribbon = box?.querySelector('[role="progressbar"]')
+
+    expect(ribbon).toHaveAttribute('aria-valuenow', '34')
+    expect(ribbon).toHaveAttribute('aria-label', MONSTER.name)
+    expect(ribbon?.getAttribute('style')).toContain('height: 34%')
+    // A sibling of the window, not a child of it: the clip that keeps the
+    // artwork inside the mount would take the overhang off the ribbon.
+    expect(ribbon?.parentElement).toBe(box)
+    expect(ribbon?.className).toContain('-top-1')
+  })
+
+  /**
+   * 완독 is stamped, not labelled (E-46) — and the word survives the change.
+   *
+   * The seal draws 完讀, two Han glyphs vendored for it (`fonts.css`), which is
+   * the prototype's mark. The **accessible name stays the Korean 완독** from the
+   * ui-spec §9 catalogue: the hanja is `aria-hidden` and the word is in the DOM
+   * beside it, so nothing in the product is legible only to a reader who knows
+   * it — and so `findByText('완독')` above still finds what it was looking for.
+   */
+  it('stamps a finished cover with the 完讀 seal, keeping 완독 as its name (E-46)', async () => {
+    renderLibrary()
+    await waitForLibrary()
+
+    const cover = await screen.findByRole('button', { name: AKIRA.name })
+    const box = cover.parentElement?.parentElement?.parentElement
+    const seal = box?.querySelector('.font-seal')
+
+    expect(seal).toHaveClass('-rotate-[9deg]', 'border-accent-text')
+    expect(seal?.querySelector('[aria-hidden="true"]')?.textContent).toBe('完讀')
+    expect(seal?.querySelector('.sr-only')?.textContent).toBe('완독')
+    // The finished cover carries no bar of any kind — the seal is the statement.
+    expect(box?.querySelector('[role="progressbar"]')).toBeNull()
   })
 
   it('lays out the auto-fill column count of the inner grid box (acceptance 1, ui-spec §7)', async () => {
@@ -2601,6 +2673,48 @@ describe('이어보기 (FR-LIB-010)', () => {
    * breakpoint, Tailwind's `md`. `07-responsive.spec.ts` 6.12 measures all three
    * in a browser; this pins the class list they come from.
    */
+  /**
+   * E-46 — the card is a sheet out of a 서류철, and these are the four marks
+   * that make it one rather than another raised tile.
+   *
+   * They are pinned together because they are one decision: the kraft ground is
+   * what the punch hole is punched in, the ruled lines are what the stamp is
+   * written on, and a card that kept the cream surface with any of the three on
+   * it would read as a mistake rather than as a document. The geometry (22px
+   * gutter, 22px rule pitch) belongs to the component; what is asserted here is
+   * that each mark is present and made of the token it should be made of.
+   *
+   * The counter is the same string it always was — `formatContinueCounter`,
+   * `10 / 214p` — so every existing assertion that reads it still reads it. What
+   * changed is that it is now inside a stamp.
+   */
+  it('draws the card as a filing card: kraft, punch hole, rules, stamp (E-46)', async () => {
+    scenario.continueItems = [makeContinueItem()]
+    renderLibrary()
+    await waitForLibrary()
+
+    const card = await screen.findByRole('button', { name: /군계\(軍鷄\) 01권\.zip/ })
+    // The ground is a shade *below* the shelf's surface, and it is the token
+    // that flips with the theme rather than the ramp step it resolves to.
+    expect(card).toHaveClass('bg-fill-track')
+    expect(card.classList.contains('bg-surface')).toBe(false)
+    // The gutter that holds the punch hole, and the hole in it, in the ground's
+    // own colour — the ground showing through the card.
+    expect(card).toHaveClass('pl-[22px]')
+    expect(card.querySelector('.bg-bg.rounded-full')).not.toBeNull()
+    // The ruled lines behind the text, at the prototype's 22px pitch.
+    expect(card.innerHTML).toContain('repeating-linear-gradient(to_bottom,transparent_0_21px')
+
+    // The counter is stamped, not typed: same string, inside a tilted rule.
+    const stamp = within(card).getByText('42 / 187p')
+    expect(stamp).toHaveClass('-rotate-[5deg]', 'border-accent-text')
+
+    // …and the progress is a 2px rule along the foot, not a pill.
+    const bar = within(card).getByRole('progressbar')
+    expect(bar).toHaveClass('h-[2px]')
+    expect(bar.classList.contains('rounded-full')).toBe(false)
+  })
+
   it('pins the card width so the spec cannot drift from it again (E-37)', async () => {
     scenario.continueItems = [makeContinueItem()]
     renderLibrary()

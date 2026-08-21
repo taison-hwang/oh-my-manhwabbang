@@ -181,35 +181,57 @@ export function TopBar({
         </div>
       )}
 
-      <div className="flex items-center gap-2">
-        <span className="hidden items-center gap-[6px] font-ui text-3xs uppercase tracking-[.1em] text-ink-dim md:inline-flex">
-          <ArrowDownNarrowWide size={13} aria-hidden={true} />
-          Sort
-        </span>
-        <select
-          className="input w-auto cursor-pointer text-base md:min-w-[132px]"
-          name="sort"
-          value={sort}
-          aria-label="정렬"
-          onChange={(e) => {
-            onSortChange(e.target.value as SortKey)
-          }}
-        >
-          {SORT_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-      </div>
+      {/* **The sort group and the view toggle sit against the right edge**, and
+          they are **one box** so that they stay together while doing it.
 
-      <Seg
-        value={view}
-        options={VIEW_OPTIONS}
-        onChange={onViewChange}
-        aria-label="보기 방식"
-        className="flex-none whitespace-nowrap"
-      />
+          `ml-auto` is what moves them: it eats the slack the search field leaves
+          once the field has hit its 400px cap, so the controls travel with the
+          right edge instead of trailing the field across an otherwise empty bar.
+          The field keeps `flex-[1_1_260px]` — it still takes the space it is
+          entitled to; what changes is where the *leftover* goes.
+
+          The wrapper is not tidiness. Put `ml-auto` on the sort group alone and
+          the two controls are independent flex items of a **wrapping** bar: at
+          768 the sort group ends line 1 flush right and the toggle starts line 2
+          flush *left*, 520px from the edge its sibling is pinned to (measured).
+          Two `ml-auto`s are worse — the free space splits between them and the
+          pair comes apart. One box with its own `flex-wrap` and `justify-end`
+          keeps them adjacent at every width and right-aligned on whatever line
+          they land on, including when the box itself wraps internally at 320.
+
+          The scan indicator, when it is on, stays with the field on the left —
+          it is a report about the library, not a control. */}
+      <div className="ml-auto flex flex-wrap items-center justify-end gap-3">
+        <div className="flex items-center gap-2">
+          <span className="hidden items-center gap-[6px] font-ui text-3xs uppercase tracking-[.1em] text-ink-dim md:inline-flex">
+            <ArrowDownNarrowWide size={13} aria-hidden={true} />
+            Sort
+          </span>
+          <select
+            className="input w-auto cursor-pointer text-base md:min-w-[132px]"
+            name="sort"
+            value={sort}
+            aria-label="정렬"
+            onChange={(e) => {
+              onSortChange(e.target.value as SortKey)
+            }}
+          >
+            {SORT_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <Seg
+          value={view}
+          options={VIEW_OPTIONS}
+          onChange={onViewChange}
+          aria-label="보기 방식"
+          className="flex-none whitespace-nowrap"
+        />
+      </div>
       <VisuallyHidden>{view === 'grid' ? '그리드 보기' : '리스트 보기'}</VisuallyHidden>
     </div>
   )

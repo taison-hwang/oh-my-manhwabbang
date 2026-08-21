@@ -783,9 +783,15 @@ dark). The prototype obeys this: progress percentages, the `이어보기` page c
 scan-log summary all use accent-700, never `--color-accent`.
 
 Red runs as a *field* (a solid fill) in exactly these places and nowhere else:
-`.btn-primary`, the checked `.seg-opt`, the `완독` corner badge, the `암호화`/`손상` badge, the
-`이미지 로드 실패` badge, progress-bar fills, the slider thumb, the sidebar brand square, the active
-sidebar row's 3px left border, and the current-page thumbnail border. Everything else is ink on ground.
+`.btn-primary`, the checked `.seg-opt`, ~~the `완독` corner badge~~, the `암호화`/`손상` badge, the
+`이미지 로드 실패` badge, progress-bar fills, **the 갈피 (`ReadRibbon`, E-46)**, the slider thumb, the
+sidebar brand square, the active sidebar row's 3px left border, and the current-page thumbnail border.
+Everything else is ink on ground.
+
+> **E-46 struck the 완독 badge from this list and did not replace it with the seal.** The badge was an
+> accent *field* with cream on it; the seal is a rule and two glyphs, i.e. accent as **ink** — so it
+> belongs to the paragraph above, at `--accent-text`, and the ribbon that replaced the progress rail is
+> the fill that took the badge's place here.
 
 ### 2.6 Icons
 
@@ -883,6 +889,22 @@ Left → right:
    Options: `이름` / `수정일` / `최근 읽은 순` / `용량` / `권 수` (`name|mtime|read|size|vols`).
 6. **View toggle** — `.seg` with two `.seg-opt` radios: `그리드` / `리스트`. Checked option is an accent field.
 
+> **Amended by E-46 — item 3 is real again, and it is one box.**
+>
+> The spacer at position 3 had been dropped from the code: `TopBar.tsx` made the search field itself the
+> elastic element, so with the field capped at 400px the sort group and the toggle trailed it across a
+> bar three times that wide instead of sitting against the right edge this list puts them at. The user
+> asked for the prototype's arrangement, which is this one.
+>
+> What ships is `ml-auto` on a **wrapper holding both controls**, not a spacer `<div>` and not `ml-auto`
+> on the sort group alone. The bar wraps below 768 (§7), and two independently-pushed items on a wrapping
+> line come apart: measured in Chrome at 768, the sort group ends line 1 flush right and the toggle opens
+> line 2 flush *left*, 520px away. The wrapper carries `flex-wrap justify-end` of its own so it also wraps
+> internally at 320 with both halves still right-aligned.
+>
+> Measured at 1440 / 1024 / 768 / 400 / 320: the toggle's right edge is the bar's own 16px padding at
+> every width, and `body.scrollWidth === clientWidth` at every width.
+
 ### 4.3 Continue-reading row (이어보기)
 
 **Hidden entirely when there is nothing in progress** (and hidden during the skeleton state).
@@ -943,6 +965,29 @@ and the cards' own elevation (`ContinueRow.tsx`, `flex-none p-4`).
 > are sized against *that*, not against the card. The 12px gap, the 12px padding, the 5px body gap and
 > the counter format did not move.
 >
+> **Amended by E-46 — the card is a filing card, and the widths above are untouched.**
+>
+> The 서고 prototype does not draw this as a raised tile. It is a sheet out of a 서류철, and four marks
+> make it one (`ContinueCard.tsx`):
+>
+> - ground `var(--fill-track)` — the ramp step the prototype paints it in, in the token that flips with
+>   the theme — instead of `var(--color-surface)`. The 이어보기 band is now a shade *below* the shelf;
+> - a **punch hole** in the left gutter: `9px` circle, `var(--color-bg)`, i.e. the ground showing through;
+> - **ruled lines** behind the content at the prototype's 22px pitch —
+>   `repeating-linear-gradient(to bottom, transparent 0 21px, var(--fill-track-2) 21px 22px)`, which is
+>   within three points of the ink-at-9 % the prototype washes them in, on either theme;
+> - the page counter is **stamped** (`PageStamp`: 1.5px `--accent-text` rule, `rotate(-5deg)`, `--font-ui`
+>   tabular) and the bar becomes a **2px rule** along the foot (`ProgressBar height={2} track="rule"`),
+>   not a pill. Same string, same `role="progressbar"`, same value.
+>
+> **What this costs is 10px of body column, and that is the whole of what moved.** The left padding goes
+> 12 → 22 to hold the hole, so the arithmetic above becomes `width − 22 gutter − 96 thumb − 12 gap − 12
+> padding`: **127px** at ≥1024, **118px** at 768–1023, **226px** on a 400px viewport. The gutter is 22 and
+> not the prototype's 34, and the thumb stays 96 rather than dropping to the prototype's 52, because this
+> card is 269px wide where the prototype's is 336 and both of the numbers that would have to give are
+> pinned by rulings made against measurements — E-37 on the width, the note above on the thumb. A 34px
+> gutter here leaves a 115px body column, which is under two lines of title.
+>
 > **Four other values in this section were already wrong and are struck above, not silently corrected**
 > — the section's `border-bottom`, the track's `padding-bottom`, the card's border-and-hover, the title
 > weight and the bar. Every one of them is a pre-E-32 contract that survived the ruling which retired
@@ -958,6 +1003,18 @@ background:var(--color-bg); z-index:2; border-bottom:1px solid var(--rule)`
 
 `<h4>{scopeLabel}</h4>` (전체 시리즈 / 읽는 중 / 최근 추가 / 완독 / root name) +
 `font-size:11px; tabular-nums; color:var(--ink-dim)` result count (`24개 시리즈`).
+
+> **Amended by E-46 — the masthead: name, latin, rule, count.**
+>
+> Between the heading and the count the 서고 prototype sets the section's name in latin —
+> `font-size:9px; letter-spacing:.34em; uppercase; color:var(--ink-dim)`, in `--font-ui` because 명조 at
+> .34em comes apart — and then a `flex:1; height:1px; background:var(--rule)` hairline that carries the
+> eye to the count. `SHELF` on this header, `CONTINUE` on §4.3's. Both are `aria-hidden`: they say
+> nothing the Korean heading beside them has not said, in a language the screen is not in.
+>
+> The `border-bottom` struck by E-32 stays struck — the rule is *inside* the header now, running to the
+> right edge, not under it. `SectionHeader.tsx` exports the pair as `SectionRule` so the two bands cannot
+> drift apart.
 
 ### 4.5 Body
 
@@ -982,6 +1039,26 @@ border:1px solid var(--rule); cursor:pointer`.
 | Done badge | `position:absolute; top:0; right:0`, same metrics, `background:var(--color-accent); color:var(--color-bg)` → `완독`. Only when `progress >= 1` |
 | Hover overlay | `position:absolute; inset:0; opacity:0; transition:opacity .12s; display:flex; flex-direction:column; justify-content:flex-end; gap:4px; padding:8px; background:var(--scrim-cover)`. On hover **and on keyboard focus-within** → `opacity:1`. Contains `.btn.btn-primary.btn-block` (`margin:0; font-size:12px`) labelled `이어 읽기` when in progress else `읽기 시작`, and a second `.btn.btn-block` with `background:var(--color-bg); color:var(--color-text); margin:0; font-size:12px` labelled `상세`. **The scrim itself is `pointer-events:none` permanently** — it spans `inset-0` above the cover button with no `z-index`, so a scrim that took pointer events would make the cover unclickable by mouse forever (a mouse must hover before it can click). Only the two buttons flip to `pointer-events:auto`, and only under the same gate that makes them visible |
 | Progress bar | Only when `0 < progress < 1`. `position:absolute; left:0; right:0; bottom:0; height:4px; background:var(--fill-track-2)`, fill `width:{pct}%; background:var(--color-accent)` |
+
+> **Amended by E-46 — the cover is matted, and two of the layers above leave the table.**
+>
+> **The mat.** The card box keeps `aspect-ratio:2/3` and its elevation, and gains `padding:7px` on
+> `var(--color-surface)`; the cover art, the format badge and the hover overlay move inside a **window**
+> cut in it (`position:absolute; inset:7px; border:1px solid var(--rule)`). The `overflow:hidden` moves
+> with them. That is not the border E-32 removed — E-32's ruling is about the card's own boundary, and
+> the card is still a raised surface with no edge drawn on it — it is the prototype's `0 0 0 1px` around
+> the mount, and the alternative is artwork bleeding into cream with nothing to say where it stops.
+>
+> **The clip has to be one level in, or the ribbon below is cut off.** `library.test.tsx` asserts that.
+>
+> | Layer | Was | Is |
+> |---|---|---|
+> | Done badge | `완독` pill, `bg-accent` / `--on-accent`, top-right | **`DoneSeal`** — a 38px square of `--accent-text` rule with **完讀** inside it, `rotate(-9deg)`, `--color-surface` fill, `right:12px; bottom:12px`, drawn on the mat rather than in the window. The two Han glyphs are vendored (3 360 B, Noto Serif CJK KR Bold behind a `unicode-range`, `fonts.css`) for the reason E-46 §4 vendors 藏. **The accessible name stays `완독`**: the hanja is `aria-hidden`, the catalogue word sits beside it in the DOM |
+> | Progress bar | 4–5px rail across the foot of the cover | **`ReadRibbon`** — a 갈피 `width:7px; right:19px; top:-4px`, `height:{pct}%`, `--accent-fill`, with a 5px swallowtail notch under it. Hangs **over** the top edge of the mat, which is what the clip move above is for. Still `role="progressbar"` with the same `aria-valuenow` and the same accessible name; the drawn length has a 2 % floor that the reported value does not (a 0.4 % ribbon is one pixel under a 5px notch) |
+>
+> The colour of both marks is `--accent-text` / `--accent-fill` and not `--color-accent`, per E-46 §5's
+> last row: the base accent is 4.33 washed in light and **2.15** in dark, i.e. a seal nobody can see on
+> exactly the theme where a cover is darkest.
 
 **Below the cover** — title `font-size:12px; line-height:1.3; -webkit-line-clamp:2`; meta row
 `display:flex; gap:8px; font-size:11px; tabular-nums; color:var(--ink-dim)` → `22권` `4.4 GB`.
@@ -2006,11 +2083,11 @@ interface Volume {
 
 | # | Component | Props (sketch) | States | Screenshot |
 |---|---|---|---|---|
-| 1 | `SeriesCard` (시리즈 카드 · grid) | `{ series: Series; onOpen(); onResume() }` | default · hover (action overlay) · focus-within · in-progress (4px bar) · finished (완독 badge) · no thumbnail (striped fallback) | [`library-grid-1440`](./ui-shots/library-grid-1440.png), [`library-grid-card-hover-1440`](./ui-shots/library-grid-card-hover-1440.png) |
+| 1 | `SeriesCard` (시리즈 카드 · grid) | `{ series: Series; onOpen(); onResume() }` | default · hover (action overlay) · focus-within · in-progress (~~4px bar~~ **갈피, E-46**) · finished (~~완독 badge~~ **完讀 낙관, E-46**) · no thumbnail (striped fallback) | [`library-grid-1440`](./ui-shots/library-grid-1440.png), [`library-grid-card-hover-1440`](./ui-shots/library-grid-card-hover-1440.png) |
 | 2 | `SeriesRow` (시리즈 행 · list) | `{ series: Series; onOpen() }` | default · hover · in-progress · finished (bar turns `--ink`) · unread (`—`) | [`library-list-1440`](./ui-shots/library-list-1440.png) |
-| 3 | `ContinueCard` (이어보기 카드) | `{ series: Series; volumeName: string; page: number; total: number; onResume() }` | default · hover (accent border) | [`library-grid-1440`](./ui-shots/library-grid-1440.png) |
+| 3 | `ContinueCard` (이어보기 카드) | `{ series: Series; volumeName: string; page: number; total: number; onResume() }` | default · hover (~~accent border~~ **lift, E-32**). **E-46: kraft ground, punch hole, ruled lines, stamped counter, 2px foot rule** — §4.3 | [`library-grid-1440`](./ui-shots/library-grid-1440.png) |
 | 4 | `VolumeTile` / `VolumeRow` (권 항목) | `{ volume: Volume; onOpen() }` | unread · in-progress · finished · **error (encrypted / corrupt, not clickable)** | [`series-detail-grid-1440`](./ui-shots/series-detail-grid-1440.png), [`series-detail-volume-error-badge-1440`](./ui-shots/series-detail-volume-error-badge-1440.png), [`series-detail-volume-list-1440`](./ui-shots/series-detail-volume-list-1440.png) |
-| 5 | `ProgressBar` (진행 바) | `{ value: number; height?: 3\|4; track?: 'default'\|'over-art'; tone?: 'accent'\|'done' }` | 0% (hidden on cards) · partial · complete | all library shots |
+| 5 | `ProgressBar` (진행 바) | `{ value: number; height?: `~~`3\|4`~~` `**`2\|5\|6\|7`**`; track?: 'default'\|'over-art'\|`**`'rule'`**`; tone?: 'accent'\|'done' }` | 0% (hidden on cards) · partial · complete. **E-46 adds `rule`** — 2px, square, `--fill-track-2` trough: the hairline along the foot of a 이어보기 filing card, where a pill is a control lying on a document | all library shots |
 | 6 | `FormatBadge` (형식 배지) | `{ format: Format; variant: 'corner' \| 'tag' }` | `corner` = ink field on the cover; `tag` = `.tag-neutral`(ZIP) / `.tag-accent`(FOLDER) / `.tag-outline`(PDF) | [`library-list-1440`](./ui-shots/library-list-1440.png) |
 | 7 | `FallbackCover` (대체 커버) | `{ title: string; format: Format; size: 'card'\|'row'\|'hero' }` | always available beneath the image; stripe pitch 16px (card/hero) or 10px (row) | [`library-grid-1440`](./ui-shots/library-grid-1440.png) |
 | 8 | `SidebarItem` (사이드바 항목) | `{ label: string; count?: number; active: boolean; onSelect() }` | default · hover · active (accent bar + tint) | [`library-sidebar-scope-active-1440`](./ui-shots/library-sidebar-scope-active-1440.png) |
@@ -2027,6 +2104,9 @@ interface Volume {
 | — | `NextVolumeCard` | `{ volume: Volume; onNext(); onBackToSeries() }` | shown at `page === total` and mode ≠ vertical | [`viewer-next-volume-card-1440`](./ui-shots/viewer-next-volume-card-1440.png) |
 | — | `SettingsDialog` | `{ roots; cache; defaults; log }` | — | [`settings-dialog-1440`](./ui-shots/settings-dialog-1440.png) |
 | — | `ShortcutsDialog` | `{ open }` | — | [`shortcuts-dialog-1440`](./ui-shots/shortcuts-dialog-1440.png) |
+| — | `DoneSeal` (완독 낙관 · **E-46**) | `{ className? }` | one state. 38px square, `--accent-text` rule, `rotate(-9deg)`, 完讀 in the vendored seal face; accessible name `완독` | §4.5 |
+| — | `PageStamp` (읽은 자리 도장 · **E-46**) | `{ children }` | one state. 1.5px `--accent-text` rule, `rotate(-5deg)`, `--font-ui` tabular — the 이어보기 counter | §4.3 |
+| — | `ReadRibbon` (갈피 · **E-46**) | `{ value: number; label?: string }` | partial (hangs `{pct}%` of the cover, 2 % drawn floor) · not rendered at 0 or at 완독. `role="progressbar"` | §4.5 |
 
 ### Text catalogue (ko)
 

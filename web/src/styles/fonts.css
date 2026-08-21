@@ -69,3 +69,28 @@
   unicode-range: U+85CF;
   src: url('../assets/fonts/seal-han-bold.woff2') format('woff2');
 }
+
+/* Two more Han glyphs — U+5B8C 完 and U+8B80 讀 — for the 완독 seal the grid
+   card stamps on a finished cover (`Seal.tsx`).
+ *
+ * Vendored for exactly the reason 藏 above is: 고운바탕 has no Han at all, so
+ * the mark would be two tofu boxes on any machine without a CJK serif — and
+ * unlike a series title that happens to contain 한자, this one is *drawn by the
+ * product*, so falling back is a rendering the design never allows rather than
+ * the residual variance fonts.css records above. 3 360 bytes, subsetted out of
+ * the same Noto Serif CJK KR Bold, and restricted by `unicode-range` so the
+ * browser only fetches it on a screen that has a finished series on it.
+ *
+ * The seal reads 完讀 rather than 완독 because that is the mark the prototype
+ * stamps, and a 낙관 is drawn in Han the way the 藏 beside the wordmark is; the
+ * *accessible* name is the Korean 완독 (`Seal.tsx` puts it in the DOM and hides
+ * the Han from assistive tech), so nothing here is legible only to a reader who
+ * knows the hanja. */
+@font-face {
+  font-family: 'Gowun Batang';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  unicode-range: U+5B8C, U+8B80;
+  src: url('../assets/fonts/seal-han-done.woff2') format('woff2');
+}

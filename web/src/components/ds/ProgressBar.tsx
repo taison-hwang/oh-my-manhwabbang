@@ -5,9 +5,14 @@ import { cn } from '../../lib/cn'
  *
  * Three variables:
  *  - height. The 3–4px square bar becomes a 5–7px **pill**: 6px in rows and
- *    cards, 7px in the series-detail stat strip, 5px over artwork;
- *  - the trough is `--fill-track` normally and `--fill-track-2` when it sits on
- *    top of a cover, where the lighter step would disappear;
+ *    cards, 7px in the series-detail stat strip, 5px over artwork, and **2px as
+ *    a `rule`** — the hairline E-46 rules along the foot of a 이어보기 filing
+ *    card, where a pill would be a control lying on a document;
+ *  - the trough is `--fill-track` normally and `--fill-track-2` in the two flat
+ *    variants: on top of a cover, where the lighter step would disappear, and on
+ *    the card's kraft ground, where `--fill-track` *is* the ground. That token
+ *    also happens to land within three points of the ink-at-13 % wash the
+ *    prototype draws its rule in, on both themes;
  *  - the fill is the accent, except a **completed** library row, where it turns
  *    to `--ink` so 완독 reads as "finished", not "still going" (ui-spec §4.5).
  *
@@ -25,9 +30,9 @@ import { cn } from '../../lib/cn'
  *
  * The trough carries `--shadow-inset` and `overflow:hidden` — the recessed lobe
  * of the dual-light set, which is what makes the pill read as a channel the fill
- * sits inside rather than two stacked bars. The over-art variant does not: it is
- * 5px of translucent rail lying on a photograph, where an inset highlight is
- * just a light smear.
+ * sits inside rather than two stacked bars. The two flat variants do not: one is
+ * 5px of translucent rail lying on a photograph and the other is a 2px rule
+ * printed on paper, and on neither is an inset highlight anything but a smear.
  */
 export interface ProgressBarProps {
   /**
@@ -43,9 +48,9 @@ export interface ProgressBarProps {
    * is the case that fails if this stops being true.
    */
   value: number
-  /** 6 in rows and cards, 7 in the stat strip, 5 over artwork. */
-  height?: 5 | 6 | 7
-  track?: 'default' | 'over-art'
+  /** 6 in rows and cards, 7 in the stat strip, 5 over artwork, 2 as a rule. */
+  height?: 2 | 5 | 6 | 7
+  track?: 'default' | 'over-art' | 'rule'
   tone?: 'accent' | 'done'
   className?: string
   /** Accessible name, e.g. the series title. */
@@ -54,6 +59,7 @@ export interface ProgressBarProps {
 
 /** Written out rather than interpolated: Tailwind scans source text. */
 const HEIGHT_CLASS = {
+  2: 'h-[2px]',
   5: 'h-[5px]',
   6: 'h-[6px]',
   7: 'h-[7px]',
@@ -69,7 +75,7 @@ export function ProgressBar({
 }: ProgressBarProps) {
   const ratio = Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0
   const pct = Math.round(ratio * 100)
-  const overArt = track === 'over-art'
+  const pill = track === 'default'
   return (
     <div
       role="progressbar"
@@ -80,16 +86,12 @@ export function ProgressBar({
       className={cn(
         'w-full overflow-hidden',
         HEIGHT_CLASS[height],
-        overArt ? 'bg-fill-track-2' : 'rounded-full bg-fill-track shadow-inset',
+        pill ? 'rounded-full bg-fill-track shadow-inset' : 'bg-fill-track-2',
         className,
       )}
     >
       <div
-        className={cn(
-          'h-full',
-          overArt ? '' : 'rounded-full',
-          tone === 'done' ? 'bg-ink' : 'bg-accent-fill',
-        )}
+        className={cn('h-full', pill && 'rounded-full', tone === 'done' ? 'bg-ink' : 'bg-accent-fill')}
         style={{ width: `${pct.toString()}%` }}
       />
     </div>

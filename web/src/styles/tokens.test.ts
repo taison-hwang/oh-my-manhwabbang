@@ -1318,7 +1318,14 @@ describe('the pairs components actually paint (E-32 §1)', () => {
     // assertion below iterating over nothing. Both entries are pairs that must
     // *pass* — a scan that only found the failures would be fitted to them.
     const seen = PAINTED.map((p) => `${p.file} bg-${p.bg} text-${p.fg}`)
-    expect(seen).toContain(join('features', 'library', 'SeriesCard.tsx') + ' bg-accent text-on-accent')
+    // Was `SeriesCard.tsx bg-accent text-on-accent`, the 완독 pill. E-46 stamps
+    // a 完讀 seal on the cover instead of labelling it, so the accent pill is
+    // gone from that file and the mark it became is its own component painting
+    // cream-and-accent-ink — the same pairing the format badge opposite it uses.
+    // Moved rather than deleted, for the reason the paragraph above gives: an
+    // entry that vanishes with the coverage it stood for leaves the scan fitted
+    // to whatever is left.
+    expect(seen).toContain(join('components', 'ds', 'DoneSeal.tsx') + ' bg-surface text-accent-text')
     // `--color-bg` on `--color-ink`: the two are inverses in both themes, so
     // this is the correct pairing and the scanner must not call it a defect.
     expect(seen).toContain(join('features', 'overlays', 'ShortcutsDialog.tsx') + ' bg-ink text-bg')
