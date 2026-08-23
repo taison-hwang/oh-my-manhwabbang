@@ -315,6 +315,13 @@ func TestScan_incremental_stampsUnchangedRowsForwardSoTheSweepSparesThem(t *test
 	if second.Roots[0].Swept != (index.SweepResult{}) {
 		t.Fatalf("a no-change rescan swept %+v", second.Roots[0].Swept)
 	}
+	// A no-change rescan also sees nothing move. The counters above cannot say
+	// so: a relocation removes a row and adds one, so it is a sweep of exactly
+	// the shape this assertion already tolerates when the numbers happen to
+	// cancel.
+	if got := second.Roots[0].Relocations; len(got) != 0 {
+		t.Fatalf("a no-change rescan reported %+v as moved", got)
+	}
 	for _, b := range h.books("manga", "시리즈") {
 		if b.ScanGen != second.ScanGen {
 			t.Errorf("book %q carries scan_gen %d, want %d — it would be swept next time",

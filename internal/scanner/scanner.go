@@ -129,6 +129,22 @@ type Options struct {
 	// 최근 추가 survives --rebuild-index (amendment A-8). *userdata.DB satisfies
 	// it; nil disables the recording and nothing else.
 	Seen SeriesSeenWriter
+	// AfterScan runs once, on the scan's own goroutine, after a run has
+	// finished — cancelled and failed runs included. nil disables it.
+	//
+	// It exists so that reattaching reading progress can be a consequence of
+	// scanning rather than a separate thing an operator has to know about: a
+	// rename or a container split changes what ids the index holds, and the
+	// moment that is true is the moment the repair can see it. The scanner
+	// itself knows nothing about progress — this is a callback for the same
+	// reason `Covers` and `Seen` are, and for the stronger reason that this
+	// package must not write to user.db at all (arch §3.7).
+	//
+	// It runs after the sweep and the log trim, with a context that is already
+	// cancelled if the scan was, so a hook that wants to skip cancelled runs can
+	// check `res.Cancelled`. A panic or a slow hook delays `Wait`, so keep it
+	// short and let it fail silently on its own terms.
+	AfterScan func(ctx context.Context, res *Result)
 	// Logger; nil selects slog.Default().
 	Logger *slog.Logger
 	// Now is the clock. nil selects time.Now.
@@ -151,6 +167,7 @@ type Scanner struct {
 	cfgRoots      []config.Root
 	covers        CoverQueue
 	seen          SeriesSeenWriter
+	afterScan     func(context.Context, *Result)
 	log           *slog.Logger
 	now           func() time.Time
 	writerOptions index.WriterOptions
@@ -201,6 +218,7 @@ func New(opts Options) (*Scanner, error) {
 		cfgRoots:       append([]config.Root(nil), opts.ConfigRoots...),
 		covers:         opts.Covers,
 		seen:           opts.Seen,
+		afterScan:      opts.AfterScan,
 		log:            log,
 		now:            now,
 		writerOptions:  opts.WriterOptions,
@@ -260,17 +278,19 @@ func (r Request) targeted() bool { return len(r.Series) > 0 }
 
 // RootResult is what one root's pass produced.
 type RootResult struct {
-	Name       string
-	Series     int64
-	Books      int64
-	Pages      int64
-	Skipped    int64
-	Errors     int64
-	Swept      index.SweepResult
-	SweepNote  string
-	Err        error
-	StartedAt  time.Time
-	FinishedAt time.Time
+	Name    string
+	Series  int64
+	Books   int64
+	Pages   int64
+	Skipped int64
+	Errors  int64
+	Swept   index.SweepResult
+	// Relocations are the books this root's sweep proved had merely moved.
+	Relocations []index.Relocation
+	SweepNote   string
+	Err         error
+	StartedAt   time.Time
+	FinishedAt  time.Time
 }
 
 // Result is one whole run.
@@ -557,6 +577,13 @@ func (s *Scanner) run(ctx context.Context, req Request, runID string, begun *beg
 		"series", series, "books", books, "pages", pages,
 		"skipped", skipped, "errors", errCount,
 		"dur_ms", s.now().Sub(start).Milliseconds(), "cancelled", ctx.Err() != nil)
+
+	// After the log line, so the hook's own lines read as consequences of a scan
+	// that has already reported itself, and after the sweep, so it sees the
+	// index the filesystem actually justifies.
+	if s.afterScan != nil {
+		s.afterScan(ctx, res)
+	}
 	return res, nil
 }
 
@@ -914,13 +941,14 @@ func (s *Scanner) scanRoot(ctx context.Context, runID string, gen int64, cfg con
 
 	decision := decideSweep(out.Err, ctx.Err() != nil, req.targeted())
 	out.SweepNote = decision.reason
-	if swept, err := s.sweepRoot(context.WithoutCancel(ctx), cfg.Name, gen, decision); err != nil {
+	if swept, moved, err := s.sweepRoot(context.WithoutCancel(ctx), cfg.Name, gen, decision); err != nil {
 		s.log.Error("sweep failed", "run_id", runID, "root", cfg.Name, "err", err)
 		if out.Err == nil {
 			out.Err = err
 		}
 	} else {
 		out.Swept = swept
+		out.Relocations = moved
 	}
 
 	if dropped := rt.logs.droppedCount(); dropped > 0 {

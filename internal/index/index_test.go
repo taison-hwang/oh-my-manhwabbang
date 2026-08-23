@@ -2096,7 +2096,7 @@ func TestWriter_stampAndSweep_removesOnlyStaleRowsOfOneRoot(t *testing.T) {
 		[]string{"b1aaaaaaaaaaaaaa", "b2aaaaaaaaaaaaaa"}); err != nil {
 		t.Fatalf("StampGen: %v", err)
 	}
-	res, err := w.SweepRoot(ctx, "manga", gen)
+	res, _, err := w.SweepRoot(ctx, "manga", gen)
 	if err != nil {
 		t.Fatalf("SweepRoot: %v", err)
 	}
@@ -2201,7 +2201,7 @@ func TestWriter_stampGen_chunksUnboundedIDLists(t *testing.T) {
 	if err := w.StampGen(ctx, gen, []string{seriesID}, stamp); err != nil {
 		t.Fatalf("StampGen with %d ids: %v", len(stamp), err)
 	}
-	res, err := w.SweepRoot(ctx, "manga", gen)
+	res, _, err := w.SweepRoot(ctx, "manga", gen)
 	if err != nil {
 		t.Fatalf("SweepRoot: %v", err)
 	}

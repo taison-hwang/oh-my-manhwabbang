@@ -57,6 +57,7 @@ import (
 	"shelf/internal/index"
 	"shelf/internal/openpool"
 	"shelf/internal/pdfium"
+	"shelf/internal/repair"
 	"shelf/internal/scanner"
 	"shelf/internal/source"
 	"shelf/internal/thumbs"
@@ -217,6 +218,21 @@ func New(ctx context.Context, opts Options) (a *App, err error) {
 		return nil, err
 	}
 
+	// ---- step 5a: reattach progress the index has re-shaped --------------
+	// Between step 4 and the first scan the index is whatever the last run left,
+	// which is exactly the state a progress row orphaned by a container split
+	// needs to be read against (internal/repair). Every start, not once behind a
+	// flag: a rung that has already run finds nothing and costs two statements,
+	// while a flag would have to be right about a scan that had not happened
+	// yet. A split performed by *this* run's scan is repaired on the next start.
+	//
+	// Logged, not fatal, for the reason the package comment gives for an
+	// unopenable root: a library that serves with 20 series reading 0 % is worth
+	// more than one that refuses to start. The repair is idempotent, so the next
+	// start tries again.
+	a.repairSplitProgress(ctx, log)
+	a.refileMisfiledProgress(ctx, log)
+
 	// ---- step 6: pools, sources, thumbnails, scanner, HTTP ---------------
 	if a.roots, err = source.OpenRoots(ctx, a.cfg.Roots, log); err != nil {
 		return nil, fmt.Errorf("opening roots: %w", err)
@@ -259,7 +275,22 @@ func New(ctx context.Context, opts Options) (a *App, err error) {
 		Scan:        a.cfg.Scan,
 		Covers:      covers,
 		Seen:        a.user, // amendment A-8: first_seen_at lives in user.db
-		Logger:      log,
+		// A scan is the moment the index learns that a book was renamed, moved
+		// or split, so it is the moment reading progress can be put back on it.
+		// Running the repair here is what makes "just rescan" true: without it
+		// the operator has to restart, and the only visible symptom in the
+		// meantime is a series reading 0 % for no reason they can see.
+		AfterScan: func(ctx context.Context, res *scanner.Result) {
+			// Evidence first, inference second. carryProgress acts on moves the
+			// scan proved by content hash; repairSplitProgress then sweeps up
+			// whatever is still orphaned, including rows whose proof was
+			// destroyed by a sweep that ran before any of this existed.
+			a.carryProgressAcrossRelocations(ctx, res, log)
+			a.repairSplitProgress(ctx, log)
+			a.refileMisfiledProgress(ctx, log)
+			a.purgeVanishedProgress(ctx, res, log)
+		},
+		Logger: log,
 	}); err != nil {
 		return nil, fmt.Errorf("building the scanner: %w", err)
 	}
@@ -354,6 +385,238 @@ func (a *App) reconcileRoots(ctx context.Context) error {
 			"root", k.Name, "series", k.SeriesCount, "books", k.BookCount)
 	}
 	return nil
+}
+
+// carryProgressAcrossRelocations moves reading progress onto the new id of every
+// book this scan proved had merely moved.
+//
+// This is the mechanism a rename *should* go through, and the reason it lives
+// here rather than in the scanner is arch §3.7: internal/scanner cannot write to
+// user.db, and no transaction may span both databases. The scan observes and
+// reports (index.Relocation); this decides what the observation means for a
+// reader; userdata performs the write.
+//
+// It runs before the orphan repair because it is the better evidence. A pairing
+// on content hash needs no opinion about filenames; the path rules downstream
+// exist only for rows whose old index entry was already swept away, which is a
+// backlog and not a mechanism.
+func (a *App) carryProgressAcrossRelocations(ctx context.Context, res *scanner.Result, log *slog.Logger) {
+	if res == nil {
+		return
+	}
+	var relocs []index.Relocation
+	for _, rr := range res.Roots {
+		relocs = append(relocs, rr.Relocations...)
+	}
+	if len(relocs) == 0 {
+		return
+	}
+	existing, err := a.user.GetProgressMany(ctx, repair.RelocationIDs(relocs))
+	if err != nil {
+		log.Warn("could not check which relocated books had been read; "+
+			"reading progress is unchanged and the next scan will try again", "error", err)
+		return
+	}
+	moves, skipped := repair.PlanRelocations(relocs, existing)
+	for _, s := range skipped {
+		log.Warn("reading progress not carried across a move: the pairing does not add up",
+			"old_book_id", s.OldBookID, "new_book_id", s.NewBookID,
+			"reason", string(s.Reason), "baseline_pages", s.PageCount, "new_pages", s.NewPages)
+	}
+	if len(moves) == 0 {
+		log.Info("books moved, none of them had been read",
+			"relocations", len(relocs), "declined", len(skipped))
+		return
+	}
+	r, err := a.user.RepairSplit(ctx, moves)
+	if err != nil {
+		log.Warn("could not carry reading progress across a move; "+
+			"user.db is unchanged and the next scan will try again",
+			"error", err, "planned", len(moves), "declined", len(skipped))
+		return
+	}
+	log.Info("carried reading progress across books the scan saw move",
+		"relocations", len(relocs), "retired", r.Retired, "written", r.Written,
+		"kept_newer_local", r.Kept, "declined", len(skipped))
+}
+
+// purgeVanishedProgress deletes reading history for books a completed walk of
+// their root did not find.
+//
+// **This is the only thing in the server that destroys authored data**, so its
+// guard is the whole design. It runs only from a scan — never at startup, where
+// nothing has been walked and every absence is unexplained — and only for roots
+// the scanner was willing to sweep. That willingness is not a proxy:
+// `scanner.decideSweep` withholds it when the root failed to enumerate, when the
+// scan was cancelled, and when the run only covered named series, which are
+// exactly the three ways an absence can mean "not looked at" instead of "not
+// there". A root whose scan was skipped keeps every row it has.
+//
+// It also runs last. Anything that could be carried across a move, reattached to
+// a split, or refiled has already been by now, so a row reaching this point has
+// been offered every explanation the system has and matched none of them.
+//
+// Every deletion is logged with its path and the page the reader was on. A purge
+// that prints a count is indistinguishable from one that took the wrong rows,
+// and this one cannot be undone from inside the product.
+func (a *App) purgeVanishedProgress(ctx context.Context, res *scanner.Result, log *slog.Logger) {
+	if res == nil || res.Cancelled {
+		return
+	}
+	var swept []string
+	for _, rr := range res.Roots {
+		if rr.Err == nil && rr.SweepNote == "" {
+			swept = append(swept, rr.Name)
+		} else if rr.SweepNote != "" {
+			log.Info("keeping reading progress for a root this run did not fully walk",
+				"root", rr.Name, "reason", rr.SweepNote)
+		}
+	}
+	if len(swept) == 0 {
+		return
+	}
+	gone, err := a.idx.VanishedProgress(ctx, swept)
+	if err != nil {
+		log.Warn("could not check for reading progress whose book is gone; "+
+			"nothing was deleted and the next scan will try again", "error", err)
+		return
+	}
+	if len(gone) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(gone))
+	for _, g := range gone {
+		log.Info("deleting reading progress: the file is not in a root this run walked end to end",
+			"root", g.RootName, "book_path", g.BookPath, "book_id", g.BookID,
+			"last_page", g.LastPage, "page_count", g.PageCount)
+		ids = append(ids, g.BookID)
+	}
+	progress, prefs, err := a.user.PurgeProgress(ctx, ids)
+	if err != nil {
+		log.Warn("could not delete reading progress for missing books; "+
+			"user.db is unchanged and the next scan will try again",
+			"error", err, "rows", len(ids))
+		return
+	}
+	log.Info("deleted reading progress for books the filesystem no longer has",
+		"progress_rows", progress, "pref_rows", prefs, "roots_walked", len(swept))
+}
+
+// refileMisfiledProgress puts progress rows back under the series their book is
+// actually in.
+//
+// It runs last of the three, after any row this scan moved has been written, so
+// a carry that got the series wrong is corrected in the same pass rather than a
+// restart later. It is also the cheapest of the three on a healthy library: one
+// equality test on a join, and nothing to do.
+//
+// Unlike the other two this one cannot decline. `books.series_id` is the index's
+// own answer to which series a book is in, so there is no second candidate to
+// weigh and nothing to be uncertain about — a disagreement is simply wrong and
+// the correction is a lookup.
+func (a *App) refileMisfiledProgress(ctx context.Context, log *slog.Logger) {
+	misfiled, err := a.idx.MisfiledProgress(ctx)
+	if err != nil {
+		log.Warn("could not check whether reading progress is filed under the right series; "+
+			"the library is unaffected and the next scan will try again", "error", err)
+		return
+	}
+	if len(misfiled) == 0 {
+		return
+	}
+	rows := make([]userdata.Refile, 0, len(misfiled))
+	for _, m := range misfiled {
+		rows = append(rows, userdata.Refile{BookID: m.BookID, SeriesID: m.ActualSeria})
+	}
+	n, err := a.user.RefileProgress(ctx, rows)
+	if err != nil {
+		log.Warn("could not refile reading progress onto the right series; "+
+			"user.db is unchanged and the next scan will try again",
+			"error", err, "rows", len(rows))
+		return
+	}
+	log.Info("refiled reading progress onto the series its book belongs to",
+		"rows", n, "seen", len(misfiled))
+}
+
+// repairSplitProgress reattaches reading progress that names a book the index
+// has since split into volumes (internal/repair).
+//
+// It counts every decline rather than only the successes: a repair that moved
+// 20 of 23 rows and said nothing about the other three would be the same shape
+// of check this codebase has been bitten by before, one that watches the part
+// that works. The counts ride on the summary line, so a start with nothing to
+// do stays one line long.
+//
+// Only two of the four declines get a line of their own, and the split is about
+// whether a human can act on it. `container-gone` and `not-a-container` mean the
+// index has never heard of the file — an older rename, a deleted archive, an
+// unplugged drive — so they are permanent until the file comes back and would
+// otherwise print the same 37 lines on this library at every single start.
+// `length-mismatch` and `page-out-of-range` mean the container WAS found and the
+// arithmetic still refused it, which is the case worth reading: it is either a
+// file that changed length under a reader or a bug in the partition.
+//
+// Nothing here is fatal. Every failure path leaves user.db exactly as it was
+// (the write is one transaction) and the next start tries again.
+func (a *App) repairSplitProgress(ctx context.Context, log *slog.Logger) {
+	orphans, err := a.idx.SplitOrphans(ctx)
+	if err != nil {
+		log.Warn("could not look for reading progress the index cannot resolve; "+
+			"the library is unaffected and the next scan will try again", "error", err)
+		return
+	}
+	if len(orphans) == 0 {
+		return
+	}
+	roots, err := a.idx.RootNames(ctx)
+	if err != nil {
+		log.Warn("could not list roots to look for relocated books; "+
+			"the library is unaffected and the next scan will try again", "error", err)
+		return
+	}
+	found, err := a.idx.BooksAt(ctx, repair.Candidates(orphans, roots))
+	if err != nil {
+		log.Warn("could not look up where orphaned reading progress may have moved to; "+
+			"the library is unaffected and the next scan will try again", "error", err)
+		return
+	}
+	moves, skipped := repair.Plan(orphans, roots, found)
+
+	byReason := make(map[repair.SkipReason]int, 5)
+	for _, s := range skipped {
+		byReason[s.Reason]++
+		switch s.Reason {
+		case repair.SkipLengthMismatch, repair.SkipPageOutOfRange, repair.SkipAmbiguous:
+			log.Warn("reading progress left alone: a destination was found but cannot be trusted",
+				"book_path", s.BookPath, "book_id", s.BookID, "reason", string(s.Reason),
+				"last_page", s.LastPage, "baseline_pages", s.PageCount, "destination_pages", s.DestPages)
+		case repair.SkipNotAContainer, repair.SkipUnresolved:
+			// Counted only: nothing on this machine can act on them.
+		}
+	}
+	counts := []any{
+		"orphans_seen", len(orphans),
+		"unreachable_file_gone", byReason[repair.SkipUnresolved] + byReason[repair.SkipNotAContainer],
+		"declined_ambiguous", byReason[repair.SkipAmbiguous],
+		"declined_length_mismatch", byReason[repair.SkipLengthMismatch],
+		"declined_page_out_of_range", byReason[repair.SkipPageOutOfRange],
+	}
+
+	if len(moves) == 0 {
+		log.Info("orphaned reading progress found, none of it reattachable", counts...)
+		return
+	}
+	res, err := a.user.RepairSplit(ctx, moves)
+	if err != nil {
+		log.Warn("could not reattach orphaned reading progress; "+
+			"user.db is unchanged and the next scan will try again",
+			append([]any{"error", err, "planned", len(moves)}, counts...)...)
+		return
+	}
+	log.Info("reattached reading progress to the books it belongs to",
+		append([]any{"retired", res.Retired, "written", res.Written,
+			"kept_newer_local", res.Kept}, counts...)...)
 }
 
 // buildAuth turns the optional `auth:` block into an Authenticator (NFR-SEC-002).

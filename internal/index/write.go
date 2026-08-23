@@ -459,11 +459,56 @@ func (w *Writer) AppendLog(ctx context.Context, entries ...LogEntry) error {
 	return w.maybeCommit(ctx)
 }
 
-// SweepResult counts what SweepRoot removed.
+// SweepResult counts what SweepRoot removed. It stays a plain comparable struct
+// — the books it saw move come back beside it, not inside it.
 type SweepResult struct {
 	Series int64
 	Books  int64
 	Pages  int64
+}
+
+// Relocation is one book that changed identity without changing content: the
+// file was renamed, or moved to another directory or root, so the (root, path)
+// pair its id is derived from is different and the id with it.
+//
+// # Why the sweep is the only place this is knowable
+//
+// A book id is a pure function of the root name and the root-relative path
+// (internal/ids), which is what lets progress survive an index rebuild — and
+// what makes a rename look exactly like a deletion followed by an unrelated
+// arrival. The two rows exist together for exactly one moment: after the walk
+// has written the file at its new path with the current generation, and before
+// this sweep deletes the row left at the old one. Ask afterwards and the
+// evidence is gone; ask by name and you are guessing at somebody's file naming.
+//
+// `content_version` is what makes it a proof rather than a guess. It is
+// FNV-1a over the container's (size, mtime) with no path in it (scanner's
+// contentVersion), so a moved file keeps the value it had and a different file
+// almost never shares one. The pairing is required to be **1:1 on both sides**
+// within a single scan: a content version held by two vanishing rows, or by two
+// surviving ones, is reported for neither. Copies of one file are the case that
+// makes that strictness necessary, and they are common in a library assembled by
+// hand.
+//
+// Nothing here touches reading progress: this package cannot write to user.db at
+// all (arch §3.7). It reports what it saw, the scan carries it out, and
+// internal/repair decides what it means for a reader.
+type Relocation struct {
+	OldBookID   string
+	NewBookID   string
+	OldRelPath  string
+	NewRelPath  string
+	NewRootName string
+	// NewSeriesID is the series the surviving row belongs to. A rename changes
+	// the series id as surely as the book id — both are hashes of a path — so a
+	// carry that keeps the old one files the reader's place under a series the
+	// index no longer has: the row still resolves to a book, so 이어보기 shows
+	// it, while the shelf percentage and the 읽는 중 filter group by series_id
+	// and cannot see it.
+	NewSeriesID string
+	// NewPageCount is the surviving row's length, so a caller can check it
+	// against whatever baseline it holds before trusting the pairing.
+	NewPageCount int
 }
 
 // SweepRoot deletes everything in one root left behind at an older generation
@@ -472,12 +517,20 @@ type SweepResult struct {
 //
 // The caller must not call it for a root whose scan aborted: an unmounted drive
 // must not silently erase a third of the library.
-func (w *Writer) SweepRoot(ctx context.Context, rootName string, gen int64) (SweepResult, error) {
+func (w *Writer) SweepRoot(ctx context.Context, rootName string, gen int64) (SweepResult, []Relocation, error) {
 	if err := w.Flush(ctx); err != nil {
-		return SweepResult{}, err
+		return SweepResult{}, nil, err
 	}
 	var res SweepResult
+	var moved []Relocation
 	err := w.db.writeTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		// Observed BEFORE any delete: this is the one moment both halves of a
+		// rename are rows. See [Relocation].
+		var relErr error
+		if moved, relErr = observeRelocations(ctx, tx, rootName, gen); relErr != nil {
+			return relErr
+		}
+
 		// Pages carry no foreign key, so they go first — and the predicate must
 		// also catch books whose *series* is about to be cascade-deleted.
 		r, err := tx.ExecContext(ctx, `
@@ -507,9 +560,64 @@ func (w *Writer) SweepRoot(ctx context.Context, rootName string, gen int64) (Swe
 		return nil
 	})
 	if err != nil {
-		return SweepResult{}, err
+		return SweepResult{}, nil, err
 	}
-	return res, nil
+	return res, moved, nil
+}
+
+// observeRelocations pairs each row this sweep is about to delete with a row
+// that survived carrying the same content.
+//
+// The surviving side is searched across **every** root, not just the one being
+// swept, because moving a directory from one root to another is one of the ways
+// this actually happens and a per-root query would be blind to exactly that.
+//
+// Both uniqueness conditions are load-bearing and neither is defensive: a
+// content version shared by two vanishing rows cannot say which one moved, and
+// one shared by two survivors cannot say where it moved to. Duplicated files are
+// ordinary in a hand-assembled library, so the ambiguous case is the common one,
+// not the exotic one, and it is dropped rather than guessed.
+func observeRelocations(ctx context.Context, tx *sql.Tx, rootName string, gen int64) ([]Relocation, error) {
+	rows, err := tx.QueryContext(ctx, `
+		WITH gone AS (
+			SELECT id, rel_path, content_version
+			FROM books
+			WHERE root_name = ? AND scan_gen < ? AND content_version <> ''
+		), kept AS (
+			SELECT id, series_id, rel_path, root_name, content_version, page_count
+			FROM books
+			WHERE scan_gen >= ? AND content_version <> ''
+		)
+		SELECT g.id, k.id, g.rel_path, k.rel_path, k.root_name, k.series_id, k.page_count
+		FROM gone g
+		JOIN kept k ON k.content_version = g.content_version
+		WHERE (SELECT count(*) FROM gone g2 WHERE g2.content_version = g.content_version) = 1
+		  AND (SELECT count(*) FROM kept k2 WHERE k2.content_version = g.content_version) = 1
+		ORDER BY g.id`, rootName, gen, gen)
+	if err != nil {
+		return nil, fmt.Errorf("observing relocations in root %q: %w", rootName, err)
+	}
+	defer rows.Close()
+
+	var out []Relocation
+	for rows.Next() {
+		var r Relocation
+		var pc sql.NullInt64
+		if err := rows.Scan(&r.OldBookID, &r.NewBookID, &r.OldRelPath,
+			&r.NewRelPath, &r.NewRootName, &r.NewSeriesID, &pc); err != nil {
+			return nil, fmt.Errorf("scanning a relocation in root %q: %w", rootName, err)
+		}
+		r.NewPageCount = int(pc.Int64)
+		if r.OldBookID == r.NewBookID {
+			// The same row surviving at a bumped generation is not a move.
+			continue
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading relocations in root %q: %w", rootName, err)
+	}
+	return out, nil
 }
 
 // DeleteBook removes one book and its pages. Used by the per-series rescan of

@@ -59,24 +59,28 @@ func decideSweep(rootErr error, cancelled, targeted bool) sweepDecision {
 // the destructive step, `index.Writer.SweepRoot` flushes and then uses its own
 // transaction, and mixing it into the batch that produced the rows would make a
 // half-applied sweep representable.
-func (s *Scanner) sweepRoot(ctx context.Context, rootName string, gen int64, d sweepDecision) (index.SweepResult, error) {
+func (s *Scanner) sweepRoot(ctx context.Context, rootName string, gen int64, d sweepDecision) (index.SweepResult, []index.Relocation, error) {
 	if !d.allowed {
 		s.log.Info("skipping the generation sweep", "root", rootName, "reason", d.reason)
-		return index.SweepResult{}, nil
+		return index.SweepResult{}, nil, nil
 	}
 	w := s.index.Writer(index.WriterOptions{})
 	defer func() { _ = w.Close() }()
 
-	res, err := w.SweepRoot(ctx, rootName, gen)
+	res, moved, err := w.SweepRoot(ctx, rootName, gen)
 	if err != nil {
-		return index.SweepResult{}, fmt.Errorf("sweeping root %q: %w", rootName, err)
+		return index.SweepResult{}, nil, fmt.Errorf("sweeping root %q: %w", rootName, err)
 	}
 	if res.Series > 0 || res.Books > 0 || res.Pages > 0 {
 		s.log.Info("swept rows the filesystem no longer has",
 			"root", rootName, "scan_gen", gen,
 			"series", res.Series, "books", res.Books, "pages", res.Pages)
 	}
-	return res, nil
+	if len(moved) > 0 {
+		s.log.Info("books moved rather than vanished; the sweep paired them by content",
+			"root", rootName, "scan_gen", gen, "relocations", len(moved))
+	}
+	return res, moved, nil
 }
 
 // genStamps accumulates the ids of rows that were confirmed unchanged, so they
