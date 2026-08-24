@@ -13,7 +13,8 @@ import (
 //
 // It is format-blind: which container format it is reading lives entirely in
 // the [archive.Reader] it was built with, which is what decision D-07 kept that
-// interface for. A ZIP book and a RAR book differ here by one field.
+// interface for. A ZIP book, a RAR book and an HV3 book differ here by one
+// field.
 //
 // It holds no file handle of its own. Every operation borrows one from the
 // pool for exactly as long as it needs it, which is what lets a hundred books
@@ -39,6 +40,10 @@ func openZIP(_ context.Context, f *Factory, b Book) (BookSource, error) {
 
 func openRAR(_ context.Context, f *Factory, b Book) (BookSource, error) {
 	return openContainer(f, b, f.readerFor(KindRAR), KindRAR)
+}
+
+func openHV3(_ context.Context, f *Factory, b Book) (BookSource, error) {
+	return openContainer(f, b, f.readerFor(KindHV3), KindHV3)
 }
 
 func openContainer(f *Factory, b Book, arch archive.Reader, kind Kind) (BookSource, error) {
@@ -277,9 +282,13 @@ func dominantFormat(byBytes map[string]int64) string {
 //
 // "비어 있음 · no supported image entries" is the honest sentence for
 // `비둘기.zip`, which holds one directory entry and nothing at all (ruling
-// E-14). It is a false sentence for `펌프킨 시저스 04.zip`, which holds 39.5 MB
-// of HV3: there is something in there, this build just cannot open it. Saying
-// "empty" sends its owner looking for a file that is fine.
+// E-14). It was a false sentence for `펌프킨 시저스 04.zip`, which holds 39.5 MB
+// of HV3: there is something in there, this build just could not open it.
+// Saying "empty" sends its owner looking for a file that is fine.
+//
+// That book is no longer the example — E-51 gave HV3 a reader, so it is a
+// series of one volume now — but the rule it produced is unchanged and still
+// has work to do for `.7z`, `.alz`, `.egg` and the rest of [foreignFormats].
 func noPagesErr(l *Listing) error {
 	if l.Foreign != "" {
 		return fmt.Errorf("%w (the archive holds %s, which this build cannot open)",

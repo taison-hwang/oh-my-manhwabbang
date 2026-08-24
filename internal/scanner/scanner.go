@@ -1328,7 +1328,7 @@ func (s *Scanner) expandChapters(ctx context.Context, rt *rootRun, t *seriesTask
 		return res, false
 	}
 	switch u.kind {
-	case source.KindZIP, source.KindRAR:
+	case source.KindZIP, source.KindRAR, source.KindHV3:
 	default:
 		return res, false
 	}

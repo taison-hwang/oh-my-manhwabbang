@@ -57,12 +57,16 @@ describe('enum values that bite (C-1 … C-4)', () => {
 
   it('books are "dir" while series are "folder" (C-4)', () => {
     // `rar`/`nestedrar` are D-71's, and were absent here while the server was
-    // already sending them for 22 books of the collection.
+    // already sending them for 22 books of the collection. `hv3`/`nestedhv3`
+    // are E-51's, and `contractcheck` could not have caught their absence
+    // either: its kind regex read values as `[a-z]+` and `hv3` has a digit.
     expect([...BOOK_KINDS]).toEqual([
       'zip',
       'nestedzip',
       'rar',
       'nestedrar',
+      'hv3',
+      'nestedhv3',
       'nesteddir',
       'dir',
       'pdf',

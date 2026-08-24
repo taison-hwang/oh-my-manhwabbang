@@ -525,6 +525,10 @@ func TestScan_errorIsolation_everyPathologicalCase_completesAndReportsEachFailur
 			"암호화 10권.zip":       encrypted,
 			"비어 있는 12권.zip":     noPages,
 			"정상 11권.zip":        good,
+			// E-51: `.hv3` is a container with a reader, so a file that is not
+			// one is a broken archive rather than clutter to ignore — the same
+			// verdict `D.N.Angel 09권.zip`'s zero bytes get above.
+			"손상된 13권.hv3": "x",
 		},
 		// Ruling E-14: the same page-less archive, alone in its own series. The
 		// book is `empty`; the series must read `error`.
@@ -533,7 +537,7 @@ func TestScan_errorIsolation_everyPathologicalCase_completesAndReportsEachFailur
 		},
 		"텍스트만 있는 시리즈": map[string]any{
 			"설명.txt": "이 폴더에는 이미지가 없습니다",
-			"목록.hv3": "x",
+			"목록.nfo": "x",
 		},
 	})
 
@@ -544,14 +548,14 @@ func TestScan_errorIsolation_everyPathologicalCase_completesAndReportsEachFailur
 	if len(res.Roots) != 1 || res.Roots[0].Err != nil {
 		t.Fatalf("root result = %+v; the scan must not abort (FR-IDX-010)", res.Roots)
 	}
-	// Three broken archives plus one encrypted one. The container of nested
+	// Four broken archives plus one encrypted one. The container of nested
 	// archives is 'empty', which is a legitimate outcome (D-10) and must not
 	// inflate the error count the settings screen shows.
-	if got := res.Roots[0].Errors; got != 4 {
-		t.Errorf("reported %d errors, want 4 — 'empty' is not a failure", got)
+	if got := res.Roots[0].Errors; got != 5 {
+		t.Errorf("reported %d errors, want 5 — 'empty' is not a failure", got)
 	}
-	if st := h.scanner.Status(); st.Errors != 4 {
-		t.Errorf("ScanStatus.errors = %d, want 4", st.Errors)
+	if st := h.scanner.Status(); st.Errors != 5 {
+		t.Errorf("ScanStatus.errors = %d, want 5", st.Errors)
 	}
 
 	byRel := map[string]index.BookRow{}
@@ -565,6 +569,7 @@ func TestScan_errorIsolation_everyPathologicalCase_completesAndReportsEachFailur
 		"암호화 10권.zip":       StatusEncrypted,
 		"비어 있는 12권.zip":     StatusEmpty,
 		"정상 11권.zip":        StatusOK,
+		"손상된 13권.hv3":       StatusError,
 	}
 	if len(byRel) != len(want) {
 		t.Fatalf("indexed %d books, want %d: %v", len(byRel), len(want), bookRels(h.books("manga", "망가진 시리즈")))

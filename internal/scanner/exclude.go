@@ -60,8 +60,9 @@ func ignoredChild(name string) (bool, string) {
 }
 
 // Container extensions. arch §4.2 names `.zip` and `.cbz`; D-71 adds `.rar`
-// and `.cbr`. 7z and friends are still out of scope (prd §7.2) and fall through
-// to "ignored" with one info-level scan-log row rather than to an error.
+// and `.cbr`, and E-51 adds `.hv3`. 7z and friends are still out of scope
+// (prd §7.2) and fall through to "ignored" with one info-level scan-log row
+// rather than to an error.
 //
 // The list is source.NestedVolumeExt's, deliberately: a format is a book on
 // disk exactly when it is a volume inside a container, and two tables that

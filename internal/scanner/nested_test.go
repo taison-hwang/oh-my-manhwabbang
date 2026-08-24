@@ -207,41 +207,110 @@ func TestScan_containerOfUnreadableVolumes_staysOneBook(t *testing.T) {
 	}
 }
 
-// TestScan_bookOfOneForeignContainer_saysWhichFormat is `펌프킨 시저스 04.zip`,
-// the last of the 48 books that reported `비어 있음 · no supported image
-// entries` and the only one where that sentence was not merely unhelpful but
-// false. It holds 39.5 MB in a single `.hv3`.
+// TestScan_containerOfOneHV3_becomesAVolume is `펌프킨 시저스 04.zip`, and it
+// is the same file three rulings have now been written about.
 //
-// HV3 is a proprietary container and this one is encrypted — its header carries
-// an ENCR chunk, its LIST chunk is empty, and its body measures 7.9972 bits of
-// entropy per byte with two JPEG signatures in 39.5 MB. There is nothing to
-// read and nothing to fix; what was wrong was the explanation.
-func TestScan_bookOfOneForeignContainer_saysWhichFormat(t *testing.T) {
+// Under D-07 it was `비어 있음 · no supported image entries` — false, since it
+// holds 39.5 MB. Under D-72 it was `unsupported`, naming HV3 — true as far as
+// it went, and the best answer available while the format was believed to be
+// encrypted. Under E-51 it is what it always was: 104 pages. The container is
+// one nested volume, indexed by the same path `사모님은 학생회장.zip`'s fifteen
+// take.
+//
+// Deflating the inner container is deliberate and is the case that costs
+// something: internal/archive/nested has to inflate forward to reach each
+// page's offset, and HV3 keeps its directory at the *front*, which is the one
+// place the adapter's tail-window optimisation cannot help.
+func TestScan_containerOfOneHV3_becomesAVolume(t *testing.T) {
 	t.Parallel()
 
-	hv3 := append([]byte("HV30"), make([]byte, 512)...)
+	pages := testutil.HV3Pages(3)
+	inner := testutil.BuildHV3(t, testutil.HV3Spec{Entries: pages, Encr: testutil.HV3EncrMask})
 	book := testutil.BuildZIP(t, testutil.ZIPSpec{Entries: []testutil.Entry{
-		{RawName: testutil.CP949(t, "펌프킨 시저스 04.hv3"), Data: hv3, Method: testutil.MethodDeflate},
+		{RawName: testutil.CP949(t, "펌프킨 시저스 04.hv3"), Data: inner, Method: testutil.MethodDeflate},
 	}})
 	h := newHarness(t, map[string]any{"펌프킨 시저스 04.zip": book})
 	h.run(Request{})
 
 	books := h.books("manga", "펌프킨 시저스 04.zip")
 	if len(books) != 1 {
+		t.Fatalf("indexed %d books %v, want 1", len(books), bookNames(books))
+	}
+	b := books[0]
+	if b.Status != StatusOK {
+		t.Fatalf("status = %q, want %q (error %q)", b.Status, StatusOK, b.Error)
+	}
+	if b.Kind != string(source.KindNestedHV3) {
+		t.Errorf("kind = %q, want %q", b.Kind, source.KindNestedHV3)
+	}
+	if b.InnerPath != "펌프킨 시저스 04.hv3" {
+		t.Errorf("inner_path = %q, want the entry that is the volume", b.InnerPath)
+	}
+	if b.PageCount != int64(len(pages)) {
+		t.Errorf("page_count = %d, want %d", b.PageCount, len(pages))
+	}
+}
+
+// TestScan_looseHV3_isABook is the same format as its own file. The collection
+// holds one — `펌프킨 시저스 04` was unpacked out of its ZIP — and 26 of them
+// when arch §4.2 was first surveyed, which is where adjustment D-7's
+// ".txt/.hv3 directories" came from.
+func TestScan_looseHV3_isABook(t *testing.T) {
+	t.Parallel()
+
+	pages := testutil.HV3Pages(4)
+	h := newHarness(t, map[string]any{
+		"펌프킨 시저스 1~13권": map[string]any{
+			"펌프킨 시저스 04.hv3": testutil.BuildHV3(t, testutil.HV3Spec{
+				Entries: pages, Encr: testutil.HV3EncrMask,
+			}),
+		},
+	})
+	h.run(Request{})
+
+	books := h.books("manga", "펌프킨 시저스 1~13권")
+	if len(books) != 1 {
+		t.Fatalf("indexed %d books %v, want 1", len(books), bookNames(books))
+	}
+	b := books[0]
+	if b.Status != StatusOK {
+		t.Fatalf("status = %q, want %q (error %q)", b.Status, StatusOK, b.Error)
+	}
+	if b.Kind != string(source.KindHV3) {
+		t.Errorf("kind = %q, want %q", b.Kind, source.KindHV3)
+	}
+	if b.PageCount != int64(len(pages)) {
+		t.Errorf("page_count = %d, want %d", b.PageCount, len(pages))
+	}
+}
+
+// TestScan_hv3ThatIsNotAnHV3_saysWhatItIs is the shape 54 of the 55 `.hv3`
+// files on this machine actually have: a RAR archive wearing the extension.
+//
+// They are all in the trash and none is in the library, so nothing dispatches
+// on the signature — [source.ContainerKind] still reads the name, as it does
+// for every other format. What must not happen is the *wrong story*: `HV3
+// signature not found` on a good RAR sends its owner looking for damage, which
+// is the failure D-72 exists to prevent, pointed the other way.
+func TestScan_hv3ThatIsNotAnHV3_saysWhatItIs(t *testing.T) {
+	t.Parallel()
+
+	rar := testutil.BuildRAR4(t, testutil.RAR4Spec{Entries: []testutil.RAR4Entry{
+		{Name: []byte("001.jpg"), Data: jpeg(t)},
+	}})
+	h := newHarness(t, map[string]any{"궁 09.hv3": rar})
+	h.run(Request{})
+
+	books := h.books("manga", "궁 09.hv3")
+	if len(books) != 1 {
 		t.Fatalf("indexed %d books, want 1", len(books))
 	}
 	b := books[0]
-	if b.Status != StatusUnsupported {
-		t.Errorf("status = %q, want %q", b.Status, StatusUnsupported)
+	if b.Status != StatusError {
+		t.Errorf("status = %q, want %q", b.Status, StatusError)
 	}
-	if !strings.Contains(b.Error, "HV3") {
-		t.Errorf("error = %q, want it to name HV3", b.Error)
-	}
-	if strings.Contains(b.Error, "no supported image entries") {
-		t.Errorf("error = %q — that sentence describes a file that is not this one", b.Error)
-	}
-	if b.PageCount != 0 {
-		t.Errorf("page_count = %d, want 0", b.PageCount)
+	if !strings.Contains(b.Error, "RAR") {
+		t.Errorf("error = %q, want it to name what the file actually is", b.Error)
 	}
 }
 

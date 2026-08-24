@@ -40,7 +40,7 @@ CURATED=(
   "라제폰 1-3권 완결"                        # a folder of RARs — D-71
   "울프가이"                                 # ZIP and RAR volumes in one series
   "사모님은 학생회장.zip"                    # container mixing ZIP, RAR and .7z
-  "펌프킨 시저스 1~13권"                     # one volume is an .hv3 — D-72
+  "펌프킨 시저스 1~13권"                     # one volume is an .hv3 — D-72, then E-51
 )
 
 # The synthetic tree carries the same names plus three shapes the real

@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"shelf/internal/archive"
+	"shelf/internal/archive/hv3"
 	"shelf/internal/archive/rar4"
 	"shelf/internal/archive/zipidx"
 	"shelf/internal/config"
@@ -56,6 +57,11 @@ const (
 	// one of the collection's 14 archives is solid, which is what a page served
 	// from a recorded offset requires (see internal/archive/rar4).
 	KindRAR Kind = "rar"
+	// KindHV3 is a HoneyView HV3 container, `.hv3`. D-72 recorded it as a
+	// format this build could never open, on a reading of its header that
+	// turned out to be wrong twice over; ruling E-51 overturns that half of
+	// D-72 and internal/archive/hv3 is the reader.
+	KindHV3 Kind = "hv3"
 	// KindNestedZIP is one volume inside a container of volumes — an entry that
 	// is itself a ZIP. The container is the book's RelPath and the volume is its
 	// InnerPath.
@@ -64,6 +70,10 @@ const (
 	// is the case it exists for: 7 ZIPs and 8 RARs in one container, and under
 	// D-07 only the 7 were books.
 	KindNestedRAR Kind = "nestedrar"
+	// KindNestedHV3 is the same shape with an HV3 volume. The collection's one
+	// HV3 is exactly this — the sole entry of `펌프킨 시저스 04.zip` — so unlike
+	// the other two nested kinds it is not the rarer half of its pair.
+	KindNestedHV3 Kind = "nestedhv3"
 	// KindNestedDir is one chapter *directory* inside a container: the container
 	// is the book's RelPath and the directory is its InnerPath (D-73). The
 	// container may be a ZIP or a RAR — a directory has no format of its own, so
@@ -154,12 +164,15 @@ type Page struct {
 	CompSize int64 // archives only: bytes on disk
 	// Method is the container's own compression method, so its numbering is
 	// per format: ZIP uses 0 stored / 8 deflate, RAR uses 0x30 stored /
-	// 0x31–0x35 packed. The two ranges do not overlap, but nothing relies on
-	// that — the reader that wrote the row is the reader that reads it.
+	// 0x31–0x35 packed, HV3 uses 0x4800 plus its ENCR mode. The ranges do not
+	// overlap, but nothing relies on that — the reader that wrote the row is the
+	// reader that reads it, and hv3 goes further and re-reads the container
+	// rather than trusting this column at all.
 	Method uint16
 
 	// LocalHdrOff is where the entry's own header starts: the ZIP local file
-	// header, or the RAR block header. FR-SRV-002 lives or dies on this column.
+	// header, the RAR block header, or the HV3 FILE block. FR-SRV-002 lives or
+	// dies on this column.
 	LocalHdrOff int64
 	CRC32       uint32 // archives only, free from the directory read
 	Mtime       int64  // dir only: the file's own mtime
@@ -186,9 +199,13 @@ type Listing struct {
 	// Excluded counts the entries dropped by FR-IDX-006, for the scan log.
 	Excluded int
 	// Foreign names the container format this book turned out to hold, when it
-	// holds one this build cannot open and no pages at all — "HV3" for
-	// `펌프킨 시저스 04.zip`. Empty for every ordinary book, including one that
-	// merely contains a stray `.7z` alongside its pages.
+	// holds one this build cannot open and no pages at all — "7-Zip" for a book
+	// that is nothing but a `.7z`. Empty for every ordinary book, including one
+	// that merely contains a stray `.7z` alongside its pages.
+	//
+	// `펌프킨 시저스 04.zip` used to be the standing example and no longer is:
+	// its `.hv3` has a reader, so the container is a series of one volume
+	// rather than a book with a name for what it could not read (E-51).
 	Foreign string
 	// TotalBytes is the sum of the pages' uncompressed sizes — books.total_bytes.
 	TotalBytes int64
@@ -249,7 +266,7 @@ type BookSource interface {
 }
 
 // StaleChecker is implemented by sources whose container can change on disk
-// while the index still describes the old one — today, [KindZIP].
+// while the index still describes the old one — every archive kind.
 //
 // The HTTP layer type-asserts for it: a page request carrying `?v=` whose
 // source reports stale is answered `409 stale_version` so the client refetches
@@ -278,6 +295,8 @@ type Options struct {
 	Archive archive.Reader
 	// RAR is the RAR container reader. Zero means rar4.New().
 	RAR archive.Reader
+	// HV3 is the HoneyView container reader. Zero means hv3.New().
+	HV3 archive.Reader
 	// PDF is the rasteriser. Zero, or a build with -tags nopdf, makes every
 	// PDF book ErrUnsupported.
 	PDF *pdfium.Renderer
@@ -309,18 +328,18 @@ type Factory struct {
 	openers map[Kind]Opener
 }
 
-// NewFactory returns a factory with the three built-in kinds registered.
+// NewFactory returns a factory with every built-in kind registered.
 func NewFactory(opts Options) *Factory {
 	f := &Factory{
 		roots:   opts.Roots,
 		pool:    opts.Pool,
-		readers: make(map[Kind]archive.Reader, 2),
+		readers: make(map[Kind]archive.Reader, 3),
 		pdf:     opts.PDF,
 		pdfW:    opts.PDFWidth,
 		pdfMaxW: opts.PDFMaxWidth,
 		pdfQ:    opts.PDFQuality,
 		log:     opts.Logger,
-		openers: make(map[Kind]Opener, 6),
+		openers: make(map[Kind]Opener, 8),
 	}
 	f.readers[KindZIP] = opts.Archive
 	if f.readers[KindZIP] == nil {
@@ -330,15 +349,21 @@ func NewFactory(opts Options) *Factory {
 	if f.readers[KindRAR] == nil {
 		f.readers[KindRAR] = rar4.New()
 	}
+	f.readers[KindHV3] = opts.HV3
+	if f.readers[KindHV3] == nil {
+		f.readers[KindHV3] = hv3.New()
+	}
 	if f.log == nil {
 		f.log = slog.Default()
 	}
 	f.openers[KindZIP] = openZIP
 	f.openers[KindRAR] = openRAR
+	f.openers[KindHV3] = openHV3
 	f.openers[KindDir] = openDir
 	f.openers[KindPDF] = openPDF
 	f.openers[KindNestedZIP] = openNestedZIP
 	f.openers[KindNestedRAR] = openNestedRAR
+	f.openers[KindNestedHV3] = openNestedHV3
 	f.openers[KindNestedDir] = openNestedDir
 	return f
 }

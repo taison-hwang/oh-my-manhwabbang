@@ -26,7 +26,8 @@ import (
 // The two readers are separate because the two containers need not be the same
 // format. `사모님은 학생회장.zip` holds 7 ZIPs and 8 RARs; each of the 15 is a
 // volume, read by whichever reader its own extension names, through one outer
-// ZIP that neither of them knows about.
+// ZIP that neither of them knows about. `펌프킨 시저스 04.zip` is the extreme
+// case of the same shape: one volume, and it is an HV3.
 type nestedSource struct {
 	containerSource
 	// innerPath is the outer container's entry name for this volume, exactly as
@@ -43,6 +44,10 @@ func openNestedZIP(ctx context.Context, f *Factory, b Book) (BookSource, error) 
 
 func openNestedRAR(ctx context.Context, f *Factory, b Book) (BookSource, error) {
 	return openNested(ctx, f, b, KindNestedRAR)
+}
+
+func openNestedHV3(ctx context.Context, f *Factory, b Book) (BookSource, error) {
+	return openNested(ctx, f, b, KindNestedHV3)
 }
 
 // openNested builds a nested source. The outer container is opened by the
@@ -89,8 +94,9 @@ type VolumeLister interface {
 // An entry whose extension names no reader is not returned, because listing it
 // would produce a book that cannot open. Under D-07 that silently dropped every
 // `.rar`: `사모님은 학생회장.zip` holds 7 ZIPs and 8 RARs and yielded 7 volumes.
-// D-71 gives RAR a reader, so it now yields all 15. `.7z` and friends are still
-// dropped, and for the same reason as before.
+// D-71 gives RAR a reader, so it now yields all 15, and E-51 does the same for
+// the `.hv3` that is the whole of `펌프킨 시저스 04.zip`. `.7z` and friends are
+// still dropped, and for the same reason as before.
 //
 // A source narrowed to one chapter directory answers about that directory only
 // (D-73). The scanner never asks one — a chapter is made of pages, so it is
@@ -148,6 +154,8 @@ func ContainerKind(name string) Kind {
 		return KindZIP
 	case ".rar", ".cbr":
 		return KindRAR
+	case ".hv3":
+		return KindHV3
 	}
 	return ""
 }
@@ -160,6 +168,8 @@ func innerKind(k Kind) Kind {
 		return KindZIP
 	case KindNestedRAR:
 		return KindRAR
+	case KindNestedHV3:
+		return KindHV3
 	}
 	return ""
 }
@@ -172,6 +182,8 @@ func NestedKind(ext string) Kind {
 		return KindNestedZIP
 	case KindRAR:
 		return KindNestedRAR
+	case KindHV3:
+		return KindNestedHV3
 	}
 	return ""
 }

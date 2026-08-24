@@ -38,7 +38,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-	"unicode/utf16"
 
 	"golang.org/x/text/encoding/japanese"
 	"golang.org/x/text/encoding/korean"
@@ -210,13 +209,20 @@ func build(root string) error {
 
 	b.solidRar("솔리드 테스트.rar", cp949Pages(3))
 
-	// 12 — a book that is one container this build has no reader for. The real
-	// case is `펌프킨 시저스 04.zip`: 39.5 MB in a single `.hv3`, a proprietary
-	// and (measurably) encrypted format. D-72 is that such a book reports the
-	// format it holds rather than `비어 있음`, which is what 비둘기.zip above
-	// still, correctly, reports.
+	// 12 — a ZIP whose only entry is an HV3, which is the whole of the real
+	// `펌프킨 시저스 04.zip`: 39.5 MB in one `.hv3`.
+	//
+	// This fixture has been three different things, and the history is the
+	// point. Under D-07 the book was `비어 있음`; under D-72 it was
+	// `unsupported`, naming HV3, and the blob written here was a header with
+	// filler behind it because nothing parsed it. Under E-51 it is a nested
+	// volume with pages, so the blob has to be a *real* container — masked
+	// payload and all — or the synthetic round would assert against a shape
+	// the real collection does not have. `비둘기.zip` above still, correctly,
+	// reports `비어 있음`, and `사모님은 학생회장.zip`'s `.7z` still, correctly,
+	// keeps D-72's rule in service.
 	b.zipFile("펌프킨 시저스 1~13권/펌프킨 시저스 04.zip", []entry{
-		{name: "펌프킨 시저스 04.hv3", data: hv3Blob()},
+		{name: "펌프킨 시저스 04.hv3", data: hv3Volume(3)},
 	})
 	for i := 1; i <= 2; i++ {
 		b.zipFile(fmt.Sprintf("펌프킨 시저스 1~13권/펌프킨 시저스 %02d.zip", i), cp949Pages(3))
@@ -250,60 +256,30 @@ func mixedVolumes() ([]entry, error) {
 	}, nil
 }
 
-// hv3Blob is the head of an HV3 container, reproduced from the real
-// `펌프킨 시저스 04.hv3` down to the chunk names: the magic, the version, the
-// declared file size, a HEAD block carrying GUID/UUID/FTIM/TITL/MAKR, and the
-// ENCR chunk that says the payload is encrypted. The body here is filler.
+// hv3Volume builds a real HV3 container of n pages, in the shape measured on
+// `펌프킨 시저스 04.hv3`: ENCR mode 2, so every payload is masked with its own
+// byte position, and the directory at the front of the file.
 //
-// Nothing in this product parses any of it — the extension is what classifies
-// the book (FR-IDX-002 forbids reading a payload at index time). It is written
-// faithfully anyway so that a future reader of this fixture can see what the
-// real file is, rather than a placeholder that would teach them nothing.
-func hv3Blob() []byte {
-	var b bytes.Buffer
-	const total = 4096
-	b.WriteString("HV30")
-	_ = binary.Write(&b, binary.LittleEndian, uint32(24))
-	_ = binary.Write(&b, binary.LittleEndian, uint32(total-40))
-	_ = binary.Write(&b, binary.LittleEndian, uint32(0))
-
-	chunk := func(tag string, payload []byte) {
-		b.WriteString(tag)
-		_ = binary.Write(&b, binary.LittleEndian, uint32(len(payload)))
-		b.Write(payload)
+// The page names are the real ones. They are UTF-16 in the container — HV3 has
+// no legacy code page at all — which is the one thing about this format that
+// makes a book *easier* than a ZIP, and the reason no `.hv3` book is ever a
+// CP949 book. Everything else about it is written by internal/testutil, the
+// same writer the unit fixtures use, so the two cannot drift.
+func hv3Volume(n int) []byte {
+	entries := make([]testutil.HV3Entry, 0, n)
+	for i := 1; i <= n; i++ {
+		entries = append(entries, testutil.HV3Entry{
+			Name:     fmt.Sprintf("펌프킨 시저스(Pumpkin Scissors)_04_%04d(Scan By Q.H).jpg", i),
+			Data:     jpegPage(),
+			Modified: fixedMtime,
+		})
 	}
-	chunk("VERS", []byte{0x07, 0x04, 0x08, 0x20})
-	chunk("FSIZ", []byte{0x00, 0x10, 0x00, 0x00})
-
-	var head bytes.Buffer
-	_ = binary.Write(&head, binary.LittleEndian, uint64(18528))
-	sub := func(tag string, payload []byte) {
-		head.WriteString(tag)
-		_ = binary.Write(&head, binary.LittleEndian, uint32(len(payload)))
-		head.Write(payload)
-	}
-	sub("GUID", make([]byte, 16))
-	sub("UUID", make([]byte, 16))
-	sub("FTIM", make([]byte, 8))
-	sub("TITL", utf16le("펌프킨 시저스_Pumpkin Scissors_04"))
-	sub("MAKR", utf16le("Scan by Q.H"))
-	chunk("HEAD", head.Bytes())
-
-	chunk("ENCR", []byte{0x02, 0x00, 0x00, 0x00})
-	chunk("LIST", nil)
-
-	for b.Len() < total {
-		b.WriteByte(byte(b.Len() * 31 % 251))
-	}
-	return b.Bytes()
-}
-
-func utf16le(s string) []byte {
-	out := make([]byte, 0, len(s)*2)
-	for _, r := range utf16.Encode([]rune(s)) {
-		out = append(out, byte(r), byte(r>>8))
-	}
-	return out
+	return testutil.HV3Bytes(testutil.HV3Spec{
+		Entries: entries,
+		Encr:    testutil.HV3EncrMask,
+		Title:   "펌프킨 시저스_Pumpkin Scissors_04",
+		Maker:   "Scan by Q.H",
+	})
 }
 
 // ---------------------------------------------------------------------------

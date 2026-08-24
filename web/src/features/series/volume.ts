@@ -44,9 +44,11 @@ export interface VolumeBadge {
  * explanation, which is the exact failure FR-IDX-010 exists to prevent.
  *
  * `unsupported` covers a `nopdf` build and, since D-72, a container holding a
- * format this build has no reader for — `펌프킨 시저스 04.zip` is 39.5 MB of
- * HV3. `empty` is an archive with nothing readable in it at all, which after
- * D-70 and D-72 means what it says: `비둘기.zip` and its one directory entry.
+ * format this build has no reader for — a book that is nothing but a `.7z`.
+ * `펌프킨 시저스 04.zip` was the standing example until E-51 gave HV3 a reader
+ * and it became a 104-page volume. `empty` is an archive with nothing readable
+ * in it at all, which after D-70 and D-72 means what it says: `비둘기.zip` and
+ * its one directory entry.
  *
  * Both carry the server's own sentence as `detail`, which is where the format
  * gets named — the Korean reason here stays general because the badge is a

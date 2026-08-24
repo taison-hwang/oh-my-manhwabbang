@@ -1186,20 +1186,28 @@ def main() -> int:
         r.eq("사모님은 학생회장 has all 15 volumes, not the 7 D-07 allowed",
              md["book_count"], 15)
 
-    # ---- D-72: a book that is one format this build cannot open ---------
-    # `펌프킨 시저스 04.zip` was the last of the 48 books reporting
-    # `비어 있음 · no supported image entries`, and the only one where that
-    # sentence was false rather than merely unhelpful: it holds 39.5 MB in a
-    # single encrypted `.hv3`.
+    # ---- E-51: the HV3 volume, which three rulings have now been about ----
+    # `펌프킨 시저스 04.zip` holds 39.5 MB in a single `.hv3` and nothing else.
+    # D-07 called it `비어 있음` (false — there is 39.5 MB in there); D-72
+    # called it `unsupported`, naming HV3 (true, while the format was believed
+    # encrypted); E-51 measured the header again and it is 104 pages behind a
+    # byte-position XOR mask. It is a nested volume now, on the same path
+    # `사모님은 학생회장.zip`'s fifteen take.
     pk = r.json("/api/series/" + by_name[PUMPKIN]["id"])
-    hv3 = [b for b in pk["books"] if b["status"] != "ok"]
-    r.eq("펌프킨 시저스 has exactly one volume that will not open", len(hv3), 1)
-    r.eq("it is unsupported, not empty and not error (D-72)", hv3[0]["status"], "unsupported")
-    r.check("and it names the format it holds",
-            "HV3" in (hv3[0]["error"] or ""), f"error field: {hv3[0]['error']!r}")
-    r.check("the rest of the series is unaffected",
-            all(b["page_count"] > 0 for b in pk["books"] if b["status"] == "ok"),
-            "sibling volumes still open")
+    hv3 = [b for b in pk["books"] if b["kind"] in ("hv3", "nestedhv3")]
+    r.check("펌프킨 시저스 has an HV3 volume", len(hv3) >= 1,
+            f"kinds: {sorted({b['kind'] for b in pk['books']})}")
+    r.eq("the HV3 volume opens (E-51 overturns D-72's HV3 half)",
+         sorted({b["status"] for b in hv3}), ["ok"])
+    r.check("and it has pages, not a name for what could not be read",
+            all(b["page_count"] > 0 for b in hv3),
+            f"page counts: {[b['page_count'] for b in hv3]}")
+    r.check("every volume of the series opens",
+            all(b["status"] == "ok" and b["page_count"] > 0 for b in pk["books"]),
+            f"statuses: {[(b['name'], b['status']) for b in pk['books']]}")
+    if real:
+        r.eq("the real HV3 volume has all 104 of its pages",
+             sorted(b["page_count"] for b in hv3)[0], 104)
 
     if not real:
         # No solid RAR exists in the collection, so this shape is synthetic

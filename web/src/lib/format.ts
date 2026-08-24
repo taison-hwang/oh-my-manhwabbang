@@ -190,13 +190,15 @@ export type FormatValue =
   | 'nestedzip'
   | 'rar'
   | 'nestedrar'
+  | 'hv3'
+  | 'nestedhv3'
   | 'nesteddir'
   | 'dir'
   | 'folder'
   | 'pdf'
 
 /**
- * The `ZIP` / `RAR` / `FOLDER` / `PDF` badge text (FR-LIB-009).
+ * The `ZIP` / `RAR` / `HV3` / `FOLDER` / `PDF` badge text (FR-LIB-009).
  *
  * The `nested` prefix is stripped rather than matched case by case. That is the
  * D-70/D-71 rule itself — the prefix records where the bytes live, and the
@@ -208,6 +210,9 @@ export type FormatValue =
  * that claim true for D-73's `nesteddir`: its twin is `dir`, so its badge is
  * FOLDER. The other order left the rule one kind short of general and would
  * have put `DIR` on 6,097 volumes.
+ *
+ * E-51's `hv3`/`nestedhv3` needed no edit here at all, which is the rule
+ * working: `HV3` and `HV3`.
  */
 export function formatLabel(format: FormatValue): string {
   const bare = format.startsWith('nested') ? format.slice('nested'.length) : format

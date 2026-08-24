@@ -235,13 +235,18 @@ func TestClassify_everyPrdTableRow_producesTheSpecifiedSeriesAndBooks(t *testing
 			coverKind: CoverPage,
 		},
 		{
-			name:      "a directory with no readable books",
-			row:       "adjustment D-7 — five real top-level directories hold only .txt/.hv3; listed as empty, never dropped",
+			name: "a directory with no readable books",
+			// The row said ".txt/.hv3" until E-51 gave HV3 a reader. A `.hv3`
+			// is a container now, so a directory holding one has a book in it
+			// — broken or not — and this row is about a directory that has
+			// none. The half of D-7 that still bites is the `.txt` half, and
+			// the rule it produced is unchanged: listed, never dropped.
+			row:       "adjustment D-7 — real top-level directories hold only text novels; listed as empty, never dropped",
 			seriesRel: "[만화] 엔젤릭 레이어",
 			layout: map[string]any{
 				"[만화] 엔젤릭 레이어": map[string]any{
 					"ANGELIC LAYER 엔젤릭 레이어.txt": "",
-					"목록.hv3":                    "x",
+					"목록.nfo":                    "x",
 				},
 			},
 			kind:      SeriesFolder,

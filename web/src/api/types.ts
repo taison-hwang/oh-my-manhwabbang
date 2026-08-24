@@ -48,8 +48,22 @@ export const ID_PATTERN = /^[a-z2-7]{16}$/
  * could not catch it, because it can only judge a string some golden file
  * happens to contain and every golden book is a `zip` or a `dir`. It now
  * compares this list against the `Kind*` constants themselves.
+ *
+ * `hv3`/`nestedhv3` arrived with E-51, and the same gate was blind to them for
+ * a second reason: it matched kind values as `[a-z]+`, and `hv3` has a digit
+ * in it. One `nestedhv3` book exists — the whole of `펌프킨 시저스 04.zip`.
  */
-export const BOOK_KINDS = ['zip', 'nestedzip', 'rar', 'nestedrar', 'nesteddir', 'dir', 'pdf'] as const
+export const BOOK_KINDS = [
+  'zip',
+  'nestedzip',
+  'rar',
+  'nestedrar',
+  'hv3',
+  'nestedhv3',
+  'nesteddir',
+  'dir',
+  'pdf',
+] as const
 export type BookKind = (typeof BOOK_KINDS)[number]
 
 /** C-4: books say `dir`, series say `folder`. The badge text is FOLDER for both. */

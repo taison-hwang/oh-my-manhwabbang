@@ -611,7 +611,11 @@ func checkErrorCodes(root string, ts *tsTypes) ([]string, error) {
 	return findings, nil
 }
 
-var reGoKind = regexp.MustCompile(`(?m)^\s*Kind[A-Za-z0-9_]+\s+Kind\s*=\s*"([a-z]+)"`)
+// The kind's *value* may hold digits: `hv3` and `nestedhv3` do. An earlier
+// `[a-z]+` here matched neither, so this gate reported "41 checks agree" while
+// two kinds the scanner could write were missing from BOOK_KINDS — a check
+// watching the wrong thing, which is the same failure it exists to catch.
+var reGoKind = regexp.MustCompile(`(?m)^\s*Kind[A-Za-z0-9_]+\s+Kind\s*=\s*"([a-z0-9]+)"`)
 
 // checkBookKinds compares the `Kind*` constants of internal/source/source.go
 // with `BOOK_KINDS` in types.ts, for the same reason checkErrorCodes exists and

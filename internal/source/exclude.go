@@ -43,17 +43,19 @@ func Ext(name string) string { return strings.ToLower(path.Ext(name)) }
 // and those are different sentences to put in front of a reader.
 //
 // Ruling E-14 settled that `비둘기.zip`, which holds one directory entry and
-// nothing else, is honestly `비어 있음`. `펌프킨 시저스 04.zip` is not that. It
-// holds 39.5 MB in a single `.hv3`, and telling its owner there are "no
-// supported image entries" describes a file that does not exist.
+// nothing else, is honestly `비어 있음`. A book that is nothing but a `.7z` is
+// not that: telling its owner there are "no supported image entries" describes
+// a file that does not exist.
 //
 // The value is what the reader is told. It names the format, not a remedy,
-// because there is no remedy: HV3 is a proprietary container and the one in
-// this collection is encrypted — its header carries an ENCR chunk, its LIST
-// chunk is empty, and its body measures 7.9972 bits of entropy per byte with
-// two JPEG signatures in 39.5 MB. No decoder recovers that without the key.
+// because for everything left in this table there is no remedy in this build.
+//
+// `.hv3` used to head the list and is the reason D-72 exists. It is gone from
+// it: ruling E-51 found that the header reading behind "encrypted, nothing
+// recovers that" was wrong twice over, and internal/archive/hv3 now serves the
+// container's 104 pages. A format leaves this table by acquiring a reader —
+// which is the only way anything should ever leave it.
 var foreignFormats = map[string]string{
-	".hv3": "HV3",
 	".7z":  "7-Zip",
 	".alz": "ALZ",
 	".egg": "EGG",

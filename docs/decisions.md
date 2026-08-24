@@ -19,11 +19,11 @@ Sources: `prd.md` (URD, authoritative) · `design.md` · `ui-spec.md` · `arch-b
 | D-04 | **FR-STT-004 export/import: backend endpoints in, UI out.** | ~80 lines, and it protects the only authored data in the system; the UI is genuinely stage 3. |
 | D-05 | **Docker image out of scope**; `make release` cross-compilation in scope. | prd §9 stage 3 calls Docker "부가적"; NFR-OPS-003 (Linux/Windows/macOS binaries) is a hard NFR. |
 | D-06 | Basic touch (tap zones + horizontal swipe) **in**; gesture *optimisation* out. | FR-VWR-011 is 권장 and NFR-CMP-002 needs the basics; "모바일 제스처 최적화" is the stage-3 item. |
-| D-07 | ~~Nested archives (a ZIP of ZIPs)~~, ~~RAR/CBR~~, 7z **out**; `internal/archive.Reader` stays an interface. | prd §7.2. **Nested ZIPs are now IN — see D-70. RAR/CBR are now IN — see D-71.** 7z and friends remain out. The clause that survives all of it is the last one, and it is the reason the other two were cheap: the interface was kept. |
+| D-07 | ~~Nested archives (a ZIP of ZIPs)~~, ~~RAR/CBR~~, 7z **out**; `internal/archive.Reader` stays an interface. | prd §7.2. **Nested ZIPs are now IN — see D-70. RAR/CBR are now IN — see D-71. HV3 is now IN — see E-51.** 7z and friends remain out. The clause that survives all of it is the last one, and it is the reason the other two were cheap: the interface was kept. |
 | D-70 | **Nested ZIPs are in, as books.** A ZIP whose entries are ZIPs becomes a series of `kind:"nestedzip"` volumes, one per inner archive. Supersedes the first clause of D-07 and narrows E-14. | 45 books — 623 volumes, 16.9 GB — were unreachable, `겟 벡커스 1~39완.zip` among them, and "the container is `empty`" was a true statement about a library the reader could not open. The cost turned out to be small: the inner archive is presented as an `io.ReaderAt` (`internal/archive/nested`), so the existing reader indexes and streams it unchanged, and the entries are stored JPEGs whose deflate ratio is measured at 1.0000, making the inflate very nearly a copy. Nothing is extracted and no cache is added. Only a book that produced **no pages of its own** is ever opened looking for volumes, so the ordinary path is untouched. |
 | D-71 | **RAR 4 is in, as a book format.** `.rar`/`.cbr` on disk are `kind:"rar"`; inside a container they are `kind:"nestedrar"`. New package `internal/archive/rar4` implements `archive.Reader`. Supersedes D-07's RAR/CBR clause. **Solid archives, multi-volume sets, split entries, encrypted entries and RAR 5 are refused by name**, not attempted. | The measurement decided it, and it is the number a reader should check first if this is ever revisited. Across all **14** RAR archives in the collection (**2,914** entries, ~1.1 GB, none of them a book until now): **solid archives 0, solid entries 0, multi-volume 0, encrypted 0, RAR 5 0**; **2,685 entries stored, 229 packed** (method 0x31, in 3 books); packing ratio **1.0000**, because they are JPEGs. Solid is the one that matters — in a solid archive page N cannot be produced without decompressing 1..N-1, so FR-SRV-002's "one page, one seek" would be a lie and the format could not be admitted at all. None of these is solid, and 92% of their entries are *stored*, which is byte-for-byte the access pattern of a stored ZIP entry. So the stored path takes no dependency at all (an `io.SectionReader` over the container, seekable, so Range still works); only the packed 8% reaches `rardecode`. Indexing reads block headers only (FR-IDX-002), and serving reaches a packed entry by splicing `signature + the container's own main header + this entry's block` into a one-file archive — valid RAR, correct because non-solid, **O(1)** rather than O(entries), and needing no new column: `LocalHdrOff` keeps exactly the meaning FR-SRV-002 gives it. Measured: reaching entry 826 of a 385 MB archive costs **6 ms**. Verified against a whole-archive `rardecode` oracle over the real collection — 14 archives, 2,914 entries, every name, length and CRC-32 agreeing. Also in: `사모님은 학생회장.zip`'s 8 RAR volumes, which D-70 had to drop. |
 | D-73 | **An archive whose pages live in per-chapter directories is one 권 per directory.** `books.kind:"nesteddir"`, `inner_path` = the directory inside the container; the container stops being a book. The rule fires only when, after the longest shared directory prefix is stripped, **two or more** directories remain; pages left at the container's top level become one more 권 (`inner_path:"."`, `… (loose pages)`, sorted first). Extends D-70's move to the case where the inner 권 are folders rather than archives. | **484 of the collection's 11,153 archives (4.3%) are this, holding 279,541 pages** — `여자친구 만들고파! 01~08권.zip` is 842 pages in eight per-volume folders, `배틀로얄 1~15 [완결].zip` 1,540 in fifteen, `암살교실 1~180화.zip` 3,534 in **182** folders literally named 화. Each was one book: a 권 list with a single unnavigable entry, and 6,097 volumes the reader could not address. **prd §2.2 row 2 had already decided this** for the same tree on disk — one 권 per image sub-folder — so the archive was the odd one out, not the folder. The cost is a pass over a page list the scan already holds (no extra read, no payload) plus one central-directory read per chapter, and it is paid only by a book that has the shape; each chapter goes through `indexUnit`, so FR-IDX-003 still skips an unchanged one and the 6,097 page-row sets are not rewritten every scan. The partition is **total** — measured 1,540 pages before and after on 배틀로얄 — which is why the loose cover image beside 29 volume folders in `야와라!` becomes a 권 rather than a dropped page, and why the one ambiguous shape (a shared wrapper folder *and* loose pages, which no archive in the collection has) is left unsplit rather than guessed at. An index that already exists splits on a **full** scan only: E-39 skips a container recorded `ok`. |
-| D-72 | **A book that is one format this build cannot open reports the format, not `empty`.** `status:"unsupported"` with the format named in `books.error`, for a container whose entries are all foreign (`.hv3`, `.7z`, `.alz`, `.egg`, `.lzh`, …) — but **only when there are no pages and no volumes**, so a foreign entry beside readable content stays a footnote. Narrows D-29 and E-14. | `펌프킨 시저스 04.zip` was the last of the 48 books reporting `비어 있음 · no supported image entries`, and the only one where that sentence was **false** rather than merely unhelpful: it holds 39.5 MB in a single `.hv3`. HV3 is a proprietary container and this one is *encrypted* — the header carries an `ENCR` chunk (value 2), the `LIST` chunk is empty, and the body measures **7.9972 bits of entropy per byte** with **2** JPEG signatures in 39.5 MB. Nothing recovers that without the key and nothing here tries. What was wrong was the explanation: `비어 있음` sends an owner looking for damage in a file that is intact. E-14's `비둘기.zip` — one directory entry, 128 bytes — keeps `empty`, which is what it is. The "no volumes" half of the rule is not decoration: naming the `.7z` inside `사모님은 학생회장.zip` closed the container as `unsupported` before the scanner ever looked for its 15 volumes, and the e2e round caught it two tiers from the change. |
+| D-72 | **A book that is one format this build cannot open reports the format, not `empty`.** `status:"unsupported"` with the format named in `books.error`, for a container whose entries are all foreign (`.7z`, `.alz`, `.egg`, `.lzh`, …; **`.hv3` was the original example and is no longer one — see E-51**) — but **only when there are no pages and no volumes**, so a foreign entry beside readable content stays a footnote. Narrows D-29 and E-14. | `펌프킨 시저스 04.zip` was the last of the 48 books reporting `비어 있음 · no supported image entries`, and the only one where that sentence was **false** rather than merely unhelpful: it holds 39.5 MB in a single `.hv3`. HV3 is a proprietary container and this one is *encrypted* — the header carries an `ENCR` chunk (value 2), the `LIST` chunk is empty, and the body measures **7.9972 bits of entropy per byte** with **2** JPEG signatures in 39.5 MB. Nothing recovers that without the key and nothing here tries. **That last sentence was wrong and E-51 overturns it: the `LIST` length was read from the wrong field (it is the 64-bit one, and it is 18,512 bytes of complete file records), the entropy figure is what 104 JPEGs measure whatever you do to them, and `ENCR` 2 is a keyless byte-position XOR. The *rule* in this row is untouched — `.7z` and friends still need it — and D-72 remains the reason `펌프킨 시저스 04.zip` stopped lying about itself. It just had one more step to go.** What was wrong about D-07's answer was the explanation: `비어 있음` sends an owner looking for damage in a file that is intact. E-14's `비둘기.zip` — one directory entry, 128 bytes — keeps `empty`, which is what it is. The "no volumes" half of the rule is not decoration: naming the `.7z` inside `사모님은 학생회장.zip` closed the container as `unsupported` before the scanner ever looked for its 15 volumes, and the e2e round caught it two tiers from the change. |
 
 ## Architecture & dependencies
 
@@ -3002,3 +3002,96 @@ NFR-DAT-004는 "책이 인덱스에서 사라져도 독서 기록은 지우지 �
 
 **이 표는 기록이지 규칙이 아니다.** 앞으로 같은 일이 생기면 E-49가 자동으로 처리하고, 처리하지
 못하는 것은 E-50이 지운다.
+
+---
+
+## E-51 — **HV3은 읽힌다.** D-72의 "암호화되어 복구 불가"는 헤더 오독이었다 (사용자 요청, 2026-08-24) — BINDING
+
+**출처.** 사용자가 레퍼런스 구현(`hv3extract.py`)을 가리키며 *"hv3 파일에 대해서도 처리
+가능하도록 해주세요"* 라고 요청했다. 재 보니 **D-72의 규칙은 옳았고 그 근거 중 둘이 틀렸다.**
+
+### 1. 무엇이 틀렸나 — 측정 셋 중 둘
+
+D-72는 세 가지를 근거로 "이 파일은 암호화됐고 키 없이는 아무것도 복구 못 한다"고 적었다.
+
+| D-72가 적은 것 | 실측 (2026-08-24) |
+|---|---|
+| "`LIST` 청크가 비어 있다" | **틀렸다.** `LIST` 뒤 4바이트를 길이로 읽었는데 그건 0이다. 길이는 그 다음 **64비트** 필드고 값은 **18,512바이트** — 이름·크기·오프셋·CRC-32를 갖춘 **완전한 파일 레코드 104개** |
+| "본문이 바이트당 **7.9972비트** 엔트로피" | **사실이지만 아무 뜻도 없다.** 본문은 JPEG 104장이고 JPEG은 손대기 전에 이미 8비트/바이트다 |
+| "`ENCR` 청크(값 2)를 갖고 있다" | 사실이다. 그런데 **모드 2는 키 없는 바이트-위치 XOR 마스크**다: `plain[i] = stored[i] ^ (i & 0xFF)`, 파일마다 0에서 다시 시작 |
+
+**엔트로피가 함정이었다.** "압축된 것"과 "암호화된 것"은 엔트로피로 구분되지 않는다. 두 번째
+줄은 첫 번째 줄을 **확인해 주는 것처럼 보였을 뿐** 독립적인 증거가 아니었다 —
+`stale-copies-agree-with-each-other`와 같은 모양이다.
+
+**증명은 논증이 아니라 측정이다.** 컨테이너가 **정답을 스스로 적어 놓는다**: `FINF` 레코드마다
+마스크를 씌우기 *전* 바이트의 CRC-32가 들어 있다. 마스크를 벗긴 104개 항목의 CRC-32가
+**104/104 일치**하고, 104개 전부 `FF D8 FF E0`으로 시작한다. 레퍼런스 파이썬 추출기와
+**104개 파일 바이트 단위 동일**.
+
+### 2. 규칙은 그대로다 — 목록에서 한 줄이 빠질 뿐
+
+D-72("읽을 수 없는 한 포맷뿐인 책은 `비어 있음`이 아니라 그 포맷 이름을 댄다")는 **손대지 않는다.**
+`.7z`·`.alz`·`.egg`·`.lzh`가 여전히 그 규칙의 대상이고, `사모님은 학생회장.zip`의 `.7z`가
+여전히 그 규칙을 지킨다. 바뀐 것은 **HV3이 더 이상 그런 포맷이 아니라는 것**뿐이다.
+`foreignFormats`에서 포맷이 빠지는 유일한 방법은 **리더가 생기는 것**이고, 이번이 그 경우다.
+
+### 3. 배선은 D-71과 같다 — 리더 하나, 오프너 둘
+
+`internal/archive/hv3`가 `archive.Reader`를 구현하고, `KindHV3`/`KindNestedHV3`가 붙는다.
+**이 패키지 위로는 아무것도 안 바뀐다** — 제외 규칙도, 자연 정렬도, 페이지 서빙도 전부 기존
+코드다. D-07이 인터페이스를 남긴 것의 세 번째 배당이다.
+
+- **모든 항목이 비압축이다.** HV3 페이지는 저장된 ZIP 항목과 같은 한 번의 seek이고, 마스크가
+  켜져 있으면 스트림을 지나가는 바이트에 XOR 한 번이 얹힌다. `LocalHdrOff`는 `FILE` 블록의
+  절대 오프셋 — FR-SRV-002에 새 컬럼도 새 개념도 필요 없다.
+- **마스크는 위치 기반이라 seek이 살아 있다.** 10만 번째 바이트를 99,999번째를 건드리지 않고
+  만들 수 있으므로 Range 요청은 정확히 그 범위만큼만 든다. 실측: `Range: bytes=400-419` →
+  `206`, 20바이트, 전체를 읽은 결과의 같은 구간과 일치.
+- **디렉터리가 파일 *앞*에 있다.** ZIP과 반대다. 중첩된 HV3(=실제 컬렉션의 모양)에서
+  `internal/archive/nested`의 tail 윈도가 도움이 안 되는 유일한 지점이라, `OpenEntry`는
+  **헤더를 먼저, 페이로드를 나중에** 읽는다 — 오프셋이 단조 증가해야 inflate 스트림이 재시작하지 않는다.
+- **`ENCR` 모드는 인덱스가 아니라 컨테이너에서 다시 읽는다.** rar4가 method 바이트를 다시 읽는
+  것과 같은 이유고, 여기서는 더 급하다: `FILE` 블록에는 모드의 흔적이 없으므로 낡은 행을 믿으면
+  400 KB의 XOR 잡음을 `Content-Type: image/jpeg`로 내보내면서 아무도 오류를 못 낸다.
+
+### 4. `.hv3`은 믿을 만한 주장이 아니다 — 55개 중 54개가 RAR이다
+
+이 기계의 모든 `.hv3`을 실측했다. **54개가 확장자만 `.hv3`인 RAR 아카이브**(`궁` 시리즈 전체,
+전부 `Rar!\x1a\x07\x00`)이고 진짜 HV3은 `펌프킨 시저스 04` **하나뿐**이다.
+
+**54개는 전부 휴지통에 있고 라이브러리에는 없다.** 그래서 시그니처로 리더를 고르는 배선은
+**하지 않는다** — 존재하지 않는 파일을 위해 규칙을 만드는 것이 잘못된 규칙이 출하되는 경로다
+(D-73이 모호한 모양을 안 쪼갠 것과 같은 판단). 대신 리더가 **거짓말을 하지 않게** 했다:
+`.hv3`인데 HV3이 아니면 오류가 **실제로 무엇인지 이름을 댄다** — `the file is named .hv3 but is
+a RAR 4.x archive`. 멀쩡한 RAR에 `HV3 signature not found`라고 하면 주인이 손상을 찾아 나선다.
+그게 D-72가 막으려던 실패를 방향만 바꾼 것이다.
+
+**이건 열린 항목이다.** 사용자가 그 54개를 복구하거나 같은 출처에서 더 받으면, 시그니처 기반
+선택이 필요해진다. 그때는 `books.kind`도 함께 움직여야 하므로 별도 판정거리다.
+
+### 5. D-7이 한정된다
+
+D-7의 ".txt/.hv3만 있는 최상위 디렉터리는 비어 있음으로 나열한다"에서 `.hv3` 절이 사라진다.
+`.hv3`은 이제 컨테이너이므로, 그것만 있는 디렉터리에는 **책이 있다** — 열리면 `ok`, 안 열리면
+`error`. 0바이트 `.zip`(`D.N.Angel 09권.zip`)이 받는 것과 같은 취급이고, 그게 일관된 답이다.
+D-7의 의도(비-미디어 시리즈를 조용히 버리지 않는다)는 `.txt` 절이 그대로 지킨다.
+
+### 6. 게이트 하나가 눈을 감고 있었다
+
+`contractcheck`의 `checkBookKinds`가 kind 값을 `[a-z]+`로 읽고 있었다. `hv3`에는 숫자가 있다.
+그래서 새 kind 둘을 `BOOK_KINDS`에 안 넣은 채로 **"41 checks agree"가 그대로 통과했다** —
+D-71 때 `nestedrar`가 빠진 것을 잡으라고 만든 바로 그 게이트가, 같은 결함을 한 글자 때문에
+놓치고 있었다. 정규식을 `[a-z0-9]+`로 넓혔고, 넓히자마자 두 건을 잡았다.
+
+### 7. 실증
+
+| 검사 | 결과 |
+|---|---|
+| 실 파일 104항목, 컨테이너가 적어 둔 CRC-32 대조 | **104/104 일치** |
+| `hv3extract.py` 출력과 바이트 비교 | **104개 파일 동일** |
+| 퍼즈 (`FuzzReadIndex`) | **1,262만 회, 크래시 0** |
+| 실 서버에서 페이지 서빙 (중첩·단독 양쪽) | 904×1315 JPEG, 두 경로의 MD5 동일 |
+| `Range: bytes=400-419` | `206`, 20바이트, 구간 일치 |
+| 실 시리즈 재스캔 | `펌프킨 시저스` **14권 전부 `ok`**, HV3 권 **104쪽** |
+

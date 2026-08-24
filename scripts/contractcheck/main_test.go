@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -438,6 +439,53 @@ func TestCuratedSeries_theRepositoryAgrees(t *testing.T) {
 	}
 	if len(findings) != 0 {
 		t.Errorf("the curated series list has drifted:\n%s", strings.Join(findings, "\n"))
+	}
+}
+
+// TestBookKinds_extractionSeesEveryKindInTheRepository pins the one thing this
+// gate cannot check about itself: that its *extraction* found anything.
+//
+// `reGoKind` read a kind's value as `[a-z]+` until 2026-08-24. `hv3` and
+// `nestedhv3` have a digit in them, so the regex matched neither, `server` came
+// back without them, and `checkBookKinds` reported agreement while two kinds
+// the scanner could write were missing from BOOK_KINDS — the exact defect this
+// gate was added for after D-71's `nestedrar`, missed for the width of one
+// character class.
+//
+// Counting is what closes it. A regex that stops matching some constants does
+// not fail the comparison — both sides simply shrink — so the assertion has to
+// be against the file, not against the other declaration.
+func TestBookKinds_extractionSeesEveryKindInTheRepository(t *testing.T) {
+	t.Parallel()
+
+	src, err := os.ReadFile(filepath.Join("../..", "internal", "source", "source.go"))
+	if err != nil {
+		t.Fatalf("reading source.go: %v", err)
+	}
+	got := map[string]bool{}
+	for _, m := range reGoKind.FindAllStringSubmatch(string(src), -1) {
+		got[m[1]] = true
+	}
+	// Counted straight out of the file rather than listed here, so adding a
+	// kind does not need this test edited — only a kind the regex cannot see
+	// fails it.
+	//
+	// The counting pattern matches the *declaration* and says nothing about the
+	// value, which is precisely the half of reGoKind that was wrong. A count
+	// derived from the same character class would shrink with it and assert
+	// nothing.
+	declared := regexp.MustCompile(`(?m)^\s*Kind\w+\s+Kind\s*=`).FindAllString(string(src), -1)
+	if len(declared) == 0 {
+		t.Fatal("no Kind constants found in source.go at all")
+	}
+	if len(got) != len(declared) {
+		t.Errorf("reGoKind matched %d of the %d Kind constants declared in source.go: %v",
+			len(got), len(declared), got)
+	}
+	// Named explicitly because it is the shape that broke: a value with a
+	// digit in it.
+	if !got["hv3"] || !got["nestedhv3"] {
+		t.Errorf("a kind whose value contains a digit was not extracted: %v", got)
 	}
 }
 

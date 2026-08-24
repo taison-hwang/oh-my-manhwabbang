@@ -319,8 +319,9 @@ func TestFactory_registry(t *testing.T) {
 
 	kinds := f.factory.Kinds()
 	want := []source.Kind{
-		source.KindDir, source.KindNestedDir, source.KindNestedRAR, source.KindNestedZIP,
-		source.KindPDF, source.KindRAR, source.KindZIP,
+		source.KindDir, source.KindHV3, source.KindNestedDir, source.KindNestedHV3,
+		source.KindNestedRAR, source.KindNestedZIP, source.KindPDF, source.KindRAR,
+		source.KindZIP,
 	}
 	if !slices.Equal(kinds, want) {
 		t.Errorf("Kinds() = %v, want %v", kinds, want)

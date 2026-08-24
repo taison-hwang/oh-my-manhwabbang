@@ -90,10 +90,14 @@ describe('Tag / FormatBadge (ui-spec §4.5, FR-LIB-009)', () => {
     expect(formatLabel('pdf')).toBe('PDF')
   })
 
-  it('a nested volume wears its twin’s badge, and no kind keeps the prefix (D-70, D-71, D-73)', () => {
+  it('a nested volume wears its twin’s badge, and no kind keeps the prefix (D-70, D-71, D-73, E-51)', () => {
     expect(formatLabel('nestedzip')).toBe('ZIP')
     expect(formatLabel('rar')).toBe('RAR')
     expect(formatLabel('nestedrar')).toBe('RAR')
+    // E-51's, and the reason the prefix rule is a rule: neither line below is
+    // a case anyone added to formatLabel.
+    expect(formatLabel('hv3')).toBe('HV3')
+    expect(formatLabel('nestedhv3')).toBe('HV3')
     // D-73's chapter directory. Its twin is `dir`, so the folder rule has to be
     // reached *after* the prefix comes off — the other order says DIR.
     expect(formatLabel('nesteddir')).toBe('FOLDER')

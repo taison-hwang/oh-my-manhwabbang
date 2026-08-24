@@ -52,7 +52,8 @@ export const SHOTS_DIR = path.resolve(HERE, '..', '..', 'docs', 'e2e-shots')
  * The curated series of impl-plan §6.3, by their exact directory names. Ten
  * until E-14 added `비둘기.zip`, and then four more in the RAR session — three
  * that D-71 made reachable (`라제폰`, `울프가이`, `사모님은 학생회장`) and one
- * that D-72 gave a name to instead of `비어 있음` (`펌프킨 시저스`). Fifteen now.
+ * that D-72 gave a name to instead of `비어 있음` (`펌프킨 시저스`, which E-51
+ * then gave a reader and 104 pages). Fifteen now.
  *
  * These are a *copy*, not the source. The same strings are written out three
  * more times — `scripts/e2e-config.sh:29-43` (`CURATED`, which becomes

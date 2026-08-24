@@ -324,7 +324,11 @@ drop a `.woff2` into `web/src/styles/fonts/` and add one `@font-face` block to
 
 ## Not in scope
 
-Editing the collection (upload, rename, delete), adding or removing roots from
-the web UI, external metadata lookup, multiple user accounts, OPDS, image
-upscaling, and RAR/CBR/7z or nested archives. The archive reader is an
-interface, so another container format is an additive change.
+Editing the collection (upload, rename, delete), external metadata lookup,
+multiple user accounts, OPDS, image upscaling, and 7z/ALZ/EGG/LZH archives. A
+book that is nothing but one of those reports the format rather than claiming
+to be empty.
+
+RAR/CBR, nested archives and HoneyView `.hv3` were all on this list and are all
+in now (D-70, D-71, E-51) — the archive reader is an interface, so each was one
+implementation and no change above it.
