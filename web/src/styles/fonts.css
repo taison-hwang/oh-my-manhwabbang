@@ -24,8 +24,10 @@
  * substitute is not a slightly different 서고, it is a different product.
  *
  * The face carries **no 한자 and no 가나** (the source has zero Han glyphs, not
- * a subsetting choice), so 본명조 stays behind it in the stack for series titles
- * that contain them. That is the one place the old variance survives.
+ * a subsetting choice). That used to leave 본명조 behind it in the stack for
+ * series titles containing them, which is to say it left them to whatever the
+ * reader's device happened to have — and to a tofu box on a device with no CJK
+ * serif at all. Both are now vendored too; see below.
  *
  * ---------------------------------------------------------------------------
  * The seal
@@ -93,4 +95,83 @@
   font-display: swap;
   unicode-range: U+5B8C, U+8B80;
   src: url('../assets/fonts/seal-han-done.woff2') format('woff2');
+}
+
+/* ---------------------------------------------------------------------------
+ * 한자 · 가나 — 본명조, vendored (3.00 MB, both weights)
+ * ---------------------------------------------------------------------------
+ * 고운바탕 has no Han and no kana, so every 한자 in a series title and every
+ * 가나 in a Japanese one was drawn by the reader's own system — `Noto Serif KR`
+ * on a Linux box that has it, `Apple SD Gothic Neo` on a Mac, and a tofu box on
+ * a Windows machine or a phone with no CJK serif installed. It was the last
+ * place the "cross-platform typography variance" this file used to record
+ * survived, and E-46 is explicit that a substituted face is not a slightly
+ * different 서고 but a different product.
+ *
+ * **The coverage is a closed set, not a sample.** Names come from filenames,
+ * which internal/kenc decodes as UTF-8, CP949 or Shift_JIS. So the ideographs a
+ * legacy-encoded name can hold are exactly what those two encodings can
+ * represent — 4 888 and 6 356, union **7 159** — and both kana blocks entire.
+ * Measured against the live library: 111 distinct 한자 and 69 가나 in 18 729
+ * names, every one of them inside the set. A volume added next year is covered
+ * because the encoding cannot express anything outside it, not because we
+ * looked. `scripts/mkfonts/subset.py` derives the set by round-tripping the
+ * codecs and is the recipe for these files.
+ *
+ * **`unicode-range` is what makes 3 MB affordable.** The declaration claims the
+ * CJK blocks and nothing else, so the browser fetches these files only on a
+ * screen that actually paints a 한자 or a 가나. A library of Korean titles never
+ * asks for them; the binary carries them for the one that does. Hangul is
+ * deliberately outside the range — 고운바탕 owns it, and letting 본명조 answer
+ * for it would quietly replace the skin's 명조 Hangul with Noto's.
+ */
+@font-face {
+  font-family: 'Noto Serif KR Han';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  unicode-range: U+3040-309F, U+30A0-30FF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF;
+  src: url('../assets/fonts/noto-serif-kr-han-400.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Noto Serif KR Han';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  unicode-range: U+3040-309F, U+30A0-30FF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF;
+  src: url('../assets/fonts/noto-serif-kr-han-700.woff2') format('woff2');
+}
+
+/* ---------------------------------------------------------------------------
+ * Archivo — the UI face, vendored (29 KB, both weights)
+ * ---------------------------------------------------------------------------
+ * `--font-ui` draws the numerals and the uppercase micro-labels, because 명조
+ * numerals are proportional and a tabular column drawn in them does not line up
+ * (E-46, and the prototype's own rule). Its stack was
+ * `ui-sans-serif, 'Helvetica Neue', Arial, sans-serif` — every entry a system
+ * font — so page counts, byte sizes, timestamps and every kicker were the last
+ * text in the product still rendering differently on each device: Helvetica on
+ * a Mac, Arial on Windows, whatever `ui-sans-serif` resolves to on Android.
+ *
+ * Archivo is the face the skin before this one vendored for exactly this job
+ * (D-39), it is still a dependency, and @fontsource already ships a latin-only
+ * cut. Both weights together are **29 208 bytes**, so the variance closes for
+ * about a thousandth of the binary. No `unicode-range`: this one is on every
+ * screen that has a number on it, which is all of them.
+ */
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../assets/fonts/archivo-latin-400.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('../assets/fonts/archivo-latin-700.woff2') format('woff2');
 }

@@ -272,19 +272,27 @@
   /* 고운바탕, vendored regular + bold (fonts.css). It covers all 11 172 modern
      Hangul syllables plus latin, so unlike Archivo before it the Korean is the
      *vendored* face rather than whatever the system had. 본명조 sits behind it
-     for 한자 and 가나, which the subset deliberately does not carry.
+     for 한자 and 가나, which the subset deliberately does not carry — and that
+     face is now vendored as `Noto Serif KR Han`, restricted by `unicode-range`
+     to the CJK blocks, so those glyphs are drawn rather than borrowed from the
+     reader's machine. The bare `'Noto Serif KR'` after it is what answers for
+     an ideograph neither CP949 nor Shift_JIS can encode, which is the one case
+     the vendored subset does not close.
 
      Numerals and uppercase micro-labels go to `--font-ui`, and that is the
      prototype's own rule rather than a preference: 명조 numerals are
-     proportional, so a tabular column drawn in them does not line up. */
-  --font-heading: 'Gowun Batang', 'Noto Serif KR', 'Apple SD Gothic Neo', batang, serif;
+     proportional, so a tabular column drawn in them does not line up. Archivo
+     leads that stack for the same reason 고운바탕 leads this one: the system
+     faces behind it differ on every device. */
+  --font-heading:
+    'Gowun Batang', 'Noto Serif KR Han', 'Noto Serif KR', 'Apple SD Gothic Neo', batang, serif;
   /* 400 and 700 only. 명조 breaks up under synthetic weights and negative
      tracking — the prototype pins both, and 800 does not exist in this face. */
   --font-heading-weight: 700;
   --font-body: var(--font-heading);
-  --font-ui: ui-sans-serif, 'Helvetica Neue', Arial, sans-serif;
+  --font-ui: 'Archivo', ui-sans-serif, 'Helvetica Neue', Arial, sans-serif;
   /* The 藏 seal. One Han glyph, added to the vendored subset for it. */
-  --font-seal: 'Gowun Batang', 'Noto Serif KR', serif;
+  --font-seal: 'Gowun Batang', 'Noto Serif KR Han', 'Noto Serif KR', serif;
 
   /* ---- space + radius -------------------------------------------------- */
   --space-1: 4px;

@@ -139,4 +139,53 @@ describe('module conventions (impl-plan §5.2)', () => {
     )
     expect(offenders).toEqual([])
   })
+
+  /**
+   * Every family a stack *leads* with must be one this repo ships.
+   *
+   * Banning the CDN is only half of NFR-OPS-001. The other half is that the
+   * stack has to reach a vendored face before it reaches a system one, and that
+   * half went unenforced: `--font-ui` led with `ui-sans-serif` for three skins,
+   * so every numeral and every uppercase micro-label in the product was drawn
+   * by Helvetica on a Mac, Arial on Windows and something else again on
+   * Android. Nothing failed, because nothing was looking.
+   *
+   * A leading family with no `@font-face` behind it is that bug, so this asserts
+   * the join: read the stacks out of tokens.css, read the declared families out
+   * of fonts.css, and require the first entry of each stack to appear in both —
+   * with a file on disk behind it.
+   */
+  it('leads every font stack with a face this repo ships (NFR-OPS-001)', () => {
+    const tokens = readFileSync(join(ROOT, 'styles/tokens.css'), 'utf8')
+    const faces = readFileSync(join(ROOT, 'styles/fonts.css'), 'utf8')
+
+    const declared = new Set(
+      [...faces.matchAll(/font-family:\s*'([^']+)'/g)].map((m) => m[1] as string),
+    )
+    // Generic CSS keywords are legitimate stack *tails*, never a lead.
+    const stacks = [...tokens.matchAll(/--font-(heading|ui|seal|body):\s*([^;]+);/g)]
+    expect(stacks.length).toBeGreaterThanOrEqual(3)
+
+    const unvendored: string[] = []
+    for (const [, name, value] of stacks) {
+      const first = (value as string).trim().split(',')[0]!.trim().replace(/^'|'$/g, '')
+      // `--font-body` is an alias of another token, not a stack of its own.
+      if (first.startsWith('var(')) continue
+      if (!declared.has(first)) unvendored.push(`--font-${name} leads with ${first}`)
+    }
+    expect(unvendored).toEqual([])
+
+    // And each declared face must have its file on disk: a stack can lead with
+    // a vendored name and still fall through if the woff2 went missing.
+    const missing = [...faces.matchAll(/url\('\.\.\/([^']+)'\)/g)]
+      .map((m) => m[1] as string)
+      .filter((p) => {
+        try {
+          return statSync(join(ROOT, p)).size === 0
+        } catch {
+          return true
+        }
+      })
+    expect(missing).toEqual([])
+  })
 })
