@@ -97,6 +97,16 @@ beforeEach(() => {
           { ...scanLogResponse.items[0], id: 1, level: 'info', message: 'scan start' },
           { ...scanLogResponse.items[0], id: 2, level: 'warn', message: 'password required' },
           { ...scanLogResponse.items[0], id: 3, level: 'error', message: 'bad central directory' },
+          // The row the file column exists for: its message names a shape, not
+          // a book, so the path is the only thing that identifies it.
+          {
+            ...scanLogResponse.items[0],
+            id: 4,
+            level: 'info',
+            rel_path: '쓰르라미 울적에/[화보집] 쓰르라미 울적에 비주얼 팬북.zip',
+            message: 'container of 6 chapter directories: indexed each one as a book',
+          },
+          { ...scanLogResponse.items[0], id: 5, level: 'info', rel_path: null, message: 'run finished' },
         ],
       }),
     ),
@@ -1104,11 +1114,42 @@ describe('스캔 로그 (FR-IDX-004)', () => {
     renderDialog()
     await screen.findByText('bad central directory')
     const body = screen.getByTestId('scan-log-body')
-    expect(within(body).getByText('INFO')).toHaveClass('text-ink-dim')
+    expect(within(body).getAllByText('INFO')[0]).toHaveClass('text-ink-dim')
     expect(within(body).getByText('WARN')).toHaveClass('text-accent-text')
     expect(within(body).getByText('ERROR')).toHaveClass('text-accent')
     expect(within(body).getByText('bad central directory')).toBeInTheDocument()
     expect(screen.getByText('경고 1 · 오류 1')).toBeInTheDocument()
+  })
+
+  // Without the file column the panel reports that something happened and never
+  // what it happened to. The commonest info message on the live index —
+  // `container of N chapter directories` — names a shape rather than a book, so
+  // the message on its own cannot identify the row.
+  it('names the file each entry is about, at every level', async () => {
+    renderDialog()
+    await screen.findByText('bad central directory')
+    const body = screen.getByTestId('scan-log-body')
+
+    const files = within(body).getAllByTestId('scan-log-file')
+    expect(files).toHaveLength(5)
+
+    // The base name, because the leading directories would crowd out the
+    // message on a one-line row; the full path stays on the title.
+    const shape = within(body).getByText('[화보집] 쓰르라미 울적에 비주얼 팬북.zip')
+    expect(shape).toHaveAttribute('title', '쓰르라미 울적에/[화보집] 쓰르라미 울적에 비주얼 팬북.zip')
+    expect(
+      within(body).getByText('container of 6 chapter directories: indexed each one as a book'),
+    ).toBeInTheDocument()
+
+    // INFO carries it as well as WARN and ERROR, and a row the scanner attached
+    // to no path renders an empty cell rather than the string "null".
+    expect(files.map((f) => f.textContent)).toEqual([
+      '군계(軍鷄) 07권.repair.zip',
+      '군계(軍鷄) 07권.repair.zip',
+      '군계(軍鷄) 07권.repair.zip',
+      '[화보집] 쓰르라미 울적에 비주얼 팬북.zip',
+      '',
+    ])
   })
 })
 

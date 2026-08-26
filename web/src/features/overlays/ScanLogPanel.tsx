@@ -22,6 +22,20 @@ const LEVEL_CLASS: Record<LogLevel, string> = {
 /** Default page of the log; the wire default is 200 too (arch §7.10). */
 export const SCAN_LOG_LIMIT = 200
 
+/**
+ * The file the row is about, as the reader would recognise it.
+ *
+ * `rel_path` is root-relative and often deep — `쓰르라미 울적에/[화보집] 쓰르라미
+ * 울적에 비주얼 팬북.zip` — and the panel gives each row one line, so the leading
+ * directories would crowd out the message. The base name is what identifies the
+ * book; the full path stays on the `title` for when it does not.
+ */
+function fileLabel(relPath: string | null): string {
+  if (relPath === null || relPath === '') return ''
+  const cut = relPath.lastIndexOf('/')
+  return cut < 0 ? relPath : relPath.slice(cut + 1)
+}
+
 /** `23:41:02` in the reader's local zone, from Unix **seconds**. */
 function formatLogTime(unixSeconds: number): string {
   if (!Number.isFinite(unixSeconds)) return '--:--:--'
@@ -59,7 +73,30 @@ export function ScanLogPanel() {
             <span className={cn('w-12 flex-none tracking-[.06em]', LEVEL_CLASS[item.level])}>
               {item.level.toUpperCase()}
             </span>
-            <span className="min-w-0 truncate whitespace-nowrap text-ink" title={item.message}>
+            {/* The file first, the diagnostic second. Every row the scanner
+                writes is about one path — `rel_path` is non-null on all 4 902
+                info rows and all 98 warn rows of the live index — and a message
+                like `container of 6 chapter directories` names a shape rather
+                than a book, so without this the panel says that something
+                happened and never what it happened to.
+
+                Both halves truncate rather than wrap: this is a log to scan
+                down, and a row reflowing to three lines costs more than the
+                tail of a long path does. `basis-[45%]` splits the line while
+                letting either half give way — a short name yields its slack to
+                the message, a long one is capped rather than pushing the
+                message off the row. */}
+            <span
+              className="min-w-0 flex-1 basis-[45%] truncate whitespace-nowrap text-ink"
+              title={item.rel_path ?? undefined}
+              data-testid="scan-log-file"
+            >
+              {fileLabel(item.rel_path)}
+            </span>
+            <span
+              className="min-w-0 flex-1 truncate whitespace-nowrap text-ink-dim"
+              title={item.message}
+            >
               {item.message}
             </span>
           </div>
