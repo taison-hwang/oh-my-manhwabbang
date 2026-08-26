@@ -44,9 +44,31 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) error {
 		}
 		return internalErr(err)
 	}
-	if book.Status != "ok" {
-		// The book detail already told the client why; a page of an unreadable
-		// book is genuinely absent rather than merely broken.
+	// The status describes how the *container* read. Whether a page can be
+	// served is a different question, and the index already answers it: there
+	// is a row for it or there is not.
+	//
+	// This used to refuse anything that was not `ok`, on the reasoning that a
+	// page of an unreadable book is genuinely absent. That held while a damaged
+	// book had no pages — and it stopped holding twice. The scanner has kept
+	// the pages of a partially readable directory since WP-04 (`군계(軍鷄)
+	// 07권.zip` keeps 101 of its 102), and zipidx now rebuilds a whole entry
+	// list from local headers when the directory is gone (salvage.go). In both
+	// cases the bytes are present, seekable and CRC-checkable, and it was the
+	// *flag* that was losing them.
+	//
+	// FR-IDX-010 does not ask for the refusal. It asks that a damaged or
+	// encrypted archive be marked with an error status and not abort the scan —
+	// which is exactly what still happens: the volume keeps its badge, its
+	// `error` string and its scan_log row. See ruling E-54.
+	//
+	// Encrypted is the one status that refuses on its own account. FR-IDX-010
+	// pairs it with damage, and the rule there is flag-and-never-decode, so it
+	// must not stream even if entries were somehow listed.
+	if book.Status == string(archive.StatusEncrypted) {
+		return notFound("book %s is password-protected", bid)
+	}
+	if book.PageCount <= 0 {
 		return notFound("book %s is not readable (status %q)", bid, book.Status)
 	}
 	if int64(n) > book.PageCount {

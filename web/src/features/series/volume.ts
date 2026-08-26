@@ -73,9 +73,28 @@ export function volumeStatus(book: BookSummary): ItemStatus {
   return book.status
 }
 
-/** FR-IDX-010: only an `ok` volume with pages may be opened. */
+/**
+ * Whether the reader may open this volume.
+ *
+ * The test is *has pages*, not *is healthy* (ruling E-54). A damaged container
+ * often keeps a readable entry list — the scanner has stored the pages of a
+ * partially readable directory since WP-04, and zipidx now rebuilds a whole
+ * list from local headers when the directory is gone — and refusing those is
+ * the flag losing the book rather than the damage losing it. Nine archives in
+ * the reference collection are in that state, holding 733 intact pages between
+ * them.
+ *
+ * FR-IDX-010 is cited for the old rule and does not say it: it asks that a
+ * damaged or encrypted archive be flagged with an error status and not abort
+ * the scan. The badge, the reason and the tile styling are all unchanged — this
+ * governs only whether the tile is a link.
+ *
+ * `encrypted` stays closed on its own account: flag it, never decode it. Its
+ * page list is empty anyway, so this is belt and braces.
+ */
 export function isOpenable(book: BookSummary): boolean {
-  return volumeStatus(book) === 'ok'
+  if (book.status === 'encrypted') return false
+  return book.page_count > 0
 }
 
 /** `null` for a healthy volume; the badge + reason otherwise. */

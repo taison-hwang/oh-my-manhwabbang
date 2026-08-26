@@ -45,13 +45,20 @@ const (
 	seriesFolderPath = "[만화] 군계 1~25"
 	seriesCloverPath = "[만화] Clover 클로버 (총4권)"
 	seriesBrokenPath = "[만화] 손상.zip"
-	seriesPDFPath    = "[만화] 미생 1~9 (완결 pdf)"
+	// Damaged, but not *empty*: the central directory is gone and every entry
+	// is still where its local header says it is. This is the shape the real
+	// collection has nine of, and the one no fixture covered before E-54 —
+	// `seriesBrokenPath` above is 12 bytes, too short to hold even one header,
+	// so it could never tell "damaged" from "damaged and unreadable" apart.
+	seriesSalvagedPath = "[만화] 꼬리잘림.zip"
+	seriesPDFPath      = "[만화] 미생 1~9 (완결 pdf)"
 
-	bookZipPath    = seriesFolderPath + "/군계(軍鷄) 01권.zip"
-	bookDirPath    = seriesFolderPath + "/군계(軍鷄) 02권"
-	bookCloverPath = seriesCloverPath + "/클로버 01권.zip"
-	bookBrokenPath = seriesBrokenPath
-	bookPDFPath    = seriesPDFPath + "/미생 01권.pdf"
+	bookZipPath      = seriesFolderPath + "/군계(軍鷄) 01권.zip"
+	bookDirPath      = seriesFolderPath + "/군계(軍鷄) 02권"
+	bookCloverPath   = seriesCloverPath + "/클로버 01권.zip"
+	bookBrokenPath   = seriesBrokenPath
+	bookSalvagedPath = seriesSalvagedPath
+	bookPDFPath      = seriesPDFPath + "/미생 01권.pdf"
 
 	coverRelPath = seriesFolderPath + "/[cover].jpg"
 
@@ -59,11 +66,12 @@ const (
 	// byte-stable. The scanner computes them from (size, mtime); nothing in the
 	// HTTP layer cares where the string came from, only that it is the one the
 	// client must echo as ?v=.
-	cvZip    = "a1b2c3d4e5f60718"
-	cvDir    = "0f1e2d3c4b5a6978"
-	cvClover = "c10bec10bec10be0"
-	cvBroken = "deadbeefdeadbeef"
-	cvPDF    = "1234567890abcdef"
+	cvZip      = "a1b2c3d4e5f60718"
+	cvDir      = "0f1e2d3c4b5a6978"
+	cvClover   = "c10bec10bec10be0"
+	cvBroken   = "deadbeefdeadbeef"
+	cvSalvaged = "5a17a6ed5a17a6ed"
+	cvPDF      = "1234567890abcdef"
 )
 
 // A fixed clock. Every timestamp in a golden file comes from it, so the files
@@ -95,15 +103,17 @@ type env struct {
 	scan *fakeScanner
 	srv  *Server
 
-	seriesFolderID string
-	seriesCloverID string
-	seriesBrokenID string
-	seriesPDFID    string
-	bookZipID      string
-	bookDirID      string
-	bookCloverID   string
-	bookBrokenID   string
-	bookPDFID      string
+	seriesFolderID   string
+	seriesCloverID   string
+	seriesBrokenID   string
+	seriesSalvagedID string
+	seriesPDFID      string
+	bookZipID        string
+	bookDirID        string
+	bookCloverID     string
+	bookBrokenID     string
+	bookSalvagedID   string
+	bookPDFID        string
 
 	// zipPages is the page metadata read out of the real archive's central
 	// directory, so the offsets a page request seeks to are genuine.
@@ -355,6 +365,10 @@ func (e *env) buildMedia(ec envConfig) {
 		// A real truncated archive: the container opens and the central
 		// directory does not parse, which is books.status='error' (FR-IDX-010).
 		seriesBrokenPath: testutil.File{Data: zipBytes[:12], ModTime: fixedMtime},
+		// The same archive with everything from the central directory on
+		// removed. Its entries are intact and reachable from their local
+		// headers, so zipidx salvages the list and the pages must serve.
+		seriesSalvagedPath: testutil.File{Data: truncateAtCentralDir(e.t, zipBytes), ModTime: fixedMtime},
 		seriesPDFPath: map[string]any{
 			"미생 01권.pdf": testutil.File{Data: e.pdfBytes(ec), ModTime: fixedMtime},
 		},
@@ -583,11 +597,13 @@ func (e *env) seed(ctx context.Context) {
 	e.seriesFolderID = ids.SeriesID(rootName, seriesFolderPath)
 	e.seriesCloverID = ids.SeriesID(rootName, seriesCloverPath)
 	e.seriesBrokenID = ids.SeriesID(rootName, seriesBrokenPath)
+	e.seriesSalvagedID = ids.SeriesID(rootName, seriesSalvagedPath)
 	e.seriesPDFID = ids.SeriesID(rootName, seriesPDFPath)
 	e.bookZipID = ids.BookID(rootName, bookZipPath)
 	e.bookDirID = ids.BookID(rootName, bookDirPath)
 	e.bookCloverID = ids.BookID(rootName, bookCloverPath)
 	e.bookBrokenID = ids.BookID(rootName, bookBrokenPath)
+	e.bookSalvagedID = ids.BookID(rootName, bookSalvagedPath)
 	e.bookPDFID = ids.BookID(rootName, bookPDFPath)
 
 	if err := e.idx.UpsertRoot(ctx, index.Root{
@@ -625,6 +641,13 @@ func (e *env) seed(ctx context.Context) {
 		Mtime: fixedMtime.Unix(), AddedAt: addedAt,
 		Status: "error", Error: "central directory is truncated", ScanGen: 1,
 	}, {
+		ID: e.seriesSalvagedID, RootName: rootName, RelPath: seriesSalvagedPath,
+		DisplayName: seriesSalvagedPath, SortKey: natsort.Key(seriesSalvagedPath),
+		SearchKey: strings.ToLower(seriesSalvagedPath), ChoseongKey: "ㄲㅈ",
+		Kind: "zip", BookCount: 1, PageCount: 2, TotalBytes: 2048,
+		Mtime: fixedMtime.Unix(), AddedAt: addedAt,
+		Status: "error", Error: "zip: central directory unreadable, rebuilt from local file headers", ScanGen: 1,
+	}, {
 		ID: e.seriesPDFID, RootName: rootName, RelPath: seriesPDFPath,
 		DisplayName: seriesPDFPath, SortKey: natsort.Key(seriesPDFPath),
 		SearchKey: strings.ToLower(seriesPDFPath), ChoseongKey: "ㅁㅅ",
@@ -652,6 +675,7 @@ func (e *env) seed(ctx context.Context) {
 	zipSize, zipMtime := statOf(bookZipPath)
 	cloverSize, cloverMtime := statOf(bookCloverPath)
 	brokenSize, brokenMtime := statOf(bookBrokenPath)
+	salvagedSize, salvagedMtime := statOf(bookSalvagedPath)
 	pdfSize, pdfMtime := statOf(bookPDFPath)
 
 	books := []index.Book{{
@@ -680,6 +704,16 @@ func (e *env) seed(ctx context.Context) {
 		ContentVersion: cvBroken, DimsState: "none",
 		Status: "error", Error: "central directory is truncated", ScanGen: 1,
 	}, {
+		// Damaged *and* readable: `status='error'` with a full page list, which
+		// is what the scanner produces for a salvaged or partially readable
+		// directory. E-54 is the ruling that these pages are served.
+		ID: e.bookSalvagedID, SeriesID: e.seriesSalvagedID, RootName: rootName, RelPath: bookSalvagedPath,
+		DisplayName: seriesSalvagedPath, SortKey: natsort.Key(seriesSalvagedPath), Ord: 0,
+		Kind: "zip", PageCount: int64(len(e.zipPages)), TotalBytes: 2048,
+		FileSize: salvagedSize, FileMtime: salvagedMtime,
+		ContentVersion: cvSalvaged, DimsState: "none",
+		Status: "error", Error: "zip: central directory unreadable, rebuilt from local file headers", ScanGen: 1,
+	}, {
 		ID: e.bookPDFID, SeriesID: e.seriesPDFID, RootName: rootName, RelPath: bookPDFPath,
 		DisplayName: "미생 01권.pdf", SortKey: natsort.Key("미생 01권.pdf"), Ord: 0,
 		Kind: "pdf", PageCount: pdfPageCount, TotalBytes: 0,
@@ -697,6 +731,9 @@ func (e *env) seed(ctx context.Context) {
 	}
 	if err := w.ReplacePages(ctx, e.bookCloverID, e.zipPages); err != nil {
 		t.Fatalf("writing clover pages: %v", err)
+	}
+	if err := w.ReplacePages(ctx, e.bookSalvagedID, e.zipPages); err != nil {
+		t.Fatalf("writing salvaged pages: %v", err)
 	}
 	w120, h120 := 120, 180
 	dirPages := []index.Page{{
@@ -979,4 +1016,20 @@ func mustWrite(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
+}
+
+// truncateAtCentralDir returns the archive with everything from the first
+// central-directory record onward removed: the entries and their local headers
+// survive, the map to them does not.
+//
+// This is the damage shape the real collection has, and the one a 12-byte stub
+// cannot stand in for. `zipBytes[:12]` is *unreadable*; this is *damaged*, and
+// the difference is 733 pages across nine files.
+func truncateAtCentralDir(t *testing.T, data []byte) []byte {
+	t.Helper()
+	at := bytes.Index(data, []byte("PK\x01\x02"))
+	if at <= 0 {
+		t.Fatalf("fixture archive has no central directory to remove")
+	}
+	return append([]byte(nil), data[:at]...)
 }

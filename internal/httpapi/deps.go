@@ -19,8 +19,11 @@
 //     `immutable` for a year; without it, cacheable for 60 s (§5.3).
 //  3. `202` is a normal answer for a cover or a thumbnail — "queued, retry
 //     after `Retry-After`" — not an error.
-//  4. A book with `status != "ok"` answers **200** with `pages: []` and a
-//     populated `error`. The UI needs the reason to render its badge.
+//  4. A book with `status != "ok"` answers **200** with a populated `error`,
+//     and with whatever pages the index holds for it — which since E-54 may be
+//     more than none: a damaged container often keeps a readable entry list.
+//     `encrypted` is the exception and always answers `pages: []`. The UI needs
+//     the reason either way, to render its badge.
 //  5. Unknown JSON *body* fields are `400`; unknown *query* parameters are
 //     ignored.
 //

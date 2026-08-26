@@ -82,12 +82,13 @@ export function ScanLogPanel() {
 
                 Both halves truncate rather than wrap: this is a log to scan
                 down, and a row reflowing to three lines costs more than the
-                tail of a long path does. `basis-[45%]` splits the line while
-                letting either half give way — a short name yields its slack to
-                the message, a long one is capped rather than pushing the
-                message off the row. */}
+                tail of a long path does. The name is sized to its content and
+                capped at 45%, so a short one hands its slack to the message
+                and a long one is trimmed rather than pushing the message off
+                the row — a fixed 45% column would spend that width on
+                whitespace for the many short names this log is full of. */}
             <span
-              className="min-w-0 flex-1 basis-[45%] truncate whitespace-nowrap text-ink"
+              className="min-w-0 max-w-[45%] flex-none truncate whitespace-nowrap text-ink"
               title={item.rel_path ?? undefined}
               data-testid="scan-log-file"
             >

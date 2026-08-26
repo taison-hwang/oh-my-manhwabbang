@@ -229,8 +229,66 @@ func TestPage_pdfWithoutSupportIs501(t *testing.T) {
 	errorBody(t, e.get("/api/books/"+e.bookPDFID+"/pages/1"), http.StatusNotImplemented, CodeUnsupported)
 }
 
-// impl-plan §4 rule 4 — a book whose status is not "ok" answers 200 with
-// `pages: []` and a populated error, because the UI has to render the reason.
+// A damaged container that still has a readable entry list must serve its
+// pages (ruling E-54).
+//
+// This is the seam nothing was looking at. `zipidx` returns the entries, the
+// scanner writes the page rows, `OpenEntry` streams the bytes — every tier
+// green — and the HTTP layer then refused all of them because the book carried
+// `status='error'`. The refusal predates the salvage: the scanner has kept the
+// pages of a partially readable directory since WP-04, and they have been
+// 404ing ever since. It survived because the only broken fixture was a 12-byte
+// stub with genuinely no pages, so "damaged" and "damaged and unreadable"
+// looked identical to every test.
+//
+// FR-IDX-010 asks for an error status that does not abort the scan. It does not
+// ask for this, and the volume keeps its badge, its error and its scan_log row
+// either way.
+func TestPage_damagedBookWithPages_servesThem(t *testing.T) {
+	e := newEnv(t)
+
+	book := decodeBody[BookDetail](t, e.get("/api/books/"+e.bookSalvagedID), http.StatusOK)
+	if book.Status != "error" {
+		t.Fatalf("status = %q, want the volume still flagged as error", book.Status)
+	}
+	if book.Error == nil || *book.Error == "" {
+		t.Error("error is null; the badge still needs its reason")
+	}
+	if len(book.Pages) == 0 {
+		t.Fatal("pages = [], want the entries the index holds for this book")
+	}
+
+	for n := 1; n <= len(book.Pages); n++ {
+		w := e.get(fmt.Sprintf("/api/books/%s/pages/%d?v=%s", e.bookSalvagedID, n, book.CV))
+		if w.Code != http.StatusOK {
+			t.Fatalf("page %d = %d, want 200: %s", n, w.Code, w.Body.String())
+		}
+		if got := w.Body.Len(); got == 0 {
+			t.Errorf("page %d served 0 bytes", n)
+		}
+		if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "image/") {
+			t.Errorf("page %d content-type = %q, want an image", n, ct)
+		}
+	}
+
+	// And the page past the end is still a 404 — serving damaged pages does not
+	// mean serving pages that are not there.
+	past := e.get(fmt.Sprintf("/api/books/%s/pages/%d", e.bookSalvagedID, len(book.Pages)+1))
+	if past.Code != http.StatusNotFound {
+		t.Errorf("page past the end = %d, want 404", past.Code)
+	}
+}
+
+// The other half of the same rule: a book with no pages serves none, whatever
+// its status says. This is what keeps E-54 from becoming "serve anything".
+func TestPage_damagedBookWithNoPages_stillRefuses(t *testing.T) {
+	e := newEnv(t)
+	errorBody(t, e.get("/api/books/"+e.bookBrokenID+"/pages/1"), http.StatusNotFound, CodeNotFound)
+}
+
+// impl-plan §4 rule 4 — a book whose status is not "ok" answers 200 with a
+// populated error. Its pages are whatever the index holds, which for this
+// fixture — 12 bytes, too short for even one local header — is none.
 func TestBookDetail_brokenBookIs200WithAnError(t *testing.T) {
 	e := newEnv(t)
 	book := decodeBody[BookDetail](t, e.get("/api/books/"+e.bookBrokenID), http.StatusOK)

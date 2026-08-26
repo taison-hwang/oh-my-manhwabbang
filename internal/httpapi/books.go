@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"shelf/internal/archive"
 	"shelf/internal/index"
 	"shelf/internal/userdata"
 )
@@ -45,8 +46,13 @@ func (s *Server) handleBookDetail(w http.ResponseWriter, r *http.Request) error 
 		return internalErr(err)
 	}
 
+	// Listed whenever the index holds them, which is no longer the same as
+	// `status == "ok"` (E-54): a damaged container can still have a readable
+	// entry list, and the viewer needs the rows to render what survived. An
+	// encrypted book is the exception the page handler also makes — its pages
+	// are never listed and never streamed.
 	pages := []PageInfo{}
-	if book.Status == "ok" {
+	if book.Status != string(archive.StatusEncrypted) {
 		rows, err := s.idx.ListPages(r.Context(), bid)
 		if err != nil {
 			return internalErr(err)

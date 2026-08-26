@@ -3228,3 +3228,86 @@ CP949 4,888자, Shift_JIS 6,356자, 합집합 **7,159자**. 여기에 가나 두
 아무 게이트도 울리지 않았다. NFR-OPS-001의 나머지 절반을 테스트로 세웠다: tokens.css의 스택과
 fonts.css의 `@font-face`를 **조인**하고, 각 스택의 첫 항목이 양쪽에 다 있으며 디스크에 파일이
 있는지 확인한다. 뮤테이션으로 확인했다 — `--font-ui`를 옛 값으로 되돌리면 그 테스트만 죽는다.
+
+---
+
+## E-54 — **손상 배지는 책을 잠그지 않는다: 페이지가 있으면 서빙한다** (28세션차, 2026-08-27)
+
+E-52가 로컬 헤더에서 733쪽을 되찾았고, 유닛 티어는 전부 초록이었다. **그런데 그 733쪽 중
+어느 하나도 브라우저에 도달하지 않았다.**
+
+### 1. 이음매에서 죽는다
+
+`internal/httpapi/pages.go`에 이런 게이트가 있었다.
+
+```go
+if book.Status != "ok" {
+    // The book detail already told the client why; a page of an unreadable
+    // book is genuinely absent rather than merely broken.
+    return notFound("book %s is not readable (status %q)", bid, book.Status)
+}
+```
+
+같은 전제가 네 곳에 있었다 — `pages.go`(바이트), `books.go`(페이지 목록), `deps.go`(문서화된
+계약 4번), `volume.ts`의 `isOpenable`.
+
+`zipidx`가 엔트리를 돌려주고, 스캐너가 페이지 행을 쓰고, `OpenEntry`가 바이트를 스트리밍한다 —
+**티어마다 초록이고 이음매에서 404다.** 격리 서버로 실제 손상 파일에 HTTP를 걸어 보고 나서야
+드러났다. [[e2e-catches-what-unit-tiers-cannot]]
+
+### 2. 이건 E-52가 만든 결함이 아니다 — 드러낸 것이다
+
+**스캐너는 WP-04부터 부분 손상 책의 페이지를 저장해 왔다.** `scanner.go`의 주석이 그렇게 말한다:
+
+> A partially readable central directory keeps the pages that parsed: the
+> truncated `군계(軍鷄) 07권.zip` still shows most of its volume.
+
+**보여 준 적이 없다.** 전부 404였다. 그 주석은 참인 적이 없는 문장이었다.
+
+**살아남은 이유는 픽스처다.** 유일한 손상 픽스처가 `zipBytes[:12]` — 12바이트, 로컬 헤더 하나가
+들어갈 수도 없는 크기다. 그래서 회수 가능한 페이지가 **원리적으로 0**이고, 모든 테스트에서
+*"손상"* 과 *"손상돼서 못 읽음"* 이 **같아 보였다**. 프런트도 마찬가지였다: `volume.test.ts`의
+`it.each(['error','encrypted','unsupported','empty'])`가 전부 `page_count: 0`을 넘긴다.
+[[tests-that-seed-the-cache-prove-nothing]]의 친척 — 픽스처가 만들 수 없는 모양은 영원히 초록이다.
+
+### 3. 근거로 든 조문이 그 말을 하지 않는다
+
+`volume.ts`의 주석은 **"FR-IDX-010: only an `ok` volume with pages may be opened"** 였다.
+FR-IDX-010의 전문은 이렇다.
+
+> 암호화된 ZIP, 손상된 ZIP은 **오류 상태로 표시하되** 스캔 전체를 중단시키지 않아야 한다
+
+**스캔 요구사항이다.** 표시하고, 중단하지 마라. 서빙 거부는 어디에도 없다. E-36 §2와 E-37이 이미
+두 번 기록한 형태 — **판정을 앞질러 굳은 계약**이 이 파일에서 세 번째로 나왔다.
+
+### 4. 판정 — 상태가 아니라 페이지 유무로 가른다
+
+상태는 **컨테이너가 어떻게 읽혔는지**를 말한다. 페이지를 줄 수 있는지는 다른 질문이고, 인덱스가
+이미 답을 갖고 있다: 행이 있거나 없거나.
+
+- `pages.go` · `books.go` · `volume.ts` 모두 **`page_count > 0`** 으로 가른다.
+- **`encrypted`는 자기 자격으로 계속 거부한다.** FR-IDX-010이 손상과 암호화를 나란히 두고,
+  암호화 쪽 규칙은 *표시하되 절대 복호화하지 않는다* 이다. 페이지 목록이 비어 있긴 하지만 명시적으로 막는다.
+- **배지·사유·scan_log 행은 전부 그대로다.** 바뀌는 것은 타일이 링크가 되느냐뿐이다.
+
+### 5. 실증 — 격리 서버, 실제 손상 파일
+
+보관함의 **원본** `타부(Taboo) 01.zip`(중앙 디렉터리 없음) 하나만 담은 루트에 별도 포트로 서버를 띄웠다.
+
+| 검사 | 결과 |
+|---|---|
+| 색인 | `status=error`, **111쪽**, 사유 문자열 유지 |
+| `/api/books/{id}` | 200, `pages` **111개** |
+| 111쪽 전량 HTTP GET | **111/111 200 · 전부 실제 JPEG** |
+| 독립 검증된 재구성본과 바이트 대조 | **111/111 동일**, 차이 0 |
+| 범위 밖 페이지 | 여전히 404 |
+| 뮤테이션(옛 게이트로 원복) | 새 테스트가 **죽는다** |
+
+픽스처도 고쳤다: `truncateAtCentralDir()`로 **중앙 디렉터리만 잘라낸** 아카이브를 추가해, 이제
+*"손상"* 과 *"손상돼서 못 읽음"* 이 테스트에서 서로 다른 모양이다.
+
+### 6. 되돌리려면
+
+`page_count > 0` 조건을 `Status == "ok"`로 되돌리면 옛 동작이다. 그러면
+`TestPage_damagedBookWithPages_servesThem`과 `volume.test.ts`의 E-54 케이스가 죽는다 —
+의도적으로, 그 자리에서.

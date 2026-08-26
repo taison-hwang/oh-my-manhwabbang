@@ -48,6 +48,23 @@ describe('volumeStatus / isOpenable', () => {
     expect(volumeStatus(zero)).toBe('empty')
     expect(isOpenable(zero)).toBe(false)
   })
+
+  // The case the row above could not see: every status there carries zero
+  // pages, so it was testing "no pages" and reading as "not healthy". A damaged
+  // container that kept a readable entry list is the shape nine archives in the
+  // collection actually have, and E-54 opens it — the badge and the reason stay
+  // exactly as they were, only the tile becomes a link.
+  it('opens a damaged volume that still has pages (E-54)', () => {
+    const salvaged = book({ status: 'error', page_count: 111, error: 'central directory unreadable' })
+    expect(isOpenable(salvaged)).toBe(true)
+    // Still flagged: opening it does not mean pretending it is healthy.
+    expect(volumeStatus(salvaged)).toBe('error')
+    expect(volumeBadge(salvaged)?.label).toBe('손상')
+  })
+
+  it('keeps an encrypted volume closed even if pages were somehow listed', () => {
+    expect(isOpenable(book({ status: 'encrypted', page_count: 42 }))).toBe(false)
+  })
 })
 
 describe('volumeBadge (FR-IDX-010)', () => {
