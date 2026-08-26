@@ -355,15 +355,15 @@ func TestSeriesList_filters(t *testing.T) {
 		query string
 		want  []string
 	}{
-		{"default is every enabled root", "", []string{seriesCloverPath, seriesFolderPath, seriesPDFPath, seriesBrokenPath}},
-		{"root filter", "root=manga", []string{seriesCloverPath, seriesFolderPath, seriesPDFPath, seriesBrokenPath}},
+		{"default is every enabled root", "", []string{seriesCloverPath, seriesFolderPath, seriesSalvagedPath, seriesPDFPath, seriesBrokenPath}},
+		{"root filter", "root=manga", []string{seriesCloverPath, seriesFolderPath, seriesSalvagedPath, seriesPDFPath, seriesBrokenPath}},
 		{"unknown root matches nothing", "root=nope", nil},
 		{"status ok", "status=ok", []string{seriesCloverPath, seriesFolderPath, seriesPDFPath}},
-		{"status error", "status=error", []string{seriesBrokenPath}},
+		{"status error", "status=error", []string{seriesSalvagedPath, seriesBrokenPath}},
 		{"progress reading", "progress=reading", []string{seriesFolderPath}},
-		{"progress unread", "progress=unread", []string{seriesCloverPath, seriesPDFPath, seriesBrokenPath}},
+		{"progress unread", "progress=unread", []string{seriesCloverPath, seriesSalvagedPath, seriesPDFPath, seriesBrokenPath}},
 		{"scope added", "scope=added", []string{seriesFolderPath}},
-		{"scope all is the default", "scope=all", []string{seriesCloverPath, seriesFolderPath, seriesPDFPath, seriesBrokenPath}},
+		{"scope all is the default", "scope=all", []string{seriesCloverPath, seriesFolderPath, seriesSalvagedPath, seriesPDFPath, seriesBrokenPath}},
 		{"substring search", "q=군계", []string{seriesFolderPath}},
 		{"choseong search", "q=ㅁㅅ", []string{seriesPDFPath}},
 		{"filters compose", "scope=added&status=ok&progress=reading", []string{seriesFolderPath}},
@@ -384,6 +384,12 @@ func TestSeriesList_filters(t *testing.T) {
 	}
 }
 
+// The fixture set gained `[만화] 꼬리잘림.zip` at E-54: a damaged series that
+// still has readable pages. It sorts between 군계 and 미생, and it is a second
+// `status=error` series, which is the point — the suite previously had exactly
+// one damaged series and it had no pages, so nothing could tell the two shapes
+// apart. See harness_test.go.
+//
 // Amendment A-8 — the 최근 추가 badge is `total` from `?scope=added&limit=1`.
 // There is no separate count endpoint, and `total` is the pre-pagination match
 // count for every filter combination.
@@ -394,7 +400,7 @@ func TestSeriesList_countIdiom(t *testing.T) {
 		query string
 		total int
 	}{
-		{"limit=1", 4},                  // 전체 시리즈
+		{"limit=1", 5},                  // 전체 시리즈
 		{"progress=reading&limit=1", 1}, // 읽는 중
 		{"scope=added&limit=1", 1},      // 최근 추가
 		{"progress=done&limit=1", 0},    // 완독

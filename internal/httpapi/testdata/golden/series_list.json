@@ -51,6 +51,31 @@
       }
     },
     {
+      "id": "pxudauvuqhpjfkqi",
+      "root_name": "manga",
+      "name": "[만화] 꼬리잘림.zip",
+      "path": "[만화] 꼬리잘림.zip",
+      "kind": "zip",
+      "book_count": 1,
+      "page_count": 2,
+      "total_bytes": 2048,
+      "mtime": 1457920766,
+      "added_at": 1782637200,
+      "status": "error",
+      "error": "zip: central directory unreadable, rebuilt from local file headers",
+      "has_cover": false,
+      "cover_cv": null,
+      "progress": {
+        "books_total": 1,
+        "books_completed": 0,
+        "books_started": 0,
+        "percent": 0,
+        "last_read_at": null,
+        "last_book_id": null,
+        "last_page": null
+      }
+    },
+    {
       "id": "6h3xlitbsskm37bq",
       "root_name": "manga",
       "name": "[만화] 미생 1~9 (완결 pdf)",
@@ -101,7 +126,7 @@
       }
     }
   ],
-  "total": 4,
+  "total": 5,
   "offset": 0,
   "limit": 60
 }
