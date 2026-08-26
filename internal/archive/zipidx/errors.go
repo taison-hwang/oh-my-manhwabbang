@@ -35,6 +35,13 @@ var (
 	// ErrBadZIP64 — the ZIP64 locator or end record is present but malformed
 	// (FR-IDX-009).
 	ErrBadZIP64 = corrupt("malformed zip64 end record")
+	// ErrSalvagedFromLocalHeaders — the central directory could not be read at
+	// all, and the entry list was rebuilt by walking local file headers
+	// instead (salvage.go). It is still corrupt: the book keeps its damaged
+	// status and its scan_log row, and what changes is only that its pages are
+	// listed rather than lost. 8 of this collection's 9 damaged archives open
+	// this way, 733 of their 740 images intact.
+	ErrSalvagedFromLocalHeaders = corrupt("central directory unreadable, rebuilt from local file headers")
 
 	// ErrEncrypted — general-purpose bit 0. FR-IDX-010: flag it, never try to
 	// decode it. This build ships no decryption and never will.

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -770,12 +771,35 @@ func TestReadCentralDirectory_eocdCommentPastEOF_isNotAnEndRecord(t *testing.T) 
 		t.Fatalf("fixture has %d bytes after the record, want fewer than the 1000 declared", rest)
 	}
 
+	// Amended for the local-header salvage (salvage.go). The property this test
+	// exists for is unchanged and still asserted: the inconsistent end record
+	// must not be believed, so no directory is parsed out of the offsets it
+	// holds. What changed is what happens *after* that refusal — the entries
+	// below were walked out of the local headers, which is why the error wraps
+	// ErrSalvagedFromLocalHeaders and not ErrNoEOCD. A truncated tail is the
+	// exact shape salvage is for, so recovering the entry here is the feature
+	// working, not the check weakening: the verdict is still an error, and the
+	// differential oracle still agrees with archive/zip that this is broken.
 	ix, err := zipidx.ReadCentralDirectory(t.Context(), bytes.NewReader(data), int64(len(data)))
-	if !errors.Is(err, zipidx.ErrNoEOCD) {
-		t.Fatalf("err = %v, want zipidx.ErrNoEOCD", err)
+	if errors.Is(err, zipidx.ErrNoEOCD) {
+		t.Fatalf("err = %v, want the end record refused rather than parsed", err)
 	}
-	if ix != nil {
-		t.Errorf("got an index of %d entries, want none", len(ix.Entries))
+	if !errors.Is(err, zipidx.ErrSalvagedFromLocalHeaders) {
+		t.Fatalf("err = %v, want zipidx.ErrSalvagedFromLocalHeaders", err)
+	}
+	if got := archive.StatusOf(err); got != archive.StatusError {
+		t.Errorf("status = %q, want %q — a salvaged book stays damaged", got, archive.StatusError)
+	}
+	// The cause is kept in the message: an operator reading books.error still
+	// learns the end record was the problem.
+	if !strings.Contains(err.Error(), "end of central directory not found") {
+		t.Errorf("err = %v, want it to still name the missing end record", err)
+	}
+	if ix == nil {
+		t.Fatal("got no index, want the one entry recovered from its local header")
+	}
+	if len(ix.Entries) != 1 || ix.Entries[0].Name != "001.jpg" {
+		t.Errorf("entries = %+v, want exactly 001.jpg", ix.Entries)
 	}
 }
 

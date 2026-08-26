@@ -104,6 +104,14 @@ func ReadCentralDirectory(ctx context.Context, r io.ReaderAt, size int64) (*arch
 
 	end, tl, err := readEnd(r, size)
 	if err != nil {
+		// The map is gone; the territory may not be. FR-IDX-010 prefers a book
+		// the reader can open with a damaged badge over an empty one, so the
+		// local headers get a walk before we give up (see salvage.go). Only
+		// structural damage qualifies — an I/O failure means the bytes were
+		// never read, and re-reading them front-to-back would not change that.
+		if errCorrupt(err) {
+			return salvage(ctx, r, size, err)
+		}
 		return nil, err
 	}
 
