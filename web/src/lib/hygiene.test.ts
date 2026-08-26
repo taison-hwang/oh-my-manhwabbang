@@ -32,6 +32,16 @@ const rel = (p: string): string => p.slice(ROOT.length + 1)
 
 const SOURCES = ALL.filter((p) => /\.(ts|tsx|css)$/.test(p) && !/\.test\.tsx?$/.test(p))
 
+/** Every first capture group of `re` in `text`, with the misses dropped. */
+function captures(text: string, re: RegExp): string[] {
+  const out: string[] = []
+  for (const m of text.matchAll(re)) {
+    const g = m[1]
+    if (g !== undefined) out.push(g)
+  }
+  return out
+}
+
 /**
  * The radius scale, read out of tokens.css rather than restated here.
  *
@@ -159,17 +169,18 @@ describe('module conventions (impl-plan §5.2)', () => {
     const tokens = readFileSync(join(ROOT, 'styles/tokens.css'), 'utf8')
     const faces = readFileSync(join(ROOT, 'styles/fonts.css'), 'utf8')
 
-    const declared = new Set(
-      [...faces.matchAll(/font-family:\s*'([^']+)'/g)].map((m) => m[1] as string),
-    )
-    // Generic CSS keywords are legitimate stack *tails*, never a lead.
+    const declared = new Set(captures(faces, /font-family:\s*'([^']+)'/g))
+
     const stacks = [...tokens.matchAll(/--font-(heading|ui|seal|body):\s*([^;]+);/g)]
     expect(stacks.length).toBeGreaterThanOrEqual(3)
 
     const unvendored: string[] = []
-    for (const [, name, value] of stacks) {
-      const first = (value as string).trim().split(',')[0]!.trim().replace(/^'|'$/g, '')
-      // `--font-body` is an alias of another token, not a stack of its own.
+    for (const stack of stacks) {
+      const name = stack[1] ?? ''
+      const lead = (stack[2] ?? '').split(',')[0] ?? ''
+      const first = lead.trim().replace(/^'|'$/g, '')
+      // `--font-body` is an alias of another token, not a stack of its own,
+      // and a bare generic keyword is a legitimate stack *tail*, never a lead.
       if (first.startsWith('var(')) continue
       if (!declared.has(first)) unvendored.push(`--font-${name} leads with ${first}`)
     }
@@ -177,15 +188,13 @@ describe('module conventions (impl-plan §5.2)', () => {
 
     // And each declared face must have its file on disk: a stack can lead with
     // a vendored name and still fall through if the woff2 went missing.
-    const missing = [...faces.matchAll(/url\('\.\.\/([^']+)'\)/g)]
-      .map((m) => m[1] as string)
-      .filter((p) => {
-        try {
-          return statSync(join(ROOT, p)).size === 0
-        } catch {
-          return true
-        }
-      })
+    const missing = captures(faces, /url\('\.\.\/([^']+)'\)/g).filter((p) => {
+      try {
+        return statSync(join(ROOT, p)).size === 0
+      } catch {
+        return true
+      }
+    })
     expect(missing).toEqual([])
   })
 })
