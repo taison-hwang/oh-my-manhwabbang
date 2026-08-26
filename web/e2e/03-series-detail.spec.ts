@@ -42,16 +42,11 @@ test.beforeEach(async ({ page }) => {
   await resetLibraryState(page)
 })
 
-test('6.5 · 군계 detail shows its path, and broken volumes are badged and dead', async ({
+test('6.5 · 군계 detail shows its path, and lists every volume it holds', async ({
   page,
 }, info) => {
   const sid = await seriesId(page, SERIES.gungye)
   const books = await booksOf(page, sid)
-  const broken = books.filter((book) => book.status !== 'ok')
-  expect(
-    broken.length,
-    '§6.3 row 6: 군계 carries the collection’s real truncated archives',
-  ).toBeGreaterThan(0)
 
   await gotoLibrary(page)
   await setView(page, 'grid')
@@ -63,22 +58,14 @@ test('6.5 · 군계 detail shows its path, and broken volumes are badged and dea
   await expect(path).toBeVisible()
   await expect(path).toContainText(SERIES.gungye)
 
-  // E-5 / D-6: every duplicate is listed, no dedup magic.
+  // E-5 / D-6: every volume the index holds gets a tile, no dedup magic. The
+  // synthetic twin still builds the folder-and-ZIP pair this rule is for; the
+  // real collection's copy of that shape was cleaned up at E-52, so here the
+  // assertion is the weaker but still true one — the counts agree.
   const tiles = page.locator('[data-testid="volume-grid"] > *')
   await expect(tiles).toHaveCount(books.length)
 
-  // FR-IDX-010 on screen: badge, Korean reason, and no control of any kind.
-  const brokenTiles = tiles.filter({ hasText: '손상' })
-  await expect(brokenTiles).toHaveCount(broken.length)
-  await expect(brokenTiles.first()).toContainText('중앙 디렉터리 손상')
-  for (let i = 0; i < broken.length; i++) {
-    await expect(
-      brokenTiles.nth(i).getByRole('button'),
-      'a volume that can never be opened is not a control (ui-spec §5.3)',
-    ).toHaveCount(0)
-  }
-
-  // …and the contrast: a healthy volume is one.
+  // A healthy volume is a control.
   const healthyName = books.find((book) => book.status === 'ok')?.name ?? ''
   expect(healthyName).not.toBe('')
   const healthyTile = tiles.filter({ has: page.locator(`[title="${healthyName}"]`) })
@@ -86,16 +73,55 @@ test('6.5 · 군계 detail shows its path, and broken volumes are badged and dea
 
   await shot(page, info, 'step-06-5a-series-detail-gungye')
 
-  // The same two facts survive the list rendering of ui-spec §5.4.
   await setView(page, 'list')
   const rows = page.locator('[data-testid="volume-row"]')
   await expect(rows).toHaveCount(books.length)
-  await expect(rows.filter({ hasText: '손상' })).toHaveCount(broken.length)
-  await expect(rows.filter({ hasText: '손상' }).first().locator('[data-role="volume-state"]')).toHaveText(
-    'ERR',
-  )
 
   await shot(page, info, 'step-06-5b-series-detail-gungye-list')
+  await setView(page, 'grid')
+})
+
+// FR-IDX-010 on screen, moved off 군계 at E-52.
+//
+// 군계 used to be the subject: it carried the collection's two truncated
+// archives, and both were repaired, so the assertions below had nothing left to
+// look at while still reading as though they were checking something. 디엔엔젤
+// is the subject that survives in *both* rounds — its `D.N.Angel 08권.zip` is
+// zero bytes in the real collection and the synthetic twin builds a 0-byte
+// archive of its own.
+//
+// It has to be a volume with **no pages**, not merely a damaged one. E-54 opens
+// a damaged container that still has a readable entry list, so "badged" and
+// "not a control" only travel together when there is genuinely nothing to open.
+test('6.5 (FR-IDX-010) · a volume with nothing readable is badged and is not a control', async ({
+  page,
+}) => {
+  const sid = await seriesId(page, SERIES.dnangel)
+  const books = await booksOf(page, sid)
+  const dead = books.filter((book) => book.status !== 'ok' && book.page_count === 0)
+  expect(dead.length, '디엔엔젤 carries the 0-byte archive of §6.3 row 7').toBeGreaterThan(0)
+
+  await gotoLibrary(page)
+  await setView(page, 'grid')
+  await openSeries(page, SERIES.dnangel)
+
+  const tiles = page.locator('[data-testid="volume-grid"] > *')
+  const badged = tiles.filter({ hasText: '손상' })
+  await expect(badged).toHaveCount(dead.length)
+  for (let i = 0; i < dead.length; i++) {
+    await expect(
+      badged.nth(i).getByRole('button'),
+      'a volume with no pages to serve is not a control (ui-spec §5.3)',
+    ).toHaveCount(0)
+  }
+
+  // The same fact survives the list rendering of ui-spec §5.4.
+  await setView(page, 'list')
+  const rows = page.locator('[data-testid="volume-row"]')
+  await expect(rows.filter({ hasText: '손상' })).toHaveCount(dead.length)
+  await expect(
+    rows.filter({ hasText: '손상' }).first().locator('[data-role="volume-state"]'),
+  ).toHaveText('ERR')
   await setView(page, 'grid')
 })
 

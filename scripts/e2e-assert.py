@@ -1236,12 +1236,33 @@ def main() -> int:
     gg_names = [b["name"] for b in gg["books"]]
     gg_errors = [b for b in gg["books"] if b["status"] == "error"]
     if real:
-        r.ge("군계 lists every volume including the duplicates (E-5)", len(gg["books"]), 27)
-        r.ge("군계's two truncated archives are isolated (FR-IDX-010)", len(gg_errors), 2)
+        # E-52 repaired both of this series' truncated archives and moved its six
+        # duplicate folders out of the media root, so the two shapes 군계 was
+        # curated for are gone from the *real* collection. The assertions that
+        # named them are not weakened here, they are replaced by the state that
+        # replaced them: 25 volumes, none broken, every one openable. An
+        # assertion that still said ">= 27 volumes, >= 2 broken" would have been
+        # checking a library that no longer exists.
+        #
+        # Both shapes keep their coverage in the synthetic round, whose twin
+        # builds the folder-and-ZIP pair and two truncated `.repair.zip` files
+        # on purpose (scripts/mkfixture). What the real round lost is the
+        # *sample*, not the rule. `월드 엠브리오 01~97화 완결` still holds one
+        # folder-and-ZIP pair and is the candidate if the real round should
+        # carry that shape again — it is not curated, and adding it costs a
+        # sixteenth series across six copies plus ~1 GB of scan.
+        r.check("군계 is whole after the E-52 repair — 25 volumes, no duplicates",
+                len(gg["books"]) == 25, f"got {len(gg['books'])}, want 25: {gg_names[:8]}")
+        r.check("군계 has no broken volume left (E-52 repaired both)",
+                len(gg_errors) == 0,
+                f"still broken: {[(b['name'], b['error']) for b in gg_errors]}")
+        r.check("every 군계 volume has pages to serve",
+                all(b["page_count"] > 0 for b in gg["books"]),
+                f"empty: {[b['name'] for b in gg['books'] if b['page_count'] <= 0]}")
     else:
         r.ge("군계's truncated archives are isolated (FR-IDX-010)", len(gg_errors), 2)
-    r.check("군계 shows both the folder and the ZIP for 01권 (D-6, ruling E-5)",
-            sum(1 for n in gg_names if "01권" in n) >= 2, f"volumes: {gg_names[:8]}")
+        r.check("군계 shows both the folder and the ZIP for 01권 (D-6, ruling E-5)",
+                sum(1 for n in gg_names if "01권" in n) >= 2, f"volumes: {gg_names[:8]}")
     r.check("군계 uses its named cover file (arch §4.10 step 1)",
             by_name[GUNGYE]["has_cover"] is True)
 

@@ -31,7 +31,10 @@ CURATED=(
   "자살도114-122"                            # loose images, mixed padding
   "바퀴.zip"                                 # single top-level ZIP
   "강철의 연금술사 1~27권 완결"              # N archives + one cover image
-  "군계 1~25"                                # duplicates + 2 truncated
+  "군계 1~25"                                # 25 ZIP volumes, CP949 (E-52 repaired its two
+                                             #   truncated archives and moved its six duplicate
+                                             #   folders out; the synthetic twin still builds both
+                                             #   shapes on purpose)
   "디엔엔젤 1-13권 연재중"                   # one 0-byte archive
   "미생 1~9 (완결 pdf)"                      # PDFs — AC-004
   "배틀로얄 1~15 [완결].zip"                 # 1 540 pages — AC-008
