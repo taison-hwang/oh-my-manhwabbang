@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "@eslint/js": "9.19.0",
+    "@fontsource/archivo": "5.2.6",
     "@playwright/test": "1.50.1",
     "@testing-library/dom": "10.4.0",
     "@testing-library/jest-dom": "6.6.3",
