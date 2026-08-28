@@ -420,6 +420,53 @@ describe('tokens.css — light ground (ui-spec §1.2, E-32 §1)', () => {
   })
 
   /**
+   * A hand-picked glyph subset may not sit in a stack that draws *text*
+   * (E-55).
+   *
+   * The 낙관 cuts — 藏 for the wordmark, 完讀 for the finished-series stamp —
+   * were declared as `Gowun Batang` and fenced off with `unicode-range`, so
+   * that they joined the text stack rather than competing with it. That is
+   * safe only while nothing behind them can draw those characters. It stopped
+   * being safe the moment a full 한자 face was vendored: a family at the head
+   * of `--font-heading` gets first refusal on every character it claims, so a
+   * two-glyph subset was answering for 한자 that *titles* contain — `完` is the
+   * 완독 marker here and appears in 204 of the 727 names carrying 한자, drawn
+   * from a KR cut while every other ideograph beside it came from TC, and only
+   * at weight 700 because the seal has no 400.
+   *
+   * Stated as the rule rather than as the two families that broke it: a face
+   * restricted to *individual codepoints* is a mark, not a typeface, and the
+   * stacks that set prose must not be able to reach it.
+   */
+  it('keeps hand-picked glyph subsets out of every text stack (E-55)', () => {
+    const faces = [...FONTS.matchAll(/@font-face\s*\{([^}]*)\}/g)].map((m) => m[1] ?? '')
+    const handPicked = new Set<string>()
+    for (const face of faces) {
+      const family = /font-family:\s*'([^']+)'/.exec(face)?.[1]
+      const range = /unicode-range:\s*([^;]+);/.exec(face)?.[1]
+      if (family === undefined || range === undefined) continue
+      // `U+3040-309F` claims a block; a bare `U+85CF` picks one character out.
+      if (range.split(',').some((entry) => !entry.includes('-'))) handPicked.add(family)
+    }
+    expect(handPicked.size, 'no hand-picked subset found — has the seal moved?').toBeGreaterThan(0)
+
+    const textStacks = ['heading', 'body', 'ui', 'ja'] as const
+    const offenders: string[] = []
+    for (const token of textStacks) {
+      const stack = light.get(`--font-${token}`) ?? ''
+      for (const family of handPicked) {
+        if (stack.includes(family)) offenders.push(`--font-${token} can reach ${family}`)
+      }
+    }
+    expect(offenders).toEqual([])
+
+    // And the marks still have a stack that *does* reach them, or they render
+    // as tofu — the failure this whole arrangement exists to prevent.
+    const seal = light.get('--font-seal') ?? ''
+    expect([...handPicked].filter((f) => !seal.includes(f))).toEqual([])
+  })
+
+  /**
    * E-55: Japanese names get a whole face, not a kana patch.
    *
    * A Japanese title's kanji and a Korean title's 한자 are the same

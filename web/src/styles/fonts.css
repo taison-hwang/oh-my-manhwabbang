@@ -59,12 +59,31 @@
   src: url('../assets/fonts/gowun-batang-bold.woff2') format('woff2');
 }
 
-/* One glyph — U+85CF 藏 — so the seal is drawn rather than boxed. Declared
-   under the same family name and restricted by `unicode-range`, so it joins the
-   stack instead of competing with it: the browser reaches for this file only
-   when that character is asked for. */
+/* One glyph — U+85CF 藏 — so the seal is drawn rather than boxed.
+ *
+ * **Its own family, since E-55.** It used to be declared as `Gowun Batang` and
+ * fenced off with `unicode-range`, so that it joined the text stack rather than
+ * competing with it. That was safe only while 고운바탕 was the *only* face in
+ * front of the reader's system fonts. It is not safe now: a family named at the
+ * head of `--font-heading` gets first refusal on every character it claims, so
+ * these hand-picked cuts were answering for 한자 that a *title* contains, ahead
+ * of the whole vendored 본명조 behind them.
+ *
+ * That is not hypothetical — `完` is the 완독 marker in this library's filenames
+ * and appears in **204 of the 727 names that carry 한자**. Every one of them was
+ * drawing its 한자 out of a two-glyph seal subset cut from Noto Serif CJK **KR**,
+ * while every other ideograph on the same screen came from TC — and only at
+ * weight 700, because the seal has no 400, so the same character changed cut
+ * with the text's weight. `Shelf Seal` is reachable only through `--font-seal`,
+ * which `Wordmark.tsx` and `DoneSeal.tsx` are the only callers of.
+ *
+ * The glyphs stay the KR cut on purpose. These are marks the product *draws* —
+ * E-46 pins them as exactly the ones the prototype stamps — and a logo is not
+ * obliged to match body text. The `unicode-range` stays too: it is no longer
+ * load-bearing now that the family is private, but it still keeps the file off
+ * any screen with no mark on it. */
 @font-face {
-  font-family: 'Gowun Batang';
+  font-family: 'Shelf Seal';
   font-style: normal;
   font-weight: 700;
   font-display: swap;
@@ -87,9 +106,13 @@
  * stamps, and a 낙관 is drawn in Han the way the 藏 beside the wordmark is; the
  * *accessible* name is the Korean 완독 (`Seal.tsx` puts it in the DOM and hides
  * the Han from assistive tech), so nothing here is legible only to a reader who
- * knows the hanja. */
+ * knows the hanja.
+ *
+ * Under `Shelf Seal` rather than `Gowun Batang` since E-55, for the reason
+ * given above the 藏 — `完` is a 완독 marker in 204 of this library's names, and
+ * a two-glyph subset had no business drawing their 한자. */
 @font-face {
-  font-family: 'Gowun Batang';
+  font-family: 'Shelf Seal';
   font-style: normal;
   font-weight: 700;
   font-display: swap;

@@ -32,15 +32,28 @@
 스크립트는 계속 그 경로를 봤고, 항상 exit 2였다. 의존성을 복구했고 `--check`가 처음으로 통과한다.
 서브셋 결과의 cmap을 되읽어 요청 글자가 실제로 들어갔는지 확인하는 `missing_glyphs()`도 붙였다.
 
+### 0.0.5 재시작 뒤에 하나 더 나왔다 — 낙관 서브셋이 제목의 한자를 가로챘다
+
+사용자가 재시작한 뒤 라이브에서 재보니 `完`이 TC가 아니라 **2글자짜리 낙관 서브셋**으로
+그려지고 있었다. `seal-han-*`는 E-46에서 `Gowun Batang` **이름으로** 선언되고
+`unicode-range`로 울타리를 친 배치인데, 그 패밀리가 `--font-heading`의 선두라 손으로 고른 세
+글자가 제목의 한자에 우선권을 갖는다. **`完`은 완결 표기라 한자 보유 이름 727개 중 204개에
+들어 있다** — KR 컷으로 그려지면서 옆의 다른 한자는 TC였고, 낙관에 400이 없어 굵기에 따라
+컷이 갈리기까지 했다.
+
+전용 패밀리 `Shelf Seal`로 분리했다. 자형은 KR 그대로 — 제품이 *그리는* 마크이고 E-46이
+못박은 글자다. 검사는 이름이 아니라 규칙으로: **개별 코드포인트로 제한된 서체는 산문 스택이
+이름을 부르는 패밀리 아래 선언될 수 없다.**
+
 ### 0.A 산출물
 
 | 무엇 | 어디 |
 |---|---|
 | 판정 | `docs/decisions.md` **E-55** |
 | 서체 | `web/src/assets/fonts/noto-serif-tc-{400,700}.woff2`, `noto-sans-jp-{400,700}.woff2` (KR 두 벌 삭제) |
-| 규칙 | `web/src/styles/fonts.css`, `tokens.css`(`--font-ja` 신설), `base.css` 맨 끝 **레이어 밖** |
+| 규칙 | `web/src/styles/fonts.css`(낙관은 `Shelf Seal`로 분리), `tokens.css`(`--font-ja` 신설), `base.css` 맨 끝 **레이어 밖** |
 | 판정 로직 | `web/src/lib/textLang.ts` (+ 태깅 11개 렌더 지점) |
-| 새 검사 | `textLang.test.ts`(7) · `nameLang.test.tsx`(8) · `cascade.test.ts`(2) · `tokens.test.ts` E-55 케이스 |
+| 새 검사 | `textLang.test.ts`(7) · `nameLang.test.tsx`(8) · `cascade.test.ts`(2) · `tokens.test.ts` E-55 케이스 둘 |
 
 ---
 

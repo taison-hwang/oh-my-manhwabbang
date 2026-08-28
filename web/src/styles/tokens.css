@@ -309,8 +309,12 @@
      -Hangul string and the Korean must stay 명조; 본고딕's `unicode-range`
      stops short of Hangul for the same reason. */
   --font-ja: 'Gowun Batang', 'Noto Sans JP', 'Noto Sans CJK JP', 'Hiragino Sans', sans-serif;
-  /* The 藏 seal. One Han glyph, added to the vendored subset for it. */
-  --font-seal: 'Gowun Batang', 'Noto Serif TC', 'Noto Serif KR', serif;
+  /* The 낙관 marks — the wordmark's 藏 and the grid card's 完讀 — and nothing
+     else. `Shelf Seal` is the private family those three glyphs are vendored
+     under (fonts.css); it leads here and is named nowhere else, which is what
+     keeps a hand-picked subset from answering for a 한자 that happens to appear
+     in a series title. 고운바탕 behind it draws the Hangul of the wordmark. */
+  --font-seal: 'Shelf Seal', 'Gowun Batang', 'Noto Serif TC', 'Noto Serif KR', serif;
 
   /* ---- space + radius -------------------------------------------------- */
   --space-1: 4px;
