@@ -5,6 +5,7 @@ import { FallbackCover } from '../../components/ds/FallbackCover'
 import { PageStamp } from '../../components/ds/PageStamp'
 import { ProgressBar } from '../../components/ds/ProgressBar'
 import { formatContinueCounter } from '../../lib/format'
+import { textLang } from '../../lib/textLang'
 
 /**
  * `ContinueCard` (ui-spec §9 #3, §4.3) — one card of the 이어보기 track, in the
@@ -182,10 +183,18 @@ export function ContinueCard({ item, onResume }: ContinueCardProps) {
 
       <span className="relative z-content flex min-w-0 flex-1 flex-col gap-[5px]">
         {/* E-32: card titles drop from 800 to 700. Section headings do not. */}
-        <span className="line-clamp-2 break-words font-heading text-base font-bold leading-[1.2]">
+        <span
+          className="line-clamp-2 break-words font-heading text-base font-bold leading-[1.2]"
+          lang={textLang(item.series_name)}
+        >
           {item.series_name}
         </span>
-        <span className="line-clamp-2 break-words text-xs text-ink-muted">{item.book.name}</span>
+        <span
+          className="line-clamp-2 break-words text-xs text-ink-muted"
+          lang={textLang(item.book.name)}
+        >
+          {item.book.name}
+        </span>
         <span className="flex-1" />
         {/* Stamped, and stamped at the *right* edge of the card the way a page
             number is stamped at the edge of a page. */}

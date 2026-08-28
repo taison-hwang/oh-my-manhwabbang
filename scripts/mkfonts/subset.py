@@ -32,7 +32,27 @@ rather than a snapshot, so a volume added tomorrow is already covered.
 
 The one hole left is a name stored as UTF-8 carrying an ideograph outside both
 legacy sets. That still falls back exactly as everything did before, and no
-such character occurs in the 18 729 names on this machine.
+such character occurs in the 18 721 names on this machine.
+
+Two CJK faces, not one (E-55)
+-----------------------------
+Until E-55 that closed set was cut once, out of **Noto Serif CJK KR**, and one
+family answered for every 한자 and every 가나 in the product. E-55 splits it in
+two because the two scripts are no longer asked to look alike:
+
+  * `noto-serif-tc-*` — **Noto Serif CJK TC**. The default 한자 face. 서고 is a
+    명조 skin and a 한자 inside a Korean title is set in 명조; the regional cut
+    moves from KR to TC because the traditional forms are the ones a Korean
+    title's 한자 is written in.
+  * `noto-sans-jp-*` — **Noto Sans CJK JP**. Reached only through `[lang='ja']`
+    (`textLang.ts` tags a name as Japanese when it carries kana), so a Japanese
+    title is set entirely in one face rather than split down the middle into
+    명조 kanji and 고딕 kana.
+
+Both carry the **same** closed set — Han ∪ kana. The JP face needs the kanji
+because a Japanese title is mostly kanji; the TC face keeps the kana so that
+any name this repo forgets to tag still renders rather than showing tofu, which
+is what a `unicode-range` hole looks like on screen.
 
 `--font-ui` draws the numerals and the uppercase micro-labels (E-46: 명조
 numerals are proportional, so a tabular column drawn in them does not line up).
@@ -43,10 +63,10 @@ and it is still a dependency, so its own latin subsets are vendored verbatim.
 """
 
 import argparse
-import os
 import shutil
 import subprocess
 import sys
+import unicodedata
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -57,9 +77,11 @@ ARCHIVO = ROOT / (
 )
 NOTO = Path("/usr/share/fonts/opentype/noto")
 
-# CJK blocks the vendored Han/kana face answers for. Hangul is deliberately
-# absent: 고운바탕 owns it, and letting this face claim it would replace the
-# skin's 명조 Hangul with Noto's.
+# CJK blocks the vendored Han/kana faces answer for. Hangul is deliberately
+# absent: 고운바탕 owns it, and letting either face claim it would replace the
+# skin's 명조 Hangul with Noto's — including inside a Japanese-tagged name,
+# which on this library is usually a Korean title with a Japanese fragment in
+# it rather than a Japanese one.
 UNICODE_RANGE_BLOCKS = [
     (0x3040, 0x309F),  # Hiragana
     (0x30A0, 0x30FF),  # Katakana
@@ -67,6 +89,18 @@ UNICODE_RANGE_BLOCKS = [
     (0x4E00, 0x9FFF),  # CJK Unified Ideographs
     (0xF900, 0xFAFF),  # CJK Compatibility Ideographs
 ]
+
+# (collection, face name inside it, output stem). Both faces are cut from the
+# same closed character set; see the module docstring for why there are two.
+CJK_FACES = [
+    ("NotoSerifCJK", "Noto Serif CJK TC", "noto-serif-tc"),
+    ("NotoSansCJK", "Noto Sans CJK JP", "noto-sans-jp"),
+]
+
+# Cut by an earlier revision of this rule and no longer referenced by
+# fonts.css. Listed so a rebuild says so out loud rather than leaving 3 MB of
+# orphan in the binary for the next reader to discover.
+RETIRED = ["noto-serif-kr-han-400.woff2", "noto-serif-kr-han-700.woff2"]
 
 
 def encodable_ideographs() -> set[str]:
@@ -96,21 +130,39 @@ def encodable_ideographs() -> set[str]:
 
 
 def kana() -> set[str]:
-    return {chr(c) for c in range(0x3040, 0x3100)}
+    """Every **assigned** character in the two kana blocks.
+
+    `U+3040`, `U+3097` and `U+3098` are reserved holes inside the hiragana
+    block. Asking for them cost nothing while the request was never checked —
+    pyftsubset drops what a face does not have and says so to nobody — but no
+    font on earth carries them, so a literal `range(0x3040, 0x3100)` makes
+    `missing_glyphs` report three phantom gaps on every cut. Filtered by
+    `unicodedata` rather than by a hard-coded triple, so the next block
+    revision does not need this comment rewritten.
+    """
+    return {
+        chr(c) for c in range(0x3040, 0x3100) if unicodedata.name(chr(c), "") != ""
+    }
 
 
-def kr_font_number(ttc: Path) -> int:
+def face_number(ttc: Path, family: str) -> int:
+    """Index of `family` inside a .ttc.
+
+    Matched on a prefix of the full name so that `NotoSerifCJK-Bold.ttc`'s
+    "Noto Serif CJK TC Bold" resolves the same way `-Regular.ttc`'s
+    "Noto Serif CJK TC" does — and so that TC never matches SC or HK.
+    """
     from fontTools.ttLib import TTCollection
 
     coll = TTCollection(str(ttc))
     for i, f in enumerate(coll.fonts):
-        if "KR" in str(f["name"].getDebugName(4)):
+        if str(f["name"].getDebugName(4)).startswith(family):
             return i
-    raise SystemExit(f"{ttc}: no Korean face inside")
+    raise SystemExit(f"{ttc}: no face named {family!r} inside")
 
 
 def subset(src: Path, font_number: int, chars: set[str], dest: Path) -> None:
-    text = ROOT / "web/src/assets/fonts/.chars.tmp"
+    text = OUT / ".chars.tmp"
     text.write_text("".join(sorted(chars)), encoding="utf-8")
     try:
         subprocess.run(
@@ -132,6 +184,23 @@ def subset(src: Path, font_number: int, chars: set[str], dest: Path) -> None:
         text.unlink(missing_ok=True)
 
 
+def missing_glyphs(woff2: Path, chars: set[str]) -> set[str]:
+    """Requested characters the cut file does not actually carry.
+
+    pyftsubset drops what the source face does not have and says nothing, so a
+    swap of source face (KR → TC, or Serif → Sans) could quietly open a hole
+    that only shows up as tofu on a reader's screen. Read the result's cmap
+    back and compare: the check has to look at the artefact, not the request.
+    """
+    from fontTools.ttLib import TTFont
+
+    font = TTFont(str(woff2))
+    have = set()
+    for table in font["cmap"].tables:
+        have |= {chr(cp) for cp in table.cmap}
+    return chars - have
+
+
 def unicode_range_css() -> str:
     return ", ".join(f"U+{a:04X}-{b:04X}" for a, b in UNICODE_RANGE_BLOCKS)
 
@@ -149,30 +218,34 @@ def main() -> int:
     print(f"CJK coverage: {len(chars)} codepoints")
     print(f"unicode-range: {unicode_range_css()}")
 
-    plan: list[tuple[Path, Path, int, set[str] | None]] = []
-    for weight, style in (("Regular", "400"), ("Bold", "700")):
-        ttc = NOTO / f"NotoSerifCJK-{weight}.ttc"
-        if not ttc.exists():
-            print(f"missing source: {ttc}", file=sys.stderr)
-            return 2
-        plan.append((ttc, OUT / f"noto-serif-kr-han-{style}.woff2", kr_font_number(ttc), chars))
+    plan: list[tuple[Path, Path, str]] = []
+    for collection, family, stem in CJK_FACES:
+        for weight, style in (("Regular", "400"), ("Bold", "700")):
+            ttc = NOTO / f"{collection}-{weight}.ttc"
+            if not ttc.exists():
+                print(f"missing source: {ttc}", file=sys.stderr)
+                return 2
+            plan.append((ttc, OUT / f"{stem}-{style}.woff2", family))
 
     total = 0
-    for src, dest, num, cs in plan:
+    for src, dest, family in plan:
         target = dest if not args.check else Path(str(dest) + ".check")
-        assert cs is not None
-        subset(src, num, cs, target)
+        subset(src, face_number(src, family), chars, target)
         size = target.stat().st_size
         total += size
+        gap = missing_glyphs(target, chars)
+        note = "" if not gap else f"  MISSING {len(gap)}: {''.join(sorted(gap)[:8])}"
         if args.check:
             old = dest.read_bytes() if dest.exists() else b""
             same = old == target.read_bytes()
             target.unlink()
-            print(f"  {dest.name}: {size} B {'ok' if same else 'DIFFERS'}")
-            if not same:
+            print(f"  {dest.name}: {size} B {'ok' if same else 'DIFFERS'}{note}")
+            if not same or gap:
                 return 1
         else:
-            print(f"  {dest.name}: {size} B")
+            print(f"  {dest.name}: {size} B{note}")
+            if gap:
+                return 1
 
     # Archivo latin, copied rather than subsetted: @fontsource already ships a
     # latin-only cut at 14 KB per weight, and re-cutting it would trade a
@@ -193,6 +266,12 @@ def main() -> int:
         else:
             dest.write_bytes(data)
             print(f"  {dest.name}: {len(data)} B")
+
+    orphans = [n for n in RETIRED if (OUT / n).exists()]
+    if orphans:
+        print(f"retired, still on disk (delete them): {', '.join(orphans)}", file=sys.stderr)
+        if args.check:
+            return 1
 
     print(f"total added: {total} B ({total / 1e6:.2f} MB)")
     return 0

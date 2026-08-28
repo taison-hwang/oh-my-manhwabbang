@@ -7,6 +7,7 @@ import { Dialog } from '../../components/ds/Dialog'
 import { cn } from '../../lib/cn'
 import { matchRange } from '../../lib/chosung'
 import { formatBytes, formatContinueCounter, formatVolumeCount } from '../../lib/format'
+import { textLang } from '../../lib/textLang'
 
 /**
  * The command palette (FR-LIB-011, ui-spec §8.4).
@@ -222,10 +223,18 @@ export function CommandPalette({ open, query, onQueryChange, onClose }: CommandP
                 pick(item)
               }}
             >
-              <span className="min-w-0 flex-1 truncate whitespace-nowrap text-md">
+              <span
+                className="min-w-0 flex-1 truncate whitespace-nowrap text-md"
+                lang={textLang(item.title)}
+              >
                 <Highlight title={item.title} query={debounced.trim()} />
               </span>
-              <span className="flex-none text-xs tabular-nums text-ink-dim">{item.sub}</span>
+              {/* The sub-line is a volume name plus a counter, so it carries a
+                  name of its own and is tagged from its own text rather than
+                  from the title's. */}
+              <span className="flex-none text-xs tabular-nums text-ink-dim" lang={textLang(item.sub)}>
+                {item.sub}
+              </span>
             </button>
           ))
         )}

@@ -3,6 +3,7 @@ import { Hr } from '../../components/ds/Hr'
 import type { BookSummary } from '../../api/types'
 import { formatLabel, formatPageCount, readToggleLabel } from '../../lib/format'
 import type { ResolvedTheme } from '../../lib/theme'
+import { textLang } from '../../lib/textLang'
 
 /**
  * End of volume → next volume (FR-VWR-010, ui-spec §6.5).
@@ -86,7 +87,9 @@ export function NextVolumeCard({
                   extrabold, because the card is a 380px surface where the
                   volume name is a *label* for the primary action beneath it
                   rather than a title the eye has to find on a busy page. */}
-              <span className="font-heading text-h4 font-bold leading-[1.15]">{nextBook.name}</span>
+              <span className="font-heading text-h4 font-bold leading-[1.15]" lang={textLang(nextBook.name)}>
+                {nextBook.name}
+              </span>
               <span className="text-sm tabular-nums text-ink-muted">
                 {`${formatPageCount(nextBook.page_count)} · ${formatLabel(nextBook.kind)}`}
               </span>

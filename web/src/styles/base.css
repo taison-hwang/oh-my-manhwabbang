@@ -1378,4 +1378,36 @@
       min-height: var(--touch-min);
     }
   }
+
+}
+
+/* ---- 일본어로 태그된 이름 (E-55) ----------------------------------------- */
+/* `lib/textLang.ts` marks a display name `lang="ja"` when it carries kana.
+   This rule is what that mark *does*: it hands the whole name to 본고딕 JP
+   instead of letting `unicode-range` split it into 명조 kanji around 고딕 kana.
+   The reasoning for tagging by name rather than by codepoint is in
+   textLang.ts; the reasoning for the stack is on `--font-ja` in tokens.css.
+
+   **`[lang='ja']`, not `:lang(ja)`.** `:lang()` matches every descendant of a
+   tagged element as well, and the tag goes on a *name*, not on a region: the
+   counter beside a Japanese title is not Japanese and has no business changing
+   face because its neighbour is. Inheritance already carries the family into
+   the text nodes inside the name, which is the whole of what this needs to
+   reach.
+
+   **Outside every layer, at the end of the file, and that is the load-bearing
+   part.** This rule first went in `@layer components`, to beat `.card-title`
+   and `.btn`. In a browser it lost anyway: `FallbackCover`, `ContinueCard`,
+   `NextVolumeCard` and `ViewerTopBar` all put `font-heading` on the very
+   element that carries the tag, Tailwind emits its utilities *after*
+   `@tailwind components`, and at equal specificity the later rule wins — so
+   four of the tagged surfaces went on rendering in 명조 with the attribute
+   sitting right there on them.
+   Nothing failed. `tokens.test.ts` reads the sheet as text and `nameLang.test
+   .tsx` runs under `css: false`, so neither tier applies a stylesheet at all;
+   it took `getComputedStyle` in a real browser to see it. Unlayered and last,
+   the rule is after the whole `@tailwind utilities` expansion, which is what
+   makes it reach `font-heading`.  */
+[lang='ja'] {
+  font-family: var(--font-ja);
 }

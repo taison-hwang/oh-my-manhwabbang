@@ -1,5 +1,6 @@
 import { cn } from '../../lib/cn'
 import { formatLabel, type FormatValue } from '../../lib/format'
+import { textLang } from '../../lib/textLang'
 
 /**
  * `FallbackCover` (ui-spec §9 #7) — FR-LIB-008's text placeholder.
@@ -42,6 +43,7 @@ export function FallbackCover({ title, format, size, className }: FallbackCoverP
                headings stay at 800; this is the placeholder cover's title. */
             className="line-clamp-4 font-heading text-sm font-bold leading-[1.15] text-ink"
             style={{ fontSize: size === 'hero' ? '15px' : '12px' }}
+            lang={textLang(title)}
           >
             {title}
           </div>

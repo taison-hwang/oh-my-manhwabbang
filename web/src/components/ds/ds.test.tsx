@@ -395,6 +395,24 @@ describe('FallbackCover (FR-LIB-008)', () => {
     expect(screen.queryByText('ZIP · NO THUMBNAIL')).toBeNull()
     expect(container.firstElementChild).toHaveClass('fallback-cover-row')
   })
+
+  /**
+   * E-55. The placeholder cover is the one place a series name is *drawn by
+   * the product* rather than shown as a row of text, so it is where a missing
+   * `lang` shows up as a split face on the biggest type on the screen.
+   */
+  it('tags a Japanese title so 본고딕 draws it whole (E-55)', () => {
+    render(<FallbackCover title="[後藤晶] カノジョは官能小說家 02" format="zip" size="card" />)
+    expect(screen.getByText('[後藤晶] カノジョは官能小說家 02')).toHaveAttribute('lang', 'ja')
+  })
+
+  it('leaves a Korean title untagged (E-55)', () => {
+    // The other half of the rule, and the one that would fail silently: a tag
+    // on every cover would put the whole library in the Japanese stack, and
+    // nothing about the layout would look wrong.
+    render(<FallbackCover title="[만화] 군계 1~25" format="zip" size="card" />)
+    expect(screen.getByText('[만화] 군계 1~25')).not.toHaveAttribute('lang')
+  })
 })
 
 describe('Skeleton (ui-spec §4.5)', () => {

@@ -4,7 +4,14 @@ import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import tailwindConfig from '../../tailwind.config'
-import { allRules, customProperties, findRule, topLevelRules, type CssRule } from './cssRules'
+import {
+  allRules,
+  customProperties,
+  findRule,
+  stripComments,
+  topLevelRules,
+  type CssRule,
+} from './cssRules'
 import { contrast, luminance, over, parseColour, type Rgba } from './contrast'
 
 // `import.meta.url` is an http URL under the jsdom environment, so the source
@@ -13,6 +20,7 @@ const read = (rel: string): string => readFileSync(resolve(process.cwd(), rel), 
 
 const TOKENS = read('src/styles/tokens.css')
 const BASE = read('src/styles/base.css')
+const FONTS = read('src/styles/fonts.css')
 
 const rules: CssRule[] = topLevelRules(TOKENS)
 
@@ -379,15 +387,21 @@ describe('tokens.css — light ground (ui-spec §1.2, E-32 §1)', () => {
     ])
   })
 
-  it('names 고운바탕 first, then the 한자 fallback (E-7 as amended by E-46)', () => {
+  it('names 고운바탕 first, then the 한자 fallback (E-7 as amended by E-46, E-55)', () => {
     // The order changed *and* so did what it means. Under E-7 the vendored face
     // was latin-only, so everything after Archivo was the stack that actually
     // drew the Korean and the order mattered enormously. 고운바탕 is vendored
     // with all 11 172 modern Hangul syllables, so the fallbacks now only ever
     // draw 한자 and 가나 — which is why 본명조 comes second and there is no
     // sans anywhere in the stack.
+    //
+    // E-55 names the regional cut. `Noto Serif TC` and the `Noto Serif KR`
+    // behind it are *not* interchangeable: 본명조 draws the same codepoint
+    // differently per region, so a stack that lost the TC entry would keep
+    // rendering 한자 — in the wrong forms, silently. The order below is what
+    // pins that.
     const stack = light.get('--font-heading') ?? ''
-    const order = ['Gowun Batang', 'Noto Serif KR', 'Apple SD Gothic Neo', 'serif']
+    const order = ['Gowun Batang', 'Noto Serif TC', 'Noto Serif KR', 'Apple SD Gothic Neo', 'serif']
     let cursor = -1
     for (const face of order) {
       const at = stack.indexOf(face, cursor + 1)
@@ -403,6 +417,54 @@ describe('tokens.css — light ground (ui-spec §1.2, E-32 §1)', () => {
     // 고운바탕 has 400 and 700 and no more; 800 would be synthesised and 명조
     // loses its strokes when it is.
     expect(light.get('--font-heading-weight')).toBe('700')
+  })
+
+  /**
+   * E-55: Japanese names get a whole face, not a kana patch.
+   *
+   * A Japanese title's kanji and a Korean title's 한자 are the same
+   * codepoints, so `unicode-range` cannot separate them and 「進撃の巨人」
+   * splits into 명조 kanji around a 고딕 の. The fix is a second stack reached
+   * by `[lang='ja']`, and each half of it can fail on its own — a stack with
+   * no rule pointing at it is dead, and a rule pointing at a stack whose face
+   * this repo does not ship falls through to the system. Both halves asserted.
+   */
+  it('hands a ja-tagged name to a vendored Japanese face (E-55)', () => {
+    const ja = light.get('--font-ja') ?? ''
+    const order = ['Gowun Batang', 'Noto Sans JP', 'sans-serif']
+    let cursor = -1
+    for (const face of order) {
+      const at = ja.indexOf(face, cursor + 1)
+      expect(at, `${face} missing or out of order in ${ja}`).toBeGreaterThan(cursor)
+      cursor = at
+    }
+
+    // 고운바탕 leads this stack too, and that is not symmetry for its own sake.
+    // A kana-bearing name on this library is usually a *Korean* title with a
+    // Japanese fragment in it, so the tag lands on a mostly-Hangul string; if
+    // 본고딕 led, one parenthesis would turn a Korean title 고딕.
+    expect((ja.split(',')[0] ?? '').trim().replace(/^'|'$/g, '')).toBe('Gowun Batang')
+
+    // The face has to be one this repo ships, and it has to claim the CJK
+    // blocks without claiming Hangul — the same reason as above, stated where
+    // the browser actually reads it.
+    expect(FONTS).toMatch(/font-family:\s*'Noto Sans JP'/)
+    const jaFaces = FONTS.split('@font-face').filter((b) => b.includes("'Noto Sans JP'"))
+    expect(jaFaces).toHaveLength(2)
+    for (const face of jaFaces) {
+      expect(face).toMatch(/unicode-range:[^;]*U\+3040-309F/)
+      expect(face).not.toMatch(/unicode-range:[^;]*U\+AC00/)
+    }
+
+    // And the rule that reaches the stack. `[lang='ja']`, never `:lang(ja)`:
+    // `:lang()` matches descendants, so a page counter beside a Japanese title
+    // would change face because of its neighbour.
+    // Read past the comments: the paragraph above the rule *names* `:lang(ja)`
+    // to say why it is not used, and a check that cannot tell a declaration
+    // from the prose explaining it would fail on its own documentation.
+    const declarations = stripComments(BASE)
+    expect(declarations).toMatch(/\[lang='ja'\]\s*\{\s*font-family:\s*var\(--font-ja\);/)
+    expect(declarations).not.toMatch(/:lang\(/)
   })
 
   it('drops one flat ink shadow, and keeps the wells soft (E-46)', () => {

@@ -273,11 +273,14 @@
      Hangul syllables plus latin, so unlike Archivo before it the Korean is the
      *vendored* face rather than whatever the system had. 본명조 sits behind it
      for 한자 and 가나, which the subset deliberately does not carry — and that
-     face is now vendored as `Noto Serif KR Han`, restricted by `unicode-range`
-     to the CJK blocks, so those glyphs are drawn rather than borrowed from the
-     reader's machine. The bare `'Noto Serif KR'` after it is what answers for
-     an ideograph neither CP949 nor Shift_JIS can encode, which is the one case
-     the vendored subset does not close.
+     face is vendored as `Noto Serif TC`, restricted by `unicode-range` to the
+     CJK blocks, so those glyphs are drawn rather than borrowed from the
+     reader's machine. TC rather than the KR cut it was until E-55: the four
+     regional designs of 본명조 differ in the strokes, and a 한자 inside a
+     Korean title is written in the traditional forms. The bare
+     `'Noto Serif KR'` after it is what answers for an ideograph neither CP949
+     nor Shift_JIS can encode, which is the one case the vendored subset does
+     not close.
 
      Numerals and uppercase micro-labels go to `--font-ui`, and that is the
      prototype's own rule rather than a preference: 명조 numerals are
@@ -285,14 +288,29 @@
      leads that stack for the same reason 고운바탕 leads this one: the system
      faces behind it differ on every device. */
   --font-heading:
-    'Gowun Batang', 'Noto Serif KR Han', 'Noto Serif KR', 'Apple SD Gothic Neo', batang, serif;
+    'Gowun Batang', 'Noto Serif TC', 'Noto Serif KR', 'Apple SD Gothic Neo', batang, serif;
   /* 400 and 700 only. 명조 breaks up under synthetic weights and negative
      tracking — the prototype pins both, and 800 does not exist in this face. */
   --font-heading-weight: 700;
   --font-body: var(--font-heading);
   --font-ui: 'Archivo', ui-sans-serif, 'Helvetica Neue', Arial, sans-serif;
+  /* Japanese names only, reached through `[lang='ja']` (base.css) — never by
+     inheritance from the document (E-55, 사용자 요청).
+
+     This is the one sans in the skin besides `--font-ui`, and it is a sans
+     deliberately: the request was 본고딕 JP for Japanese, and the alternative
+     is worse than a mixed skin. A Japanese title split by `unicode-range`
+     alone puts 명조 kanji next to a 고딕 kana inside one word, because kanji
+     and 한자 are the same codepoints and no range can separate them —
+     `lib/textLang.ts` explains why the split has to be by name instead.
+
+     고운바탕 still leads. On this library a kana-bearing name is usually a
+     Korean title carrying a Japanese fragment, so the tag lands on a mostly
+     -Hangul string and the Korean must stay 명조; 본고딕's `unicode-range`
+     stops short of Hangul for the same reason. */
+  --font-ja: 'Gowun Batang', 'Noto Sans JP', 'Noto Sans CJK JP', 'Hiragino Sans', sans-serif;
   /* The 藏 seal. One Han glyph, added to the vendored subset for it. */
-  --font-seal: 'Gowun Batang', 'Noto Serif KR Han', 'Noto Serif KR', serif;
+  --font-seal: 'Gowun Batang', 'Noto Serif TC', 'Noto Serif KR', serif;
 
   /* ---- space + radius -------------------------------------------------- */
   --space-1: 4px;

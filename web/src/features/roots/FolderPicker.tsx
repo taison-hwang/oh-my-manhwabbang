@@ -5,6 +5,7 @@ import { useBrowse } from '../../api/queries'
 import type { BrowseEntry } from '../../api/types'
 import { Button } from '../../components/ds/Button'
 import { Spinner } from '../../components/ds/Spinner'
+import { textLang } from '../../lib/textLang'
 import { browseReasonLabel, rootErrorMessage } from './rootErrors'
 
 /**
@@ -206,7 +207,10 @@ function FolderRow({
         title={entry.path}
       >
         <Folder size={13} aria-hidden={true} className="flex-none text-ink-dim" />
-        <span className="truncate whitespace-nowrap">
+        <span
+          className="truncate whitespace-nowrap"
+          lang={textLang(showFullPath ? entry.path : entry.name)}
+        >
           {showFullPath ? entry.path : entry.name}
         </span>
         <ChevronRight size={12} aria-hidden={true} className="flex-none text-ink-dim" />

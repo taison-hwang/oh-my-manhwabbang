@@ -171,8 +171,8 @@ describe('module conventions (impl-plan §5.2)', () => {
 
     const declared = new Set(captures(faces, /font-family:\s*'([^']+)'/g))
 
-    const stacks = [...tokens.matchAll(/--font-(heading|ui|seal|body):\s*([^;]+);/g)]
-    expect(stacks.length).toBeGreaterThanOrEqual(3)
+    const stacks = [...tokens.matchAll(/--font-(heading|ui|seal|body|ja):\s*([^;]+);/g)]
+    expect(stacks.length).toBeGreaterThanOrEqual(4)
 
     const unvendored: string[] = []
     for (const stack of stacks) {

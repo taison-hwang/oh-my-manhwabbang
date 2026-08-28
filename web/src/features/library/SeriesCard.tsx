@@ -8,6 +8,7 @@ import { FormatBadge } from '../../components/ds/FormatBadge'
 import { ReadRibbon } from '../../components/ds/ReadRibbon'
 import { cn } from '../../lib/cn'
 import { formatBytes, formatVolumeCount } from '../../lib/format'
+import { textLang } from '../../lib/textLang'
 import { seriesCardDomId } from '../../store/ui'
 import { CARD_TEXT_HEIGHT, highlightParts } from './useLibrary'
 
@@ -229,6 +230,7 @@ export function SeriesCard({
             series.status === 'ok' ? '' : 'text-ink-dim',
           )}
           title={series.name}
+          lang={textLang(series.name)}
         >
           {parts.before}
           {parts.match !== '' && <span className="text-accent-text">{parts.match}</span>}

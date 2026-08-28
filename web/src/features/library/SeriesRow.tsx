@@ -11,6 +11,7 @@ import {
   formatProgressLabel,
   formatVolumeCount,
 } from '../../lib/format'
+import { textLang } from '../../lib/textLang'
 import { seriesRowDomId } from '../../store/ui'
 import { highlightParts, LIST_TEMPLATE, type ListLayout } from './useLibrary'
 
@@ -56,6 +57,7 @@ export function SeriesRow({ series, layout, query, revealed = false, onOpen }: S
         'min-w-0 truncate whitespace-nowrap text-left text-base',
         series.status === 'ok' ? '' : 'text-ink-dim',
       )}
+      lang={textLang(series.name)}
     >
       {parts.before}
       {parts.match !== '' && <span className="text-accent-text">{parts.match}</span>}

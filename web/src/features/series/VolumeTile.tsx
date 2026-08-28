@@ -8,6 +8,7 @@ import { FormatBadge } from '../../components/ds/FormatBadge'
 import { ProgressBar } from '../../components/ds/ProgressBar'
 import { cn } from '../../lib/cn'
 import { formatBytes, formatPageCount, readToggleLabel } from '../../lib/format'
+import { textLang } from '../../lib/textLang'
 import { useVolumeReadToggle } from './useVolumeActions'
 import { isOpenable, volumeBadge, volumeBytes, volumeProgressRatio, volumeTone } from './volume'
 
@@ -126,7 +127,11 @@ export function VolumeTile({ book, number, onOpen }: VolumeTileProps) {
 
   const caption = (
     <>
-      <span className="truncate whitespace-nowrap text-sm" title={book.name}>
+      <span
+        className="truncate whitespace-nowrap text-sm"
+        title={book.name}
+        lang={textLang(book.name)}
+      >
         {book.name}
       </span>
       {/* prd FR-LIB-009 (필수) wants 페이지 수 *and* 용량 per volume; ui-spec

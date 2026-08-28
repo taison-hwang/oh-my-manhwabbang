@@ -98,7 +98,7 @@
 }
 
 /* ---------------------------------------------------------------------------
- * 한자 · 가나 — 본명조, vendored (3.00 MB, both weights)
+ * 한자 — 본명조 TC, vendored (3.31 MB, both weights)
  * ---------------------------------------------------------------------------
  * 고운바탕 has no Han and no kana, so every 한자 in a series title and every
  * 가나 in a Japanese one was drawn by the reader's own system — `Noto Serif KR`
@@ -112,35 +112,84 @@
  * which internal/kenc decodes as UTF-8, CP949 or Shift_JIS. So the ideographs a
  * legacy-encoded name can hold are exactly what those two encodings can
  * represent — 4 888 and 6 356, union **7 159** — and both kana blocks entire.
- * Measured against the live library: 111 distinct 한자 and 69 가나 in 18 729
- * names, every one of them inside the set. A volume added next year is covered
- * because the encoding cannot express anything outside it, not because we
- * looked. `scripts/mkfonts/subset.py` derives the set by round-tripping the
+ * Measured against the live library: 727 of 18 721 names carry 한자 and 128
+ * carry 가나, every character inside the set. A volume added next year is
+ * covered because the encoding cannot express anything outside it, not because
+ * we looked. `scripts/mkfonts/subset.py` derives the set by round-tripping the
  * codecs and is the recipe for these files.
+ *
+ * **The regional cut is TC, not KR** (E-55, 사용자 요청). Noto Serif CJK ships
+ * one design per region and they differ in the strokes: 直, 骨, 花 are drawn
+ * differently in the KR, TC, SC and JP cuts of the same codepoint. A 한자
+ * inside a Korean title is written in the traditional forms, which is the TC
+ * cut, so that is the one vendored.
  *
  * **`unicode-range` is what makes 3 MB affordable.** The declaration claims the
  * CJK blocks and nothing else, so the browser fetches these files only on a
- * screen that actually paints a 한자 or a 가나. A library of Korean titles never
- * asks for them; the binary carries them for the one that does. Hangul is
- * deliberately outside the range — 고운바탕 owns it, and letting 본명조 answer
- * for it would quietly replace the skin's 명조 Hangul with Noto's.
+ * screen that actually paints a 한자 or a 가나. A library of purely Korean
+ * titles never asks for them; the binary carries them for the one that does.
+ * Hangul is deliberately outside the range — 고운바탕 owns it, and letting
+ * 본명조 answer for it would quietly replace the skin's 명조 Hangul with Noto's.
+ *
+ * The kana are in this face too even though `--font-ja` below is what normally
+ * draws them. They are the floor: a name this repo forgets to tag, or one whose
+ * Japanese is all kanji, still renders in 명조 instead of falling through the
+ * `unicode-range` into whatever the reader's machine has.
  */
 @font-face {
-  font-family: 'Noto Serif KR Han';
+  font-family: 'Noto Serif TC';
   font-style: normal;
   font-weight: 400;
   font-display: swap;
   unicode-range: U+3040-309F, U+30A0-30FF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF;
-  src: url('../assets/fonts/noto-serif-kr-han-400.woff2') format('woff2');
+  src: url('../assets/fonts/noto-serif-tc-400.woff2') format('woff2');
 }
 
 @font-face {
-  font-family: 'Noto Serif KR Han';
+  font-family: 'Noto Serif TC';
   font-style: normal;
   font-weight: 700;
   font-display: swap;
   unicode-range: U+3040-309F, U+30A0-30FF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF;
-  src: url('../assets/fonts/noto-serif-kr-han-700.woff2') format('woff2');
+  src: url('../assets/fonts/noto-serif-tc-700.woff2') format('woff2');
+}
+
+/* ---------------------------------------------------------------------------
+ * 일본어 — 본고딕 JP, vendored (2.27 MB, both weights)
+ * ---------------------------------------------------------------------------
+ * The face above cannot answer for Japanese, and no `unicode-range` can make
+ * it: a Japanese title's kanji and a Korean title's 한자 are the **same
+ * codepoints**. Split by codepoint alone, 「進撃の巨人」 comes out as 명조
+ * 進撃/巨人 around a 고딕 の — one word in two skins.
+ *
+ * So the split is by *name*, not by character. `lib/textLang.ts` tags a name
+ * `lang="ja"` when it carries kana, `[lang='ja']` in base.css points that
+ * element's stack at `--font-ja`, and this face — which carries the kanji as
+ * well as the kana — draws the whole thing.
+ *
+ * `unicode-range` stops short of Hangul here for a sharper reason than it does
+ * above. On this library a kana-bearing name is usually a *Korean* title with a
+ * Japanese fragment in it (`나와 그녀의 연애목록 (すかぢ) 1~19화` — 128 names
+ * carry kana and this is the shape most of them have), so the tag lands on a
+ * mostly-Hangul string. Letting 본고딕 claim Hangul would turn that title's
+ * Korean into 고딕 because of a parenthesis.
+ */
+@font-face {
+  font-family: 'Noto Sans JP';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  unicode-range: U+3040-309F, U+30A0-30FF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF;
+  src: url('../assets/fonts/noto-sans-jp-400.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Noto Sans JP';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  unicode-range: U+3040-309F, U+30A0-30FF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF;
+  src: url('../assets/fonts/noto-sans-jp-700.woff2') format('woff2');
 }
 
 /* ---------------------------------------------------------------------------

@@ -6,6 +6,7 @@ import { FormatBadge } from '../../components/ds/FormatBadge'
 import { ProgressBar } from '../../components/ds/ProgressBar'
 import { cn } from '../../lib/cn'
 import { formatBytes, formatPageCount, readToggleLabel } from '../../lib/format'
+import { textLang } from '../../lib/textLang'
 import { useVolumeReadToggle } from './useVolumeActions'
 import {
   isOpenable,
@@ -191,6 +192,7 @@ export function VolumeRow({ book, onOpen }: VolumeRowProps) {
           <button
             type="button"
             className="min-w-0 truncate whitespace-nowrap text-left text-base"
+            lang={textLang(book.name)}
             onClick={() => {
               onOpen(book)
             }}
@@ -198,7 +200,9 @@ export function VolumeRow({ book, onOpen }: VolumeRowProps) {
             {book.name}
           </button>
         ) : (
-          <span className="min-w-0 truncate whitespace-nowrap text-base">{book.name}</span>
+          <span className="min-w-0 truncate whitespace-nowrap text-base" lang={textLang(book.name)}>
+            {book.name}
+          </span>
         )}
         {badge !== null && (
           <>

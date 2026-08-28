@@ -12,6 +12,7 @@ import {
 import { Button } from '../../components/ds/Button'
 import { Seg, type SegOption } from '../../components/ds/Seg'
 import { cn } from '../../lib/cn'
+import { textLang } from '../../lib/textLang'
 import type { DisplayMode, FitMode, ReadingDirection } from '../../store/viewer'
 
 /**
@@ -250,7 +251,10 @@ export function ViewerTopBar({
 
       <div className="flex min-w-0 flex-col">
         {/* E-32: 800 → 700. The viewer title is a card title, not a heading. */}
-        <span className="truncate font-heading text-base font-bold text-ink">
+        <span
+          className="truncate font-heading text-base font-bold text-ink"
+          lang={textLang(seriesName)}
+        >
           {seriesName}
         </span>
         {/* `--ink-faint`, not `--color-neutral-500`. The ramps are a
