@@ -1,11 +1,50 @@
 # HANDOFF — SHELF 아카이브 뷰어
 
-> 세션 인수인계 문서. **2026-08-27 갱신 (28세션차).** **다음 세션은 이 문서부터 읽으세요.**
+> 세션 인수인계 문서. **2026-08-28 갱신 (29세션차).** **다음 세션은 이 문서부터 읽으세요.**
 >
 > 아래 §1은 **22세션차**, 그 다음은 **18세션차**다 — 19·20·21·23·24·25세션차는 이 문서를 갱신하지
 > 않았다. 그 세션들의 내용은 커밋과 `docs/decisions.md`(E-46…**E-51**)에만 있다.
 
-## 0. 28세션차 — **손상 ZIP 9건 전수 분류, 733쪽 회수, 폰트 벤더링 완결**
+## 0. 29세션차 — **한자는 본명조 TC, 일본어는 본고딕 JP (판정 E-55)**
+
+사용자 요청 한 줄. *"Noto Serif TC -> 한자, Noto Sans JP -> 일본어 기본폰트로 적용해줘요."*
+앞의 절반은 서브셋 교체로 끝나고, 뒤의 절반은 **CSS가 코드포인트로는 할 수 없는 일이다** —
+일본어 칸지와 한국어 한자는 같은 코드포인트다. 그래서 판정을 **이름 단위**로 옮겼다:
+`lib/textLang.ts`가 가나를 가진 이름에 `lang="ja"`를 달고, base.css의 `[lang='ja']`가 그
+요소의 스택을 `--font-ja`(본고딕 JP)로 돌린다. 전문은 `decisions.md` **E-55**.
+
+### 0.0 다음 세션이 알아야 할 것 세 가지
+
+**(1) 예산 여유가 618 KB다.** 바이너리가 30 351 544 → **32 936 120 B**, `SIZE_BUDGET`은
+33 554 432. 게이트는 통과하지만 다음 기능 하나가 깰 수 있다. 그리고 Makefile 주석의
+`25 833 656`은 **이번 변경 전에 이미 4.5 MB 밀려 있던 숫자**다 — 예산은
+`release_budget_test.go`가 지키지만 *측정치* 는 아무도 지키지 않는다.
+
+**(2) CSS 유닛 티어는 "어느 규칙이 이기는지"를 볼 수 없다.** 이번에 그걸로 한 번 틀렸다.
+`[lang='ja']`를 `@layer components`에 넣었더니 `font-heading` **유틸리티**를 가진 네 표면
+(`FallbackCover`·`ContinueCard`·`NextVolumeCard`·`ViewerTopBar`)에서 졌는데, `tokens.test.ts`
+(텍스트로 읽음)도 `nameLang.test.tsx`(`css: false`)도 죽지 않았다. 실서버에 vite를 물려
+`getComputedStyle`을 읽고 나서야 나왔다. 새 `styles/cascade.test.ts`가 **컴파일된 시트**를
+검사하니 앞으로는 유닛 티어에서 잡힌다.
+
+**(3) `scripts/mkfonts/subset.py`가 이제 실제로 돈다.** E-53이 썼을 때부터 이 트리에서 한 번도
+완주한 적이 없었다 — `@fontsource/archivo`가 커밋 `97e9782`에서 package.json에서 빠졌는데
+스크립트는 계속 그 경로를 봤고, 항상 exit 2였다. 의존성을 복구했고 `--check`가 처음으로 통과한다.
+서브셋 결과의 cmap을 되읽어 요청 글자가 실제로 들어갔는지 확인하는 `missing_glyphs()`도 붙였다.
+
+### 0.A 산출물
+
+| 무엇 | 어디 |
+|---|---|
+| 판정 | `docs/decisions.md` **E-55** |
+| 서체 | `web/src/assets/fonts/noto-serif-tc-{400,700}.woff2`, `noto-sans-jp-{400,700}.woff2` (KR 두 벌 삭제) |
+| 규칙 | `web/src/styles/fonts.css`, `tokens.css`(`--font-ja` 신설), `base.css` 맨 끝 **레이어 밖** |
+| 판정 로직 | `web/src/lib/textLang.ts` (+ 태깅 11개 렌더 지점) |
+| 새 검사 | `textLang.test.ts`(7) · `nameLang.test.tsx`(8) · `cascade.test.ts`(2) · `tokens.test.ts` E-55 케이스 |
+
+---
+
+## 0.B 28세션차 — **손상 ZIP 9건 전수 분류, 733쪽 회수, 폰트 벤더링 완결**
 
 세션은 "손상된 ZIP 9건 전수 분류"로 시작해 분류 → 코드 → 데이터 순으로 끝났다. 커밋 셋:
 
