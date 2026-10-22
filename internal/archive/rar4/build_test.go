@@ -11,12 +11,12 @@ import (
 // could drift, and the one that drifted would be the one this package's tests
 // were passing against.
 //
-// There is deliberately no packed-entry fixture checked in. Producing one means
-// running a RAR compressor, which no Go library does, and the only packed RAR
-// bytes available are pages of scanned manga that do not belong in a source
-// tree. The packed path is covered instead by
-// TestIntegration_realCollection_matchesUnpacker, which decodes all 229 packed
-// entries in the collection against a whole-archive oracle.
+// A packed entry cannot be produced here: that means running a RAR compressor,
+// which no Go library does. The one packed fixture is a real compressor's
+// output carried as bytes, testutil.RARPackedSample (libarchive's sample), and
+// packed_test.go reads it through the splice path. The collection's 229 packed
+// entries are still decoded against a whole-archive oracle by
+// TestIntegration_realCollection_matchesUnpacker, where the collection exists.
 type builder struct {
 	t    testing.TB
 	spec testutil.RAR4Spec
@@ -59,6 +59,13 @@ func (b *builder) file(o entryOpt) *builder {
 		HighPack: o.highPack,
 		HighUnp:  o.highUnp,
 	})
+	return b
+}
+
+// entry appends a ready-made file block, for fixtures testutil already builds
+// whole, such as testutil.RARPackedSampleEntry.
+func (b *builder) entry(e testutil.RAR4Entry) *builder {
+	b.spec.Entries = append(b.spec.Entries, e)
 	return b
 }
 

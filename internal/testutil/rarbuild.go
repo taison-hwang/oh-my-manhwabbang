@@ -2,6 +2,7 @@ package testutil
 
 import (
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"hash/crc32"
 	"testing"
@@ -12,10 +13,11 @@ import (
 // a solid flag, a multi-volume flag, raw CP949 name bytes, a block chain that
 // stops early — are things a real packer would never produce on request.
 //
-// It writes stored entries only. Every refusal internal/archive/rar4 makes is
-// decided from header bits and lengths, none of which depend on the packing
-// method, and no Go library compresses RAR either. Fixtures that need real
-// packed bytes use the collection, through the integration-tagged tests.
+// It packs nothing itself. Every refusal internal/archive/rar4 makes is decided
+// from header bits and lengths, none of which depend on the packing method, and
+// no Go library compresses RAR either. The one packed stream a fixture can use
+// is RARPackedSample, lifted from libarchive's test suite; anything larger
+// still comes from the collection, through the integration-tagged tests.
 
 // RAR 4.x block types and the fixed parts of the two headers this writer emits.
 const (
@@ -46,8 +48,74 @@ const (
 	RARFileUnicode     uint16 = 0x0200
 )
 
-// RARMethodStore is RAR's "no compression", the only method this writer emits.
+// RARMethodStore is RAR's "no compression", the default method.
 const RARMethodStore uint16 = 0x30
+
+// The packed sample: entry testdir\test.txt of libarchive's
+// test_read_format_rar_compress_normal.rar (libarchive commit 33140186cb7b,
+// libarchive/test/), method 0x33 "normal", not solid, header dictionary bits
+// 0x0020. Its 30 packed bytes are the whole stream; rardecode v2.3.0 unpacks
+// them to RARPackedSampleText and reports ErrBadFileChecksum when the recorded
+// CRC is wrong. They are used verbatim under libarchive's licence:
+//
+//	Copyright (c) 2003-2007 Tim Kientzle
+//	Copyright (c) 2011 Andres Mejia
+//	Copyright (c) 2011-2012 Michihiro NAKAJIMA
+//	All rights reserved.
+//
+//	Redistribution and use in source and binary forms, with or without
+//	modification, are permitted provided that the following conditions
+//	are met:
+//	1. Redistributions of source code must retain the above copyright
+//	   notice, this list of conditions and the following disclaimer.
+//	2. Redistributions in binary form must reproduce the above copyright
+//	   notice, this list of conditions and the following disclaimer in the
+//	   documentation and/or other materials provided with the distribution.
+//
+//	THIS SOFTWARE IS PROVIDED BY THE AUTHOR(S) ``AS IS'' AND ANY EXPRESS OR
+//	IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+//	OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+//	IN NO EVENT SHALL THE AUTHOR(S) BE LIABLE FOR ANY DIRECT, INDIRECT,
+//	INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+//	NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+//	DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+//	THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+//	(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+//	THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+//
+// testutil is test-only, so the bytes never reach the shipped binary.
+const (
+	RARPackedSampleText          = "test text document\r\n"
+	RARPackedSampleCRC    uint32 = 0xbec8a242
+	RARPackedSampleMethod uint16 = 0x33
+
+	rarPackedSampleDictFlags uint16 = 0x0020
+	rarPackedSampleHex              = "0800c8fe8cf7a17877b759a2b83107fc4b95ffc228a7ccf34adb883de6a0"
+)
+
+// RARPackedSample returns the 30 packed bytes, a fresh copy on every call so a
+// test that damages them cannot reach another test's fixture.
+func RARPackedSample() []byte {
+	b, err := hex.DecodeString(rarPackedSampleHex)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+// RARPackedSampleEntry is the sample as a file block: the packed bytes, the
+// unpacked size and CRC the original header records, and its method and
+// dictionary bits. A fixture that wants a checksum failure flips e.CRC.
+func RARPackedSampleEntry(name []byte) RAR4Entry {
+	return RAR4Entry{
+		Name:    name,
+		Data:    RARPackedSample(),
+		Method:  RARPackedSampleMethod,
+		Flags:   rarPackedSampleDictFlags,
+		UnpSize: int64(len(RARPackedSampleText)),
+		CRC:     RARPackedSampleCRC,
+	}
+}
 
 // RAR4Entry is one file block.
 //
@@ -70,6 +138,10 @@ type RAR4Entry struct {
 	// claims more bytes than the file holds is built.
 	UnpSize  int64
 	PackSize int64
+
+	// CRC overrides the recorded FILE_CRC; zero means crc32(Data). A packed
+	// entry needs it, since its CRC is of the unpacked bytes, not of Data.
+	CRC uint32
 
 	// HighPack and HighUnp are the upper 32 bits of the 64-bit sizes. Setting
 	// either sets RARFileLarge and adds the eight-byte field, which is the only
@@ -168,6 +240,10 @@ func rarFileBlock(e RAR4Entry) ([]byte, error) {
 	if pack == 0 {
 		pack = int64(len(data))
 	}
+	crc := e.CRC
+	if crc == 0 {
+		crc = crc32.ChecksumIEEE(data)
+	}
 	large := e.HighPack != 0 || e.HighUnp != 0
 
 	size := rarBlockHeaderLen + rarFileHeaderLen + len(e.Name)
@@ -189,7 +265,7 @@ func rarFileBlock(e RAR4Entry) ([]byte, error) {
 	binary.LittleEndian.PutUint32(body[0:4], uint32(pack))
 	binary.LittleEndian.PutUint32(body[4:8], uint32(unp))
 	body[8] = 3 // HOST_OS: Unix
-	binary.LittleEndian.PutUint32(body[9:13], crc32.ChecksumIEEE(data))
+	binary.LittleEndian.PutUint32(body[9:13], crc)
 	// FTIME: 2016-01-02 03:04:04, matching the ZIP writer's fixed timestamp.
 	binary.LittleEndian.PutUint32(body[13:17], (36<<25)|(1<<21)|(2<<16)|(3<<11)|(4<<5)|2)
 	body[17] = 29 // UNP_VER 2.9, what RAR 3.x/4.x writes

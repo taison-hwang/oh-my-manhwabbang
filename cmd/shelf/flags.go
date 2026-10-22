@@ -38,6 +38,11 @@ const usageText = `shelf — a web reader for ZIP, folder and PDF comic collecti
 usage:
   shelf [flags]                  start the server
   shelf hash-password [flags]    print a bcrypt hash for auth.password_hash
+  shelf verify [--root NAME]...  read every page in full and check it against
+                                 the container's length and CRC-32; read-only.
+                                 Exit 0 clean, 1 defects, 2 setup error or
+                                 unchecked root, 130 interrupted.
+                                 See shelf verify -h.
 
 flags:
   --config PATH      configuration file; fatal if it does not exist.

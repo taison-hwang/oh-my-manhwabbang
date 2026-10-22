@@ -6,6 +6,7 @@
 //	shelf --init-config               write a commented starter configuration
 //	shelf --rebuild-index             delete index.db and rebuild it from disk
 //	shelf hash-password               print a bcrypt hash for auth.password_hash
+//	shelf verify [--root NAME]...     read every page in full and check its CRC
 //	shelf --version                   print the build banner
 //
 // Everything this file does is argument handling, exit codes and signals. The
@@ -44,6 +45,11 @@ func main() {
 
 // run is main with the process boundary removed, so the tests can drive it.
 func run(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	// verify has flags of its own (--root), so it is dispatched before the
+	// server's flag set can reject them.
+	if len(argv) > 0 && argv[0] == "verify" {
+		return runVerify(argv[1:], stdout, stderr)
+	}
 	f, err := parseFlags(argv, stderr)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {

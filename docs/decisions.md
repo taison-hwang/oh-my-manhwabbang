@@ -3642,3 +3642,125 @@ package.json에서 제거됐다.** 스크립트는 항상 exit 2로 죽었고 `-
 - 값의 의미("넷이 0이면 조용하다")를 단언하는 서버 쪽 테스트는 이 판정이 새로 더하지 않았다. 지키는 것은 이름의
   일치와 서비스 필드와의 일대일 대응이다. 의미는 `idle()`의 정의에 기대고 있다.
 
+## E-58 — **`shelf verify`: 모든 쪽을 끝까지 읽어 컨테이너의 길이·CRC-32와 대조하는 오프라인 검사** (사용자 결정, 2026-10-18) — BINDING
+
+**출처.** HANDOFF §5.7.14 항목 `bv`. 28세션차가 우연히 드러낸 사실에서 시작한다. **인덱스의 `ok`는 페이로드를 본
+적이 없다.** 스캔은 중앙 디렉터리만 읽고(FR-IDX-002), 쪽 서빙은 해시를 재지 않는다(`EntryRef.CRC32`는
+들고 다닐 뿐 검사하지 않는다). 그래서 `status='ok'`인 책도 쪽이 깨져 있을 수 있고, 그 모수는 잰 적이 없다.
+이 검사를 만드는 것은 **사용자 결정**(30세션차 판정 20건)이다. 규범 문구는 `arch-backend.md` §6.4이고,
+코드는 `internal/verify`와 `cmd/shelf/verify.go`다.
+
+### 1. 결론
+
+`shelf verify [--config PATH] [--root NAME]...`는 켜진 루트(또는 지정한 루트)의 색인된 모든 책을 대상으로
+모든 쪽을 **끝까지** 읽는다. 그리고 컨테이너가 스스로 적어 둔 길이와 CRC-32(IEEE)에 대조한다. ZIP, RAR 4,
+HV3이 모두 이 값을 적는다. 서빙 경로는 바뀌지 않는다. 이 명령은 운영자가 오프라인에서 묻는 질문이다.
+
+- **출력**(stdout, 탭 구분): 결함마다 한 줄씩
+  `BROKEN⇥book_id⇥root/rel_path[!inner_path]⇥page_no|-⇥page_name|-⇥cause`를 쓴다. 다음으로 검사하지 못한
+  루트마다 `UNCHECKED⇥root_name⇥reason`을 쓰고, 마지막에
+  `SUMMARY⇥books=⇥pages=⇥defective_books=⇥defective_pages=⇥unverifiable_books=⇥unverifiable_pages=⇥roots_not_checked=`
+  한 줄을 쓴다. BROKEN 줄의 순서는 정의하지 않는다.
+- **종료 코드는 우선순위 순서로 정한다.** **130**은 중단(SIGINT/SIGTERM)이다. **2**는 설정·`index.db`·플래그
+  오류, 루트 선택 오류(설정에 없거나 꺼진 `--root`), 또는 검사하지 못한 루트가 있을 때다. 불완전한 실행이 결함보다 우선하며, 그때도 BROKEN 줄은 출력된다.
+  **1**은 결함이 하나 이상일 때, **0**은 깨끗할 때다.
+- **쪽마다** 읽기 오류(flate 손상, 로컬 헤더 불량, packed RAR 엔트리 EOF에서 rardecode의 `ErrBadFileChecksum`),
+  길이(`short read: N of M bytes`, 또는 size+1에서 끊는 long read), CRC(`crc mismatch: want %08x got %08x`)를
+  차례로 본다. 목록 읽기가 오류와 **함께** 돌아오면(zipidx salvage: EOCD 없음, 잘리거나 잘못된 중앙 디렉터리)
+  원인을 적은 **책 단위 결함**으로 치고, 회수된 쪽도 마저 검사한다.
+- **검증 불가(unverifiable)는 결함이 아니다.** `dir`과 `pdf`에는 무결성 데이터가 없다. 이 빌드가 설계상
+  못 읽는 책(미지원 형식·압축 방식, 암호)도 검증 불가로 센다. 쪽 하나만 못 여는 경우는 쪽 단위로 센다.
+  다만 열거나 목록을 읽는 것 자체가 실패하면 결함이다. 빈 책은 결함도 검증 불가도 아니다.
+- **책 목록은 `index.db`에서 쓰지 않고 읽는다.** `index.Open`은 쓰지 않는다. 그 함수는 데이터 디렉터리를
+  만들고, 마이그레이션을 돌리고, `user.db`를 ATTACH한다. 모드는 **디스크의 사이드카 상태로** 고른다.
+
+  | 디스크 상태 | 동작 |
+  |---|---|
+  | `-wal`에 내용 있음 + `-shm` 있음 | 서버 옆에서 `mode=ro` |
+  | `-wal`에 내용 있음 + `-shm` 없음 | 거부, exit 2(서버를 띄우거나, 띄웠다 내려서 체크포인트하라) |
+  | `-wal` 없음 또는 비어 있음 | `immutable=1`로 읽고 다시 검사. 내용 있는 `-wal`이 생겼거나 본 파일의 크기·mtime이 바뀌었으면 목록을 버리고 exit 2 |
+
+  목록을 메모리로 읽고 DB를 닫은 다음에야 컨테이너를 연다.
+- **쪽은 `pages` 행이 아니라 컨테이너에서** 읽는다. 서버와 같은 배선(`source.OpenRoots` → `openpool` →
+  `source.NewFactory`)을 쓰고, PDF 렌더러만 뺀다.
+- **동시성.** 책을 `scan.workers` 고루틴에 나눈다. 한 책의 줄은 한 락 아래에서 쓰므로 섞이지 않는다.
+  중단하면 새 책을 넣지 않고, 처리 중이던 책은 세지 않고 버린다.
+- **읽기 전용 보장.** `internal/verify`는 `scripts/check-readonly.sh`의 미디어 패키지 목록에 테스트 파일까지 들어
+  있다(FR-CFG-005).
+
+**메인 판단** 셋(정책)은 이렇다.
+
+1. 중단은 **130**으로 끝낸다(128+SIGINT, 셸 관례). 결함 있음(1)과 구별된다.
+2. **열 수 없는 루트가 있어도 나머지 루트는 끝까지 검사하고**, 그 루트는 UNCHECKED로 적은 뒤 **exit 2**로 끝낸다.
+   불완전한 실행을 0이나 1로 보고하지 않는다.
+3. 미지원·암호 책은 **검증 불가**로 센다. 결함이 아니다.
+
+### 2. 근거
+
+- 서빙에 해시를 넣지 않고 따로 검사하는 이유는 이렇다. 쪽 요청마다 전량 CRC를 재면 서빙 비용이 오른다.
+  그리고 질문 자체가 "내 라이브러리에 깨진 쪽이 몇 개인가"이므로 요청 단위가 아니라 일괄 단위로 묻는 것이 맞다.
+- 사이드카 표는 측정에서 나왔다. **modernc.org/sqlite v1.54는 사이드카 없는 WAL DB를 `mode=ro`로 열면
+  `-shm`과 `-wal`을 새로 만든다.** 그래서 `mode=ro`는 "쓰지 않는다"를 보장하지 않는다. 디스크 상태를 먼저 보고,
+  `-wal`이 없을 때만 `immutable=1`을 쓴다. `mode=ro`로 여는 데 실패해도 immutable로 다시 시도하지 않는다.
+  옆의 WAL이 진짜이기 때문이다.
+- **사실 하나는 문구를 바꿨다.** 서버가 도는 동안에는 `mode=ro` 읽기도 `-shm`의 읽기 표시 슬롯에 쓴다(mmap을 통해,
+  크기·mtime은 바뀌지 않는다). 이것은 SQLite의 락 테이블이지 데이터가 아니고, 서버 자신의 리더도 같은 일을 한다.
+  그래서 README는 "changes neither the index nor your files"라고 쓴다. "아무것도 쓰지 않는다"가 아니다.
+- **빈 디렉터리 볼륨(bv-gap).** 마운트되지 않은 볼륨은 빈 마운트 지점을 남기고, 그 디렉터리는 여느 루트처럼
+  열린다. 색인된 책을 하나도 찾지 못하는 루트를 BROKEN으로 보고하면 마운트 하나 빠진 것을 라이브러리 전체의
+  손상이라고 말하게 된다. 그래서 그런 루트는 **열 수 없는 루트와 똑같이 UNCHECKED + exit 2**로 처리한다.
+  디렉터리가 비었는지가 아니라 색인된 책이 하나라도 있는지를 묻기 때문에, 다른 볼륨이 그 자리에 마운트된 경우도
+  덮는다. 책이 하나라도 남아 있는 루트는 검사하고, 없어진 책은 그대로 BROKEN이다.
+  이 종료 코드 정책은 **메인 판단**(배분 시 지정, ea 구현)이다.
+  구현은 `internal/verify/verify.go`의 `anyBookExists`, 테스트는 `TestRun_verify_emptyMountPointIsUncheckedAndExitsTwo`
+  · `TestRun_verify_unsearchableBookIsBrokenNotAnUnmountedRoot` 등이다. codex 1회(차단 0, 비차단 3 전부 반영) 뒤
+  `make lint` 0(check-readonly clean, contractcheck 44 일치), `make test` 0(두 태그 `-race`, 실패 0)이었다(ea 보고).
+
+### 3. 대안과 기각 이유
+
+| 대안 | 기각 이유 |
+|---|---|
+| 서빙할 때 CRC 검사 | 요청마다 비용이 든다. 읽은 쪽만 알 수 있고 모수를 주지 않는다 |
+| 스캔이 페이로드까지 읽기 | FR-IDX-002(스캔은 중앙 디렉터리만 읽는다)를 뒤집는다. 스캔마다 라이브러리 전량을 읽게 된다 |
+| `index.Open`으로 목록 읽기 | 디렉터리 생성, 마이그레이션, ATTACH. 읽기 전용 명령이 쓰게 된다 |
+| 그냥 `mode=ro` | 위 측정대로 사이드카를 만든다 |
+| `pages` 행으로 쪽 목록 | 인덱스가 아니라 컨테이너가 진실이다. 회수된 쪽(salvage)과 인덱스 이후의 변화를 놓친다 |
+| 열 수 없는 루트에서 즉시 exit 2 | 나머지 루트의 결함을 버린다(메인 판단 2) |
+| 빈 마운트 지점을 결함으로 | 마운트 누락을 대량 손상으로 보고한다 |
+
+### 4. 검증
+
+- `internal/verify`: `check_test.go`(무결, CRC 불일치, short/long read, RAR 체크섬 오류, 읽기 오류),
+  `index_test.go`(사이드카 표의 각 칸, immutable 읽는 중 `-wal` 출현과 본 파일 변화 시 폐기, 인덱스 없음,
+  `mode=ro` 직전 서버 종료 시 경고), `verify_test.go`(ZIP·HV3·RAR stored 결함, EOCD 없음에서 회수 쪽 검사,
+  dir·PDF 검증 불가, 중첩 권 경로, 워커 수와 무관한 결과, 루트 필터, 비활성 루트, 취소).
+- `cmd/shelf/verify_test.go`: 종료 코드 0/1/2/130(인덱스 읽는 중 중단 포함), 열 수 없는 루트는 나머지를
+  보고한 뒤 2, 빈 마운트 지점은 UNCHECKED와 2, 검색할 수 없는 책은 마운트 누락이 아니라 BROKEN.
+- 리뷰는 codex(gpt-6-astra, reasoning high) 1라운드였고 내부 폴백은 없었다. 샌드박스가 파일을 못 읽어 변경분을
+  지시문에 넣어 돌렸다. 차단 0, 지적 F1~F7 일곱 개 가운데 **여섯을 수정**했다(F1 사이드카 재확인 경고는 부분 수용,
+  F2 회수된 쪽 CRC, F3 취소 보존, F4 쪽 단위 검증 불가, F6 동시성·취소 테스트, F7 data_dir 스냅숏). **F5는 반박했다.**
+  빈 책(`source.ErrNoPages`)을 결함도 검증 불가도 아닌 것으로 두는 것은 `books.status='empty'`와 같은 의도된 정책이다.
+  수정은 구현자가 아닌 별도 에이전트가 했다(ea 보고).
+- 바이너리 크기 증가는 **+8 192 B**(ea 트리 실측, **합친 트리 최종 측정 전**)이다.
+
+### 5. 남은 공백
+
+- ~~**packed RAR 픽스처가 없다.**~~ **닫힘(2026-10-20).** 사용자가 libarchive의 30바이트 packed 샘플(BSD-2,
+  풀면 `"test text document\r\n"`, CRC-32 `bec8a242`, METHOD 0x33)을 승인했고, `testutil.RARPackedSample()` ·
+  `RARPackedSampleEntry`로 들어왔다(ea). 이제 실제 리더가 그 오류를 그 자리에서 낸다는 것을 세 계층이 각각 검사한다.
+  `internal/verify`의 `TestRun_rarPackedEntry_isVerifiedAndClean` · `…WithWrongCRC_isRardecodesChecksumDefect` ·
+  `…WithDamagedStream_isAPageDefect`(ea), `internal/archive/rar4/packed_test.go`(정상 디코드·forward-only,
+  CRC 변조 시 본문을 끝까지 준 뒤 `ErrBadFileChecksum`), `internal/source/rarsource_packed_test.go`(직접·중첩 RAR
+  서빙이 `ReadSeeker`가 아님 = Range 없음, CRC 변조 시 읽기 오류)다(20). 주입 테스트
+  `TestCheckStream_rarChecksumErrorAtEOFIsADefect`는 그대로 남는다. 남은 한계는 샘플이 하나뿐이라 압축 스트림
+  한 모양만 덮는다는 점이다. 그 밖의 모양은 실 컬렉션이 있을 때만 도는 `TestIntegration_realCollection_matchesUnpacker`
+  (packed 229개)에 기댄다.
+- **`mode=ro` 분기의 알려진 틈.** 사이드카 검사와 열기 사이에 서버가 내려가면, 열기가 새 `-shm`과 빈 `-wal`을
+  만든다. 쓰지 않고는 그 창을 닫을 수 없으므로 감지만 한다. 읽은 뒤 사이드카를 다시 보고 `Loaded.Warning`으로
+  알린다. 지우지는 않는다(그때쯤 시작 중인 서버의 것일 수 있다). 파일 동일성 비교라서, 파일시스템이 같은 inode
+  번호를 재사용하고 `-wal`이 비어 있지 않은 경우는 놓칠 수 있다.
+- **루트의 책을 전부 지운 경우와 마운트 누락은 구별되지 않는다.** 둘 다 UNCHECKED + exit 2다. 가르는 것은
+  재스캔의 일이다.
+- 실 라이브러리 전량 실행은 이 판정의 검증에 들어 있지 않다. `bv`가 원래 물은 모수는 이 도구를 실 라이브러리에
+  돌려야 나온다.
+

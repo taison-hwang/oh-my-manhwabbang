@@ -200,6 +200,7 @@ zip-viewer/
 │   │   └── golden_test.go          JSON golden files the frontend can diff against
 │   ├── auth/                       bcrypt verify, HMAC session cookie, login rate limit
 │   ├── buildinfo/                  version, commit, date (ldflags)
+│   ├── verify/                     `shelf verify`: offline CRC check of every page, read-only (§6.4, E-58)
 │   └── testutil/                   synthetic fixture builders (§10.3)
 │
 └── web/                            *** both the Vite project AND a Go package ***
@@ -1556,6 +1557,32 @@ Measured contributions: base process + sqlite ≈ 33 MiB RSS; pdfium pool +43 Mi
 5. Start the HTTP server. **The library is served immediately from the existing index** — the whole point of NFR-OPS-006.
 6. If `scan.on_start`, kick off an incremental scan in the background. `GET /api/scan/status` reports it; the UI shows the indicator from prd UI-001.
 7. `SIGINT`/`SIGTERM` → cancel the scan context, `Server.Shutdown` with `shutdown_grace`, checkpoint both WALs (`PRAGMA wal_checkpoint(TRUNCATE)`), close pools.
+
+### 6.4 Offline integrity check — `shelf verify` (ruling E-58)
+
+`shelf verify [--config PATH] [--root NAME]...` reads every page of every indexed book of the enabled roots (or only the named ones) **in full** and holds the bytes against the container's own integrity data: the entry's recorded uncompressed length and CRC-32 (IEEE — ZIP, RAR 4 and HV3 all record it). It exists because nothing else does: the scan reads central directories only (FR-IDX-002), so `status='ok'` says nothing about payloads, and page serving never hashes (`EntryRef.CRC32` is carried, not checked). Serving stays that way; verify is an operator's offline question (`internal/verify`). It is a separate command, not a scan option, and it is safe to run beside the server.
+
+* **Book list from `index.db`, without changing it.** `index.Open` is not used (it creates the data directory, migrates and ATTACHes `user.db`). The open mode is chosen from the sidecars on disk, because a `mode=ro` open of a WAL database with no sidecars *creates* `-shm` and an empty `-wal` (measured, modernc.org/sqlite v1.54):
+  * `-wal` with content and `-shm` present → `mode=ro` beside the running server. A read-only WAL reader still records its read mark in the server's `-shm` (content only, size and mtime unchanged) — that is SQLite's reader protocol and cannot be avoided; neither the database nor the WAL is touched.
+  * `-wal` with content and no `-shm` → refuse, exit 2: start the server, or start and stop it once so it checkpoints.
+  * `-wal` absent or empty → `immutable=1`, then re-check that no `-wal` with content appeared and the main file's size and mtime did not move; otherwise discard the list, exit 2.
+
+  Known window: a server shutting down between the sidecar check and the `mode=ro` open can delete its sidecars, which the open then recreates empty. verify detects it after the read (`os.SameFile`, a now-empty `-wal`) and warns; it never deletes anything. The list is read into memory and the database closed before any container is opened.
+* **Roots.** A selected root that cannot be opened, or where **not one** of its indexed books exists (the shape of an unmounted volume — often an empty mount point — or of another volume mounted in its place), is not checked: it is named on an `UNCHECKED` line with the reason, the other roots are verified to the end, and the run exits 2. Existence is a `Stat` of each distinct container path; only "does not exist" counts as absent, so a book whose directory cannot be searched is checked and reported, not taken as a missing volume. The trade-off is explicit: deleting every indexed book of a root looks the same and is reported the same way — never as a clean 0; telling the two apart is a rescan's job. A root that still holds one of its books is checked, and its missing books are `BROKEN`.
+* **Pages from the containers**, through the server's own wiring (`source.OpenRoots` → `openpool` → `source.NewFactory`, no PDF renderer), not from `pages` rows. A listing that comes back *with* an error (zipidx salvage: no EOCD, truncated or malformed central directory) is a **book-level defect** naming the cause, and the recovered pages are still checked. A partial listing that ends in an error verify cannot judge (an encrypted or solid RAR entry breaking the chain) marks the book unverifiable, and the pages before it are still checked.
+* **Per page:** archive kinds (zip, rar, hv3, the nested kinds, nesteddir) are streamed and checked for a read error (flate corruption, bad local header, rardecode's `ErrBadFileChecksum` at EOF of a packed RAR entry), then length (`short read: N of M bytes`, or a long read, bounded at size+1), then CRC (`crc mismatch: want %08x got %08x`). A page this build cannot read by design (unsupported method, encrypted) is an **unverifiable page**, not a defect. `dir` and `pdf` books have no integrity data and are **unverifiable books**, as are books in a format or method this build cannot read; failing to open or list one is still a defect. An empty book is neither.
+* **Concurrency:** books are spread over `scan.workers` goroutines (resolved by `config.Load`); each book's lines are written under one lock, so lines never interleave. SIGINT/SIGTERM stops feeding, abandons in-flight books uncounted, prints the summary of what was read, and exits 130.
+* **Output.** stdout, one line per defect, then one per unchecked root, then the summary (fields tab-separated; line order among `BROKEN` lines is not defined):
+
+  ```
+  BROKEN     book_id  root/rel_path[!inner_path]  page_no|-  page_name|-  cause
+  UNCHECKED  root_name  reason
+  SUMMARY    books=  pages=  defective_books=  defective_pages=  unverifiable_books=  unverifiable_pages=  roots_not_checked=
+  ```
+
+  Progress and warnings go to stderr.
+* **Exit codes**, in priority order: **130** interrupted · **2** configuration, root selection, `index.db` or flag error, or an `UNCHECKED` root (an incomplete run outranks its defects, whose lines are printed all the same) · **1** at least one defect · **0** every selected root checked, no defects.
+* **Read-only guarantee:** `internal/verify` is in check-readonly's media-package list, test files included (FR-CFG-005); its tests snapshot every file in the data directory (name, size, mtime, sha256) before and after.
 
 ---
 

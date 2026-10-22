@@ -44,7 +44,7 @@ note() { printf '  %s\n' "$*"; }
 # 1. No write primitive in a media-reading package (FR-CFG-005, D-50)
 # ---------------------------------------------------------------------------
 media_pkgs=()
-for d in internal/scanner internal/source internal/archive internal/openpool; do
+for d in internal/scanner internal/source internal/archive internal/openpool internal/verify; do
   [ -d "$d" ] && media_pkgs+=("$d")
 done
 

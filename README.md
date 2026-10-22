@@ -260,7 +260,14 @@ roots:
 Useful flags: `--port`, `--log-level debug`, `--rebuild-index` (throws the
 derived index away and rescans; never touches your reading progress),
 `--version`. `shelf hash-password` prints a bcrypt hash for the optional
-`auth:` block.
+`auth:` block. `shelf verify [--root NAME]` reads every page of every indexed
+book in full and checks it against the archive's own length and CRC-32,
+printing one `BROKEN` line per defect. It changes neither the index nor your
+files and can run beside the server. Exit codes: 0 clean, 1 at least one
+defect, 2 a setup error or a root it did not check — one it could not open, or
+one where none of its indexed books exists, which is what an unmounted volume
+looks like (the other roots are still checked, and the summary names the ones
+that were not), 130 interrupted.
 
 There is **no password by default**. That matches the single-user LAN tool this
 is; if the server is reachable from anywhere else, uncomment `auth:` in the
