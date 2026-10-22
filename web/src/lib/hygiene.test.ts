@@ -42,6 +42,35 @@ function captures(text: string, re: RegExp): string[] {
   return out
 }
 
+/** Colour literals in functional notation, comments read past. */
+function colourFunctions(text: string): string[] {
+  return (
+    text
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+      .match(/\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\([^)]*\)/gi) ?? []
+  )
+}
+
+describe('the scans below read a tree, not an empty list', () => {
+  it('walks src/ and finds the files every rule here polices', () => {
+    // Every assertion in this file is "the offender list is empty", which is
+    // also what a scan over no files returns. A filter that stopped matching —
+    // an extension, a path separator — would turn the whole file green while it
+    // checked nothing, so the tree is asserted first: a floor, and one known
+    // file of each kind the rules read.
+    expect(SOURCES.length, 'the source walk found almost nothing').toBeGreaterThanOrEqual(80)
+    expect(SOURCES.map(rel)).toEqual(
+      expect.arrayContaining([
+        join('styles', 'base.css'),
+        join('styles', 'tokens.css'),
+        join('api', 'client.ts'),
+        join('components', 'ds', 'FormatBadge.tsx'),
+      ]),
+    )
+  })
+})
+
 /**
  * The radius scale, read out of tokens.css rather than restated here.
  *
@@ -93,12 +122,22 @@ describe('the radius scale is closed (D-40 as amended by E-32)', () => {
       allowed.add(`var(${name})`)
     }
     const offenders: string[] = []
+    let scanned = 0
     for (const path of SOURCES) {
-      for (const m of readFileSync(path, 'utf8').matchAll(/border-radius:\s*([^;}\n]+)/g)) {
+      const text = readFileSync(path, 'utf8')
+      for (const m of text.matchAll(/border-radius\s*:\s*([^;}\n]+)/g)) {
+        scanned += 1
         const value = (m[1] ?? '').trim()
         if (!allowed.has(value)) offenders.push(`${rel(path)}: ${value}`)
       }
+      // A corner this scan cannot read — a longhand, or a style object's
+      // camelCase — is reported rather than skipped.
+      for (const m of text.matchAll(/border-[a-z-]+-radius\s*:|borderRadius\s*:/g)) {
+        offenders.push(`${rel(path)}: unreadable ${m[0]}`)
+      }
     }
+    // The positive control: an empty scan and a clean tree look the same here.
+    expect(scanned, 'the border-radius scan found nothing to read').toBeGreaterThanOrEqual(14)
     expect(offenders).toEqual([])
   })
 })
@@ -106,23 +145,40 @@ describe('the radius scale is closed (D-40 as amended by E-32)', () => {
 describe('colour lives in the token layer (ui-spec §1.2)', () => {
   const HEX = /#[0-9a-fA-F]{3,8}\b/g
 
+  it('reads the hex the token layer is built of', () => {
+    // The positive control for both scans below: a pattern that reads nothing
+    // would pass them on an empty hand. The three ramps alone are 27 literals.
+    const hits = readFileSync(resolve(ROOT, 'styles/tokens.css'), 'utf8').match(HEX) ?? []
+    expect(hits.length, 'the hex pattern reads nothing in tokens.css').toBeGreaterThanOrEqual(27)
+  })
+
   it('has no hex literal in any component or feature', () => {
     const offenders: string[] = []
+    let scanned = 0
     for (const path of SOURCES) {
       if (!/[/\\](components|features)[/\\]/.test(path)) continue
-      const hits = readFileSync(path, 'utf8').match(HEX)
-      if (hits !== null) offenders.push(`${rel(path)}: ${hits.join(', ')}`)
+      scanned += 1
+      const text = readFileSync(path, 'utf8')
+      const hits = [...(text.match(HEX) ?? []), ...colourFunctions(text)]
+      if (hits.length > 0) offenders.push(`${rel(path)}: ${hits.join(', ')}`)
     }
+    expect(scanned, 'the path filter let no component through').toBeGreaterThanOrEqual(60)
     expect(offenders).toEqual([])
   })
 
   it('confines every hex in the stylesheet layer to tokens.css', () => {
     const offenders: string[] = []
+    const scanned: string[] = []
     for (const path of SOURCES) {
       if (!path.endsWith('.css') || path.endsWith('tokens.css')) continue
-      const hits = readFileSync(path, 'utf8').match(HEX)
-      if (hits !== null) offenders.push(`${rel(path)}: ${hits.join(', ')}`)
+      scanned.push(rel(path))
+      const text = readFileSync(path, 'utf8')
+      const hits = [...(text.match(HEX) ?? []), ...colourFunctions(text)]
+      if (hits.length > 0) offenders.push(`${rel(path)}: ${hits.join(', ')}`)
     }
+    expect(scanned).toEqual(
+      expect.arrayContaining([join('styles', 'base.css'), join('styles', 'fonts.css')]),
+    )
     expect(offenders).toEqual([])
   })
 })
@@ -136,10 +192,13 @@ describe('module conventions (impl-plan §5.2)', () => {
   })
 
   it('never calls fetch outside src/api (D-44)', () => {
-    const offenders = SOURCES.filter((p) => {
-      if (/[/\\]api[/\\]/.test(p) || !/\.tsx?$/.test(p)) return false
-      return /\bfetch\s*\(/.test(readFileSync(p, 'utf8'))
-    }).map(rel)
+    const FETCH = /\bfetch\s*\(/
+    const outside = SOURCES.filter((p) => !/[/\\]api[/\\]/.test(p) && /\.tsx?$/.test(p))
+    // The positive control: the pattern has to find the call the client does
+    // make, and the filter has to let the rest of the tree through.
+    expect(FETCH.test(readFileSync(join(ROOT, 'api', 'client.ts'), 'utf8'))).toBe(true)
+    expect(outside.length, 'the filter let almost nothing through').toBeGreaterThanOrEqual(80)
+    const offenders = outside.filter((p) => FETCH.test(readFileSync(p, 'utf8'))).map(rel)
     expect(offenders).toEqual([])
   })
 
@@ -188,7 +247,13 @@ describe('module conventions (impl-plan §5.2)', () => {
 
     // And each declared face must have its file on disk: a stack can lead with
     // a vendored name and still fall through if the woff2 went missing.
-    const missing = captures(faces, /url\('\.\.\/([^']+)'\)/g).filter((p) => {
+    // Every `url(` in the sheet has to be one this pattern reads, or a face
+    // written as `url("…")` is a file nobody checks — and an empty capture
+    // would leave `missing` empty for the wrong reason.
+    const urls = captures(faces, /url\('\.\.\/([^']+)'\)/g)
+    expect(urls.length, 'a font url this check cannot read').toBe((faces.match(/url\(/g) ?? []).length)
+    expect(urls.length).toBeGreaterThanOrEqual(declared.size)
+    const missing = urls.filter((p) => {
       try {
         return statSync(join(ROOT, p)).size === 0
       } catch {

@@ -235,7 +235,6 @@ ground can pass and then fail on the ground the reader actually sees.
 | `--rule` | `var(--color-divider)` | — | 1px hairlines |
 | `--rule-strong` | `#CFC5B0` (neutral-400) | — | The 2px structural rules (§0.2) |
 | `--control-border` | `#A79B84` (neutral-500) | 2.14 / 2.37 | The soft divider is 1.16 on the ground; a control boundary drawn in it is not a boundary |
-| `--control-border-hover` | `#857A66` (neutral-600) | 3.31 / 3.65 | |
 | `--fill-subtle` | `#EFE9DC` (neutral-200) | — | |
 | `--fill-track` | `#E2DACA` (neutral-300) | — | Progress troughs |
 | `--fill-track-2` | `#CFC5B0` (neutral-400) | — | Troughs sitting over imagery |
@@ -454,7 +453,7 @@ no rebuild. What the config actually contains:
   triples. That is intentional and matches the DS: every tint the design needs is already a named semantic
   token. Add one to `tokens.css` rather than inventing `/40` at the call site.
 - **Not every token needs a utility.** Roughly twenty are painted only from `base.css` —
-  `--control-border-hover`, the three `--scrim-cover-*` stops, `--ghost-*`, `--selection-bg`,
+  ~~`--control-border-hover`~~ (deleted, item an 2026-10-18: no consumer), the three `--scrim-cover-*` stops, `--ghost-*`, `--selection-bg`,
   `--scrollbar-thumb*`, the paper set, `--shadow-sidebar`, `--disabled-opacity`, the two fade durations.
   A token absent from this table is not a defect; a *utility* that resolves to a literal is.
 
@@ -492,7 +491,6 @@ The `[data-theme='dark']` block redeclares **46** tokens — these and only thes
 | `--rule` | `#3E5B57` | | |
 | `--rule-strong` | `#4A6B66` | | |
 | `--control-border` | `#5A7C77` | | The viewer's button/seg borders |
-| `--control-border-hover` | `#79A09A` | | |
 | `--fill-subtle` | `#2F4A46` | | |
 | `--fill-track` | `#3E5B57` | | |
 | `--fill-track-2` | `#5A7C77` | | |

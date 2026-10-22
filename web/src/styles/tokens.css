@@ -113,8 +113,6 @@
                                 boundary fainter than the one it replaces. Held
                                 at the outgoing number instead, between
                                 neutral-500 and neutral-600. */
-  --control-border-hover: #807362; /* 3.66 on the surface — the same step up the
-                                      outgoing skin had (3.65). */
   --fill-subtle: #E4DBCB; /* neutral-200 */
   --fill-track: #D5C4A4; /* neutral-300 — progress troughs */
   --fill-track-2: #C4B497; /* neutral-400 — troughs over imagery */
@@ -429,7 +427,6 @@
   --rule: #4A4139;
   --rule-strong: #584D45;
   --control-border: #6E6355; /* neutral-600 — the viewer's button/seg borders */
-  --control-border-hover: #B7A78B; /* neutral-500 */
   --fill-subtle: #302A24;
   --fill-track: #4A4139;
   --fill-track-2: #6E6355;
@@ -458,7 +455,10 @@
   --scrollbar-thumb: rgb(222 213 196 / 0.4);
   --scrollbar-thumb-hover: rgb(222 213 196 / 0.55);
   --ghost-hover: rgb(211 167 157 / 0.12);
-  --ghost-press: rgb(211 167 157 / 0.2);
+  /* 0.15, not 0.2: the press keeps the hover's accent ink on this wash, and
+     0.15 is the deepest the dark surface allows it — 4.55 under the grain,
+     where 0.2 was 4.13 (HANDOFF `al`). */
+  --ghost-press: rgb(211 167 157 / 0.15);
   --selection-bg: rgb(211 167 157 / 0.32);
 
   /* Elevation on a dark ground = hairline edge + ambient darkness. A flat ink

@@ -1,5 +1,5 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Component, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 
 import type { ID, SeriesSummary } from '../../api/types'
 import { seriesCardDomId } from '../../store/ui'
@@ -172,12 +172,11 @@ export function SeriesGrid({
    *  0. **A note on this dependency list, because it has now been wrong three
    *     times.** `getTotalSize()` was here and was removed — its stated reason,
    *     that a changing total picks out the re-measured commit, is false.
-   *     `columns` is here and **cannot** trigger a run that `rowHeight` would
-   *     miss: `columnWidth = (W − gap(c−1))/c` is equal at two column counts
-   *     only when `(c₂ − c₁)(W + gap) = 0`, i.e. only when `c₁ = c₂`, so a
-   *     column change always moves `rowHeight` too. It stays because the effect
-   *     *reads* it and the exhaustive-deps rule is right to insist, **not**
-   *     because it is a second trigger. The list's `anchorGeneration` was
+   *     `columns` is here **and is a trigger of its own** — this note used to
+   *     prove otherwise, and the proof held `W` fixed, which a resize does not.
+   *     At `desktop` a 320px box is 2 columns of 152px and a 992px box is 6
+   *     columns of 152px: the same `rowHeight`, a different series→row mapping,
+   *     and only `columns` to say the anchor must move. The list's `anchorGeneration` was
    *     described as symmetric and turned out to be load-bearing. The pattern
    *     worth carrying forward: a dependency list is a claim about *when* an
    *     effect runs, and that claim needs the same evidence as any other — the
@@ -244,12 +243,12 @@ export function SeriesGrid({
    *     the scroller is within a pixel of the offset effect 2 last wrote, then
    *     `scrollTop` carries no reader intent and the remembered series stands.
    *     Any other position is the reader's and re-derives it. That needs no
-   *     scroll listener and no suppression flag, and it degrades correctly — a
+   *     suppression flag, and it degrades correctly — a
    *     write the browser clamped does not match, so the next run re-derives
    *     from where the scroller actually is.
    *
-   *     **The clamp that used to eat the reader's place is closed, and a smaller
-   *     one is not.** The old one was pathological: the intermediate layout was
+   *     **The clamp.** There were two, and both are closed. The old one was
+   *     pathological: the intermediate layout was
    *     much shorter than the settled one — 871 → 354 rendered 4 columns, a
    *     1 033px track against the 1 770px it settles at — and the browser clamped
    *     `scrollTop` to a maximum belonging to a layout that was never shown,
@@ -259,23 +258,32 @@ export function SeriesGrid({
    *     and the reader's position is not. `useGridBox` removes the layout, so it
    *     removes the clamp.
    *
-   *     What survives is that **any** resize which genuinely shortens the track
-   *     still clamps before JavaScript runs — widening from a narrow tier to a
-   *     wide one takes the same items from many rows to few, and a reader parked
-   *     below the new maximum is moved by the browser, not by us. Effect 1 reads
-   *     `scrollTop` after React's mutation phase, so it can only ever see the
-   *     post-clamp value and will faithfully anchor to it. This is smaller than
-   *     what it replaces — the target is now a layout the reader is actually
-   *     being taken to, so the residual is "this layout cannot hold you that
-   *     deep" rather than "we clamped you to a fiction" — but it is not nothing,
-   *     and it is **not measured**: the numbers above were taken against the
-   *     intermediate commit and do not transfer.
+   *     The second is any resize which genuinely shortens the track: widening
+   *     from a narrow tier to a wide one takes the same items from many rows to
+   *     few, the commit writes the shorter track into the DOM, and the first
+   *     `scrollTop` read after it forces the layout that clamps the reader to the
+   *     new maximum. A live read at the top of effect 1 *is* that read, so it
+   *     could only ever see the post-clamp value and faithfully anchored to it.
+   *     Measured in Chrome before the fix (`bj`), 240 series at 600 → 1440, 3 → 6
+   *     columns, new maximum 13 050: parked at 20 % the reader kept their row;
+   *     at 50 % they were read as 13 050 and lost 3 series; at 80 % and 95 %
+   *     both landed on series 114 — the clamp target — **72 and 108 series**
+   *     short of the 186 and 222 they were on, whose rows the new layout holds.
    *
-   *     Closing it means anchoring from a `scrollTop` captured *before* the
-   *     commit — a passive `scroll` listener storing the reader's last position —
-   *     rather than from the live read at the top of this effect. That is a
-   *     separate change with its own test, deliberately not folded in here so
-   *     that the two are attributable.
+   *     So effect 1 anchors from the position `ScrollSnapshot` read in the
+   *     **before-mutation** phase of the same commit — React's own hook for
+   *     exactly this, `getSnapshotBeforeUpdate`, which runs for the whole tree
+   *     before any DOM is touched. The track there is still the one this commit
+   *     is about to shorten, so this commit's clamp has not happened yet, and
+   *     the value is in the coordinates of the layout that was on screen, which
+   *     is the only layout `previous` describes.
+   *
+   *     A passive `scroll` listener was the first cut and is the wrong shape:
+   *     the event for a position may not have been delivered yet, so anything that moved
+   *     the scroller and had not been announced yet — the reveal's
+   *     `scrollToIndex`, a search that clamped a shorter list, our own write on
+   *     a second re-lay-out in the same frame — was anchored from where the
+   *     reader *had* been. Reading at the commit asks the scroller itself.
    *
    *     **That expression re-implements `virtual-core`'s layout rule, so it
    *     inherits that rule's premises**, and they are premises about the options
@@ -345,15 +353,37 @@ export function SeriesGrid({
   const [anchorGeneration, setAnchorGeneration] = useState(0)
   /** The pitch and column count the layout on screen was built from. */
   const laidOutRef = useRef({ pitch: rowHeight + metrics.gap, columns })
-  /** The series the reader is being kept on, and the offset we last put it at. */
+  /**
+   * The series the reader is being kept on, and the offset we last put it at.
+   *
+   * **Not reset when `items` changes, and that was measured rather than
+   * assumed** (HANDOFF `w`). A search, sort or scope swaps `items` in place —
+   * `useLibrary` holds the previous snapshot, so the grid stays mounted and
+   * `scrollTop` survives — and the remembered index then names a different
+   * series. It is only ever *used* while `ours` holds, though, and `ours` means
+   * the scroller is still at `floor(index / columns) × pitch` of the layout on
+   * screen: the index is a slot in the reader's top row, whatever series now
+   * fills it. 24 series at 773 → 702 → (search) → 773 kept `나 시리즈 13` of
+   * that top row on top; re-deriving would have kept its neighbour. A page
+   * append keeps the same series in the slot. A swap short enough to clamp
+   * `scrollTop` breaks `ours`, and the next run re-derives.
+   */
   const anchorSeriesRef = useRef<number | null>(null)
   const lastWrittenRef = useRef<number | null>(null)
+  /** `ScrollSnapshot`'s read for the commit being laid out; effect 1 consumes it. */
+  const topBeforeCommitRef = useRef<number | null>(null)
 
   useLayoutEffect(() => {
     const previous = laidOutRef.current
     laidOutRef.current = { pitch: rowHeight + metrics.gap, columns }
 
-    const top = scrollRef.current?.scrollTop ?? 0
+    // Not a live `scrollTop` read: by the time this runs, a commit that made the
+    // track shorter has already been laid out, and the read itself is what
+    // clamps the reader to the new maximum — see "The clamp" above. The live
+    // read is left for the mount, which has no previous layout to disagree with.
+    const snapshot = topBeforeCommitRef.current
+    topBeforeCommitRef.current = null
+    const top = snapshot ?? scrollRef.current?.scrollTop ?? 0
     // Is the scroller where *we* last put it, rather than where the reader put
     // it? Then `top` carries no new information and the remembered series is
     // the better answer — see the comment above.
@@ -451,6 +481,11 @@ export function SeriesGrid({
       style={{ scrollbarGutter: 'stable' }}
       data-testid="library-scroller"
     >
+      <ScrollSnapshot
+        scroller={scrollRef}
+        layout={`${columns.toString()}:${rowHeight.toString()}:${metrics.gap.toString()}`}
+        into={topBeforeCommitRef}
+      />
       <div className="p-4">
         <div
           ref={gridRef}
@@ -493,4 +528,41 @@ export function SeriesGrid({
       </div>
     </div>
   )
+}
+
+interface ScrollSnapshotProps {
+  scroller: RefObject<HTMLDivElement | null>
+  /** Changes exactly when effect 1's dependencies do. */
+  layout: string
+  into: { current: number | null }
+}
+
+/**
+ * Reads the scroller's position before React mutates the DOM, on the commits
+ * that re-lay the grid out (`bj`, "The clamp" in `SeriesGrid`).
+ *
+ * A class because `getSnapshotBeforeUpdate` has no hook equivalent, and the
+ * before-mutation phase is the one moment a commit that shortens the track has
+ * not yet shortened it. `componentDidUpdate` runs in the layout phase ahead of
+ * the parent's layout effects, so the value is in place when effect 1 reads it.
+ * Commits that leave the layout alone — every scroll re-renders the grid — read
+ * nothing, so this costs no forced layout while the reader scrolls.
+ */
+class ScrollSnapshot extends Component<ScrollSnapshotProps> {
+  override getSnapshotBeforeUpdate(previous: ScrollSnapshotProps): number | null {
+    if (previous.layout === this.props.layout) return null
+    return this.props.scroller.current?.scrollTop ?? null
+  }
+
+  override componentDidUpdate(
+    _previous: ScrollSnapshotProps,
+    _state: unknown,
+    snapshot: number | null,
+  ): void {
+    if (snapshot !== null) this.props.into.current = snapshot
+  }
+
+  override render(): null {
+    return null
+  }
 }

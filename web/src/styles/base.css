@@ -609,8 +609,13 @@
      presses *surfaces*, and a ghost has none. An inset shadow needs a fill to be
      cut into; drawn on the page it is a smudge on the ground rather than a
      control being pushed in. The press is the deeper wash instead. */
+  /* The ink is named here too, not left to `:hover`: a keyboard press — Space
+     held — is `:active` without `:hover`, and fell back to `--ink-dim`, 4.17
+     on the light ground under this wash. One press, one look, whatever pressed
+     it (HANDOFF `al`). */
   .btn-ghost:active:not(:disabled) {
     background: var(--ghost-press);
+    color: var(--accent-text);
   }
 
   .btn-icon {

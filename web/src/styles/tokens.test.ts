@@ -642,9 +642,15 @@ describe('tokens.css — dark ramp (ui-spec §1.4, NFR-CMP-003, E-32 §3)', () =
   })
 
   it('leaves the raw ramps untouched — they are an absolute lightness scale', () => {
-    const redeclared = [...dark.keys()].filter((k) =>
-      /^--color-(neutral|accent(-2)?)-\d00$/.test(k),
-    )
+    const RAMP_STEP = /^--color-(neutral|accent(-2)?)-\d00$/
+    // The positive control: a pattern that stopped matching the ramp names would
+    // find nothing to forbid in the dark block and pass on an empty hand. The
+    // base block declares all three ramps, nine steps each.
+    expect(
+      [...light.keys()].filter((k) => RAMP_STEP.test(k)).length,
+      'the ramp pattern reads no ramp step in the base block',
+    ).toBeGreaterThanOrEqual(27)
+    const redeclared = [...dark.keys()].filter((k) => RAMP_STEP.test(k))
     expect(redeclared).toEqual([])
   })
 
@@ -660,7 +666,6 @@ describe('tokens.css — dark ramp (ui-spec §1.4, NFR-CMP-003, E-32 §3)', () =
       '--rule',
       '--rule-strong',
       '--control-border',
-      '--control-border-hover',
       '--fill-subtle',
       '--fill-track',
       '--fill-track-2',
@@ -754,12 +759,11 @@ describe('tokens.css — dark ramp (ui-spec §1.4, NFR-CMP-003, E-32 §3)', () =
     const declared = [...light.keys()].filter(
       (k) => /^--(control|on-control)/.test(k) || /^--shadow-(control|accent)-/.test(k),
     )
-    // `--control-border` and `--control-border-hover` are deliberately *not* in
-    // this family. They are the retired bordered-box tokens, they still flip,
-    // and the radio dot's ring is the one consumer E-36 §3.3 leaves them.
-    expect(declared.sort()).toEqual(
-      [...CONTROL_ABSOLUTES, '--control-border', '--control-border-hover'].sort(),
-    )
+    // `--control-border` is deliberately *not* in this family. It is the retired
+    // bordered-box token, it still flips, and the radio dot's ring is the one
+    // consumer E-36 §3.3 leaves it. Its `-hover` twin had no consumer left at all
+    // and was removed (HANDOFF `an`).
+    expect(declared.sort()).toEqual([...CONTROL_ABSOLUTES, '--control-border'].sort())
     expect(dark.has('--control-border')).toBe(true)
   })
 
@@ -965,6 +969,11 @@ describe('contrast floors (E-32 §4)', () => {
     // the first `>` inside a `{…}` expression would hand back a fragment with no
     // class list at all, and the assertion after it would pass on nothing.
     expect(tag, 'the override chip carries no className to read').toContain('className=')
+    // And the one for the utility reader: the bar this chip sits in is a
+    // stacking context *because* of its `z-chrome`, so a `zUtilities` that
+    // reads nothing would call that tag as clean as the chip's.
+    const barTag = openingTag(chipSource, chipSource.indexOf('data-role="viewer-top-bar"'))
+    expect(zUtilities(barTag), 'zUtilities reads no z- utility off the bar').toContain('z-chrome')
     expect(zUtilities(tag), 'a z- utility on the chip outranks the base rule').toEqual([])
 
     // 6. And the element the rule lifts is the element that paints the pair.
@@ -991,6 +1000,74 @@ describe('contrast floors (E-32 §4)', () => {
       const wet = washedRatio(theme, token, ground)
       expect(wet, `${what}: ${token} on ${ground} washed`).toBeGreaterThanOrEqual(4.5)
     }
+  })
+
+  it('keeps the ghost button legible on its hover and press washes (al)', () => {
+    // `.btn-ghost` is the one control that paints an accent ink on a wash of
+    // that same accent, so the wash eats the ink's contrast from both sides.
+    // The hover was **3.90** on the dark surface under E-43's palette; E-46
+    // moved both halves and it is 5.22 dry, 4.82 washed now. Nothing held it.
+    //
+    // The press is the deeper wash and was the one still under: at 0.20 the
+    // dark `--ghost-press` took the hover ink to 4.42 dry, 4.13 washed. It is
+    // held at 0.15, the deepest the dark surface allows (4.55 washed).
+    //
+    // Three pairs, all read off the rules so an edit to any of them is measured
+    // as it is: the hover; a pointer press, which is `:hover` and `:active` at
+    // once; and a keyboard press — Space held — which is `:active` alone. The
+    // press rule names its own ink so the two presses look the same: without
+    // it a keyboard press fell back to the rest ink, 4.17 on the light ground
+    // at 0.18, and only an alpha of 0.12 — indistinguishable from the hover —
+    // would have cleared it (HANDOFF `al`, the orchestrator's ruling (b)).
+    // Same specificity, and the press rule comes later, so its ink wins both.
+    const token = (selector: string, property: 'color' | 'background'): string | undefined => {
+      const body = exactRule(selector)?.body ?? ''
+      const pattern =
+        property === 'color'
+          ? /(?:^|[;\s{])color:\s*var\((--[\w-]+)\)/
+          : /background:\s*var\((--[\w-]+)\)/
+      return pattern.exec(body)?.[1]
+    }
+    const restInk = token('.btn-ghost', 'color')
+    const hoverInk = token('.btn-ghost:hover:not(:disabled)', 'color')
+    const hoverWash = token('.btn-ghost:hover:not(:disabled)', 'background')
+    const pressWash = token('.btn-ghost:active:not(:disabled)', 'background')
+    const pressInk = token('.btn-ghost:active:not(:disabled)', 'color')
+    expect(restInk, 'the ghost no longer sets its ink from a token').toBeDefined()
+    expect(hoverInk, 'the ghost hover no longer sets its ink from a token').toBeDefined()
+    expect(hoverWash, 'the ghost hover no longer sets its wash from a token').toBeDefined()
+    expect(pressWash, 'the ghost press no longer sets its wash from a token').toBeDefined()
+    const pairs: [string, string, string][] = [
+      ['hover', hoverInk ?? '', hoverWash ?? ''],
+      ['pointer press', pressInk ?? hoverInk ?? '', pressWash ?? ''],
+      ['keyboard press', pressInk ?? restInk ?? '', pressWash ?? ''],
+    ]
+
+    const offenders: string[] = []
+    let measured = 0
+    for (const [name, theme] of themes) {
+      for (const ground of ['--color-bg', '--color-surface']) {
+        for (const [state, ink, wash] of pairs) {
+          const bg = over(
+            parseColour(resolveToken(theme, wash)),
+            parseColour(resolveToken(theme, ground)),
+          )
+          const fg = over(parseColour(resolveToken(theme, ink)), bg)
+          const wet = Math.min(
+            ...GRAIN_TONES.map((tone) =>
+              contrast(washed(fg, tone, GRAIN_MEAN_ALPHA), washed(bg, tone, GRAIN_MEAN_ALPHA)),
+            ),
+          )
+          // `wet < 4.5` is false for NaN, so an unparseable colour would pass.
+          if (!Number.isFinite(wet) || wet < 4.5) {
+            offenders.push(`${name} ${state}: ${ink} on ${wash} over ${ground}`)
+          }
+          measured += 1
+        }
+      }
+    }
+    expect(measured, 'three states on two grounds in each of two themes').toBe(12)
+    expect(offenders).toEqual([])
   })
 
   it('reports the peak-grain margin, and holds nothing to it', () => {
@@ -1708,8 +1785,21 @@ describe('tokens.css — responsive layer (ui-spec §7)', () => {
 
 describe('the style layer holds every colour literal', () => {
   it('keeps base.css free of hex — it may only reference tokens', () => {
-    const hex = BASE.match(/#[0-9a-fA-F]{3,8}\b/g) ?? []
-    expect(hex).toEqual([])
+    const HEX = /#[0-9a-fA-F]{3,8}\b/g
+    // The positive control: the same pattern has to read the token layer, which
+    // is built of hex — the three ramps alone are 27 literals — or the empty
+    // result below is a pattern that reads nothing.
+    const tokenHex = TOKENS.match(HEX) ?? []
+    expect(tokenHex.length, 'the hex pattern reads nothing in tokens.css').toBeGreaterThanOrEqual(27)
+    expect(tokenHex).toContain(light.get('--color-bg'))
+    expect(BASE.match(HEX) ?? []).toEqual([])
+    // A colour in another notation is the same literal spelled differently, so
+    // it is reported rather than slipped past. Comments are read past: the sheet
+    // quotes the prototype's `rgba(…)` values in prose.
+    expect(
+      stripComments(BASE).match(/\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\([^)]*\)/gi) ?? [],
+      'a colour literal in functional notation',
+    ).toEqual([])
   })
 
   it('draws the cover gradient from its own three stops (open item p)', () => {
@@ -1755,14 +1845,26 @@ describe('the style layer holds every colour literal', () => {
     // nobody has to look up a token for.
     const allowed = new Set(['0', '50%', '9999px'])
     for (const key of light.keys()) if (key.startsWith('--radius-')) allowed.add(`var(${key})`)
-    const offenders = allRules(BASE)
+    const declared = allRules(BASE)
       .filter((r) => !r.body.includes('{'))
       .flatMap((r) =>
-        [...r.body.matchAll(/border-radius:\s*([^;}\n]+)/g)]
-          .map((m) => (m[1] ?? '').trim())
-          .filter((v) => !allowed.has(v))
-          .map((v) => `${r.selector}: ${v}`),
+        [...r.body.matchAll(/border-radius\s*:\s*([^;}\n]+)/g)].map((m) => ({
+          selector: r.selector,
+          value: (m[1] ?? '').trim(),
+        })),
       )
+    // The positive control, for the reason the z-ladder scan below gives: an
+    // empty scan and a clean sheet are indistinguishable from the assertion.
+    expect(declared.length, 'the border-radius scan found nothing to read').toBeGreaterThanOrEqual(14)
+    // A longhand corner is a notation this scan does not read, so it is
+    // reported rather than skipped.
+    expect(
+      stripComments(BASE).match(/border-[a-z-]+-radius\s*:[^;}]*/g) ?? [],
+      'a corner set by a longhand the scan cannot read',
+    ).toEqual([])
+    const offenders = declared
+      .filter((d) => !allowed.has(d.value))
+      .map((d) => `${d.selector}: ${d.value}`)
     expect(offenders).toEqual([])
   })
 
@@ -2241,10 +2343,12 @@ describe('a ramp step painted by a class flips with the theme (ui-spec §1.4)', 
 
   it('reads at AA inside every chip, in the theme that paints it', () => {
     const offenders: string[] = []
+    let measured = 0
     for (const rule of rampRules) {
       const bg = rule.paint.get('bg')
       const fg = rule.paint.get('fg')
       if (bg === undefined || fg === undefined) continue
+      measured += 1
       const theme = isDark(rule.selector) ? DARK_CASCADE : light
       const value = contrast(
         parseColour(resolveToken(theme, fg)),
@@ -2252,6 +2356,11 @@ describe('a ramp step painted by a class flips with the theme (ui-spec §1.4)', 
       )
       if (value < 4.5) offenders.push(`${rule.selector}: ${fg} on ${bg} is ${value.toFixed(2)}:1`)
     }
+    // The calibration above names the rules, not which half each one paints.
+    // `.row-chip:hover` paints a ground and no ink, so a pattern that stopped
+    // reading `color:` would keep every rule on that list and leave this loop
+    // measuring nothing. Six chips carry both halves.
+    expect(measured, 'no chip was measured — is the ink half still read?').toBeGreaterThanOrEqual(6)
     expect(offenders).toEqual([])
   })
 

@@ -475,6 +475,57 @@ function scrollTo(scroller: HTMLElement, top: number): void {
   scroller.dispatchEvent(new Event('scroll'))
 }
 
+/**
+ * The browser's clamp, which jsdom does not have: `scrollTop` is held to
+ * `scrollHeight − height` of the track the DOM holds *when it is read*, the way
+ * a read forces layout and layout clamps. A clamp that moves the value is
+ * announced with a `scroll` event a task later, and so is a programmatic
+ * `scrollTo` (`stubScrolling` announces at once). The `setTimeout` models *that
+ * the announcement trails the move*; it is not a copy of the browser's
+ * scheduling, which delivers `scroll` in the rendering steps.
+ *
+ * Installed on one element and removed with the returned function, so no other
+ * test sees a scroller that clamps.
+ */
+function clampingScrollTop(el: HTMLElement, height: number): () => void {
+  // jsdom's own accessor, reached through the prototype so the instance
+  // property below can wrap it.
+  const read = (): number => Reflect.get(Element.prototype, 'scrollTop', el)
+  const write = (value: number): void => {
+    Reflect.set(Element.prototype, 'scrollTop', value, el)
+  }
+  const clamp = (value: number): number => Math.max(0, Math.min(value, el.scrollHeight - height))
+  Object.defineProperty(el, 'scrollTop', {
+    configurable: true,
+    get(): number {
+      const raw = read()
+      const held = clamp(raw)
+      if (held !== raw) {
+        write(held)
+        setTimeout(() => el.dispatchEvent(new Event('scroll')), 0)
+      }
+      return held
+    },
+    set(value: number) {
+      write(clamp(value))
+    },
+  })
+  Object.defineProperty(el, 'scrollTo', {
+    configurable: true,
+    writable: true,
+    value(this: HTMLElement, options: ScrollToOptions) {
+      const top = Math.round(options.top ?? 0)
+      scrollCalls.push(top)
+      this.scrollTop = top
+      setTimeout(() => this.dispatchEvent(new Event('scroll')), 0)
+    },
+  })
+  return () => {
+    Reflect.deleteProperty(el, 'scrollTop')
+    Reflect.deleteProperty(el, 'scrollTo')
+  }
+}
+
 /** The `translateY` a virtualised row is positioned at, in px. */
 function rowOffset(row: HTMLElement | null | undefined): number {
   const m = /translateY\((-?[\d.]+)px\)/.exec(row?.style.transform ?? '')
@@ -1357,6 +1408,191 @@ describe('grid mode (FR-LIB-001, FR-LIB-008)', () => {
         expect(scroller.scrollTop).toBe(297)
       })
       expect(rowOffset(rowAt(1))).toBe(297)
+    } finally {
+      restoreScroll()
+      restoreWidth()
+    }
+  })
+
+  it('anchors from where the reader was, not from where the browser clamped them (bj)', async () => {
+    // **The clamp happens before any of our code runs.** Widening takes the same
+    // items from many rows to few, the commit writes the shorter track into the
+    // DOM, and the first thing that reads `scrollTop` afterwards — effect 1 —
+    // forces the layout that clamps it to the *new* maximum. A reader parked
+    // below that maximum was therefore anchored from a position they never
+    // chose. Measured in Chrome, 240 series at 600 → 1440 (3 → 6 columns): from
+    // 80 % and 95 % down, both landed on series 114 — the clamp target, not the
+    // reader — 72 and 108 series short. Above the new maximum nothing changed.
+    //
+    // jsdom does no layout and never clamps, which is why every guard above
+    // passed over it. `clampingScrollTop` reproduces the browser's half: reads
+    // and writes are held to `scrollHeight − height`, from the track the DOM
+    // holds at that moment, and the clamp announces itself with a `scroll` event
+    // that trails it, as the real one does.
+    //
+    // 60 series at `desktop`. A 320px box: 2 columns of 152px → 288px cards →
+    // 304 pitch, 30 rows, a 9104px track. A 1000px box: 6 columns of 153.3px →
+    // 290px cards → 306 pitch, 10 rows, a 3044px track, so with the scroller's
+    // 900px the new maximum is 2144. Parked on row 20 (6080) — series 40, which
+    // belongs on row 6 at 1836, inside that maximum. Anchoring from the clamped
+    // 2144 instead names row 7 of the old pitch, series 14, row 2: 612.
+    let contentWidth = 320
+    const restoreWidth = stubContentWidth(() => contentWidth)
+    const restoreScroll = stubScrolling()
+    try {
+      stubViewport(1_600)
+      scenario.series = Array.from({ length: 60 }, (_, i) =>
+        makeSeries({ id: makeId(5_100 + i), name: `[만화] 시리즈 ${(i + 1).toString()}` }),
+      )
+      renderLibrary()
+      await waitForLibrary()
+      await screen.findByRole('button', { name: '[만화] 시리즈 1' })
+
+      const scroller = screen.getByTestId('library-scroller')
+      const rowAt = (index: number): HTMLElement | null =>
+        scroller.querySelector<HTMLElement>(`[data-index="${index.toString()}"]`)
+      const restoreClamp = clampingScrollTop(scroller, 900)
+      try {
+        expect(rowAt(0)?.children).toHaveLength(2)
+        act(() => {
+          scrollTo(scroller, 20 * 304)
+        })
+        expect(scroller.scrollTop).toBe(6_080)
+        const anchorLabel = rowAt(20)?.querySelector('[aria-label]')?.getAttribute('aria-label')
+        expect(anchorLabel).toBeTruthy()
+
+        contentWidth = 1_000
+        act(() => {
+          resizeViewport(1_600)
+        })
+
+        // The premise, or this test proves nothing: the track really did get
+        // shorter than the reader's position, so the browser had something to
+        // clamp. The first *rendered* row, not row 0: a reader kept deep is not
+        // looking at row 0, and the virtualiser does not mount it.
+        expect([...scroller.querySelectorAll('[data-index]')][0]?.children).toHaveLength(6)
+        expect(scroller.scrollHeight - 900).toBeLessThan(6_080)
+
+        await waitFor(() => {
+          expect(scroller.scrollTop).toBe(1_836)
+        })
+        expect(rowOffset(rowAt(6))).toBe(1_836)
+        const labels = [...(rowAt(6)?.querySelectorAll('[aria-label]') ?? [])].map((el) =>
+          el.getAttribute('aria-label'),
+        )
+        expect(labels).toContain(anchorLabel)
+      } finally {
+        restoreClamp()
+      }
+    } finally {
+      restoreScroll()
+      restoreWidth()
+    }
+  })
+
+  it('counts its own write as where the reader is, before that write is announced (bj)', async () => {
+    // The `scroll` event for effect 2's own write arrives a task later, and a
+    // second re-lay-out can land first — a tier change and the width that
+    // follows it inside one frame. A position *recorded from scroll events*
+    // is then still the reader's pre-write one, in the coordinates of a layout
+    // that is no longer on screen; anchoring from it reads the reader as having
+    // moved, drops the remembered series and re-derives it from a number the
+    // new pitch cannot interpret. That was the first cut of this fix, and this
+    // is the test that caught it; the grid now reads the scroller at the commit.
+    //
+    // 480 → 320 → 480 with no task between the two resizes. 60 series, 2
+    // columns throughout, 424 then 304 then 424. Parked on row 20 (8480): the
+    // first resize writes row 20 of the 304 pitch, 6080, and the second has to
+    // find the reader there and put them back on row 20, 8480. Anchoring from
+    // the stale 8480 in the 304 pitch names row 27 — series 54 — and lands
+    // seven rows down at 11 448.
+    let contentWidth = 480
+    const restoreWidth = stubContentWidth(() => contentWidth)
+    const restoreScroll = stubScrolling()
+    try {
+      scenario.series = Array.from({ length: 60 }, (_, i) =>
+        makeSeries({ id: makeId(5_300 + i), name: `[만화] 시리즈 ${(i + 1).toString()}` }),
+      )
+      renderLibrary()
+      await waitForLibrary()
+      await screen.findByRole('button', { name: '[만화] 시리즈 1' })
+
+      const scroller = screen.getByTestId('library-scroller')
+      const restoreClamp = clampingScrollTop(scroller, 900)
+      try {
+        act(() => {
+          scrollTo(scroller, 20 * 424)
+        })
+        contentWidth = 320
+        act(() => {
+          resizeViewport(1_600)
+        })
+        // The premise: the first resize wrote, and nothing has announced it yet.
+        expect(scroller.scrollTop).toBe(6_080)
+        contentWidth = 480
+        act(() => {
+          resizeViewport(1_600)
+        })
+
+        await waitFor(() => {
+          expect(scroller.scrollTop).toBe(20 * 424)
+        })
+      } finally {
+        restoreClamp()
+      }
+    } finally {
+      restoreScroll()
+      restoreWidth()
+    }
+  })
+
+  it('anchors from a programmatic scroll that has not been announced yet (bj)', async () => {
+    // Effect 2 is not the only thing that writes `scrollTop`: the E-34 reveal
+    // calls `scrollToIndex`, a shorter search result clamps, and a wheel moves
+    // the scroller a frame before its `scroll` event says so. A resize that
+    // lands in that frame has to anchor from where the scroller *is*. Any
+    // design that learns the position from events instead anchors from the
+    // previous one — here, series 0 rather than the series the write went to.
+    //
+    // 60 series at `desktop`, 320px box (2 columns, 304 pitch). At the top,
+    // then a write to row 20 (6080) whose event is still queued, then the same
+    // shortening resize as above to 1000px: series 40 belongs on row 6, 1836.
+    let contentWidth = 320
+    const restoreWidth = stubContentWidth(() => contentWidth)
+    const restoreScroll = stubScrolling()
+    try {
+      stubViewport(1_600)
+      scenario.series = Array.from({ length: 60 }, (_, i) =>
+        makeSeries({ id: makeId(5_500 + i), name: `[만화] 시리즈 ${(i + 1).toString()}` }),
+      )
+      renderLibrary()
+      await waitForLibrary()
+      await screen.findByRole('button', { name: '[만화] 시리즈 1' })
+
+      const scroller = screen.getByTestId('library-scroller')
+      const restoreClamp = clampingScrollTop(scroller, 900)
+      try {
+        // Announced: the reader is at the top, and every record says so.
+        act(() => {
+          scrollTo(scroller, 0)
+        })
+        // Not announced: `clampingScrollTop`'s `scrollTo` queues its event.
+        act(() => {
+          scroller.scrollTo({ top: 20 * 304 })
+        })
+        expect(scroller.scrollTop).toBe(6_080)
+
+        contentWidth = 1_000
+        act(() => {
+          resizeViewport(1_600)
+        })
+
+        await waitFor(() => {
+          expect(scroller.scrollTop).toBe(1_836)
+        })
+      } finally {
+        restoreClamp()
+      }
     } finally {
       restoreScroll()
       restoreWidth()
