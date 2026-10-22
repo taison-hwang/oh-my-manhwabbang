@@ -277,6 +277,21 @@ export const LIST_TEMPLATE: Record<ListLayout, string> = {
  * and `library.test.tsx` asserts the two elements carry the identical string.
  */
 export const LIST_HEADER_WRAPPER_CLASS = 'px-2 pt-2'
+
+/**
+ * The list scroller's horizontal padding, i.e. the inset of every row grid.
+ *
+ * `SeriesList` sets the scroller's padding *and* the header wrapper's from this
+ * one value — the header's right side is this **plus the gutter**
+ * (`listHeaderPadRight`) — so the two grids resolve `minmax(0,1fr)` against one
+ * width. Two copies drifted once: the header kept a pre-E-32 `--space-4` while
+ * the scroller was `px-2`, and every column from 형식 rightwards sat 8px left of
+ * its rows at every width, overlay scrollbars included.
+ *
+ * `px-2` in `LIST_HEADER_WRAPPER_CLASS` is this same token for `GridSkeleton`,
+ * which has no gutter; the loaded list overrides it inline from here.
+ */
+export const LIST_INSET_X = 'var(--space-2)'
 export const LIST_HEADER_BAND_CLASS =
   'grid items-center gap-3 border-b-2 border-rule-strong p-2 text-xs uppercase tracking-[.08em] text-ink-dim'
 
@@ -312,49 +327,6 @@ export function useDebouncedValue<T>(value: T, delayMs: number): T {
     }
   }, [value, debounced, delayMs])
   return debounced
-}
-
-/** Shared plumbing: re-run `measure` whenever `element` is resized. */
-function useMeasured(
-  ref: RefObject<HTMLElement | null>,
-  read: (element: HTMLElement) => number,
-): number {
-  const [value, setValue] = useState(0)
-  const readRef = useRef(read)
-  readRef.current = read
-
-  // `useLayoutEffect`, not `useEffect`: the first measurement has to happen
-  // before the browser paints. `useEffect` runs after, so the very first frame
-  // of the grid is laid out against `width === 0` — `columnCount(0)` is 1 — and
-  // the reader sees one full-width column for a frame before the measurement
-  // lands and it snaps to six. Measured in Chrome 150 at 1440×900 against the
-  // real collection, that frame is worth up to **0.0120 CLS** on its own, over
-  // impl-plan §6.3 step 6.1's 0.01 budget, and it is a *race*: on a run where
-  // `/api/series` resolved before the first paint the same page scored 0.0007.
-  // A layout effect removes the frame rather than the flake.
-  useLayoutEffect(() => {
-    const element = ref.current
-    if (element === null) return undefined
-    const measure = (): void => {
-      setValue(readRef.current(element))
-    }
-    measure()
-    // jsdom has no `ResizeObserver`, and a virtualised grid that throws in the
-    // test environment is a grid nobody can test.
-    if (typeof ResizeObserver === 'undefined') {
-      window.addEventListener('resize', measure)
-      return () => {
-        window.removeEventListener('resize', measure)
-      }
-    }
-    const observer = new ResizeObserver(measure)
-    observer.observe(element)
-    return () => {
-      observer.disconnect()
-    }
-  }, [ref])
-
-  return value
 }
 
 /** The two halves of a grid layout, guaranteed to have been read together. */
@@ -419,9 +391,9 @@ export interface GridBox {
 export function useGridBox(ref: RefObject<HTMLElement | null>): GridBox {
   // Lazily seeded, so the first render already has the right tier. Dropping to
   // a constant here would give back the flash of the wrong layout that
-  // `useMediaQuery`'s `useSyncExternalStore` was chosen to avoid. `width: 0` is
-  // the same starting point as `useMeasured` — `columnCount(0)` is 1 — and the
-  // layout effect below replaces it before the browser paints.
+  // `useMediaQuery`'s `useSyncExternalStore` was chosen to avoid. `width: 0`
+  // — `columnCount(0)` is 1 — never paints: the layout effect below replaces it
+  // before the browser paints.
   const [box, setBox] = useState<GridBox>(() => ({ width: 0, breakpoint: readBreakpoint() }))
 
   useLayoutEffect(() => {
@@ -470,23 +442,91 @@ export function useGridBox(ref: RefObject<HTMLElement | null>): GridBox {
   return box
 }
 
-/**
- * The width a scroll container reserves for its vertical scrollbar.
- *
- * The list header sits outside the scroller (WP-09 acceptance 3), so the two
- * grids resolve `minmax(0,1fr)` against different widths — the scrollbar's —
- * and every column from 형식 rightwards lands 12px off on a stable-gutter
- * platform. `SeriesList` reserves the gutter on the header to close it; pair
- * this with `scrollbar-gutter: stable` on the scroller so the number does not
- * change when the list stops overflowing.
- */
-export function useScrollbarGutter(ref: RefObject<HTMLElement | null>): number {
-  return useMeasured(ref, (element) => Math.max(0, element.offsetWidth - element.clientWidth))
+/** The two halves of a list header, guaranteed to have been read together. */
+export interface ListBox {
+  /** The column set, from the same tier rule as everything else. */
+  layout: ListLayout
+  /**
+   * The width the scroller reserves for its vertical scrollbar.
+   *
+   * The list header sits outside the scroller (WP-09 acceptance 3), so the two
+   * grids resolve `minmax(0,1fr)` against different widths — the scrollbar's —
+   * and every column from 형식 rightwards lands 12px off on a stable-gutter
+   * platform. `SeriesList` reserves the gutter on the header to close it; pair
+   * this with `scrollbar-gutter: stable` on the scroller so the number does not
+   * change when the list stops overflowing.
+   */
+  gutter: number
 }
 
-/** The header's right padding: `px-4` plus the scroller's reserved gutter. */
+/**
+ * The list layout **and** the scroller's gutter, in one commit (item bk).
+ *
+ * The same rule as `useGridBox`, whose comment has the measurements: the tier
+ * arrives on a `matchMedia` change and the gutter on a `ResizeObserver`
+ * callback, tens of ms apart, so two separate hooks commit the new template
+ * beside the old gutter and the header's columns sit off the rows' until the
+ * observer catches up. Here both listeners run one reader, so whichever fires
+ * first commits both and the second finds nothing to change.
+ *
+ * Seeded with the real layout and a `0` gutter; the layout effect measures
+ * before the first paint, so the seed is never on screen. The listener wiring
+ * is a copy of `useGridBox`'s rather than shared with it, so the grid's code
+ * path did not move for the list's sake.
+ */
+export function useListBox(ref: RefObject<HTMLElement | null>): ListBox {
+  const [box, setBox] = useState<ListBox>(() => ({
+    layout: listLayoutFor(readBreakpoint()),
+    gutter: 0,
+  }))
+
+  useLayoutEffect(() => {
+    const element = ref.current
+    if (element === null) return undefined
+    const read = (): void => {
+      const layout = listLayoutFor(readBreakpoint())
+      const gutter = Math.max(0, element.offsetWidth - element.clientWidth)
+      // Same value ⇒ same object, so the second of the two events commits nothing.
+      setBox((prev) =>
+        prev.layout === layout && prev.gutter === gutter ? prev : { layout, gutter },
+      )
+    }
+    read()
+
+    const stop: (() => void)[] = []
+    if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+      for (const query of TIER_QUERIES) {
+        const mql = window.matchMedia(query)
+        mql.addEventListener('change', read)
+        stop.push(() => {
+          mql.removeEventListener('change', read)
+        })
+      }
+    }
+    // jsdom has no `ResizeObserver`.
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', read)
+      stop.push(() => {
+        window.removeEventListener('resize', read)
+      })
+    } else {
+      const observer = new ResizeObserver(read)
+      observer.observe(element)
+      stop.push(() => {
+        observer.disconnect()
+      })
+    }
+    return () => {
+      for (const off of stop) off()
+    }
+  }, [ref])
+
+  return box
+}
+
+/** The header's right padding: the scroller's own (`LIST_INSET_X`) plus its gutter. */
 export function listHeaderPadRight(gutter: number): string {
-  return `calc(var(--space-4) + ${gutter.toString()}px)`
+  return `calc(${LIST_INSET_X} + ${gutter.toString()}px)`
 }
 
 // ---------------------------------------------------------------------------

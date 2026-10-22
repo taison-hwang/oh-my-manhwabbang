@@ -1667,10 +1667,15 @@ describe('list mode (FR-LIB-003)', () => {
       await waitForLibrary()
 
       const wrapper = await screen.findByTestId('library-list-header-wrapper')
-      expect(wrapper.style.paddingRight).toBe('calc(var(--space-4) + 12px)')
+      const scroller = screen.getByTestId('library-scroller')
+      // Derived from the scroller rather than spelled out: the literal this
+      // line used to pin (`--space-4`) had drifted from the scroller's `px-2`
+      // and kept the 8px header/row offset green.
+      expect(scroller.style.paddingRight).not.toBe('')
+      expect(wrapper.style.paddingRight).toBe(`calc(${scroller.style.paddingRight} + 12px)`)
       // …and the gutter is reserved unconditionally, so that number does not
       // change when the list stops overflowing.
-      expect(screen.getByTestId('library-scroller').style.scrollbarGutter).toBe('stable')
+      expect(scroller.style.scrollbarGutter).toBe('stable')
     } finally {
       restore()
     }

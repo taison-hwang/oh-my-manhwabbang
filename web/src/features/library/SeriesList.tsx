@@ -3,20 +3,19 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import type { ID, SeriesSummary } from '../../api/types'
 import { cn } from '../../lib/cn'
-import { useBreakpoint } from '../../lib/useMediaQuery'
 import { seriesRowDomId, useUiStore, type SortKey } from '../../store/ui'
 import { SeriesRow } from './SeriesRow'
 import {
   listHeaderPadRight,
-  listLayoutFor,
   LIST_CARD_CLASS,
   LIST_HEADER_BAND_CLASS,
   LIST_HEADER_WRAPPER_CLASS,
+  LIST_INSET_X,
   LIST_ROW_HEIGHT,
   LIST_ROW_HEIGHT_STACKED,
   LIST_SORT_COLUMNS,
   LIST_TEMPLATE,
-  useScrollbarGutter,
+  useListBox,
 } from './useLibrary'
 
 /**
@@ -64,15 +63,15 @@ export function SeriesList({
   onEndReached,
 }: SeriesListProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
-  const breakpoint = useBreakpoint()
-  const layout = listLayoutFor(breakpoint)
+  // One reader for both, so no commit pairs this viewport's columns with
+  // another viewport's gutter (item bk — `useListBox`).
+  const { layout, gutter } = useListBox(scrollRef)
   const template = LIST_TEMPLATE[layout]
   const rowHeight = layout === 'stacked' ? LIST_ROW_HEIGHT_STACKED : LIST_ROW_HEIGHT
 
   const sort = useUiStore((s) => s.sort)
   const order = useUiStore((s) => s.order)
   const toggleSort = useUiStore((s) => s.toggleSort)
-  const gutter = useScrollbarGutter(scrollRef)
 
   const virtualizer = useVirtualizer({
     count: items.length,
@@ -222,7 +221,7 @@ export function SeriesList({
     <div className={cn('flex min-h-0 flex-1 flex-col', LIST_CARD_CLASS)}>
       <div
         className={LIST_HEADER_WRAPPER_CLASS}
-        style={{ paddingRight: listHeaderPadRight(gutter) }}
+        style={{ paddingLeft: LIST_INSET_X, paddingRight: listHeaderPadRight(gutter) }}
         data-testid="library-list-header-wrapper"
       >
         <div
@@ -254,8 +253,8 @@ export function SeriesList({
 
       <div
         ref={scrollRef}
-        className="min-h-0 flex-1 overflow-y-auto px-2"
-        style={{ scrollbarGutter: 'stable' }}
+        className="min-h-0 flex-1 overflow-y-auto"
+        style={{ paddingLeft: LIST_INSET_X, paddingRight: LIST_INSET_X, scrollbarGutter: 'stable' }}
         data-testid="library-scroller"
       >
         <div className="relative w-full" style={{ height: `${virtualizer.getTotalSize().toString()}px` }}>

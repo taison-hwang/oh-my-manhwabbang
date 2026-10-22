@@ -16,6 +16,7 @@ import {
   isSmartScope,
   libraryParams,
   listHeaderPadRight,
+  LIST_INSET_X,
   listLayoutFor,
   LIST_TEMPLATE,
   scopeLabel,
@@ -184,9 +185,15 @@ describe('grid geometry (FR-LIB-007)', () => {
     expect(cardHeight(Number.NaN)).toBe(60)
   })
 
-  it('pads the list header by the scroller gutter it does not contain', () => {
-    expect(listHeaderPadRight(12)).toBe('calc(var(--space-4) + 12px)')
-    expect(listHeaderPadRight(0)).toBe('calc(var(--space-4) + 0px)')
+  it('pads the list header by the scroller\'s own inset plus the gutter it does not contain', () => {
+    // One constant on both sides of the equation: the header kept a stale
+    // `--space-4` while the scroller was `px-2`, and every column from 형식
+    // rightwards sat 8px left of its rows at every width.
+    expect(listHeaderPadRight(12)).toBe(`calc(${LIST_INSET_X} + 12px)`)
+    expect(listHeaderPadRight(0)).toBe(`calc(${LIST_INSET_X} + 0px)`)
+    // The skeleton has no gutter and keeps `px-2` from the shared wrapper class;
+    // that is this same token (`tailwind.config.ts` spacing 2).
+    expect(LIST_INSET_X).toBe('var(--space-2)')
   })
 
   it('requests a cover width from the configured set (impl-plan §0.4)', () => {
