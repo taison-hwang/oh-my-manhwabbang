@@ -5,6 +5,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
+import type { ReactNode } from 'react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -34,6 +35,7 @@ import type {
 } from '../../api/types'
 import { resetBasePath } from '../../api/urls'
 import { LibraryPage } from '../library/LibraryPage'
+import { useLibrarySettingsSync } from '../library/useLibrary'
 import { SeriesDetailPage } from '../series/SeriesDetailPage'
 import { useSeriesDirStore } from '../../store/seriesDir'
 import { seriesCardDomId, seriesRowDomId, useUiStore } from '../../store/ui'
@@ -2931,8 +2933,9 @@ function libraryHandlers(recorded: LibraryRecorded, view: 'grid' | 'list' = 'gri
     http.get(`${ORIGIN}/api/roots`, () => HttpResponse.json({ items: LIBRARY_ROOTS })),
     http.get(`${ORIGIN}/api/continue`, () => HttpResponse.json({ items: [] })),
     // The server already stores what the sidebar shows (A-5). If it did not,
-    // `useLibrarySettingsSync` would hydrate the store back to `all` on arrival
-    // and this file would be testing the hydration, not the button.
+    // `useLibrarySettingsSync` would hydrate the store to `all` as soon as it
+    // mounted — while the viewer is still open — and the button would be pressed
+    // over a scope that was already gone.
     http.get(`${ORIGIN}/api/settings`, () =>
       HttpResponse.json({ ...settings, library_scope: LIBRARY_SCOPE, library_view: view }),
     ),
@@ -3035,6 +3038,16 @@ interface LibrarySetup {
   library: LibraryRecorded
 }
 
+/**
+ * `ShellDataProvider`'s library sync (`router.tsx`), as the parent of the routes:
+ * the app mounts it there, from the first render, so it is already running
+ * while the viewer is open and is not remounted on the way to the library.
+ */
+function LibrarySettingsSync({ children }: { children: ReactNode }) {
+  useLibrarySettingsSync()
+  return children
+}
+
 /** The viewer and the real library screen in one router, starting in the viewer. */
 async function setupViewerThenLibrary(
   options: { scope?: string; query?: string; view?: 'grid' | 'list' } = {},
@@ -3043,9 +3056,9 @@ async function setupViewerThenLibrary(
   const library: LibraryRecorded = { seriesQueries: [], settingsPuts: [] }
   // The library's handlers go first: MSW resolves in registration order, and
   // `handlers()` carries a `GET /api/settings` whose `library_scope` is `all`.
-  // Left in front it would hydrate the store back to `all` on arrival (A-5, the
-  // server wins), and this file would be testing the hydration rather than the
-  // button.
+  // Left in front it would hydrate the store to `all` as soon as the sync mounts
+  // (A-5, the server wins), before the button is pressed, and this file would be
+  // testing the hydration rather than the button.
   server.use(...libraryHandlers(library, options.view ?? 'grid'), ...handlers(detailOf(), recorded))
   stubViewport(1_440)
   stubImage(recorded)
@@ -3064,11 +3077,13 @@ async function setupViewerThenLibrary(
   render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[`/series/${SERIES_ID}/books/${BOOK_ID}?page=12`]}>
-        <Routes>
-          <Route path="/" element={<LibraryPage />} />
-          <Route path="/series/:sid" element={<LocationProbe />} />
-          <Route path="/series/:sid/books/:bid" element={<ViewerPage />} />
-        </Routes>
+        <LibrarySettingsSync>
+          <Routes>
+            <Route path="/" element={<LibraryPage />} />
+            <Route path="/series/:sid" element={<LocationProbe />} />
+            <Route path="/series/:sid/books/:bid" element={<ViewerPage />} />
+          </Routes>
+        </LibrarySettingsSync>
       </MemoryRouter>
     </QueryClientProvider>,
   )
@@ -3094,27 +3109,26 @@ interface FilterWatch {
  * The store's **transition list** for the sidebar filter and the search box —
  * the only shape in which "the button did not touch them" can be asserted here.
  *
- * E-34 §1 rules on `scope` *and* `q`, and the three obvious observables can only
- * see the `q` half:
+ * E-34 §1 rules on `scope` *and* `q`. `useLibrarySettingsSync` is mounted above
+ * the routes, as `ShellDataProvider` mounts it (defect ⑥), so it has reconciled
+ * the payload long before the press and nothing hydrates on the library's
+ * arrival. A scope the button *cleared* therefore stays cleared, and the three
+ * obvious observables see it:
  *
- *  * **The wire.** `useLibrarySettingsSync` runs its hydration effect on the
- *    library's mount, and `GET /api/settings` is already in the cache because
- *    the viewer asked for it — so `library_scope` is put back **before** the
- *    first `GET /api/series` is ever issued. `root=` on the wire is the server's
- *    value under either behaviour. `q` is not a settings field, so nothing
- *    repairs it and that half stays honest.
- *  * **`PUT /api/settings`.** The repair leaves the store equal to the payload,
- *    so the write-back's `snapshot === serverKey` guard closes and no request is
- *    sent. A cleared scope produces no `PUT` at all.
- *  * **`useUiStore.getState().scope` afterwards.** Same repair, one step later.
+ *  * **The wire.** The library's first `GET /api/series` carries the store's
+ *    scope and search, so a cleared one goes out without its `root=` or `q=`.
+ *  * **`PUT /api/settings`.** A cleared scope is a local change, and the
+ *    write-back sends it — but one debounce later, after the first
+ *    `GET /api/series`, so the check below at that point cannot see it yet.
+ *  * **`useUiStore.getState().scope` afterwards.**
  *
- * All three read the value **after** it settles, and the value settles back to
- * the truth. What no repair can undo is that it *moved*: `store/ui.ts` is behind
- * zustand's `persist`, which writes `shelf.ui` on every `set`, so a scope that
- * went to `all` and back was written to `localStorage` as `all` in between — a
- * reload, a second tab, or a settings request that never answers in that window
- * keeps it. And it is the plain reading of the ruling: 건드리지 않는다. A value
- * changed and changed back was touched.
+ * All three read the value **after** it settles. What none of them can see is a
+ * value that *moved and came back*: `store/ui.ts` is behind zustand's `persist`,
+ * which writes `shelf.ui` on every `set`, so a scope that went to `all` and back
+ * was written to `localStorage` as `all` in between — a reload, a second tab, or
+ * a settings request that never answers in that window keeps it. And it is the
+ * plain reading of the ruling: 건드리지 않는다. A value changed and changed back
+ * was touched.
  *
  * Same reasoning as `watchChrome` above, one layer down: a list has nothing to
  * settle into, and `[]` means nothing happened.
@@ -3144,18 +3158,16 @@ describe('the 라이브러리 button (ruling E-34)', () => {
     try {
       await pressLibrary()
 
-      // The whole of the ruling, and the only assertion here that can see the
-      // `scope` half: neither value moved at any point between the press and the
-      // library settling. Everything below is the `q` half and the corroboration
-      // — see `watchFilters` for why they cannot stand in for this line.
+      // The whole of the ruling: neither value moved at any point between the
+      // press and the library settling. Everything below is the corroboration —
+      // see `watchFilters` for why it cannot stand in for this line.
       expect(
         watch.moves(),
-        'E-34 §1: 라이브러리 touches neither the sidebar filter nor the search box — a value that went to `all` and was hydrated back was still touched',
+        'E-34 §1: 라이브러리 touches neither the sidebar filter nor the search box — a value that moved and came back was still touched',
       ).toEqual([])
 
-      // The *request list*. `q` is not a settings field, so nothing on arrival
-      // repairs it: a cleared search is visible on the wire, and this is where
-      // it shows.
+      // The *request list*: a cleared scope or search goes out on the wire, and
+      // this is where it shows.
       await waitFor(() => {
         expect(library.seriesQueries.length).toBeGreaterThan(0)
       })

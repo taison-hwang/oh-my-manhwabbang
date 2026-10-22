@@ -23,7 +23,7 @@ import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { RouterProvider, createMemoryRouter } from 'react-router-dom'
+import { Link, MemoryRouter, Route, RouterProvider, Routes, createMemoryRouter } from 'react-router-dom'
 
 import { App } from './App'
 import {
@@ -42,7 +42,7 @@ import { resetBasePath } from './api/urls'
 import { LibraryPage } from './features/library/LibraryPage'
 import { useShellData } from './lib/shellData'
 import { ShellDataProvider } from './router'
-import { UI_STORAGE_KEY, useUiStore } from './store/ui'
+import { UI_STORAGE_KEY, defaultOrderFor, useUiStore } from './store/ui'
 import { failUnhandled } from './test/msw'
 
 const server = setupServer()
@@ -280,12 +280,14 @@ function renderShellFromServer(): void {
  * The same shell over the same provider, with the **real library screen** under
  * it instead of a placeholder.
  *
- * It exists for exactly one assertion — the `active` guard — and the screen is
- * what makes that assertion honest. `scope` is not something a test may simply
- * set: what puts a root name in it on a cold start is `useLibrarySettingsSync`
- * hydrating `Settings.library_scope` into the store, and that hook lives in
- * `LibraryPage`. Mounting it is what turns "a stale scope" from a state a test
- * arranged into the state the server hands the client.
+ * It exists for exactly one assertion — the `active` guard — and the cold start
+ * is what makes that assertion honest. `scope` is not something a test may
+ * simply set: what puts a root name in it on a cold start is
+ * `useLibrarySettingsSync` hydrating `Settings.library_scope` into the store.
+ * The provider mounts that hook (defect ⑥), and the real screen under it is the
+ * cold start at `/` the stale scope is met on. That is what turns "a stale
+ * scope" from a state a test arranged into the state the server hands the
+ * client.
  */
 function renderLibraryShellFromServer(): void {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -363,6 +365,18 @@ describe('the sidebar and a pending root (A-11 / R2, ruling E-26)', () => {
   })
 
   it('leaves a loaded root selectable, with its count', async () => {
+    // Picking a root is an A-5 write-back, and the provider mounts the sync on
+    // every route — so the click below puts a real `PUT` on the wire. Answered
+    // like the server (merge and echo) and waited out, so it lands here and not
+    // in the next test's handlers. That the write is sent is the ⑥ block's to
+    // assert, below.
+    let served: Settings = { ...settings }
+    server.use(
+      http.put(`${ORIGIN}/api/settings`, async ({ request }) => {
+        served = { ...served, ...((await request.json()) as SettingsUpdate) }
+        return HttpResponse.json(served)
+      }),
+    )
     renderShellFromServer()
     const nav = await screen.findByRole('complementary', { name: '라이브러리 탐색' })
     const loaded = await within(nav).findByRole('button', { name: new RegExp(root.label) })
@@ -372,6 +386,7 @@ describe('the sidebar and a pending root (A-11 / R2, ruling E-26)', () => {
 
     await userEvent.click(loaded)
     expect(useUiStore.getState().scope).toBe(root.name)
+    await settle()
   })
 
   /**
@@ -398,9 +413,9 @@ describe('the sidebar and a pending root (A-11 / R2, ruling E-26)', () => {
     let served: Settings = { ...settings, library_scope: pendingRoot.name }
     server.use(
       http.get(`${ORIGIN}/api/settings`, () => HttpResponse.json(served)),
-      // A-5's write-back is live here because `LibraryPage` is: the real screen
-      // syncs the four library preferences, and MSW runs with
-      // `onUnhandledRequest: 'error'`. The handler behaves like the server —
+      // A-5's write-back is live here because the provider is: it syncs the
+      // four library preferences on every route, and an unhandled request fails
+      // the test (`failUnhandled`). The handler behaves like the server —
       // merge and echo — so the sync settles instead of erroring; what this test
       // asserts is the store, which `hydrateFromSettings` writes exactly once.
       http.put(`${ORIGIN}/api/settings`, async ({ request }) => {
@@ -622,3 +637,236 @@ describe('ShellDataProvider — the server theme on every route', () => {
   }, 10_000)
 })
 
+// ---------------------------------------------------------------------------
+// Library preferences changed off the library screen — A-5 write-back (defect ⑥)
+// ---------------------------------------------------------------------------
+
+/**
+ * The real shell over the real provider, with the **real library screen** at
+ * `/` and a placeholder at `/series/:sid`, entered at `path`.
+ *
+ * `MemoryRouter`, not `createMemoryRouter`: the data router's `navigate` trips
+ * over jsdom's `AbortSignal`, and every route change here has to be a real one —
+ * the 라이브러리 button, a sidebar row, or the link below — because what is under
+ * test is what survives the screen change.
+ */
+function renderLibraryShellAt(path: string): void {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={[path]}>
+        <Link to="/series/s1">test: open series s1</Link>
+        <Routes>
+          <Route
+            path="/"
+            element={
+              <ShellDataProvider>
+                <App />
+              </ShellDataProvider>
+            }
+          >
+            <Route index element={<LibraryPage />} />
+            <Route path="series/:sid" element={<p>series screen</p>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
+/**
+ * The shell draws the sort select and the view switch (`TopBar`) and the scope
+ * rows (`Sidebar`) on **every** route, so those three are library preferences a
+ * reader can change while the library screen is not mounted. A-5 makes no
+ * exception for where the change was made: every local change after the server
+ * answered is written back, and the server is authoritative only for the
+ * payloads it sends. So a change made on a series screen is the reader's, and
+ * walking back to the library must neither drop it nor quietly put the server's
+ * old value over it.
+ *
+ * Each test waits out the settings writer's debounce before it ends (and the
+ * `afterEach` drains once more), so no `PUT` is left on the wire for the next
+ * test's handlers to receive.
+ */
+describe('library preferences changed off the library screen (A-5 write-back)', () => {
+  let puts: SettingsUpdate[]
+  let settingsReads: number
+  /** The library screen's own `GET /api/series` — the sidebar's counts are `limit=1`. */
+  let libraryReads: number
+
+  beforeEach(() => {
+    puts = []
+    settingsReads = 0
+    libraryReads = 0
+    let served: Settings = { ...settings }
+    localStorage.clear()
+    useUiStore.setState({
+      theme: 'system',
+      view: 'grid',
+      sort: 'name',
+      order: 'asc',
+      scope: 'all',
+      query: '',
+      drawerOpen: false,
+      overlays: [],
+      revealSeries: null,
+    })
+    stubViewport(1440)
+    server.use(
+      http.get(`${ORIGIN}/api/settings`, () => {
+        settingsReads += 1
+        return HttpResponse.json(served)
+      }),
+      // Behaves like the server — merge and echo — so the write-back settles.
+      http.put(`${ORIGIN}/api/settings`, async ({ request }) => {
+        const update = (await request.json()) as SettingsUpdate
+        puts.push(update)
+        served = { ...served, ...update }
+        return HttpResponse.json(served)
+      }),
+      http.get(`${ORIGIN}/api/continue`, () => HttpResponse.json({ items: [] })),
+      http.get(`${ORIGIN}/api/series`, ({ request }) => {
+        if (new URL(request.url).searchParams.get('limit') !== '1') libraryReads += 1
+        return HttpResponse.json(page(0))
+      }),
+    )
+  })
+
+  afterEach(async () => {
+    await settle()
+    document.documentElement.removeAttribute('data-theme')
+  })
+
+  /** On `/` with the settings payload absorbed, and nothing written back for it. */
+  async function libraryReady(): Promise<void> {
+    await waitFor(() => {
+      expect(libraryReads).toBeGreaterThan(0)
+    })
+    await settle()
+    expect(puts, 'premise: hydrating the server payload writes nothing back').toEqual([])
+  }
+
+  async function openSeries(): Promise<void> {
+    await userEvent.click(screen.getByRole('link', { name: 'test: open series s1' }))
+    await screen.findByText('series screen')
+  }
+
+  /** Back on `/`: the series screen and its back button are gone, and the library asked for its page. */
+  async function backOnLibrary(readsBefore: number): Promise<void> {
+    await waitFor(() => {
+      expect(screen.queryByText('series screen')).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: '라이브러리' })).not.toBeInTheDocument()
+      expect(libraryReads).toBeGreaterThan(readsBefore)
+    })
+    await settle()
+  }
+
+  it('writes back a sort changed on a series screen, and keeps it on the way back to the library', async () => {
+    renderLibraryShellAt('/')
+    await libraryReady()
+    await openSeries()
+
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: '정렬' }), 'mtime')
+    expect(useUiStore.getState().sort, 'premise: the series-route TopBar drives the store').toBe('mtime')
+    await settle()
+    // `store/ui.ts` `defaultOrderFor`: a key other than `name` starts `desc` (ui-spec §4.5).
+    expect(puts).toEqual([
+      expect.objectContaining({ library_sort: 'mtime', library_order: defaultOrderFor('mtime') }),
+    ])
+
+    const readsBefore = libraryReads
+    await userEvent.click(screen.getByRole('button', { name: '라이브러리' }))
+    await backOnLibrary(readsBefore)
+
+    expect(useUiStore.getState().sort).toBe('mtime')
+    expect(useUiStore.getState().order).toBe(defaultOrderFor('mtime'))
+    // Arriving at the library re-sends nothing: the one change is one write.
+    expect(puts).toHaveLength(1)
+  })
+
+  it('keeps a view switched on a series URL entered directly, and writes it back', async () => {
+    renderLibraryShellAt('/series/s1')
+    await screen.findByText('series screen')
+    // The provider has read the settings: the change below comes after the
+    // server answered, so it is the reader's and not a cold-start race.
+    await waitFor(() => {
+      expect(settingsReads).toBe(1)
+    })
+    await settle()
+    expect(puts, 'premise: hydrating the server payload writes nothing back').toEqual([])
+
+    const viewSwitch = screen.getByRole('radiogroup', { name: '보기 방식' })
+    await userEvent.click(within(viewSwitch).getByRole('radio', { name: '리스트' }))
+    expect(useUiStore.getState().view, 'premise: the series-route TopBar drives the store').toBe('list')
+    await settle()
+
+    await userEvent.click(screen.getByRole('button', { name: '라이브러리' }))
+    await backOnLibrary(0)
+
+    expect(useUiStore.getState().view).toBe('list')
+    expect(puts.map((p) => p.library_view)).toContain('list')
+  })
+
+  it('lands on the library scoped to a sidebar root picked on a series screen, and writes it back', async () => {
+    renderLibraryShellAt('/')
+    await libraryReady()
+    await openSeries()
+
+    const nav = screen.getByRole('complementary', { name: '라이브러리 탐색' })
+    const row = within(nav).getByRole('button', { name: new RegExp(root.label) })
+    expect(row, 'premise: a loaded root, selectable and not current').toBeEnabled()
+    expect(row).toHaveAttribute('data-active', 'false')
+
+    const readsBefore = libraryReads
+    await userEvent.click(row)
+    await backOnLibrary(readsBefore)
+
+    expect(useUiStore.getState().scope).toBe(root.name)
+    expect(within(nav).getByRole('button', { name: new RegExp(root.label) })).toHaveAttribute(
+      'aria-current',
+      'page',
+    )
+    expect(puts.map((p) => p.library_scope)).toContain(root.name)
+  })
+
+  /**
+   * What has to outlive the screen is the sync's whole memory, not only its
+   * `reconciled`. The invalid-`library_sort` repair is bounded to one attempt
+   * per distinct unreadable value (`useLibrarySettingsSync`), and walking to the
+   * library is not one of the things that re-arms it. A sync that is mounted
+   * again on the way home has forgotten that it tried, so a server that keeps
+   * the value is "repaired" once more on every visit.
+   */
+  it('repairs an unreadable library_sort the server keeps once, not once per library visit', async () => {
+    let kept: Settings = { ...settings, library_sort: 'nonsense' as unknown as Settings['library_sort'] }
+    server.use(
+      http.get(`${ORIGIN}/api/settings`, () => HttpResponse.json(kept)),
+      // Takes everything but the sort, which it keeps — and echoes back.
+      http.put(`${ORIGIN}/api/settings`, async ({ request }) => {
+        const update = (await request.json()) as SettingsUpdate
+        puts.push(update)
+        kept = { ...kept, ...update, library_sort: kept.library_sort }
+        return HttpResponse.json(kept)
+      }),
+    )
+    renderLibraryShellAt('/')
+    await waitFor(
+      () => {
+        expect(puts).toHaveLength(1)
+      },
+      { timeout: 3_000 },
+    )
+    await settle()
+    expect(puts, "premise: the one repair, carrying the store's own sort").toEqual([
+      expect.objectContaining({ library_sort: 'name' }),
+    ])
+
+    await openSeries()
+    const readsBefore = libraryReads
+    await userEvent.click(screen.getByRole('button', { name: '라이브러리' }))
+    await backOnLibrary(readsBefore)
+    await settle()
+
+    expect(puts).toHaveLength(1)
+  })
+})

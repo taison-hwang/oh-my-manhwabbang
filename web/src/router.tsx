@@ -20,7 +20,7 @@ import {
 } from './api/queries'
 import { RouteErrorScreen } from './components/shell/RouteScaffold'
 import { LibraryPage } from './features/library/LibraryPage'
-import { useThemeSettingsSync } from './features/library/useLibrary'
+import { useLibrarySettingsSync, useThemeSettingsSync } from './features/library/useLibrary'
 import { Overlays } from './features/overlays/Overlays'
 import { SeriesDetailPage } from './features/series/SeriesDetailPage'
 import { ViewerPage } from './features/viewer/ViewerPage'
@@ -81,6 +81,9 @@ import { DEFAULT_SHELL_DATA, ShellDataContext, type ShellData } from './lib/shel
  * It also hydrates the server's `theme` (`useThemeSettingsSync`): the theme paints
  * every route, so a screen cannot own it — a reader entering at a series or
  * viewer URL would keep the stale local copy until they opened the library.
+ * And it keeps the four library preferences in step (`useLibrarySettingsSync`,
+ * the A-5 write-back): the shell changes them on every route, so a screen
+ * cannot own that either.
  */
 export function ShellDataProvider({ children }: { children: ReactNode }) {
   const auth = useAuthStatus()
@@ -97,6 +100,14 @@ export function ShellDataProvider({ children }: { children: ReactNode }) {
   // Mounted here for the same reason: `theme` is the one server setting every
   // screen paints with.
   useThemeSettingsSync()
+  // And the library's four, for a reason of their own: the shell changes them on
+  // every route — the sort select and the view switch (`TopBar`), the scope rows
+  // (`Sidebar`) — so the sync's `reconciled` state has to outlive whatever
+  // changed the store. Under `LibraryPage` it did not: a change made on a series
+  // screen was never written back, and the remount on the way home hydrated the
+  // server's old value over it (defect ⑥). After the theme sync, as one
+  // component's effects run in declaration order.
+  useLibrarySettingsSync()
 
   // `limit: 1` — only `total` is read. One row is the smallest answer the
   // contract allows (`limit` is 1..200) and keeps these three off the payload

@@ -12,7 +12,7 @@ import { Onboarding } from './Onboarding'
 import { SectionHeader } from './SectionHeader'
 import { SeriesGrid } from './SeriesGrid'
 import { SeriesList } from './SeriesList'
-import { CONTINUE_MAX_CARDS, useLibrary, useLibrarySettingsSync } from './useLibrary'
+import { CONTINUE_MAX_CARDS, useLibrary } from './useLibrary'
 
 /**
  * How long the cards wait for the 이어보기 answer once their own page is in.
@@ -37,7 +37,9 @@ const CONTINUE_GRACE_MS = 1000
  *
  * Everything the screen reads comes from the WP-06 query hooks; everything it
  * remembers lives in `store/ui.ts`. The one place the two meet is
- * `useLibrarySettingsSync`, which is the A-5 write-back.
+ * `useLibrarySettingsSync`, the A-5 write-back — run by the shell
+ * (`ShellDataProvider` in `router.tsx`), not here, because the top bar that
+ * changes 정렬 and 보기 is on every screen and this page is not.
  *
  * The band order below the section header is deliberate: **failure first**, then
  * empty, then data. A 500 from `/api/series` produces `items: []` exactly like a
@@ -48,7 +50,6 @@ const CONTINUE_GRACE_MS = 1000
 export function LibraryPage() {
   const navigate = useNavigate()
   const library = useLibrary()
-  useLibrarySettingsSync()
 
   // `library_view` reaches the store in an effect after `/api/settings` lands
   // (the shell's `useLibrarySettingsSync`) — a painted frame later — and a
@@ -117,7 +118,7 @@ export function LibraryPage() {
 
   // `Settings.server.config_path` (amendment A-10) and
   // `.root_editing_enabled` (amendment A-11) for the onboarding screen. The
-  // same query `useLibrarySettingsSync` already runs, so this costs no request;
+  // same query the shell's `useLibrarySettingsSync` runs, so it costs no request;
   // it is read here rather than inside `Onboarding` because the empty state is
   // a presentational component and stays one.
   const configPath = settings.data?.server.config_path

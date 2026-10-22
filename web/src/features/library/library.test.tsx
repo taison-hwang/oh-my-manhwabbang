@@ -1,11 +1,12 @@
 import '@testing-library/jest-dom/vitest'
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import type { ReactNode } from 'react'
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useNavigate, type NavigateFunction } from 'react-router-dom'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -28,7 +29,7 @@ import { resetBasePath } from '../../api/urls'
 import { matchRange } from '../../lib/chosung'
 import { seriesCardDomId, useUiStore } from '../../store/ui'
 import { LibraryPage } from './LibraryPage'
-import { LIST_CARD_CLASS } from './useLibrary'
+import { LIST_CARD_CLASS, useLibrarySettingsSync } from './useLibrary'
 import { failUnhandled } from '../../test/msw'
 
 /**
@@ -559,6 +560,35 @@ function stubRects(height: number): void {
 }
 
 /**
+ * The A-5 write-back, mounted where the app mounts it: `ShellDataProvider` in
+ * `router.tsx` runs `useLibrarySettingsSync` above every route, so the page no
+ * longer does (⑥). A parent of the routes here too, because effects run child
+ * first and the hydrate has to land in the order it does in the app.
+ */
+function SettingsSync({ children }: { children: ReactNode }) {
+  useLibrarySettingsSync()
+  return <>{children}</>
+}
+
+/**
+ * The router's `navigate`, for a test that leaves the library and comes back
+ * the way the app does — by route, with `SettingsSync` (the shell's, in the
+ * app) staying mounted — rather than by tearing the whole harness down.
+ */
+let navigateTo: NavigateFunction | null = null
+
+function NavigateHandle() {
+  navigateTo = useNavigate()
+  return null
+}
+
+/** Navigates the mounted harness; throws if nothing is mounted. */
+function navigateLibrary(to: string): void {
+  if (navigateTo === null) throw new Error('renderLibrary has not mounted a router')
+  void navigateTo(to)
+}
+
+/**
  * Renders the library screen.
  *
  * Returns the `QueryClient` so a test can invalidate a key the way the product
@@ -582,13 +612,16 @@ function renderLibrary(existing?: QueryClient): QueryClient {
   })
   render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={['/']}>
-        <Routes>
-          <Route path="/" element={<LibraryPage />} />
-          <Route path="/series/:sid" element={<p>series detail</p>} />
-          <Route path="/series/:sid/books/:bid" element={<p>viewer</p>} />
-        </Routes>
-      </MemoryRouter>
+      <SettingsSync>
+        <MemoryRouter initialEntries={['/']}>
+          <NavigateHandle />
+          <Routes>
+            <Route path="/" element={<LibraryPage />} />
+            <Route path="/series/:sid" element={<p>series detail</p>} />
+            <Route path="/series/:sid/books/:bid" element={<p>viewer</p>} />
+          </Routes>
+        </MemoryRouter>
+      </SettingsSync>
     </QueryClientProvider>,
   )
   return client
@@ -644,6 +677,7 @@ beforeEach(() => {
   scrollCalls = []
   coverRequests = []
   rootPosts = []
+  navigateTo = null
   seriesGate = new Promise<void>((resolve) => {
     releaseSeries = resolve
   })
@@ -3155,6 +3189,37 @@ describe('이어보기 (FR-LIB-010)', () => {
       await new Promise((resolve) => setTimeout(resolve, 100))
     })
     expect(screen.queryByText('이어보기')).not.toBeInTheDocument()
+  })
+
+  it('holds the cards while a stale, empty 이어보기 is refetched on the way back', async () => {
+    const client = renderLibrary()
+    await screen.findByRole('button', { name: GUNGYE.name })
+    expect(screen.queryByText('이어보기')).not.toBeInTheDocument()
+
+    // Into the viewer by route, as the app goes: the page unmounts and the
+    // settings sync above the routes stays. A progress write there marks the
+    // list stale without refetching it (`useSaveProgress`, refetchType 'none')
+    // — so the cache still says "empty".
+    act(() => {
+      navigateLibrary(`/series/${GUNGYE.id}/books/${makeId(77)}`)
+    })
+    expect(screen.getByText('viewer')).toBeInTheDocument()
+    scenario.continueItems = [makeContinueItem()]
+    scenario.holdContinue = true
+    await client.invalidateQueries({ queryKey: queryKeys.continueReading.all, refetchType: 'none' })
+
+    // And back: the page mounts again over the cache its first mount filled.
+    act(() => {
+      navigateLibrary('/')
+    })
+    expect(screen.getByTestId('library-skeleton')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: GUNGYE.name })).not.toBeInTheDocument()
+
+    act(() => {
+      releaseContinue()
+    })
+    expect(await screen.findByText('이어보기')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: GUNGYE.name })).toBeInTheDocument()
   })
 
   /**
