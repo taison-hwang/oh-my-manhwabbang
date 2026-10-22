@@ -92,4 +92,19 @@ Thumbs.db
 # deliberately, before a run rather than during one, and step 9's walk is
 # already scoped to the media volume and the state directory — so the signal
 # this hides is one nobody needs, and what it prevents is a real mis-commit.
-.claude/
+# `.worktrees/` is the same case: every hand-made `git worktree add` goes there.
+#
+# The rest of `.claude/` — the shared rules under `.claude/rules/` — is
+# committed on purpose (2026-10-18); only the two paths above stay out.
+.claude/settings.local.json
+.claude/worktrees/
+.worktrees/
+
+# `tsc -b` leaves this behind; `pnpm typecheck` runs with --noEmit and never does.
+*.tsbuildinfo
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
+
+# ---- Serena scratch -----------------------------------------------------------
+.serena/
