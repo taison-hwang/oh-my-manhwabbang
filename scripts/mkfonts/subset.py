@@ -23,16 +23,25 @@ no kana at all**. Those are the gaps, and until they were vendored they fell
 through to `Noto Serif KR` / `Apple SD Gothic Neo` / `serif` — which is to say,
 to whatever the reader's device happened to have, or to a tofu box.
 
-The Han/kana subset is not a sample of the current library. Book and series
-names come from filenames, and internal/kenc decodes those as UTF-8, CP949 or
-Shift_JIS, so the ideographs a *legacy-encoded* name can hold are exactly the
-union of what those two encodings can represent: 4 888 + 6 356 = 7 159, plus
-the two kana blocks entire. That is a closed set derived from the encodings
-rather than a snapshot, so a volume added tomorrow is already covered.
+The Han/kana subset is not a sample of the current library. Archive entry
+names that are not UTF-8 go through internal/kenc, which decodes them as CP949
+or Windows-31J (x/text's `japanese.ShiftJIS`, which is Python's `cp932`: NEC row
+13 and the NEC/IBM extension rows included). So the ideographs a *legacy-encoded*
+name can hold are the union of what those two codecs can produce: 4 888 + 6 716
+= 7 424, plus the 189 assigned kana. That is derived from the encodings rather
+than a snapshot, so a volume added tomorrow is already covered.
 
-The one hole left is a name stored as UTF-8 carrying an ideograph outside both
-legacy sets. That still falls back exactly as everything did before, and no
-such character occurs in the 18 721 names on this machine.
+The set is written to `cjk-coverage.txt` beside this script, and two checks hold
+it in place: internal/kenc/fontcoverage_test.go fails unless it is *exactly* the
+ideographs kenc's own codecs produce, and web/src/styles/fontCoverage.test.ts
+fails unless every woff2 file's cmap carries all of it. The first exists
+because this script once round-tripped Python's strict `shift_jis` while kenc
+decoded Windows-31J, and 265 ideographs kenc could produce had no glyph here.
+
+The one hole left is a name stored as UTF-8 — every series and book name read
+from the filesystem, and any UTF-8 entry name — carrying an ideograph outside
+both legacy sets. That falls back to the reader's system face, as everything
+did before, and no such character occurs in the 18 721 names on this machine.
 
 Two CJK faces, not one (E-55)
 -----------------------------
@@ -76,6 +85,11 @@ ARCHIVO = ROOT / (
     "/node_modules/@fontsource/archivo/files"
 )
 NOTO = Path("/usr/share/fonts/opentype/noto")
+# The character set the CJK faces are cut for, one code point per line. It is
+# what the checks hold the recipe to: internal/kenc/fontcoverage_test.go says
+# it is exactly what kenc's codecs can produce, and
+# web/src/styles/fontCoverage.test.ts says every woff2 file's cmap carries it.
+MANIFEST = ROOT / "scripts/mkfonts/cjk-coverage.txt"
 
 # CJK blocks the vendored Han/kana faces answer for. Hangul is deliberately
 # absent: 고운바탕 owns it, and letting either face claim it would replace the
@@ -104,13 +118,14 @@ RETIRED = ["noto-serif-kr-han-400.woff2", "noto-serif-kr-han-700.woff2"]
 
 
 def encodable_ideographs() -> set[str]:
-    """Every ideograph CP949 or Shift_JIS can represent.
+    """Every ideograph CP949 or Windows-31J can represent.
 
-    Derived by round-tripping the encodings rather than from a table, so it
-    cannot drift from what internal/kenc will actually decode.
+    Derived by round-tripping the codecs rather than from a hand-kept list.
+    `cp932`, not `shift_jis`: kenc decodes with x/text's ShiftJIS, which is
+    Windows-31J, and fontcoverage_test.go fails if the two sets part.
     """
     out: set[str] = set()
-    for enc in ("cp949", "shift_jis"):
+    for enc in ("cp949", "cp932"):
         for hi in range(0x81, 0x100):
             for lo in range(0x30, 0x100):
                 try:
@@ -201,6 +216,17 @@ def missing_glyphs(woff2: Path, chars: set[str]) -> set[str]:
     return chars - have
 
 
+def manifest_text(chars: set[str]) -> str:
+    lines = [
+        "# Written by scripts/mkfonts/subset.py; do not edit by hand.",
+        "# The characters the vendored 한자/가나 faces are cut for: every ideograph",
+        "# CP949 or Windows-31J can encode, plus the assigned kana. One hexadecimal",
+        "# code point per line.",
+    ]
+    lines += [f"{ord(c):04X}" for c in sorted(chars)]
+    return "\n".join(lines) + "\n"
+
+
 def unicode_range_css() -> str:
     return ", ".join(f"U+{a:04X}-{b:04X}" for a, b in UNICODE_RANGE_BLOCKS)
 
@@ -266,6 +292,16 @@ def main() -> int:
         else:
             dest.write_bytes(data)
             print(f"  {dest.name}: {len(data)} B")
+
+    text = manifest_text(chars)
+    if args.check:
+        same = MANIFEST.exists() and MANIFEST.read_text(encoding="utf-8") == text
+        print(f"  {MANIFEST.name}: {len(chars)} code points {'ok' if same else 'DIFFERS'}")
+        if not same:
+            return 1
+    else:
+        MANIFEST.write_text(text, encoding="utf-8")
+        print(f"  {MANIFEST.name}: {len(chars)} code points")
 
     orphans = [n for n in RETIRED if (OUT / n).exists()]
     if orphans:

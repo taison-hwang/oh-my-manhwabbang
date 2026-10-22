@@ -303,22 +303,51 @@ The cost is that those two inputs are load-bearing:
   their `series_id` changes and their progress orphans. That change would be a
   deliberate migration, not a silent upgrade.
 
-### 2. Korean text renders in a system font
+### 2. Names render in vendored faces — with three exceptions
 
-Only Archivo (Latin) is bundled. Hangul falls back to whatever the viewing
-machine has, in this order:
+The skin is 명조, and a system sans standing in for it is a different product
+(ruling **E-46**), so every stack reaches a vendored face before any system one
+(**E-53**). Five are bundled:
 
-```
-Pretendard → Apple SD Gothic Neo → Malgun Gothic → Noto Sans KR → system-ui
-```
+| Face | Draws | Size |
+|---|---|---|
+| 고운바탕 (Gowun Batang) 400/700 | Hangul — all 11 172 syllables — and Latin | 904 KB |
+| Noto Serif TC 400/700 | 한자 and 가나 | 3 418 KB |
+| Noto Sans JP 400/700 | Japanese names only, through `lang="ja"` | 2 355 KB |
+| Archivo 400/700 | numerals and UI labels (`--font-ui`) | 29 KB |
+| Shelf Seal | the three 낙관 glyphs, 藏 · 完 · 讀 | 6 KB |
 
-So the same page looks slightly different on Linux, macOS and Windows: line
-lengths, weights and vertical rhythm shift with the fallback. This is a
-deliberate trade — a subsetted Korean webfont costs 1.5–4 MB against an ~18 MB
-binary, and NFR-OPS-001/002 forbid fetching one from a font CDN at runtime. If
-you would rather have consistent Korean typography, it is a two-file change:
-drop a `.woff2` into `web/src/styles/fonts/` and add one `@font-face` block to
-`web/src/styles/fonts.css`.
+Coverage is derived, not sampled: the Han subset is every ideograph CP949 or
+Windows-31J can encode — 7 424 of them — plus the 189 assigned kana. Those are
+the two codecs `internal/kenc` decodes a non-UTF-8 archive entry name with, so
+that is all such a name can hold; a Go test holds the recipe's list
+(`scripts/mkfonts/cjk-coverage.txt`) to exactly what kenc's codecs produce, and
+a web test reads every cut's cmap against it. When ruling E-53 measured the
+reference library the set also covered every ideograph in every series and book
+name.
+
+Japanese is chosen per **name**, not per character: kanji and 한자 are the same
+codepoints, so `unicode-range` cannot tell 「進撃の巨人」 from 「三國志」.
+`web/src/lib/textLang.ts` tags a name that contains kana with `lang="ja"`, and
+only those names switch to Noto Sans JP (ruling **E-55**). What that leaves:
+
+- **A Japanese title with no kana** (「攻殻機動隊」) is drawn in Noto Serif TC.
+  Nothing in the data marks it as Japanese — file names carry no language.
+- **An ideograph outside that set** falls through to the system: `Noto Serif KR`
+  in a Korean name, Noto Sans CJK JP or Hiragino Sans in one tagged Japanese.
+  Series and book names are read from the filesystem as UTF-8, so they can hold
+  any ideograph. None occurred in the library at E-53.
+- **The 낙관 is the Korean cut** of Noto Serif CJK, not the TC the body uses:
+  it is the mark the prototype draws (E-46).
+
+The fonts come to about 6.7 MB, a fifth of the binary, and the release budget
+has little headroom left (see [Build](#build)), so adding a face is a budget decision
+before it is a CSS one. Noto Serif TC and Noto Sans JP are cut, and Archivo
+copied, by `scripts/mkfonts/subset.py`; `--check` rebuilds them to the side,
+re-reads each cut's cmap for the requested glyphs and compares the bytes with
+what is committed. 고운바탕 and the seal were cut by hand at E-46. Either way the
+rules live in `web/src/styles/fonts.css`, and `styles/tokens.test.ts` and
+`styles/cascade.test.ts` hold the stack order and which rule wins.
 
 ---
 

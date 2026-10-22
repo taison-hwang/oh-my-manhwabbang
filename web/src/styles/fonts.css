@@ -121,7 +121,7 @@
 }
 
 /* ---------------------------------------------------------------------------
- * 한자 — 본명조 TC, vendored (3.31 MB, both weights)
+ * 한자 — 본명조 TC, vendored (3.42 MB, both weights)
  * ---------------------------------------------------------------------------
  * 고운바탕 has no Han and no kana, so every 한자 in a series title and every
  * 가나 in a Japanese one was drawn by the reader's own system — `Noto Serif KR`
@@ -131,15 +131,25 @@
  * survived, and E-46 is explicit that a substituted face is not a slightly
  * different 서고 but a different product.
  *
- * **The coverage is a closed set, not a sample.** Names come from filenames,
- * which internal/kenc decodes as UTF-8, CP949 or Shift_JIS. So the ideographs a
- * legacy-encoded name can hold are exactly what those two encodings can
- * represent — 4 888 and 6 356, union **7 159** — and both kana blocks entire.
- * Measured against the live library: 727 of 18 721 names carry 한자 and 128
- * carry 가나, every character inside the set. A volume added next year is
- * covered because the encoding cannot express anything outside it, not because
- * we looked. `scripts/mkfonts/subset.py` derives the set by round-tripping the
- * codecs and is the recipe for these files.
+ * **The coverage is derived, not sampled.** The set is every ideograph CP949 or
+ * Windows-31J can encode — 4 888 and 6 716, union **7 424** — plus the assigned
+ * kana. Those are the two codecs internal/kenc decodes a non-UTF-8 entry name
+ * with (x/text's `japanese.ShiftJIS` is Windows-31J, NEC and IBM extension rows
+ * included), so a legacy name cannot hold a 한자 outside it. A volume added next
+ * year is covered because the encoding cannot express anything else, not
+ * because we looked. `scripts/mkfonts/subset.py` derives the set by round-tripping
+ * Python's `cp949` and `cp932`, writes it to `scripts/mkfonts/cjk-coverage.txt`,
+ * and is the recipe for these files. Two checks keep it honest: kenc's
+ * fontcoverage_test.go fails unless the manifest is exactly what kenc's codecs
+ * produce — the recipe once used strict `shift_jis` and left 265 of them out —
+ * and fontCoverage.test.ts reads each file's cmap and fails on any gap.
+ *
+ * The hole that remains is a name stored as UTF-8 — every series and book name,
+ * which are read from the filesystem — carrying an ideograph outside both legacy
+ * sets. That falls through the `unicode-range` to the reader's system. Measured
+ * against the live library: 727 of 18 721 names carry 한자 and 128 carry 가나,
+ * every character inside the set. That part is a statement about this library,
+ * not a guarantee.
  *
  * **The regional cut is TC, not KR** (E-55, 사용자 요청). Noto Serif CJK ships
  * one design per region and they differ in the strokes: 直, 骨, 花 are drawn
@@ -178,7 +188,7 @@
 }
 
 /* ---------------------------------------------------------------------------
- * 일본어 — 본고딕 JP, vendored (2.27 MB, both weights)
+ * 일본어 — 본고딕 JP, vendored (2.35 MB, both weights)
  * ---------------------------------------------------------------------------
  * The face above cannot answer for Japanese, and no `unicode-range` can make
  * it: a Japanese title's kanji and a Korean title's 한자 are the **same

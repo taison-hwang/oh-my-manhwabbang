@@ -67,9 +67,23 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/japanese"
 	"golang.org/x/text/encoding/korean"
 	"golang.org/x/text/transform"
+)
+
+// The two legacy codecs, named once so that nothing else can disagree with
+// them. x/text's ShiftJIS is Windows-31J (Python's `cp932`, NEC and IBM
+// extension rows included) and its EUCKR is CP949.
+//
+// They are also the font's specification: the vendored 한자/가나 faces are cut
+// from exactly the ideographs these two can produce, and fontcoverage_test.go
+// fails when scripts/mkfonts/cjk-coverage.txt says otherwise. Swapping either
+// one is therefore a font change as well (E-53, E-55).
+var (
+	cp932 encoding.Encoding = japanese.ShiftJIS
+	cp949 encoding.Encoding = korean.EUCKR
 )
 
 // The encoding labels DecodeEntryName reports. They are stored per book so the
@@ -171,10 +185,10 @@ func DecodeEntryNameAs(raw []byte, utf8Flag bool, legacy string) (name string, e
 	//    What decides the outcome is whether the decoder had to substitute
 	//    anything.
 	if legacy == EncCP932 {
-		if dec, ok := decodeLegacy(japanese.ShiftJIS.NewDecoder(), raw); ok {
+		if dec, ok := decodeLegacy(cp932.NewDecoder(), raw); ok {
 			return dec, EncCP932
 		}
-	} else if dec, ok := decodeLegacy(korean.EUCKR.NewDecoder(), raw); ok {
+	} else if dec, ok := decodeLegacy(cp949.NewDecoder(), raw); ok {
 		return dec, EncCP949
 	}
 
@@ -242,7 +256,7 @@ func ArchiveFallback(raws [][]byte) string {
 	if len(raws) == 0 {
 		return ""
 	}
-	dec := japanese.ShiftJIS.NewDecoder()
+	dec := cp932.NewDecoder()
 	var cjk int
 	for _, raw := range raws {
 		s, ok := decodeLegacy(dec, raw)
