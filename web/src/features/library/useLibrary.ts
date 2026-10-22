@@ -30,13 +30,8 @@ import {
   type RefObject,
 } from 'react'
 
-import {
-  useContinue,
-  useRoots,
-  useSaveSettings,
-  useSeriesListInfinite,
-  useSettings,
-} from '../../api/queries'
+import { useContinue, useRoots, useSeriesListInfinite, useSettings } from '../../api/queries'
+import { useSettingsWriter } from '../../api/settingsWriter'
 import type {
   ContinueItem,
   ProgressFilter,
@@ -550,10 +545,17 @@ function settingsKey(s: {
 /**
  * Keeps the four library preferences in step with `GET/PUT /api/settings`.
  *
- * The server is authoritative once it answers (`store/ui.ts`): **every** settings
- * payload hydrates the store, and every local change after that is written back
- * exactly once. `lastSent` bounds the write to one request per distinct local
- * state, so a `PUT` cannot be sent twice while its own response is in flight.
+ * **Writes go through `api/settingsWriter.ts`**, which patches the settings cache
+ * at once, sends one request at a time, and lets no echo older than the latest
+ * change back into the cache — so whatever this hook hydrates from is never older
+ * than what the reader last picked. A `GET` keeps the fields the writer has not
+ * seen confirmed (`useSettings`); everything else in it is the server's word.
+ *
+ * The server is authoritative once it answers (`store/ui.ts`): every settings
+ * payload with new content hydrates the store, and every local change after that
+ * is written back. A change is written once: the writer patches the cache with
+ * it, so on the next render the store and the payload agree and nothing is left
+ * to write.
  *
  * **`reconciled` is `useState`, not `useRef`, and it holds a payload key rather
  * than a boolean. Both halves of that matter.**
@@ -580,10 +582,9 @@ function settingsKey(s: {
  * (`api/queries.ts`) invalidates `queryKeys.settings` whenever a root is added or
  * removed. Keying on the payload closes it: a payload the store has not been
  * reconciled against is, by definition, news from the server, and the server
- * wins. A successful `PUT` goes through the same door, because `useSaveSettings`
- * writes its response into the cache with `setQueryData` — the echo is just
- * another payload, and adopting it is what makes a server that stores something
- * other than what it was sent terminate instead of loop.
+ * wins. A taken `PUT` answer goes through the same door — the writer puts it in
+ * the cache — and adopting it is what makes a server that stores something other
+ * than what it was sent terminate instead of loop.
  *
  * So: **do not "simplify" this back into a ref, and do not collapse the key back
  * into a boolean.** Two behaviours depend on it and only tests defend them —
@@ -596,7 +597,7 @@ function settingsKey(s: {
  */
 export function useLibrarySettingsSync(): void {
   const settings = useSettings()
-  const { mutate } = useSaveSettings()
+  const save = useSettingsWriter()
   const hydrateFromSettings = useUiStore((s) => s.hydrateFromSettings)
   const view = useUiStore((s) => s.view)
   const sort = useUiStore((s) => s.sort)
@@ -608,8 +609,16 @@ export function useLibrarySettingsSync(): void {
   // on a cold start — no payload has been reconciled, so there is nothing to
   // write back *to* yet.
   const [reconciled, setReconciled] = useState<string | null>(null)
-  const lastSent = useRef<string | null>(null)
   const serverKey = data === undefined ? null : settingsKey(data)
+  // The unreadable server sort the last write-back went out against, and the
+  // sort it carried. A server that keeps the value — echoing it back, or refusing
+  // the repair and re-reading — would otherwise be "repaired" once per debounce
+  // and round trip, forever. One attempt per distinct unreadable value; re-armed
+  // by another unreadable value, by a readable server sort other than the one
+  // sent (the server or the reader moved it), or by the reader changing a library
+  // value. Held limit: a readable server sort equal to the one sent cannot be
+  // told from this client's own optimistic patch, so it does not re-arm.
+  const repaired = useRef<{ server: string; sort: SortKey } | null>(null)
 
   useEffect(() => {
     if (data === undefined || serverKey === null) return
@@ -619,26 +628,12 @@ export function useLibrarySettingsSync(): void {
       order: data.library_order,
       scope: data.library_scope,
     }
-    if (isSortKey(data.library_sort)) next.sort = data.library_sort
+    if (isSortKey(data.library_sort)) {
+      next.sort = data.library_sort
+      if (data.library_sort !== repaired.current?.sort) repaired.current = null
+    }
     hydrateFromSettings(next)
     setReconciled(serverKey)
-    // A new server truth reopens the write-back. `lastSent` remembers one
-    // snapshot forever otherwise, and the store can come back to it: the reader
-    // picks 그리드 (sent, remembered), a refetch re-hydrates the store to the
-    // server's 리스트, the reader picks 그리드 again — `snapshot ===
-    // lastSent.current`, the write is suppressed, the screen says 그리드 and the
-    // server keeps 리스트 until the next reload throws the choice away. The
-    // invalid-`library_sort` repair below dies the same way: after any earlier
-    // write-back, a payload carrying an unreadable sort re-hydrates the other
-    // three fields and the repair `PUT` is swallowed by the same guard.
-    //
-    // This line was deleted once and a review put it back. The reasoning that
-    // deleted it was that a mutation removing it left every test in this file
-    // green — but that is a statement about the tests, not about the code, and
-    // the two scenarios above are exactly the paths the tests did not walk.
-    // **"The mutation survived" is evidence a line is unguarded, never evidence
-    // it is unnecessary.** Both scenarios now have tests (`library.test.tsx`).
-    lastSent.current = null
   }, [reconciled, serverKey, data, hydrateFromSettings])
 
   // `reconciled` and `serverKey` are dependencies, not just guards —
@@ -667,16 +662,21 @@ export function useLibrarySettingsSync(): void {
       library_order: order,
       library_scope: scope,
     })
-    if (snapshot === serverKey) return
-    if (lastSent.current === snapshot) return
-    lastSent.current = snapshot
-    mutate({
+    if (snapshot === settingsKey(data)) return
+    if (!isSortKey(data.library_sort)) {
+      const repairOnly =
+        view === data.library_view && order === data.library_order && scope === data.library_scope
+      const last = repaired.current
+      if (repairOnly && last?.server === data.library_sort && last.sort === sort) return
+      repaired.current = { server: data.library_sort, sort }
+    }
+    save({
       library_view: view,
       library_sort: sort,
       library_order: order,
       library_scope: scope,
     })
-  }, [reconciled, serverKey, data, view, sort, order, scope, mutate])
+  }, [reconciled, serverKey, data, view, sort, order, scope, save])
 }
 
 // ---------------------------------------------------------------------------

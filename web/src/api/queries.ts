@@ -10,6 +10,8 @@
  *  * A `409 stale_version` invalidates the book query and retries once.
  *  * A `401` invalidates the auth status, which flips the shell to the login screen.
  *  * `useSaveProgress` debounces 1 s and is idempotent.
+ *  * Settings writes are ordered by `settingsWriter.ts`; a `GET /api/settings` keeps the
+ *    choices that writer has not seen confirmed yet (`useSettings`).
  */
 
 import {
@@ -49,7 +51,6 @@ import {
   purgeCache,
   putBookPrefs,
   putProgress,
-  putSettings,
   rescanSeries,
   startScan,
   subscribeUnauthorized,
@@ -83,9 +84,9 @@ import type {
   SeriesListParams,
   SeriesListResponse,
   Settings,
-  SettingsUpdate,
 } from './types'
 import { SERIES_LIST_DEFAULT_LIMIT } from './types'
+import { SETTINGS_QUERY_KEY, settingsReadMark, withUnsavedSettings } from './settingsWriter'
 import {
   assertPageNumber,
   pageThumbUrl,
@@ -154,7 +155,7 @@ export const queryKeys = {
     all: ['continue'] as const,
     list: (limit?: number) => ['continue', { limit }] as const,
   },
-  settings: ['settings'] as const,
+  settings: SETTINGS_QUERY_KEY,
   cache: { usage: ['cache', 'usage'] as const },
   scan: {
     all: ['scan'] as const,
@@ -567,22 +568,21 @@ export function useContinue(
 // §7.8 Settings
 // ---------------------------------------------------------------------------
 
+/**
+ * The mark is taken when the GET is sent: a field a `PUT` answered for after that
+ * keeps its written value, because the GET may have been read before the `PUT`
+ * was applied (`settingsWriter.ts`).
+ */
 export function useSettings(options: EnabledOption = {}): UseQueryResult<Settings> {
+  const queryClient = useQueryClient()
   return useQuery({
     queryKey: queryKeys.settings,
-    queryFn: ({ signal }) => getSettings({ signal }),
+    queryFn: async ({ signal }) => {
+      const mark = settingsReadMark()
+      return withUnsavedSettings(queryClient, await getSettings({ signal }), mark)
+    },
     enabled: options.enabled ?? true,
     retry: retryQuery,
-  })
-}
-
-export function useSaveSettings(): UseMutationResult<Settings, Error, SettingsUpdate> {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (update: SettingsUpdate) => putSettings(update),
-    onSuccess: (settings) => {
-      queryClient.setQueryData<Settings>(queryKeys.settings, settings)
-    },
   })
 }
 

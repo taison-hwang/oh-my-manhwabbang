@@ -408,6 +408,20 @@ describe('request bodies', () => {
     expect(await box.current?.json()).toEqual({ theme: 'dark', prefetch: 6 })
   })
 
+  it('PUT settings carries keepalive into the request init only when asked (unload write)', async () => {
+    const original = globalThis.fetch.bind(globalThis)
+    const spy = vi.spyOn(globalThis, 'fetch')
+    spy.mockImplementation((input, init) => original(input, init))
+    server.use(http.put(`${ORIGIN}/api/settings`, () => HttpResponse.json(settings)))
+
+    await putSettings({ theme: 'dark' }, { keepalive: true })
+    await putSettings({ theme: 'dark' })
+
+    const [withFlag, without] = spy.mock.calls.map((call) => call[1])
+    expect(withFlag).toMatchObject({ method: 'PUT', keepalive: true, credentials: 'same-origin' })
+    expect(without, 'every other write is unchanged').not.toHaveProperty('keepalive')
+  })
+
   it('POST scan sends {roots, full}', async () => {
     const box = capture('post', '/api/scan', () =>
       HttpResponse.json({ run_id: 'run-2' }, { status: 202 }),

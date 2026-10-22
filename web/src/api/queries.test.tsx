@@ -6,7 +6,7 @@
  */
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
 import type { ReactNode } from 'react'
@@ -55,7 +55,6 @@ import {
   useRescanSeries,
   useRoots,
   useSaveProgress,
-  useSaveSettings,
   useScanLog,
   useScanStatus,
   useSeries,
@@ -66,7 +65,8 @@ import {
   useSettings,
   useStartScan,
 } from './queries'
-import type { ScanStatus } from './types'
+import { useSettingsWriter } from './settingsWriter'
+import type { ScanStatus, SettingsUpdate } from './types'
 import { resetBasePath } from './urls'
 import { failUnhandled } from '../test/msw'
 
@@ -786,20 +786,26 @@ describe('mutations invalidate what they change', () => {
     expect(client.getQueryState(queryKeys.scan.status)?.isInvalidated).toBe(true)
   })
 
-  it('saving settings replaces the cached settings with the server answer', async () => {
+  it('saving settings shows the change at once, then replaces the cache with the server answer', async () => {
+    // The ordering rules are `settingsWriter.test.tsx`'s; this is the wire.
     server.use(
-      http.put(`${ORIGIN}/api/settings`, () =>
-        HttpResponse.json({ ...settings, theme: 'dark' as const }),
+      http.put(`${ORIGIN}/api/settings`, async ({ request }) =>
+        HttpResponse.json({ ...settings, ...((await request.json()) as SettingsUpdate), prefetch: 11 }),
       ),
     )
     const client = makeClient()
-    const { result } = renderHook(() => useSaveSettings(), { wrapper: makeWrapper(client) })
+    client.setQueryData(queryKeys.settings, settings)
+    const { result } = renderHook(() => useSettingsWriter(), { wrapper: makeWrapper(client) })
 
-    result.current.mutate({ theme: 'dark' })
+    act(() => {
+      result.current({ theme: 'dark' })
+    })
+    expect(client.getQueryData<typeof settings>(queryKeys.settings)?.theme).toBe('dark')
 
     await waitFor(() => {
-      expect(client.getQueryData<typeof settings>(queryKeys.settings)?.theme).toBe('dark')
+      expect(client.getQueryData<typeof settings>(queryKeys.settings)?.prefetch).toBe(11)
     })
+    expect(client.getQueryData<typeof settings>(queryKeys.settings)?.theme).toBe('dark')
   })
 
   it('setting per-book prefs patches both the prefs key and the book detail (FR-VWR-002)', async () => {

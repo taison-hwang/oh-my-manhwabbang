@@ -23,6 +23,7 @@ import type {
   SettingsUpdate,
 } from '../../api/types'
 import { queryKeys } from '../../api/queries'
+import { SETTINGS_SAVE_DEBOUNCE_MS, settingsWriterState } from '../../api/settingsWriter'
 import { resetBasePath } from '../../api/urls'
 import { matchRange } from '../../lib/chosung'
 import { seriesCardDomId, useUiStore } from '../../store/ui'
@@ -1880,7 +1881,10 @@ describe('settings write-back (A-5)', () => {
 
   /**
    * Yields long enough for a `PUT` started by an effect to reach MSW and be
-   * recorded.
+   * recorded: the settings writer's debounce (`api/settingsWriter.ts`), then until
+   * the writer has nothing unsent and nothing on the wire — so a step after this
+   * (another device's change, a refetch) happens after the answer, as the
+   * scenarios say — then a few turns.
    *
    * How long that is cannot be asserted, only bounded from below, which is why
    * the test below runs the *same* helper over a change that must write: a
@@ -1893,7 +1897,15 @@ describe('settings write-back (A-5)', () => {
    * discriminates "yielded" from "did not", not 3 from 1. **Three is headroom,
    * not a demonstrated floor** — do not cite it as one.
    */
-  async function flushSettingsWrites(): Promise<void> {
+  async function flushSettingsWrites(client: QueryClient): Promise<void> {
+    await act(async () => {
+      await new Promise((resolve) => {
+        setTimeout(resolve, SETTINGS_SAVE_DEBOUNCE_MS)
+      })
+    })
+    await waitFor(() => {
+      expect(settingsWriterState(client)).toMatchObject({ pending: 0, inFlight: false })
+    })
     for (let turn = 0; turn < 3; turn++) {
       await act(async () => {
         await new Promise((resolve) => {
@@ -1905,7 +1917,7 @@ describe('settings write-back (A-5)', () => {
 
   it('sends no PUT at all when the server payload is the one that wins', async () => {
     scenario.settings = { ...settingsFixture, ...REMOTE }
-    renderLibrary()
+    const client = renderLibrary()
     await waitForLibrary()
 
     // Preconditions, asserted rather than assumed: hydration happened, and it
@@ -1922,7 +1934,7 @@ describe('settings write-back (A-5)', () => {
       hydratedStore.scope,
     ]).toEqual(['list', 'mtime', 'desc', 'reading'])
 
-    await flushSettingsWrites()
+    await flushSettingsWrites(client)
     expect(settingsUpdates).toEqual([])
 
     // Positive control, same recorder and same flush. A genuine local change
@@ -1932,7 +1944,7 @@ describe('settings write-back (A-5)', () => {
     act(() => {
       useUiStore.getState().setView('grid')
     })
-    await flushSettingsWrites()
+    await flushSettingsWrites(client)
     expect(settingsUpdates).toEqual([
       {
         library_view: 'grid',
@@ -1954,7 +1966,7 @@ describe('settings write-back (A-5)', () => {
       ...REMOTE,
       library_sort: 'nonsense' as unknown as Settings['library_sort'],
     }
-    renderLibrary()
+    const client = renderLibrary()
     await waitForLibrary()
 
     await waitFor(() => {
@@ -1962,7 +1974,7 @@ describe('settings write-back (A-5)', () => {
     })
     expect(useUiStore.getState().sort).toBe('name')
 
-    await flushSettingsWrites()
+    await flushSettingsWrites(client)
     expect(settingsUpdates).toEqual([
       {
         library_view: 'list',
@@ -1996,7 +2008,7 @@ describe('settings write-back (A-5)', () => {
     await waitFor(() => {
       expect(useUiStore.getState().sort).toBe('mtime')
     })
-    await flushSettingsWrites()
+    await flushSettingsWrites(client)
     expect(settingsUpdates).toEqual([])
 
     // The server's values change underneath us — another tab, or this one adding
@@ -2027,7 +2039,7 @@ describe('settings write-back (A-5)', () => {
     // And nothing may have been written back. Before the fix this recorded one
     // PUT carrying list/mtime/desc/reading — the values the server had just
     // replaced.
-    await flushSettingsWrites()
+    await flushSettingsWrites(client)
     expect(settingsUpdates).toEqual([])
 
     // Positive control, same recorder and same flush: a genuine local change
@@ -2036,7 +2048,7 @@ describe('settings write-back (A-5)', () => {
     act(() => {
       useUiStore.getState().setView('list')
     })
-    await flushSettingsWrites()
+    await flushSettingsWrites(client)
     expect(settingsUpdates).toEqual([
       {
         library_view: 'list',
@@ -2069,7 +2081,7 @@ describe('settings write-back (A-5)', () => {
     act(() => {
       useUiStore.getState().setView('grid')
     })
-    await flushSettingsWrites()
+    await flushSettingsWrites(client)
     expect(settingsUpdates).toHaveLength(1)
 
     // The server's own value comes back — another tab, or `invalidateRootState`
@@ -2088,7 +2100,7 @@ describe('settings write-back (A-5)', () => {
     act(() => {
       useUiStore.getState().setView('grid')
     })
-    await flushSettingsWrites()
+    await flushSettingsWrites(client)
     expect(settingsUpdates.slice(1)).toEqual([
       {
         library_view: 'grid',
@@ -2112,7 +2124,7 @@ describe('settings write-back (A-5)', () => {
     act(() => {
       useUiStore.getState().setView('grid')
     })
-    await flushSettingsWrites()
+    await flushSettingsWrites(client)
     expect(settingsUpdates).toHaveLength(1)
 
     // Now the server hands over a sort the client cannot read. `hydrateFromSettings`
@@ -2128,7 +2140,7 @@ describe('settings write-back (A-5)', () => {
       await client.invalidateQueries({ queryKey: queryKeys.settings })
     })
 
-    await flushSettingsWrites()
+    await flushSettingsWrites(client)
     expect(settingsUpdates.slice(1)).toEqual([
       {
         library_view: 'grid',
@@ -2137,6 +2149,126 @@ describe('settings write-back (A-5)', () => {
         library_scope: 'reading',
       },
     ])
+  })
+
+  /**
+   * The repair is bounded: a server that keeps an unreadable sort — echoing it
+   * back, or refusing the repair and re-reading — gets one attempt per distinct
+   * unreadable value, not one per debounce and round trip, forever.
+   */
+  describe('a server that keeps the unreadable library_sort', () => {
+    const BOGUS = 'nonsense' as unknown as Settings['library_sort']
+    const REPAIR = {
+      library_view: 'list',
+      library_sort: 'name',
+      library_order: 'desc',
+      library_scope: 'reading',
+    }
+
+    /** Real time for several debounces and round trips: a loop would have sent again by now. */
+    async function severalDebounces(): Promise<void> {
+      await act(async () => {
+        await new Promise((resolve) => {
+          setTimeout(resolve, 2 * (SETTINGS_SAVE_DEBOUNCE_MS + 100))
+        })
+      })
+    }
+
+    async function refetchSettings(client: QueryClient): Promise<void> {
+      await act(async () => {
+        await client.invalidateQueries({ queryKey: queryKeys.settings })
+      })
+      await severalDebounces()
+    }
+
+    function stubbornServer(): void {
+      server.use(
+        http.put(`${ORIGIN}/api/settings`, async ({ request }) => {
+          const update = (await request.json()) as SettingsUpdate
+          settingsUpdates.push(update)
+          // Takes everything but the sort, which it keeps.
+          scenario.settings = { ...scenario.settings, ...update, library_sort: scenario.settings.library_sort }
+          return HttpResponse.json(scenario.settings)
+        }),
+      )
+    }
+
+    beforeEach(() => {
+      scenario.settings = { ...settingsFixture, ...REMOTE, library_sort: BOGUS }
+    })
+
+    it('sends one repair when every answer echoes the unreadable value back', async () => {
+      stubbornServer()
+      const client = renderLibrary()
+      await waitForLibrary()
+      await waitFor(() => {
+        expect(settingsUpdates).toHaveLength(1)
+      })
+      await severalDebounces()
+      await refetchSettings(client)
+      await refetchSettings(client)
+
+      expect(settingsUpdates).toEqual([REPAIR])
+      expect(useUiStore.getState().sort, 'the store keeps a sort it can read').toBe('name')
+    })
+
+    it('sends one repair when the server refuses it and the re-read brings the value back', async () => {
+      server.use(
+        http.put(`${ORIGIN}/api/settings`, async ({ request }) => {
+          settingsUpdates.push((await request.json()) as SettingsUpdate)
+          return HttpResponse.json(
+            { error: { code: 'bad_request', message: 'refused' } },
+            { status: 400 },
+          )
+        }),
+      )
+      const client = renderLibrary()
+      await waitForLibrary()
+      await waitFor(() => {
+        expect(settingsUpdates).toHaveLength(1)
+      })
+      await severalDebounces()
+      await refetchSettings(client)
+
+      expect(settingsUpdates).toEqual([REPAIR])
+    })
+
+    it('tries once more when the server moves to another unreadable value', async () => {
+      stubbornServer()
+      const client = renderLibrary()
+      await waitForLibrary()
+      await waitFor(() => {
+        expect(settingsUpdates).toHaveLength(1)
+      })
+      await severalDebounces()
+
+      scenario.settings = {
+        ...scenario.settings,
+        library_sort: 'other-nonsense' as unknown as Settings['library_sort'],
+      }
+      await refetchSettings(client)
+      await refetchSettings(client)
+
+      expect(settingsUpdates).toEqual([REPAIR, REPAIR])
+    })
+
+    it('writes a sort the reader picks, and still does not loop on the echo', async () => {
+      stubbornServer()
+      renderLibrary()
+      await waitForLibrary()
+      await waitFor(() => {
+        expect(settingsUpdates).toHaveLength(1)
+      })
+      await severalDebounces()
+
+      act(() => {
+        useUiStore.getState().setSort('size', 'desc')
+      })
+      await severalDebounces()
+      await severalDebounces()
+
+      expect(settingsUpdates).toEqual([REPAIR, { ...REPAIR, library_sort: 'size' }])
+    })
   })
 })
 

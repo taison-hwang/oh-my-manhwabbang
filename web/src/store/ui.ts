@@ -112,7 +112,10 @@ export interface UiState {
   toggleOverlay: (overlay: Overlay) => void
   /** Pops the topmost overlay. Returns it, or `null` when none was open. */
   closeTopOverlay: () => Overlay | null
-  /** Server settings win once they arrive (arch §7.8 + A-5). */
+  /**
+   * Server settings win once they arrive (arch §7.8 + A-5). No stale payload gets
+   * here: `api/settingsWriter.ts` keeps them out of the settings cache.
+   */
   hydrateFromSettings: (settings: Partial<PersistedUi>) => void
 }
 

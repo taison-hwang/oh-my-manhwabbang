@@ -1,7 +1,9 @@
 import { ChevronsDown, Columns2, File } from 'lucide-react'
+import { useReducer } from 'react'
 
-import { useSaveSettings, useSettings } from '../../api/queries'
-import type { DisplayMode, ReadingDir } from '../../api/types'
+import { useSettings } from '../../api/queries'
+import { useSettingsWriter } from '../../api/settingsWriter'
+import type { DisplayMode, ReadingDir, SettingsUpdate } from '../../api/types'
 import { Seg, type SegOption } from '../../components/ds/Seg'
 import type { ThemeSetting } from '../../lib/theme'
 import { useUiStore } from '../../store/ui'
@@ -10,7 +12,26 @@ import { useUiStore } from '../../store/ui'
  * 읽기 기본값 + 테마 (ui-spec §8.6 §2, prd UI-004).
  *
  * Everything here writes `PUT /api/settings` — these are the *global* defaults
- * a book falls back to when it has no override of its own (arch §7.6).
+ * a book falls back to when it has no override of its own (arch §7.6). Writes go
+ * through `api/settingsWriter.ts`, which patches the settings cache at once; a
+ * sweep of changes is one ordered write, so nothing is disabled while a request
+ * is on the wire.
+ *
+ * **A pick re-renders in its own event.** The cache patch is synchronous, but
+ * react-query hands it to this component a task later (the observer's result
+ * is current at once, but query-core `notifyManager` delivers it to React's
+ * subscribed listener with `setTimeout(0)`), and React
+ * restores a controlled input to the props it last rendered as soon as the
+ * handler returns. With nothing else to render, the click committed the *old*
+ * option and a browser could paint that frame before the update arrived — 3/3
+ * clicks with a save on the wire, 6/20 rapid toggles without (item 4,
+ * 2026-10-20). So each pick also bumps local state: React renders inside the
+ * event, and `useSettings` reads the cache *during* render — already patched —
+ * so the input is committed with the new value before it is restored. The cache
+ * stays the only source of what is shown: a refetch, or the re-read after a
+ * refused write, is drawn as it lands, with no local copy to fall out of step.
+ * `ReadDefaultsPanel.test.tsx` holds the first half synchronously after the
+ * event, and the second against a refusal and another device's change.
  *
  * The theme row replaces the prototype's static `다크 (뷰어 고정)` text with a
  * real 라이트 / 다크 / 시스템 control (NFR-CMP-003, ui-spec gap #2). It writes
@@ -44,12 +65,20 @@ export const PREFETCH_MAX = 12
 
 export function ReadDefaultsPanel() {
   const settings = useSettings()
-  const save = useSaveSettings()
+  const save = useSettingsWriter()
   const theme = useUiStore((s) => s.theme)
   const setTheme = useUiStore((s) => s.setTheme)
+  /** Renders the pick inside its own event (see the module comment). */
+  const [, redraw] = useReducer((n: number) => n + 1, 0)
 
   const data = settings.data
-  const disabled = data === undefined || save.isPending
+  const disabled = data === undefined
+
+  const pick = (update: SettingsUpdate) => {
+    if (disabled) return
+    save(update)
+    redraw()
+  }
 
   return (
     <section className="flex min-w-0 flex-1 flex-col gap-3">
@@ -62,7 +91,7 @@ export function ReadDefaultsPanel() {
           options={DIR_OPTIONS}
           aria-label="읽기 방향"
           onChange={(reading_direction) => {
-            if (!disabled) save.mutate({ reading_direction })
+            pick({ reading_direction })
           }}
         />
       </div>
@@ -74,7 +103,7 @@ export function ReadDefaultsPanel() {
           options={MODE_OPTIONS}
           aria-label="표시 모드"
           onChange={(display_mode) => {
-            if (!disabled) save.mutate({ display_mode })
+            pick({ display_mode })
           }}
         />
       </div>
@@ -103,7 +132,7 @@ export function ReadDefaultsPanel() {
             value={data?.prefetch ?? 0}
             disabled={disabled}
             onChange={(e) => {
-              save.mutate({ prefetch: Number(e.target.value) })
+              pick({ prefetch: Number(e.target.value) })
             }}
           />
         </span>
@@ -121,7 +150,7 @@ export function ReadDefaultsPanel() {
             // Local first: `data-theme` must flip on the click, not on the
             // round trip (NFR-CMP-003).
             setTheme(next)
-            save.mutate({ theme: next })
+            save({ theme: next })
           }}
         />
       </div>

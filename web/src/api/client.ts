@@ -427,7 +427,7 @@ export function getSettings(options?: RequestOptions): Promise<Settings> {
 }
 
 /** Partial; sending a `server.*` key is `400 bad_request`, so only user keys are typed. */
-export function putSettings(update: SettingsUpdate, options?: RequestOptions): Promise<Settings> {
+export function putSettings(update: SettingsUpdate, options?: WriteOptions): Promise<Settings> {
   return requestJson<Settings>(settingsUrl(), { ...options, method: 'PUT', body: update })
 }
 
