@@ -39,7 +39,7 @@ import type {
   SeriesSummary,
   SortOrder,
 } from '../../api/types'
-import { SORT_KEYS } from '../../api/types'
+import { SORT_KEYS, THEMES, type Theme } from '../../api/types'
 import { THUMB_WIDTH_FOR, type ThumbWidth } from '../../api/urls'
 import { matchRange } from '../../lib/chosung'
 import { readBreakpoint, TIER_QUERIES, type Breakpoint } from '../../lib/useMediaQuery'
@@ -542,8 +542,62 @@ function settingsKey(s: {
   return JSON.stringify([s.library_view, s.library_sort, s.library_order, s.library_scope])
 }
 
+function isTheme(value: unknown): value is Theme {
+  return (THEMES as readonly unknown[]).includes(value)
+}
+
+/**
+ * What the theme hook's `reconciled` tracks: the four library preferences **plus
+ * `theme`** — the payload's content, not just its theme — so any payload with
+ * news re-asserts the server's theme, including over a store that drifted from
+ * the cache without a write (a late `persist` rehydrate, a `setTheme` that never
+ * reached the writer).
+ */
+function reconcileKey(s: Parameters<typeof settingsKey>[0] & { theme: string }): string {
+  return JSON.stringify([settingsKey(s), s.theme])
+}
+
+/**
+ * Hydrates `theme` from `GET /api/settings` (item bq) — on **every** route, so it
+ * is mounted once in `ShellDataProvider` (`router.tsx`), not by a screen. Under
+ * `LibraryPage` alone, a reader who entered at a series or viewer URL kept
+ * whatever `localStorage` restored until they visited the library.
+ *
+ * **Theme precedence.** Every payload whose *content* differs from the last one
+ * reconciled — the first load, a refetch, a writer patch or answer — sets the
+ * store's theme to the cache's, so on load the server beats whatever
+ * `localStorage` (`shelf.ui`) restored for the first paint. A payload identical
+ * to the reconciled one carries no news and is skipped, and a value not in
+ * `THEMES` is ignored. The theme has **one** writer: the 테마 switch
+ * (`ReadDefaultsPanel`), which sets the store and saves `{theme}` itself. This
+ * hook only reads it, so hydrating a theme can never send it back.
+ *
+ * A ref is enough here, unlike `useLibrarySettingsSync`'s `reconciled` state:
+ * that one exists to keep a write-back in the same commit shut, and this hook
+ * has no write-back.
+ */
+export function useThemeSettingsSync(): void {
+  const settings = useSettings()
+  const hydrateFromSettings = useUiStore((s) => s.hydrateFromSettings)
+  const data = settings.data
+  const serverKey = data === undefined ? null : reconcileKey(data)
+  const theme = data?.theme
+  // `null` until the first payload lands; after that, the last payload content
+  // looked at — readable theme or not, so an unreadable one is skipped once, not
+  // re-checked on every render.
+  const reconciled = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (serverKey === null || reconciled.current === serverKey) return
+    reconciled.current = serverKey
+    if (isTheme(theme)) hydrateFromSettings({ theme })
+  }, [serverKey, theme, hydrateFromSettings])
+}
+
 /**
  * Keeps the four library preferences in step with `GET/PUT /api/settings`.
+ * `theme` is not among them: `useThemeSettingsSync` hydrates it on every route,
+ * and nothing here reads or writes it.
  *
  * **Writes go through `api/settingsWriter.ts`**, which patches the settings cache
  * at once, sends one request at a time, and lets no echo older than the latest
@@ -608,6 +662,11 @@ export function useLibrarySettingsSync(): void {
   // `null` until the first payload lands, which is what keeps the write-back shut
   // on a cold start — no payload has been reconciled, so there is nothing to
   // write back *to* yet.
+  // Keyed on the four library preferences only: a payload whose sole news is a
+  // theme is `useThemeSettingsSync`'s, and re-running this hydration for it could
+  // only re-assert — or, when it shares a commit with a local change the writer
+  // has not seen yet, revert and lose — library values the store already holds
+  // (`themeHydration.test.tsx`, "keeps a library pick that lands in the same commit").
   const [reconciled, setReconciled] = useState<string | null>(null)
   const serverKey = data === undefined ? null : settingsKey(data)
   // The unreadable server sort the last write-back went out against, and the
@@ -662,6 +721,7 @@ export function useLibrarySettingsSync(): void {
       library_order: order,
       library_scope: scope,
     })
+    // Library fields only: `theme` is not this hook's to write (`useThemeSettingsSync`).
     if (snapshot === settingsKey(data)) return
     if (!isSortKey(data.library_sort)) {
       const repairOnly =

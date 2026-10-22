@@ -18,7 +18,7 @@
 import '@testing-library/jest-dom/vitest'
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
@@ -27,6 +27,7 @@ import { RouterProvider, createMemoryRouter } from 'react-router-dom'
 
 import { App } from './App'
 import {
+  errorEnvelope,
   ORIGIN,
   pendingRoot,
   root,
@@ -35,12 +36,13 @@ import {
   scanStatusRunning,
   settings,
 } from './api/fixtures'
-import type { AuthStatus, SeriesListResponse, Settings } from './api/types'
+import { SETTINGS_SAVE_DEBOUNCE_MS } from './api/settingsWriter'
+import type { AuthStatus, SeriesListResponse, Settings, SettingsUpdate } from './api/types'
 import { resetBasePath } from './api/urls'
 import { LibraryPage } from './features/library/LibraryPage'
 import { useShellData } from './lib/shellData'
 import { ShellDataProvider } from './router'
-import { useUiStore } from './store/ui'
+import { UI_STORAGE_KEY, useUiStore } from './store/ui'
 import { failUnhandled } from './test/msw'
 
 const server = setupServer()
@@ -66,6 +68,9 @@ beforeEach(() => {
     ),
     http.get(`${ORIGIN}/api/roots`, () => HttpResponse.json(rootsResponse)),
     http.get(`${ORIGIN}/api/scan/status`, () => HttpResponse.json(scanStatusIdle)),
+    // The provider hydrates `theme` on every route (`useThemeSettingsSync`), so
+    // every test that mounts it reads the settings once.
+    http.get(`${ORIGIN}/api/settings`, () => HttpResponse.json(settings)),
     http.get(`${ORIGIN}/api/series`, ({ request }) => {
       const params = new URL(request.url).searchParams
       seriesQueries.push(params.toString())
@@ -443,3 +448,177 @@ describe('the sidebar and a pending root (A-11 / R2, ruling E-26)', () => {
     expect(within(nav).getByRole('button', { name: root.label })).toBeEnabled()
   })
 })
+
+// ---------------------------------------------------------------------------
+// The server theme on every route, not only the library's
+// ---------------------------------------------------------------------------
+
+/**
+ * The real shell over the real provider, entered **directly** at `path` — a
+ * bookmark, a reload, a link — with placeholder screens, so nothing below the
+ * provider reads the settings.
+ */
+function renderShellAt(
+  path: string,
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+): void {
+  const memory = createMemoryRouter(
+    [
+      {
+        path: '/',
+        element: (
+          <ShellDataProvider>
+            <App />
+          </ShellDataProvider>
+        ),
+        children: [
+          { index: true, element: <p>library screen</p> },
+          { path: 'series/:sid', element: <p>series screen</p> },
+          { path: 'series/:sid/books/:bid', element: <p>viewer screen</p> },
+        ],
+      },
+    ],
+    { initialEntries: [path] },
+  )
+  render(
+    <QueryClientProvider client={client}>
+      <RouterProvider router={memory} />
+    </QueryClientProvider>,
+  )
+}
+
+/**
+ * `main.tsx`'s query defaults, copied: what a query that sets no `retry` of its
+ * own inherits in the app (`retry: 1`), where the test default above would hide it.
+ */
+function productionClient(): QueryClient {
+  return new QueryClient({
+    defaultOptions: { queries: { staleTime: 30_000, refetchOnWindowFocus: false, retry: 1 } },
+  })
+}
+
+/** Past the settings writer's debounce, so a write-back would have been sent. */
+async function settle(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, SETTINGS_SAVE_DEBOUNCE_MS + 100))
+  })
+}
+
+/**
+ * `theme` used to reach the store only through `LibraryPage`'s settings sync, so
+ * a reader who never opened the library kept whatever `shelf.ui` restored. The
+ * provider is the one component every route renders under; the theme travels
+ * `GET /api/settings` → `useThemeSettingsSync` → the store → `data-theme`, with
+ * no library screen anywhere in the tree.
+ */
+describe('ShellDataProvider — the server theme on every route', () => {
+  let puts: SettingsUpdate[]
+
+  beforeEach(() => {
+    puts = []
+    useUiStore.setState({ theme: 'system', drawerOpen: false, overlays: [], scope: 'all' })
+    localStorage.clear()
+    stubViewport(1440)
+    server.use(
+      // Recorded rather than left unhandled: hydration must send nothing, and an
+      // unhandled request would fail as a network error instead of as a count.
+      http.put(`${ORIGIN}/api/settings`, async ({ request }) => {
+        const update = (await request.json()) as SettingsUpdate
+        puts.push(update)
+        return HttpResponse.json({ ...settings, ...update })
+      }),
+    )
+  })
+
+  afterEach(() => {
+    document.documentElement.removeAttribute('data-theme')
+  })
+
+  it.each([
+    ['a series', '/series/s1', 'series screen'],
+    ['a viewer', '/series/s1/books/b1', 'viewer screen'],
+  ])(
+    'lets the server theme beat the local copy on %s URL entered directly, without writing it back',
+    async (_, path, screenText) => {
+      // This device's last choice, exactly as `persist` stored it.
+      localStorage.setItem(UI_STORAGE_KEY, JSON.stringify({ state: { theme: 'light' }, version: 0 }))
+      await useUiStore.persist.rehydrate()
+      expect(useUiStore.getState().theme, 'premise: the local copy restored').toBe('light')
+      // Another device has since saved `dark`.
+      server.use(
+        http.get(`${ORIGIN}/api/settings`, () =>
+          HttpResponse.json({ ...settings, theme: 'dark' } satisfies Settings),
+        ),
+      )
+
+      renderShellAt(path)
+      await screen.findByText(screenText)
+
+      await waitFor(() => {
+        expect(useUiStore.getState().theme).toBe('dark')
+      })
+      expect(document.documentElement).toHaveAttribute('data-theme', 'dark')
+      await settle()
+      // Read-only: the theme's one writer is the 테마 switch.
+      expect(puts).toEqual([])
+    },
+  )
+
+  /**
+   * The provider's queries run before the auth gate decides anything, so behind
+   * a password the settings read is one more `401`. It must cost one request
+   * (a 4xx is not retried, and the `401` only re-reads the auth status), leave
+   * the local theme alone, and be answered by the login's refetch-everything.
+   * Under the app's own query defaults, so the "not retried" is `useSettings`'s
+   * `retryQuery` and not this file's `retry: false`.
+   */
+  it('reads the settings once behind the login screen, then hydrates once logged in', async () => {
+    const user = userEvent.setup()
+    let loggedIn = false
+    let settingsReads = 0
+    const refused = () =>
+      HttpResponse.json(errorEnvelope('unauthorized', 'login required'), { status: 401 })
+    useUiStore.setState({ theme: 'light' })
+    server.use(
+      http.get(`${ORIGIN}/api/auth/status`, () =>
+        HttpResponse.json({ auth_required: true, authenticated: loggedIn } satisfies AuthStatus),
+      ),
+      http.get(`${ORIGIN}/api/roots`, () => (loggedIn ? HttpResponse.json(rootsResponse) : refused())),
+      http.get(`${ORIGIN}/api/scan/status`, () =>
+        loggedIn ? HttpResponse.json(scanStatusIdle) : refused(),
+      ),
+      http.get(`${ORIGIN}/api/series`, () => (loggedIn ? HttpResponse.json(page(0)) : refused())),
+      http.get(`${ORIGIN}/api/settings`, () => {
+        settingsReads += 1
+        return loggedIn
+          ? HttpResponse.json({ ...settings, theme: 'dark' } satisfies Settings)
+          : refused()
+      }),
+      http.post(`${ORIGIN}/api/auth/login`, () => {
+        loggedIn = true
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+
+    renderShellAt('/series/s1', productionClient())
+    await screen.findByRole('heading', { name: '비밀번호를 입력하세요' })
+    // Past the first retry `retry: 1` would schedule (1 s after the failure).
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_600))
+    })
+    expect(settingsReads, 'a refused read is not retried or looped').toBe(1)
+    expect(useUiStore.getState().theme).toBe('light')
+
+    await user.type(screen.getByLabelText('비밀번호'), 'hunter2')
+    await user.click(screen.getByRole('button', { name: '로그인' }))
+
+    await screen.findByText('series screen')
+    await waitFor(() => {
+      expect(useUiStore.getState().theme).toBe('dark')
+    })
+    expect(settingsReads).toBe(2)
+    await settle()
+    expect(puts).toEqual([])
+  }, 10_000)
+})
+

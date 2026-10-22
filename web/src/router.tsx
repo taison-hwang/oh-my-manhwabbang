@@ -20,6 +20,7 @@ import {
 } from './api/queries'
 import { RouteErrorScreen } from './components/shell/RouteScaffold'
 import { LibraryPage } from './features/library/LibraryPage'
+import { useThemeSettingsSync } from './features/library/useLibrary'
 import { Overlays } from './features/overlays/Overlays'
 import { SeriesDetailPage } from './features/series/SeriesDetailPage'
 import { ViewerPage } from './features/viewer/ViewerPage'
@@ -76,6 +77,10 @@ import { DEFAULT_SHELL_DATA, ShellDataContext, type ShellData } from './lib/shel
  * this row reported the size of the whole library, which is the "visibly wrong
  * number" E-9 exists to fix; there is no client-side window here, because the
  * server owns `library.recently_added_days` and would disagree with one.
+ *
+ * It also hydrates the server's `theme` (`useThemeSettingsSync`): the theme paints
+ * every route, so a screen cannot own it — a reader entering at a series or
+ * viewer URL would keep the stale local copy until they opened the library.
  */
 export function ShellDataProvider({ children }: { children: ReactNode }) {
   const auth = useAuthStatus()
@@ -89,6 +94,9 @@ export function ShellDataProvider({ children }: { children: ReactNode }) {
   // looking at. A copy inside the settings dialog would fire a second set of
   // refetches, and only for users who happened to have the dialog open.
   useScanCompletionRefresh(scan.data)
+  // Mounted here for the same reason: `theme` is the one server setting every
+  // screen paints with.
+  useThemeSettingsSync()
 
   // `limit: 1` — only `total` is read. One row is the smallest answer the
   // contract allows (`limit` is 1..200) and keeps these three off the payload

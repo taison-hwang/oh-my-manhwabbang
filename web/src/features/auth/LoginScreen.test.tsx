@@ -5,16 +5,22 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
-import { useCallback, useMemo, type ReactNode } from 'react'
 import { RouterProvider, createMemoryRouter } from 'react-router-dom'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { App } from '../../App'
-import { ORIGIN, authStatus, rootsResponse, scanStatusIdle, seriesListResponse } from '../../api/fixtures'
+import {
+  ORIGIN,
+  authStatus,
+  rootsResponse,
+  scanStatusIdle,
+  seriesListResponse,
+  settings,
+} from '../../api/fixtures'
 import { errorEnvelope } from '../../api/fixtures'
-import { queryKeys, useAuthStatus, useLogin, useRoots, useScanStatus, useSeriesList } from '../../api/queries'
+import { queryKeys } from '../../api/queries'
 import { resetBasePath } from '../../api/urls'
-import { DEFAULT_SHELL_DATA, ShellDataContext, type ShellData } from '../../lib/shellData'
+import { ShellDataProvider } from '../../router'
 import { useUiStore } from '../../store/ui'
 import { failUnhandled } from '../../test/msw'
 
@@ -35,9 +41,10 @@ import { failUnhandled } from '../../test/msw'
  *            →  `/api/auth/status` re-read    →  App's gate  →  this screen
  *            →  `useLogin`                    →  invalidate everything  →  back where we were
  *
- * The provider below is the one in `router.tsx` (`ShellDataProvider`), which is private to
- * that module; it is reproduced rather than exported so that this test does not reshape a
- * file it does not own.
+ * The provider is the shipped one, imported from `router.tsx` (`ShellDataProvider`), not a
+ * copy: an earlier copy here drifted from it (it lost the three sidebar counts and the
+ * `theme` hydration) while staying green. Every request the provider makes is therefore
+ * answered below — `src/test/msw.ts` fails the test naming any endpoint it grows.
  */
 
 const server = setupServer()
@@ -87,38 +94,6 @@ beforeEach(() => {
   useUiStore.setState({ theme: 'system', drawerOpen: false, overlays: [], scope: 'all' })
 })
 
-/** A verbatim stand-in for `router.tsx`'s private `ShellDataProvider`. */
-function ShellDataProvider({ children }: { children: ReactNode }) {
-  const auth = useAuthStatus()
-  const roots = useRoots()
-  const scan = useScanStatus()
-  const login = useLogin()
-  const all = useSeriesList({ limit: 1 })
-
-  const { mutateAsync } = login
-  const submitLogin = useCallback(
-    async (password: string): Promise<void> => {
-      await mutateAsync(password)
-    },
-    [mutateAsync],
-  )
-
-  const value = useMemo<ShellData>(
-    () => ({
-      auth: auth.data ?? DEFAULT_SHELL_DATA.auth,
-      login: submitLogin,
-      loginPending: login.isPending,
-      roots: roots.data?.items ?? [],
-      rootsLoaded: roots.isSuccess,
-      counts: { reading: 0, added: all.data?.total ?? 0, done: 0 },
-      scan: scan.data ?? DEFAULT_SHELL_DATA.scan,
-    }),
-    [all.data, auth.data, login.isPending, roots.data, roots.isSuccess, scan.data, submitLogin],
-  )
-
-  return <ShellDataContext.Provider value={value}>{children}</ShellDataContext.Provider>
-}
-
 function makeClient(): QueryClient {
   return new QueryClient({
     defaultOptions: {
@@ -162,6 +137,8 @@ function handlersForALiveSession(): void {
     ),
     http.get(`${ORIGIN}/api/roots`, () => HttpResponse.json(rootsResponse)),
     http.get(`${ORIGIN}/api/scan/status`, () => HttpResponse.json(scanStatusIdle)),
+    // The provider hydrates `theme` on every route (`useThemeSettingsSync`).
+    http.get(`${ORIGIN}/api/settings`, () => HttpResponse.json(settings)),
     http.get(`${ORIGIN}/api/series`, () => HttpResponse.json(seriesListResponse)),
   )
 }
@@ -176,6 +153,8 @@ describe('in-app re-authentication (ruling E-17)', () => {
       ),
       http.get(`${ORIGIN}/api/roots`, () => HttpResponse.json(rootsResponse)),
       http.get(`${ORIGIN}/api/scan/status`, () => HttpResponse.json(scanStatusIdle)),
+      http.get(`${ORIGIN}/api/settings`, () => HttpResponse.json(settings)),
+      // All three sidebar counts (읽는 중 · 최근 추가 · 완독) are `/api/series` calls.
       http.get(`${ORIGIN}/api/series`, () =>
         sessionLive
           ? HttpResponse.json(seriesListResponse)

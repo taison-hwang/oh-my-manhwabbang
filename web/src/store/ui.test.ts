@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { UI_STORAGE_KEY, defaultOrderFor, useUiStore } from './ui'
 
@@ -127,3 +127,57 @@ describe('persistence', () => {
     expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
   })
 })
+
+/**
+ * The store's half of item bq. Keeping a stale payload away from the theme is
+ * not done here: no echo older than the latest pick reaches the settings cache
+ * (`api/settingsWriter.ts`), and `themeHydration.test.tsx` holds the reader's
+ * side of it — first load, stale echoes, other devices, `system`, bad values.
+ */
+describe('theme (item bq)', () => {
+  it('applies a switch at once and persists only the sticky slice', () => {
+    useUiStore.getState().setTheme('dark')
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
+    const parsed = JSON.parse(localStorage.getItem(UI_STORAGE_KEY) ?? '{}') as {
+      state?: Record<string, unknown>
+    }
+    expect(parsed.state).toEqual({
+      theme: 'dark',
+      view: 'grid',
+      scope: 'all',
+      sort: 'name',
+      order: 'asc',
+    })
+  })
+
+  it('takes the theme of every payload it is handed, a recent switch or not', () => {
+    useUiStore.getState().setTheme('light')
+    useUiStore.getState().hydrateFromSettings({ theme: 'dark', view: 'list' })
+    expect(useUiStore.getState()).toMatchObject({ theme: 'dark', view: 'list' })
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
+  })
+
+  it('leaves the theme alone when a payload carries none', () => {
+    useUiStore.getState().setTheme('light')
+    useUiStore.getState().hydrateFromSettings({ view: 'list' })
+    expect(useUiStore.getState()).toMatchObject({ theme: 'light', view: 'list' })
+  })
+
+  it('restores the saved theme in a fresh store for the first paint, then takes the first server theme', async () => {
+    // What `persist` writes: the sticky slice, here a `light` from last session.
+    localStorage.setItem(
+      UI_STORAGE_KEY,
+      JSON.stringify({
+        state: { theme: 'light', view: 'list', scope: 'all', sort: 'name', order: 'asc' },
+        version: 0,
+      }),
+    )
+    vi.resetModules()
+    const fresh = (await import('./ui')).useUiStore
+    expect(fresh.getState()).toMatchObject({ theme: 'light', view: 'list' })
+
+    fresh.getState().hydrateFromSettings({ theme: 'dark' })
+    expect(fresh.getState().theme).toBe('dark')
+  })
+})
+

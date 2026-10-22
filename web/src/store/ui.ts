@@ -91,6 +91,11 @@ export interface UiState {
    */
   overlays: Overlay[]
 
+  /**
+   * Applies `data-theme` at once. Saving it is the caller's — the 테마 switch
+   * (`ReadDefaultsPanel`) also hands it to the settings writer, which keeps every
+   * echo older than it out of the cache this store hydrates from (item bq).
+   */
   setTheme: (theme: ThemeSetting) => void
   setView: (view: ViewMode) => void
   setScope: (scope: Scope) => void
