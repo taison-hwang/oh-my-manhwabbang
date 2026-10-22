@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
+import { LIBRARY_VIEWS, SORT_KEYS, SORT_ORDERS, THEMES } from '../api/types'
 import { applyTheme, type ThemeSetting } from '../lib/theme'
 
 /**
@@ -29,6 +30,19 @@ export type SortOrder = 'asc' | 'desc'
  * root name is user-supplied config, not an enum.
  */
 export type Scope = string
+
+/**
+ * What a saved scope must look like to be one at all. A root name is a
+ * configuration identity of `[a-zA-Z0-9._-]{1,64}` (arch §3.2) and the four
+ * smart lists are words in the same alphabet; which roots exist is the
+ * server's to say, so this is a shape, not a membership test.
+ */
+const SCOPE_SHAPE = /^[a-zA-Z0-9._-]{1,64}$/
+
+/** Whether `value`, read from outside the type system, is one of `list`. */
+function isOneOf<T extends string>(list: readonly T[], value: unknown): value is T {
+  return (list as readonly unknown[]).includes(value)
+}
 
 /** Overlays are state, not routes (ui-spec §3). */
 export type Overlay = 'palette' | 'settings' | 'shortcuts'
@@ -247,6 +261,30 @@ export const useUiStore = create<UiState>()(
     }),
     {
       name: UI_STORAGE_KEY,
+      // The default shallow merge, field by field. `persisted` is whatever storage
+      // held, and all of it is read before the server answers — `theme` by
+      // `main.tsx`'s `applyTheme`, the rest by the library's first request — so
+      // every field is checked before it is trusted: one that is not a value of
+      // its type is dropped (the store keeps its own), and a key outside
+      // `PersistedUi` is never restored. The lists are the wire enums; each
+      // narrows to its wire type, which must assign to `PersistedUi`.
+      // Item ⑤: a saved `view` is the reader's, and a stored `libraryViewKnown`
+      // is overwritten, never believed.
+      merge: (persisted, current) => {
+        if (typeof persisted !== 'object' || persisted === null) return current
+        const saved = persisted as Record<string, unknown>
+        const restored: Partial<PersistedUi> = {}
+        if (isOneOf(THEMES, saved.theme)) restored.theme = saved.theme
+        if (isOneOf(LIBRARY_VIEWS, saved.view)) restored.view = saved.view
+        if (typeof saved.scope === 'string' && SCOPE_SHAPE.test(saved.scope)) restored.scope = saved.scope
+        if (isOneOf(SORT_KEYS, saved.sort)) restored.sort = saved.sort
+        if (isOneOf(SORT_ORDERS, saved.order)) restored.order = saved.order
+        return {
+          ...current,
+          ...restored,
+          libraryViewKnown: current.libraryViewKnown || restored.view !== undefined,
+        }
+      },
       partialize: (s): PersistedUi => ({
         theme: s.theme,
         view: s.view,

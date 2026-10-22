@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { applyTheme } from '../lib/theme'
+
 import { UI_STORAGE_KEY, defaultOrderFor, useUiStore } from './ui'
 
 const reset = (): void => {
@@ -276,3 +278,69 @@ describe('libraryViewKnown (item ⑤)', () => {
   })
 })
 
+/**
+ * `shelf.ui` is outside the type system, and every field of it is read before
+ * the server answers: `theme` by `main.tsx`'s `applyTheme` ahead of the first
+ * render, `scope`/`sort`/`order` by the library's first `GET /api/series` — and
+ * for as long as `/api/settings` keeps failing. So each field is checked on the
+ * way in, not only `view` (item ⑤): an unreadable one is dropped and the store
+ * keeps its default, while the readable rest is still restored.
+ */
+describe('rehydrating shelf.ui', () => {
+  const SAVED = { theme: 'dark', view: 'list', scope: 'mangga', sort: 'size', order: 'desc' } as const
+  const DEFAULTS = { theme: 'system', view: 'grid', scope: 'all', sort: 'name', order: 'asc' } as const
+
+  it('round-trips a fully readable saved state exactly', async () => {
+    const fresh = await freshStore({ ...SAVED })
+    expect(fresh.getState()).toMatchObject({ ...SAVED, libraryViewKnown: true })
+  })
+
+  // Not one of the wire enums (arch §7.8, C-3) — `vols` is the ui-spec draft's
+  // name that C-3 overruled, `Dark`/`ASC` a case the server never sends.
+  it.each([
+    ...(['bogus', 'Dark', '', null, false, {}, 7] as const).map((v) => ['theme', v] as const),
+    ...(['bogus', 'vols', 'read', '', null, false, {}, 7] as const).map((v) => ['sort', v] as const),
+    ...(['bogus', 'ASC', '', null, false, {}, 7] as const).map((v) => ['order', v] as const),
+  ])('drops an unreadable saved %s (%j) and restores the rest', async (field, value) => {
+    const fresh = await freshStore({ ...SAVED, [field]: value })
+    expect(fresh.getState()).toMatchObject({ ...SAVED, [field]: DEFAULTS[field], libraryViewKnown: true })
+  })
+
+  // A scope is a smart list or a root name, and a root name is a configuration
+  // identity of `[a-zA-Z0-9._-]{1,64}` (arch §3.2): nothing else can name a scope.
+  it.each(['', ' ', 'two words', 'a/b', '../mangga', 'x'.repeat(65), 'tab\there', null, false, {}, 7])(
+    'drops an unreadable saved scope (%j) and restores the rest',
+    async (scope) => {
+      const fresh = await freshStore({ ...SAVED, scope })
+      expect(fresh.getState()).toMatchObject({ ...SAVED, scope: 'all', libraryViewKnown: true })
+    },
+  )
+
+  it('restores every readable value of each field', async () => {
+    const readable = {
+      theme: ['light', 'dark', 'system'],
+      sort: ['name', 'mtime', 'recent', 'size', 'books', 'added'],
+      order: ['asc', 'desc'],
+      scope: ['all', 'reading', 'added', 'done', 'mangga', '01.mangga_v-2', 'x'.repeat(64)],
+    } as const
+    for (const [field, values] of Object.entries(readable)) {
+      for (const value of values) {
+        const fresh = await freshStore({ ...SAVED, [field]: value })
+        expect(fresh.getState()).toMatchObject({ ...SAVED, [field]: value })
+      }
+    }
+  })
+
+  it('never lets an unreadable theme reach data-theme at boot', async () => {
+    document.documentElement.removeAttribute('data-theme')
+    const fresh = await freshStore({ ...SAVED, theme: 'bogus' })
+    // What `main.tsx` does before the first render; the store applies nothing on rehydrate.
+    applyTheme(fresh.getState().theme)
+    expect(['light', 'dark']).toContain(document.documentElement.getAttribute('data-theme'))
+  })
+
+  it('restores nothing outside the persisted slice', async () => {
+    const fresh = await freshStore({ ...SAVED, query: '환타', overlays: ['palette'], drawerOpen: true })
+    expect(fresh.getState()).toMatchObject({ ...SAVED, query: '', overlays: [], drawerOpen: false })
+  })
+})
