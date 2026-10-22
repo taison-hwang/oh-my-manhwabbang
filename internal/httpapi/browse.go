@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"shelf/internal/config"
 	"shelf/internal/natsort"
@@ -96,7 +97,7 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) error {
 
 	entries, truncated, err := readSubdirs(base, rel)
 	if err != nil {
-		return browseReadError(err)
+		return browseReadError(err, clean)
 	}
 
 	current := s.browseEntry(clean)
@@ -120,12 +121,7 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) error {
 func (s *Server) browseBaseList(w http.ResponseWriter, bases []string) error {
 	entries := make([]BrowseEntry, 0, len(bases))
 	for _, base := range bases {
-		entry := s.browseEntry(base)
-		if _, err := os.Stat(base); err != nil {
-			entry.Selectable = false
-			entry.Reason = reasonPtr(reasonDoesNotExist)
-		}
-		entries = append(entries, entry)
+		entries = append(entries, s.browseEntry(base))
 	}
 	writeJSON(w, http.StatusOK, BrowseResponse{
 		Path:    "",
@@ -241,6 +237,23 @@ func (s *Server) browseEntries(dir string, names []string) []BrowseEntry {
 // path the same sentence.
 func (s *Server) browseEntry(path string) BrowseEntry {
 	e := BrowseEntry{Name: filepath.Base(path), Path: path, Selectable: true}
+	// validateRootCreate's checks before the comparisons, in its order. A name
+	// with a control character is refused before anything touches the
+	// filesystem. Then its stat and open (reach) — and a path that is not valid
+	// UTF-8 leaves here with U+FFFD in place of the bad bytes (encoding/json),
+	// so the stat the endpoint will run is of a spelling that names nothing.
+	if hasControlChars(path) {
+		e.Selectable, e.Reason = false, reasonPtr(reasonControlChars)
+		return e
+	}
+	if !utf8.ValidString(path) {
+		e.Selectable, e.Reason = false, reasonPtr(reasonDoesNotExist)
+		return e
+	}
+	if _, reason := reach(path); reason != "" {
+		e.Selectable, e.Reason = false, reasonPtr(reason)
+		return e
+	}
 	resolved := resolvePath(path)
 	for _, existing := range s.configuredRoots() {
 		other := resolvePath(filepath.Clean(existing.Path))
@@ -289,12 +302,12 @@ func reasonPtr(s string) *string { return &s }
 // one that tried to escape, and that conflation is convenient here rather than
 // awkward: both are "no such directory under a base", which is what the client
 // is told.
-func browseReadError(err error) error {
+func browseReadError(err error, path string) error {
 	switch {
 	case errors.Is(err, errNotADirectory):
 		return badRoot("path", reasonNotADirectory, "that path is a file, not a directory")
 	case errors.Is(err, os.ErrNotExist):
-		return badRoot("path", reasonDoesNotExist, "there is no such directory on the server")
+		return notThere(path)
 	default:
 		// Permission denied lands here with every other read failure, and on
 		// purpose: they are one remedy from the caller's side.

@@ -2,7 +2,9 @@ package httpapi
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -320,6 +322,53 @@ func TestCreateRoot_fallsBackToPendingWhenTheRootCannotBeOpened(t *testing.T) {
 	s := decodeBody[Settings](t, e.get("/api/settings"), http.StatusOK)
 	if !s.Server.ConfigChangedOnDisk {
 		t.Error("config_changed_on_disk is false, but the file on disk gained a root this process never opened")
+	}
+}
+
+// TestCreateRoot_saysWhyAReAddedNameWaitsForARestart is open item `af`.
+//
+// Undoing a removal before restarting is answered with a pending row — on
+// purpose (E-40 §2 left hot remove unbought, so the old handle is still open
+// under that name). What was wrong is that the one sentence the server writes
+// about it was the generic "could not be opened", which reads as a broken
+// directory. The operator log must say that the name is still held by the
+// removed root, and that a restart is what frees it.
+func TestCreateRoot_saysWhyAReAddedNameWaitsForARestart(t *testing.T) {
+	e := newEnv(t, withRootEditing(), withSecondRoot())
+	var buf bytes.Buffer
+	e.srv.log = slog.New(slog.NewJSONHandler(&buf, nil))
+
+	dir, ok := e.srv.roots.(*source.RootSet).Path(rootName)
+	if !ok {
+		t.Fatalf("the harness root %q is not open; this test would prove nothing", rootName)
+	}
+	if w := e.do(http.MethodDelete, "/api/roots/"+rootName, nil); w.Code != http.StatusNoContent {
+		t.Fatalf("DELETE = %d: %s", w.Code, w.Body.String())
+	}
+	decodeBody[RootEntry](t,
+		e.jsonBody(http.MethodPost, "/api/roots",
+			`{"path":`+quoteJSON(dir)+`,"label":`+quoteJSON(rootName)+`}`),
+		http.StatusCreated)
+
+	var found bool
+	for line := range strings.Lines(buf.String()) {
+		var rec struct {
+			Level string `json:"level"`
+			Msg   string `json:"msg"`
+			Root  string `json:"root"`
+		}
+		if err := json.Unmarshal([]byte(line), &rec); err != nil || rec.Root != rootName || rec.Level != "WARN" {
+			continue
+		}
+		found = true
+		for _, want := range []string{"removed", "same name", "restart"} {
+			if !strings.Contains(rec.Msg, want) {
+				t.Errorf("the warning %q does not say %q", rec.Msg, want)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no warning about %q was logged; the log was:\n%s", rootName, buf.String())
 	}
 }
 

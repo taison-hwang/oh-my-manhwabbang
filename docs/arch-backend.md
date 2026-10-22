@@ -1971,7 +1971,7 @@ file keeps saying what the operator meant.
 |---|---|---|
 | `missing` | `path` absent or empty | The one required field. `detail.field` is `"path"` like every other row. |
 | `not_absolute` | `path` is relative | A relative path is ambiguous against the server's working directory, which the user cannot see. §3.2 requires absolute. |
-| `does_not_exist` | nothing at `path` | Startup validation refuses it (§3.2), so writing it guarantees a failed restart. |
+| `does_not_exist` | nothing at `path` | Startup validation refuses it (§3.2), so writing it guarantees a failed restart. **A path that is not valid UTF-8 cannot be named, by this request or by the file** (open item `b`): JSON and YAML are both UTF-8, so the name reaches the client from `/api/browse` with U+FFFD in place of its bytes, and YAML refuses the raw bytes. The picker lists such a directory unselectable with this reason (after `control_characters`, in this table's order), and when the path carries U+FFFD the message names the likely cause and the ways in: a directory above it whose path is valid UTF-8, a rename, or a symlink with a valid name. |
 | `not_a_directory` | `path` is a file | Same. |
 | `not_readable` | the directory cannot be opened | Same in effect: the root would index as empty and `available: false`. |
 | `duplicate` | the resolved path is already a configured root | Two names for one directory means two `series_id`s for one file. `detail.conflicts_with` names the existing root. |

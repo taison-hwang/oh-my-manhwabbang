@@ -114,6 +114,8 @@ const BROWSE_REASONS: Readonly<Record<string, string>> = {
   contains_storage: '앱 데이터·캐시 폴더가 안에 있음',
   does_not_exist: '지금 접근할 수 없음',
   not_readable: '읽을 수 없음',
+  not_a_directory: '폴더가 아님',
+  control_characters: '이름에 제어 문자',
 }
 
 /** `null` for a selectable entry, else the short inline reason. */

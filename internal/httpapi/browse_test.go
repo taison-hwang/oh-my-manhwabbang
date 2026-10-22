@@ -377,3 +377,136 @@ func TestBrowse_listsAMissingBaseAsUnselectable(t *testing.T) {
 		t.Errorf("reason = %v, want %q", gone.Reason, reasonDoesNotExist)
 	}
 }
+
+// TestBrowse_aNameThatIsNotUTF8_isUnselectableAndSaysWhy is open item `b`.
+//
+// A directory name is bytes, and JSON is UTF-8: on its way out of this endpoint
+// a name like CP949 `가` (b0 a1) becomes U+FFFD twice, so the path the picker
+// hands the client names a directory that does not exist. Offering it as
+// selectable was a promise `POST /api/roots` could not keep; it now says so in
+// both places, and with a sentence that names the cause rather than "there is
+// no such directory", which is true and no help.
+func TestBrowse_aNameThatIsNotUTF8_isUnselectableAndSaysWhy(t *testing.T) {
+	base := t.TempDir()
+	mustMkdir(t, filepath.Join(base, "\xb0\xa1"))
+	mustMkdir(t, filepath.Join(base, "보통"))
+	// Both at once: POST refuses the control character before it stats
+	// anything, so the picker must give that reason first too.
+	mustMkdir(t, filepath.Join(base, "\xb0\xa1\n둘"))
+	e := newEnv(t, withBrowseBases(base))
+
+	listing := decodeBody[BrowseResponse](t, browse(e, base), http.StatusOK)
+	var odd, both, plain *BrowseEntry
+	for i, entry := range listing.Entries {
+		switch {
+		case entry.Name == "보통":
+			plain = &listing.Entries[i]
+		case strings.Contains(entry.Name, "\n"):
+			both = &listing.Entries[i]
+		default:
+			odd = &listing.Entries[i]
+		}
+	}
+	if odd == nil || both == nil || plain == nil {
+		t.Fatalf("entries = %+v, want all three directories listed", listing.Entries)
+	}
+	if both.Selectable || both.Reason == nil || *both.Reason != reasonControlChars {
+		t.Errorf("a name with a control character and bad bytes = %+v, want unselectable as %q", *both, reasonControlChars)
+	}
+	w := e.jsonBody(http.MethodPost, "/api/roots", `{"path":`+quoteJSON(both.Path)+`}`)
+	if got := reasonOf(t, w); got != reasonControlChars {
+		t.Errorf("POST for the same path: reason = %q, want %q", got, reasonControlChars)
+	}
+	if !plain.Selectable {
+		t.Errorf("a plain directory is not selectable: %+v", *plain)
+	}
+	if odd.Selectable {
+		t.Errorf("the picker offers %q, a path POST /api/roots cannot find", odd.Path)
+	}
+	if odd.Reason == nil || *odd.Reason != reasonDoesNotExist {
+		t.Errorf("reason = %v, want %q — the answer POST gives for the same path", odd.Reason, reasonDoesNotExist)
+	}
+
+	// The path exactly as the client received it, through both endpoints.
+	for name, w := range map[string]*httptest.ResponseRecorder{
+		"POST /api/roots": e.jsonBody(http.MethodPost, "/api/roots", `{"path":`+quoteJSON(odd.Path)+`}`),
+		"GET /api/browse": browse(e, odd.Path),
+	} {
+		body := errorBody(t, w, http.StatusBadRequest, CodeBadRequest)
+		if got := reasonOf(t, w); got != reasonDoesNotExist {
+			t.Errorf("%s: reason = %q, want %q", name, got, reasonDoesNotExist)
+		}
+		if !strings.Contains(body.Message, "UTF-8") {
+			t.Errorf("%s: message %q does not name the cause", name, body.Message)
+		}
+	}
+
+	// A path that is simply not there keeps the short sentence.
+	w = e.jsonBody(http.MethodPost, "/api/roots", `{"path":`+quoteJSON(filepath.Join(base, "없음"))+`}`)
+	if body := errorBody(t, w, http.StatusBadRequest, CodeBadRequest); strings.Contains(body.Message, "UTF-8") {
+		t.Errorf("a plain missing path gets the UTF-8 sentence: %q", body.Message)
+	}
+}
+
+// TestBrowse_reachabilityReasonsAreTheCreateEndpoints: a base or a child the
+// server cannot use is greyed out with the reason `POST /api/roots` would give
+// for the same path — not_a_directory for a file, not_readable for a path it
+// cannot stat or a directory it cannot open — rather than does_not_exist for
+// every failed stat, or selectable because nothing tried to open it.
+func TestBrowse_reachabilityReasonsAreTheCreateEndpoints(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can open anything; the permission cases have no premise")
+	}
+	scratch := t.TempDir()
+	fileBase := filepath.Join(scratch, "a-file")
+	mustWrite(t, fileBase, "x")
+	unsearchable := filepath.Join(scratch, "unsearchable")
+	unstattable := filepath.Join(unsearchable, "child")
+	mustMkdir(t, unstattable)
+	missing := filepath.Join(scratch, "unmounted")
+	good := t.TempDir()
+	unopenable := filepath.Join(good, "unopenable")
+	mustMkdir(t, unopenable)
+	mustMkdir(t, filepath.Join(good, "plain"))
+	for _, dir := range []string{unsearchable, unopenable} {
+		if err := os.Chmod(dir, 0); err != nil {
+			t.Fatalf("chmod %s: %v", dir, err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	}
+	e := newEnv(t, withBrowseBases(fileBase, unstattable, missing, good))
+
+	want := map[string]string{
+		fileBase:    reasonNotADirectory,
+		unstattable: reasonNotReadable,
+		missing:     reasonDoesNotExist,
+		unopenable:  reasonNotReadable,
+	}
+	got := map[string]*BrowseEntry{}
+	top := decodeBody[BrowseResponse](t, browse(e, ""), http.StatusOK)
+	inside := decodeBody[BrowseResponse](t, browse(e, good), http.StatusOK)
+	for _, list := range [][]BrowseEntry{top.Entries, inside.Entries} {
+		for i := range list {
+			got[list[i].Path] = &list[i]
+		}
+	}
+	for path, reason := range want {
+		entry := got[path]
+		if entry == nil {
+			t.Errorf("%s is not listed", path)
+			continue
+		}
+		if entry.Selectable || entry.Reason == nil || *entry.Reason != reason {
+			t.Errorf("%s = %+v, want unselectable as %q", path, *entry, reason)
+		}
+		w := e.jsonBody(http.MethodPost, "/api/roots", `{"path":`+quoteJSON(path)+`}`)
+		if r := reasonOf(t, w); r != reason {
+			t.Errorf("POST %s: reason = %q, want %q — the picker's flag would disagree", path, r, reason)
+		}
+	}
+	for _, path := range []string{good, filepath.Join(good, "plain")} {
+		if entry := got[path]; entry == nil || !entry.Selectable {
+			t.Errorf("%s is not offered: %+v", path, entry)
+		}
+	}
+}

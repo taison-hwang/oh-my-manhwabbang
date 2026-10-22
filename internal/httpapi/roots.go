@@ -10,10 +10,12 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"shelf/internal/config"
 	"shelf/internal/index"
 	"shelf/internal/scanner"
+	"shelf/internal/source"
 )
 
 // Roots over HTTP — arch §7.4, FR-CFG-001/-002, AMENDMENT A-11 (ruling E-26).
@@ -388,23 +390,9 @@ func (s *Server) validateRootCreate(body RootCreate, current []config.Root) (Roo
 	}
 	clean := filepath.Clean(raw)
 
-	info, err := os.Stat(clean)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		return RootEntry{}, badRoot("path", reasonDoesNotExist, "there is no such directory on the server")
-	case err != nil:
-		return RootEntry{}, badRoot("path", reasonNotReadable, "the server cannot read that path")
-	case !info.IsDir():
-		return RootEntry{}, badRoot("path", reasonNotADirectory, "that path is a file, not a directory")
+	if refusal, _ := reach(clean); refusal != nil {
+		return RootEntry{}, refusal
 	}
-	// "Readable" means openable: a directory the server cannot open would index
-	// as empty and report `available: false`, which is a root that exists only
-	// to look broken.
-	dir, err := os.Open(clean)
-	if err != nil {
-		return RootEntry{}, badRoot("path", reasonNotReadable, "the server cannot read that directory")
-	}
-	_ = dir.Close()
 
 	label := strings.TrimSpace(body.Label)
 	if len(label) > maxRootLabelLen {
@@ -498,6 +486,59 @@ func resolvePath(path string) string {
 // badRoot is §7.4's `400`: `detail: {field, reason}`, and never the value.
 func badRoot(field, reason, format string, args ...any) *apiError {
 	return badRequest(format, args...).withDetail("field", field, "reason", reason)
+}
+
+// reach is validateRootCreate's filesystem half — its stat, then its open — as
+// the refusal it would give and that refusal's reason, or nil and "".
+//
+// `/api/browse` greys entries out with this same function, which is what keeps
+// the picker's reason and the `400` one rule: while the two were written out
+// separately the picker never opened anything (an unopenable child was offered)
+// and read every failed stat of a base as `does_not_exist` (a file, or a path
+// it may not search, was "not there").
+func reach(path string) (*apiError, string) {
+	info, err := os.Stat(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return notThere(path), reasonDoesNotExist
+	case err != nil:
+		return badRoot("path", reasonNotReadable, "the server cannot read that path"), reasonNotReadable
+	case !info.IsDir():
+		return badRoot("path", reasonNotADirectory, "that path is a file, not a directory"), reasonNotADirectory
+	}
+	// "Readable" means openable: a directory the server cannot open would index
+	// as empty and report `available: false`, which is a root that exists only
+	// to look broken.
+	dir, err := os.Open(path)
+	if err != nil {
+		return badRoot("path", reasonNotReadable, "the server cannot read that directory"), reasonNotReadable
+	}
+	_ = dir.Close()
+	return nil, ""
+}
+
+// notThere is `does_not_exist` for path (open item `b`).
+//
+// A path carrying U+FFFD gets a sentence that names the likely cause. A
+// directory name is bytes and JSON is UTF-8, so a name that is not valid UTF-8 —
+// CP949 `가` is b0 a1 — reaches the client from `/api/browse` with U+FFFD in
+// place of those bytes, and comes back naming nothing. "There is no such
+// directory" is then true and no help: the directory is there, under a spelling
+// no request can carry. The configuration file cannot carry it either — YAML is
+// UTF-8 and refuses the raw bytes, and a `\x` escape is a code point rather
+// than a byte. What can be added is a path that is valid UTF-8 all the way down:
+// a directory above it, the same directory renamed, or a symlink to it. U+FFFD
+// is also a legal character in a name, so the sentence says "likely".
+// The reason stays `does_not_exist`; only the sentence changes.
+func notThere(path string) *apiError {
+	if strings.ContainsRune(path, utf8.RuneError) {
+		return badRoot("path", reasonDoesNotExist,
+			"there is no such directory on the server; the path contains U+FFFD, which is likely a "+
+				"directory name that is not valid UTF-8, as it comes out of JSON — such a name cannot be "+
+				"sent here or written to the configuration file, so add a directory above it whose path "+
+				"is valid UTF-8, rename it, or point a symlink with a valid UTF-8 name at it")
+	}
+	return badRoot("path", reasonDoesNotExist, "there is no such directory on the server")
 }
 
 // maxRootNameLen is §3.2's `[a-zA-Z0-9._-]{1,64}`.
@@ -731,6 +772,17 @@ func (s *Server) adoptRoot(ctx context.Context, entry RootEntry, priorDigest str
 		return false
 	}
 	if err := s.roots.Add(root.Name, root.Path); err != nil {
+		if errors.Is(err, source.ErrRootExists) {
+			// Open item `af`: the ordinary way here is undoing a removal before
+			// a restart. DELETE closes no handle (E-40 §2), so the name is free
+			// in the file and still taken in this process — say that, rather
+			// than "could not be opened", which reads as a broken directory.
+			s.log.WarnContext(ctx, "the root was written to the configuration file, but this process still "+
+				"holds the root removed earlier under the same name (removal does not close it), "+
+				"so it stays pending until a restart opens it",
+				"root", root.Name, "err", err)
+			return false
+		}
 		s.log.WarnContext(ctx, "the root was written to the configuration file but could not be opened; "+
 			"it stays pending until a restart",
 			"root", root.Name, "err", err)
