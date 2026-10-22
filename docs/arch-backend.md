@@ -2338,7 +2338,7 @@ value that means "these characters may be wrong", so it is the one a fold must n
 
 | Param | Type | Default |
 |---|---|---|
-| `w` | int | `thumbnails.widths[0]` — **120** under amendments A-1/A-6 (was `widths[1]` = 320). Snapped **up** to the nearest configured width, clamped to the largest |
+| `w` | int | `thumbnails.widths[0]` — **120** under **AMENDMENT A-6** (A-1's `widths[0]`; was `widths[1]` = 320). Snapped **up** to the nearest configured width, clamped to the largest |
 | `v` | string | the series' `cover_cv`; enables `immutable` caching (§5.3) |
 
 `200 image/jpeg` · `202` with `Retry-After: 1` while the cover is queued but not yet generated (the frontend shows a skeleton and retries) · `404` when the series has no cover at all (FR-LIB-008 placeholder) · `422 thumb_unavailable` when the source cannot be decoded.
@@ -2398,7 +2398,7 @@ A 1,071-page book returns 1,071 `PageInfo` objects ≈ 110 KB of JSON — well i
 
 | Param | Type | Default |
 |---|---|---|
-| `w` | int | `thumbnails.widths[0]` — **120** under amendments A-1/A-6 (was 240) — snapped up to a configured width |
+| `w` | int | `thumbnails.widths[0]` — **120** under **AMENDMENT A-6** (A-1's `widths[0]`; was 240) — snapped up to a configured width |
 | `v` | string | the book's `cv` |
 
 `200 image/jpeg` · `202` + `Retry-After: 1` when queued · `404` · `422 thumb_unavailable` (§5.5). The thumbnail strip (FR-VWR-008) requests these lazily as it scrolls; the 202 path is what keeps a 1,071-page strip from blocking.
@@ -2540,6 +2540,9 @@ interface Settings {
                                   //   `sort=`, not a free string. Anything else is
                                   //   `400 bad_request` with `detail.field="library_sort"`.
   library_order: "asc" | "desc";
+  library_scope: string;          // AMENDMENT A-5 — the sticky sidebar scope: "all", "reading",
+                                  //   "added", "done", or a root name. Not a closed set, since a
+                                  //   root name is free-form: validated as below, not by membership.
 
   // read-only mirror of the YAML, so the settings screen can show it
   server: {

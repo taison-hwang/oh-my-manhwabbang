@@ -773,6 +773,10 @@ const sampleAmendPlan = "### 0.2 Before\n\n| **A-9** | not in §0.3 |\n\n" +
 	"| **A-1** | one |\n| **A-2** | two, never inlined in arch |\n| **A-3** | three |\n\n" +
 	"### 0.4 After\n\n| **A-7** | not in §0.3 either |\n"
 
+// sampleAmendExempt is the sample's A-7: a row that changes no arch text, so
+// it carries no note there and says why.
+var sampleAmendExempt = map[int]string{2: "the sample's rule about the table itself"}
+
 func TestAmendments_agreementProducesNoFindings(t *testing.T) {
 	t.Parallel()
 	arch, table, err := parseAmendments(sampleAmendArch, sampleAmendPlan)
@@ -782,7 +786,7 @@ func TestAmendments_agreementProducesNoFindings(t *testing.T) {
 	if strings.Join(intsToStrings(table), ",") != "1,2,3" {
 		t.Errorf("table = %v, want [1 2 3] — rows outside §0.3 must not count", table)
 	}
-	if findings := compareAmendments(arch, table); len(findings) != 0 {
+	if findings := compareAmendments(arch, table, sampleAmendExempt); len(findings) != 0 {
 		t.Errorf("agreement produced findings:\n%s", strings.Join(findings, "\n"))
 	}
 }
@@ -816,7 +820,7 @@ func TestAmendments_findsEveryKindOfDrift(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parseAmendments: %v", err)
 			}
-			findings := compareAmendments(arch, table)
+			findings := compareAmendments(arch, table, sampleAmendExempt)
 			var hit bool
 			for _, f := range findings {
 				if strings.Contains(f, tc.want+" ") || strings.HasSuffix(f, tc.want) {
@@ -828,6 +832,99 @@ func TestAmendments_findsEveryKindOfDrift(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The other direction: a row is a change to §7, so arch must say where. The
+// only rows excused are the ones that change no arch text, and each excuse is
+// written down — a missing note is otherwise exactly the A-5/A-6 drift, two
+// amendments whose arch text was never marked (A-5's field was not even in the
+// §7.8 interface).
+func TestAmendments_aRowWithNoArchNoteIsDrift(t *testing.T) {
+	t.Parallel()
+	arch, table, err := parseAmendments(sampleAmendArch, sampleAmendPlan)
+	if err != nil {
+		t.Fatalf("parseAmendments: %v", err)
+	}
+	findings := compareAmendments(arch, table, nil)
+	if !anyNames(findings, "A-2") {
+		t.Errorf("a row with no arch note and no exemption produced no finding naming A-2; got:\n%s",
+			strings.Join(findings, "\n"))
+	}
+}
+
+// An exemption is a claim that the row has no arch text. When arch does mark
+// it, the claim is false and the list has gone stale.
+func TestAmendments_anExemptionWithANoteIsStale(t *testing.T) {
+	t.Parallel()
+	arch, table, err := parseAmendments(sampleAmendArch, sampleAmendPlan)
+	if err != nil {
+		t.Fatalf("parseAmendments: %v", err)
+	}
+	exempt := map[int]string{1: "wrongly excused", 2: sampleAmendExempt[2]}
+	if findings := compareAmendments(arch, table, exempt); !anyNames(findings, "A-1") {
+		t.Errorf("an exempt row that arch marks produced no finding naming A-1; got:\n%s",
+			strings.Join(findings, "\n"))
+	}
+}
+
+// A blank line ends a Markdown table. A row after it still matched the row
+// pattern, so it was counted while rendering outside the table — the A-16 row
+// spent a session that way and every check stayed green.
+func TestAmendments_aBlankLineInsideTheTableIsABreak(t *testing.T) {
+	t.Parallel()
+	if breaks := amendmentTableBreaks(sampleAmendPlan); len(breaks) != 0 {
+		t.Fatalf("the intact sample reported breaks:\n%s", strings.Join(breaks, "\n"))
+	}
+	broken := strings.Replace(sampleAmendPlan, "| **A-3** |", "\n| **A-3** |", 1)
+	if breaks := amendmentTableBreaks(broken); !anyNames(breaks, "A-3") {
+		t.Errorf("a blank line before A-3 produced no finding naming A-3; got:\n%s", strings.Join(breaks, "\n"))
+	}
+	prose := strings.Replace(sampleAmendPlan, "| **A-3** |", "A note between rows.\n| **A-3** |", 1)
+	if breaks := amendmentTableBreaks(prose); !anyNames(breaks, "A-3") {
+		t.Errorf("a prose line before A-3 produced no finding naming A-3; got:\n%s", strings.Join(breaks, "\n"))
+	}
+}
+
+// The file-reading entry point, not only its parts: both new findings must
+// reach checkAmendments' result, not stop at the helpers the tests above call.
+func TestAmendments_checkAmendmentsReportsBothNewKinds(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(rel, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(rel)), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A-2 has no note and is not exempt here (only A-7 is); A-3 sits after a
+	// blank line.
+	write("docs/arch-backend.md", sampleAmendArch)
+	write("docs/impl-plan.md", strings.Replace(sampleAmendPlan, "| **A-3** |", "\n| **A-3** |", 1))
+	findings, err := checkAmendments(root)
+	if err != nil {
+		t.Fatalf("checkAmendments: %v", err)
+	}
+	if !anyNames(findings, "A-2") {
+		t.Errorf("no finding for the row with no arch note; got:\n%s", strings.Join(findings, "\n"))
+	}
+	if !anyNames(findings, "A-3") {
+		t.Errorf("no finding for the row cut off by a blank line; got:\n%s", strings.Join(findings, "\n"))
+	}
+}
+
+// anyNames reports whether a finding names id as a whole number — "A-1" must
+// not be satisfied by "A-16".
+func anyNames(findings []string, id string) bool {
+	re := regexp.MustCompile(regexp.QuoteMeta(id) + `\b`)
+	for _, f := range findings {
+		if re.MatchString(f) {
+			return true
+		}
+	}
+	return false
 }
 
 // Nothing found is an error, not agreement: an empty table agrees with an

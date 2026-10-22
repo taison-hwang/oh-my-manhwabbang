@@ -62,12 +62,19 @@
 //     into arch-backend.md has its row in impl-plan §0.3, and the rows run
 //     A-1, A-2, … with no gap and no repeat. See `checkAmendments`.
 //
+//  9. **Interface field sets, declaration against declaration.** arch §7's
+//     ```ts interfaces against types.ts (names and `?`), every response type
+//     against its Go struct's JSON tags (names, and `?` against `omitempty`),
+//     and the request bodies against theirs (names). No golden in between, so
+//     a field no golden instance carries is still compared. See
+//     `checkInterfaceFields`.
+//
 // # What is deliberately not compared
 //
-// Request bodies, status codes, and the query parameters of the other
-// endpoints: none of them appear in a golden response, and a general extractor
-// over every handler would be a parser rather than a grep.
-// `internal/httpapi`'s own tests cover them.
+// Status codes, the query parameters of endpoints other than `/api/series`,
+// and field types outside the golden values: a general extractor over every
+// handler would be a parser rather than a grep. `internal/httpapi`'s own tests
+// cover them.
 package main
 
 import (
@@ -257,6 +264,13 @@ func check(root string) (findings, checked []string, err error) {
 	}
 	findings = append(findings, amendFindings...)
 	checked = append(checked, fmt.Sprintf("%-28s -> impl-plan §0.3 amendments", "docs/arch-backend.md"))
+
+	fieldFindings, err := checkInterfaceFields(root, ts)
+	if err != nil {
+		return nil, nil, err
+	}
+	findings = append(findings, fieldFindings...)
+	checked = append(checked, fmt.Sprintf("%-28s -> interface fields (arch, types.ts, Go)", "docs/arch-backend.md"))
 	return findings, checked, nil
 }
 
@@ -269,6 +283,9 @@ type tsField struct {
 	name     string
 	optional bool // written `name?: …`
 	typ      typeRef
+	// expr is the type as written, for the walks that need every name in it
+	// and not just the one typeRef keeps.
+	expr string
 }
 
 // typeRef is a parsed field type, reduced to the three things this check needs:
@@ -437,10 +454,12 @@ func parseFields(body string) []tsField {
 		if m == nil {
 			continue
 		}
+		expr := strings.TrimSuffix(strings.TrimSpace(m[3]), ";")
 		out = append(out, tsField{
 			name:     m[1],
 			optional: m[2] == "?",
-			typ:      parseTypeRef(strings.TrimSuffix(strings.TrimSpace(m[3]), ";")),
+			typ:      parseTypeRef(expr),
+			expr:     expr,
 		})
 	}
 	return out
@@ -966,9 +985,14 @@ var (
 // broken twice — A-12 and A-13 went into arch alone and a later session
 // back-filled the rows — because arch is where someone changing §7 already is
 // and the table is in another file. The rule cannot make that less natural, so
-// this makes skipping it visible. Only one direction is required: a row with
-// no inline note is legitimate (A-5, A-6 and A-7 change no arch text of their
-// own), a note with no row is the defect.
+// this makes skipping it visible. Both directions are required: a note with no
+// row skipped the table, and a row with no note is a change to §7 that arch
+// never marked — A-5 and A-6 were, until 2026-10-20, and A-5's field was not
+// even in the §7.8 interface. A row that changes no arch text is listed in
+// amendmentsWithoutArchNote with its reason. The rows must also be one table:
+// a blank line ends a Markdown table, and one sat before A-12 from the first
+// commit, leaving A-12 through A-16 outside the rendered table while every
+// check here still counted them.
 func checkAmendments(root string) ([]string, error) {
 	read := func(rel string) (string, error) {
 		b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
@@ -989,7 +1013,51 @@ func checkAmendments(root string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return compareAmendments(arch, table), nil
+	findings := compareAmendments(arch, table, amendmentsWithoutArchNote)
+	return append(findings, amendmentTableBreaks(planSrc)...), nil
+}
+
+// amendmentsWithoutArchNote are the §0.3 rows that change no arch text, so arch
+// has no place to mark them. Each entry says why; a row is excused here or it
+// needs an `AMENDMENT A-n` note.
+var amendmentsWithoutArchNote = map[int]string{
+	7: "A-7 is the rule about this table itself (everything else in §7 is frozen verbatim, and the " +
+		"table is updated first); it changes no §7 text, and arch's \"Binding as amended\" note names it",
+}
+
+// amendmentTableBreaks reports a line that is not a table row between the first
+// and the last `| **A-n** |` row of §0.3. Such a line ends the Markdown table,
+// so the rows after it render as loose text while reAmendRow still counts them.
+func amendmentTableBreaks(planSrc string) []string {
+	head := reAmendHead.FindStringIndex(planSrc)
+	if head == nil {
+		return nil
+	}
+	section := planSrc[head[1]:]
+	if next := reNextHead.FindStringIndex(section); next != nil {
+		section = section[:next[0]]
+	}
+	rows := reAmendRow.FindAllStringSubmatchIndex(section, -1)
+	if len(rows) < 2 {
+		return nil
+	}
+	var findings []string
+	for i := 1; i < len(rows); i++ {
+		between := section[rows[i-1][1]:rows[i][0]]
+		// between is the rest of the previous row, then whole lines. Every
+		// line after the first must itself be a table row, starting at column
+		// 0 as reAmendRow already requires of the rows.
+		lines := strings.Split(between, "\n")
+		for _, line := range lines[1 : len(lines)-1] {
+			if !strings.HasPrefix(line, "|") {
+				findings = append(findings, fmt.Sprintf(
+					"docs/impl-plan.md §0.3: A-%s is cut off from the table by the line %q before it (a Markdown table ends there)",
+					section[rows[i][2]:rows[i][3]], line))
+				break
+			}
+		}
+	}
+	return findings
 }
 
 // parseAmendments returns the distinct amendment numbers arch names, ascending,
@@ -1027,18 +1095,34 @@ func parseAmendments(archSrc, planSrc string) (arch, table []int, err error) {
 	return arch, table, nil
 }
 
-// compareAmendments: every arch note has a row, and the rows are A-1…A-max in
+// compareAmendments: every arch note has a row, every row has a note unless it
+// is exempt, an exemption is never also noted, and the rows are A-1…A-max in
 // order, each once.
-func compareAmendments(arch, table []int) []string {
+func compareAmendments(arch, table []int, exempt map[int]string) []string {
 	var findings []string
 	rows := map[int]int{}
 	for _, n := range table {
 		rows[n]++
 	}
+	noted := map[int]bool{}
 	for _, n := range arch {
+		noted[n] = true
 		if rows[n] == 0 {
 			findings = append(findings, fmt.Sprintf(
 				"docs/arch-backend.md: AMENDMENT A-%d has no row in docs/impl-plan.md §0.3 (A-7: the table is written first)", n))
+		}
+	}
+	for n := range rows {
+		_, excused := exempt[n]
+		switch {
+		case !noted[n] && !excused:
+			findings = append(findings, fmt.Sprintf(
+				"docs/impl-plan.md §0.3: row A-%d has no `AMENDMENT A-%d` note in docs/arch-backend.md "+
+					"(mark the §7 text it changed, or list it in amendmentsWithoutArchNote with the reason)", n, n))
+		case noted[n] && excused:
+			findings = append(findings, fmt.Sprintf(
+				"scripts/contractcheck: A-%d is listed in amendmentsWithoutArchNote but docs/arch-backend.md "+
+					"marks it; the exemption is stale", n))
 		}
 	}
 	for i, n := range table {
