@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -528,4 +529,366 @@ func TestCuratedSeries_extractionFindsEveryCopyInTheRepository(t *testing.T) {
 	if c.a11Fill == "" {
 		t.Errorf("no A11_FILL extracted from %s", curatedShellPath)
 	}
+}
+
+// --- the thumb flush signal (amendment A-15, ruling E-57) -------------------
+
+const sampleFlushArch = "| `GET /api/health` | `200 {ok: true}`. **AMENDMENT A-15 (ruling E-57):** " +
+	"`verbose.thumbs.{cover_depth,page_depth,active,inflight}` is contract. |\n"
+
+// sampleFlushDTO is Go source, not text: the tags are read through go/parser.
+const sampleFlushDTO = `package httpapi
+
+type ThumbCounter struct {
+	Hits       int64 ` + "`json:\"hits\"`" + `
+	CoverDepth int   ` + "`json:\"cover_depth\"`" + `
+	PageDepth  int   ` + "`json:\"page_depth\"`" + `
+	Active     int   ` + "`json:\"active\"`" + `
+	Inflight   int   ` + "`json:\"inflight\"`" + `
+}
+
+type Other struct {
+	Queued int64 ` + "`json:\"queued\"`" + `
+}
+`
+
+const sampleFlushPy = `
+def wait_for_thumb_quiescence(r, limit_s):
+    keys = ("cover_depth", "page_depth", "active", "inflight")
+    while True:
+        pass
+
+
+def envelope(body):
+    return body
+`
+
+func TestThumbFlush_agreeingCopiesProduceNoFindings(t *testing.T) {
+	t.Parallel()
+	c, err := parseThumbFlush(sampleFlushArch, sampleFlushDTO, sampleFlushPy)
+	if err != nil {
+		t.Fatalf("parseThumbFlush: %v", err)
+	}
+	if findings := compareThumbFlush(c); len(findings) != 0 {
+		t.Errorf("agreeing copies produced findings:\n%s", strings.Join(findings, "\n"))
+	}
+}
+
+// Each drift names the file that moved and the field it moved, so the finding is
+// the fix. The arch line is the declaration: the Go tags must carry every field
+// it names (the struct has more, which is fine), and the gate's tuple must be
+// exactly those fields — one fewer and the wait ends while a cover is still
+// being written, one more and it waits on a counter nobody promised.
+func TestThumbFlush_findsEveryKindOfDrift(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name                string
+		arch, dto, py       string
+		wantFile, wantField string
+	}{
+		{
+			name: "the gate stopped waiting on one", wantFile: "scripts/e2e-assert.py", wantField: "inflight",
+			arch: sampleFlushArch, dto: sampleFlushDTO,
+			py: strings.Replace(sampleFlushPy, `, "inflight"`, "", 1),
+		},
+		{
+			name: "the gate waits on one nobody promised", wantFile: "scripts/e2e-assert.py", wantField: "queued",
+			arch: sampleFlushArch, dto: sampleFlushDTO,
+			py: strings.Replace(sampleFlushPy, `"inflight"`, `"inflight", "queued"`, 1),
+		},
+		{
+			name: "the server renamed one", wantFile: "internal/httpapi/dto.go", wantField: "inflight",
+			arch: sampleFlushArch, py: sampleFlushPy,
+			dto: strings.Replace(sampleFlushDTO, `json:"inflight"`, `json:"in_flight"`, 1),
+		},
+		{
+			name: "the contract lost one", wantFile: "scripts/e2e-assert.py", wantField: "active",
+			dto: sampleFlushDTO, py: sampleFlushPy,
+			arch: strings.Replace(sampleFlushArch, ",active", "", 1),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c, err := parseThumbFlush(tc.arch, tc.dto, tc.py)
+			if err != nil {
+				t.Fatalf("parseThumbFlush: %v", err)
+			}
+			findings := compareThumbFlush(c)
+			var hit bool
+			for _, f := range findings {
+				if strings.Contains(f, tc.wantFile) && strings.Contains(f, `"`+tc.wantField+`"`) {
+					hit = true
+				}
+			}
+			if !hit {
+				t.Errorf("no finding naming %s and %q; got:\n%s", tc.wantFile, tc.wantField, strings.Join(findings, "\n"))
+			}
+		})
+	}
+}
+
+// A copy the parser cannot find is an error, not agreement: three empty lists
+// agree with each other perfectly.
+func TestThumbFlush_aMissingCopyIsAnErrorNotAgreement(t *testing.T) {
+	t.Parallel()
+	for name, args := range map[string][3]string{
+		"no amendment line": {"| `GET /api/health` | no amendment here |\n", sampleFlushDTO, sampleFlushPy},
+		"no ThumbCounter":   {sampleFlushArch, "package httpapi\n\ntype Other struct {\n}\n", sampleFlushPy},
+		"no keys tuple":     {sampleFlushArch, sampleFlushDTO, "def f():\n    pass\n"},
+	} {
+		if _, err := parseThumbFlush(args[0], args[1], args[2]); err == nil {
+			t.Errorf("%s: parsed without error", name)
+		}
+	}
+}
+
+// flushVerdict runs both halves and says whether the copies were judged to
+// agree. An error and a finding are both "did not agree"; the regressions
+// below only need to rule out the silent pass.
+func flushVerdict(arch, dto, py string) (agreed bool, why string) {
+	c, err := parseThumbFlush(arch, dto, py)
+	if err != nil {
+		return false, "error: " + err.Error()
+	}
+	findings := compareThumbFlush(c)
+	return len(findings) == 0, strings.Join(findings, "\n")
+}
+
+// The gate's tuple is the one inside wait_for_thumb_quiescence, not the first
+// `keys = (…)` in the file: another helper holding the same four names would
+// otherwise vouch for a wait that dropped one.
+func TestThumbFlush_theTupleIsTheWaitFunctionsOwn(t *testing.T) {
+	t.Parallel()
+	four := `    keys = ("cover_depth", "page_depth", "active", "inflight")` + "\n"
+	short := strings.Replace(sampleFlushPy, `, "inflight"`, "", 1)
+	for name, py := range map[string]string{
+		"an earlier function holds all four":    "def earlier(r):\n" + four + "\n\n" + short,
+		"a later function holds all four":       short + "\n\ndef later(r):\n" + four,
+		"two tuples inside the wait":            strings.Replace(sampleFlushPy, "    while True:", four+"    while True:", 1),
+		"no wait function at all":               strings.Replace(sampleFlushPy, "wait_for_thumb_quiescence", "wait_for_thumbs", 1),
+		"the only tuple is in another function": strings.Replace(sampleFlushPy, four, "", 1) + "\n\ndef other(r):\n" + four,
+	} {
+		if agreed, _ := flushVerdict(sampleFlushArch, sampleFlushDTO, py); agreed {
+			t.Errorf("%s: reported agreement", name)
+		}
+	}
+	single := strings.ReplaceAll(sampleFlushPy, `"`, "'")
+	if agreed, why := flushVerdict(sampleFlushArch, sampleFlushDTO, single); !agreed {
+		t.Errorf("single-quoted tuple: %s", why)
+	}
+}
+
+// ThumbCounter's tags are read as Go struct tags: a longer name that merely
+// starts with a declared one is a different wire field, and a field that was
+// commented out is not served at all.
+func TestThumbFlush_goTagsAreTagsNotText(t *testing.T) {
+	t.Parallel()
+	inflightLine := "\tInflight   int   `json:\"inflight\"`\n"
+	if !strings.Contains(sampleFlushDTO, inflightLine) {
+		t.Fatal("sampleFlushDTO no longer holds the Inflight line this test edits")
+	}
+	for name, dto := range map[string]string{
+		"a longer tag with the same prefix": strings.Replace(sampleFlushDTO, `json:"inflight"`, `json:"inflight2"`, 1),
+		"the field commented out":           strings.Replace(sampleFlushDTO, inflightLine, "\t// "+inflightLine[1:], 1),
+	} {
+		agreed, why := flushVerdict(sampleFlushArch, dto, sampleFlushPy)
+		if agreed || !strings.Contains(why, `"inflight"`) {
+			t.Errorf("%s: want a finding naming %q; got agreed=%v %s", name, "inflight", agreed, why)
+		}
+	}
+	omit := strings.Replace(sampleFlushDTO, `json:"inflight"`, `json:"inflight,omitempty"`, 1)
+	if agreed, why := flushVerdict(sampleFlushArch, omit, sampleFlushPy); !agreed {
+		t.Errorf("a tag with options: %s", why)
+	}
+}
+
+// The declaration is the A-15 sentence on the GET /api/health row of §7.4 and
+// nowhere else: an A-15 list on some other line — a changelog entry, an older
+// draft — must not stand in for the row the contract lives on.
+func TestThumbFlush_theDeclarationIsTheHealthRows(t *testing.T) {
+	t.Parallel()
+	elsewhere := "A changelog line: **AMENDMENT A-15** added `verbose.thumbs.{cover_depth,page_depth,active,inflight}`.\n"
+	noAmendmentRow := "| `GET /api/health` | `200 {ok: true}`. |\n"
+	for name, arch := range map[string]string{
+		"an earlier line holds all four": elsewhere + strings.Replace(sampleFlushArch, ",active", "", 1),
+		"only another line declares":     elsewhere + noAmendmentRow,
+		"two health rows":                sampleFlushArch + sampleFlushArch,
+		"no health row":                  elsewhere,
+	} {
+		if agreed, _ := flushVerdict(arch, sampleFlushDTO, sampleFlushPy); agreed {
+			t.Errorf("%s: reported agreement", name)
+		}
+	}
+}
+
+func TestThumbFlush_theRepositoryAgrees(t *testing.T) {
+	t.Parallel()
+	findings, err := checkThumbFlushFields("../..")
+	if err != nil {
+		t.Fatalf("checkThumbFlushFields: %v", err)
+	}
+	if len(findings) != 0 {
+		t.Errorf("the thumb flush signal has drifted:\n%s", strings.Join(findings, "\n"))
+	}
+}
+
+// The extraction itself, against the real files: four names from each copy.
+// Agreement between three lists the parser shrank alike would assert nothing.
+func TestThumbFlush_extractionSeesTheFourFieldsInTheRepository(t *testing.T) {
+	t.Parallel()
+	read := func(rel string) string {
+		t.Helper()
+		b, err := os.ReadFile(filepath.Join("../..", filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatalf("reading %s: %v", rel, err)
+		}
+		return string(b)
+	}
+	c, err := parseThumbFlush(read("docs/arch-backend.md"), read("internal/httpapi/dto.go"), read("scripts/e2e-assert.py"))
+	if err != nil {
+		t.Fatalf("parseThumbFlush: %v", err)
+	}
+	want := []string{"cover_depth", "page_depth", "active", "inflight"}
+	for name, got := range map[string][]string{"arch": c.arch, "e2e-assert.py": c.py} {
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("%s: extracted %v, want %v", name, got, want)
+		}
+	}
+	for _, f := range want {
+		if !contains(c.goTags, f) {
+			t.Errorf("ThumbCounter: tag %q not extracted from %v", f, c.goTags)
+		}
+	}
+}
+
+// --- the amendment table (open item bc) ------------------------------------
+
+const sampleAmendArch = "| `scope` | **AMENDMENT A-1.** x |\n" +
+	"  stale_seen?: boolean; // AMENDMENT A-3 (ruling E-45).\n" +
+	"**AMENDMENT A-3 (ruling E-45) — prose.**\n"
+
+const sampleAmendPlan = "### 0.2 Before\n\n| **A-9** | not in §0.3 |\n\n" +
+	"### 0.3 Amendments to the frozen API contract\n\n| Id | Amendment |\n|---|---|\n" +
+	"| **A-1** | one |\n| **A-2** | two, never inlined in arch |\n| **A-3** | three |\n\n" +
+	"### 0.4 After\n\n| **A-7** | not in §0.3 either |\n"
+
+func TestAmendments_agreementProducesNoFindings(t *testing.T) {
+	t.Parallel()
+	arch, table, err := parseAmendments(sampleAmendArch, sampleAmendPlan)
+	if err != nil {
+		t.Fatalf("parseAmendments: %v", err)
+	}
+	if strings.Join(intsToStrings(table), ",") != "1,2,3" {
+		t.Errorf("table = %v, want [1 2 3] — rows outside §0.3 must not count", table)
+	}
+	if findings := compareAmendments(arch, table); len(findings) != 0 {
+		t.Errorf("agreement produced findings:\n%s", strings.Join(findings, "\n"))
+	}
+}
+
+// A-7 says §0.3 is changed first, and A-12 and A-13 were written into arch
+// alone. Each drift is named with the number, so the finding is the fix.
+func TestAmendments_findsEveryKindOfDrift(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name, arch, plan, want string
+	}{
+		{
+			name: "an arch amendment with no row", want: "A-4",
+			arch: sampleAmendArch + "// AMENDMENT A-4 — new\n", plan: sampleAmendPlan,
+		},
+		{
+			name: "a row written twice", want: "A-2",
+			arch: sampleAmendArch,
+			plan: strings.Replace(sampleAmendPlan, "| **A-3** |", "| **A-2** | again |\n| **A-3** |", 1),
+		},
+		{
+			name: "a gap in the numbering", want: "A-2",
+			arch: sampleAmendArch,
+			plan: strings.Replace(sampleAmendPlan, "| **A-2** | two, never inlined in arch |\n", "", 1),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			arch, table, err := parseAmendments(tc.arch, tc.plan)
+			if err != nil {
+				t.Fatalf("parseAmendments: %v", err)
+			}
+			findings := compareAmendments(arch, table)
+			var hit bool
+			for _, f := range findings {
+				if strings.Contains(f, tc.want+" ") || strings.HasSuffix(f, tc.want) {
+					hit = true
+				}
+			}
+			if !hit {
+				t.Errorf("no finding naming %s; got:\n%s", tc.want, strings.Join(findings, "\n"))
+			}
+		})
+	}
+}
+
+// Nothing found is an error, not agreement: an empty table agrees with an
+// arch the extractor could not read.
+func TestAmendments_aMissingSideIsAnErrorNotAgreement(t *testing.T) {
+	t.Parallel()
+	if _, _, err := parseAmendments("no markers here\n", sampleAmendPlan); err == nil {
+		t.Error("an arch with no AMENDMENT markers parsed without error")
+	}
+	if _, _, err := parseAmendments(sampleAmendArch, "### 0.3 Amendments\n\nno rows\n"); err == nil {
+		t.Error("a §0.3 with no rows parsed without error")
+	}
+	if _, _, err := parseAmendments(sampleAmendArch, "### 0.2 Elsewhere\n\n| **A-1** | x |\n"); err == nil {
+		t.Error("a plan with no §0.3 parsed without error")
+	}
+}
+
+func TestAmendments_theRepositoryAgrees(t *testing.T) {
+	t.Parallel()
+	findings, err := checkAmendments("../..")
+	if err != nil {
+		t.Fatalf("checkAmendments: %v", err)
+	}
+	if len(findings) != 0 {
+		t.Errorf("the amendment table has drifted:\n%s", strings.Join(findings, "\n"))
+	}
+}
+
+// The extraction against the real files, counted by a pattern that does not
+// share the extractor's number class.
+func TestAmendments_extractionSeesEveryMarkerAndRow(t *testing.T) {
+	t.Parallel()
+	read := func(rel string) string {
+		t.Helper()
+		b, err := os.ReadFile(filepath.Join("../..", filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatalf("reading %s: %v", rel, err)
+		}
+		return string(b)
+	}
+	archSrc, planSrc := read("docs/arch-backend.md"), read("docs/impl-plan.md")
+	arch, table, err := parseAmendments(archSrc, planSrc)
+	if err != nil {
+		t.Fatalf("parseAmendments: %v", err)
+	}
+	distinct := map[string]bool{}
+	for _, m := range regexp.MustCompile(`AMENDMENT (A-\S+?)\b`).FindAllStringSubmatch(archSrc, -1) {
+		distinct[m[1]] = true
+	}
+	if len(arch) != len(distinct) {
+		t.Errorf("extracted %d distinct arch amendments, the file names %d: %v", len(arch), len(distinct), distinct)
+	}
+	if len(table) < 15 {
+		t.Errorf("extracted %d §0.3 rows, want at least the 15 (A-1…A-15) the table had when this was written", len(table))
+	}
+}
+
+func intsToStrings(ns []int) []string {
+	out := make([]string, len(ns))
+	for i, n := range ns {
+		out[i] = strconv.Itoa(n)
+	}
+	return out
 }

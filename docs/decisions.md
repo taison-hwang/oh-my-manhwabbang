@@ -3509,3 +3509,54 @@ package.json에서 제거됐다.** 스크립트는 항상 exit 2로 죽었고 `-
 `[lang='ja']` 규칙을 지우고, `Shelf Seal`을 다시 `Gowun Batang`으로 합치면 E-53 상태다.
 그러면 `tokens.test.ts`의 E-55 케이스 둘, `cascade.test.ts` 2건, `nameLang.test.tsx` 8건이
 죽는다 — 의도적으로, 그 자리에서.
+
+## E-57 — **썸네일 큐 카운터 넷을 계약으로 올린다 (A-15)** (사용자 결정 "계약 승격", 2026-10-18) — BINDING
+
+**출처.** HANDOFF §5.6.1 항목 `D`. 이 문서의 "what was deliberately NOT ruled" #1이 판정을 남겨 두었다.
+`GET /api/health?verbose=1`의 `thumbs.{cover_depth,page_depth,active,inflight}`는 계약인가? 그 사이
+`scripts/e2e-assert.py`의 `wait_for_thumb_quiescence`가 이 넷을 이름으로 기다리는 하드 게이트가 됐다.
+반면 `internal/httpapi/dto.go`는 블록 전체를 "diagnostics, not contract"라고 적고 있었다.
+
+### 1. 결론
+
+- **네 필드를 계약으로 올린다.** 개정 번호는 **A-15**(`impl-plan.md` §0.3)이고, 규범 문구는 arch §7.4의
+  `GET /api/health` 행에 둔다. 승격은 **사용자 결정**이다.
+- 네 값은 0 이상의 정수이고, 한 락 아래에서 읽은 하나의 스냅샷이다.
+- **넷이 모두 0이면** 그 시점에 대기 중이거나, 디코딩 중이거나, 아직 쓰는 중인 썸네일 작업이 없다는 뜻이다.
+  받은 작업이 성공이든 실패든 전부 끝났다는 것이지, 특정 파일이 있다는 보장은 아니다. 파일 존재는
+  호출자(게이트)가 확인한다.
+- `verbose`의 나머지는 그대로 진단용이고, 개정 없이 바뀔 수 있다.
+
+### 2. 근거
+
+- 네 값의 논리곱은 `thumbs.Service.idle()`의 `quiet` 조건(`internal/thumbs/worker.go`)과 정확히 같다.
+  `idle()`은 여기에 `dimsIdle()`을 더 본다. 그러므로 "넷이 0"은 이미 서비스가 쓰는 정의이지 새 의미가 아니다.
+- 승격 전에는 아무것도 이 이름들을 지키지 않았다. 이름을 바꾸면 e2e가 20분 뒤에야 깨졌고, 튜플에서 하나를
+  빼면 아무것도 깨지지 않은 채 대기만 일찍 끝났다. 앞의 것은 늦은 실패이고, 뒤의 것은 조용한 실패다.
+
+### 3. 대안과 기각 이유
+
+| 대안 | 기각 이유 |
+|---|---|
+| 진단으로 두고 게이트를 다른 신호로 옮기기 | 승격보다 큰 변경이다. 서버에 새 신호를 만들고 e2e 대기를 다시 써야 한다 |
+| 진단으로 두고 그대로 쓰기 | 위 §2의 두 실패 모양이 그대로 남는다 |
+| `verbose` 블록 전체를 계약으로 | 게이트가 읽는 것은 넷뿐이다. 나머지까지 묶으면 바꿀 때마다 개정이 필요해진다 |
+
+### 4. 검증
+
+- `?verbose=1`을 담은 골든도 없고, 이것을 읽는 클라이언트 타입도 없다. 그래서 `scripts/contractcheck`의
+  `checkThumbFlushFields`가 세 표기를 대조한다. arch §7.4 health 행, `ThumbCounter`의 json 태그(Go AST로 읽음,
+  함수 범위), `wait_for_thumb_quiescence` 안의 `keys` 튜플이다. 추출 범위는 health 행으로 한정했다.
+- 와이어 이름은 `TestHealthVerbose_thumbCountersMirrorTheServiceFieldForField`(`internal/httpapi/api_test.go`)가
+  이미 고정하고 있다.
+- 검사기 뮤테이션은 모두 빨강이었다.
+  `scripts/e2e-assert.py`는 바꾸지 않았다.
+- 리뷰는 codex 1회였다. 샌드박스(bwrap) 문제로 파일을 읽지 못해, 코드를 지시문에 넣어 돌렸다. 차단 5건은
+  모두 수용했고 구현자와 다른 에이전트가 반영했다. 내용은 과장된 보장 문구, "idle()과 같다"는 오기,
+  튜플·태그·arch 추출 범위였다.
+
+### 5. 남은 공백
+
+- 값의 의미("넷이 0이면 조용하다")를 단언하는 서버 쪽 테스트는 이 판정이 새로 더하지 않았다. 지키는 것은 이름의
+  일치와 서비스 필드와의 일대일 대응이다. 의미는 `idle()`의 정의에 기대고 있다.
+

@@ -50,8 +50,9 @@ type Health struct {
 }
 
 // HealthVerbose is the `?verbose=1` payload: the pool counters arch §5.2 and
-// §9 say stand in for a metrics endpoint in v1. It is `omitempty` because it is
-// diagnostics, not contract — the plain health body must not change shape.
+// §9 say stand in for a metrics endpoint in v1. It is `omitempty` so the plain
+// health body never changes shape. It is diagnostics, not contract — except the
+// four flush fields of ThumbCounter, which amendment A-15 made contract.
 type HealthVerbose struct {
 	Goroutines   int          `json:"goroutines"`
 	HeapAllocKB  uint64       `json:"heap_alloc_kb"`
@@ -73,18 +74,22 @@ type PoolCounter struct {
 // ThumbCounter mirrors the subset of thumbs.Stats an operator needs.
 //
 // `cover_depth`, `page_depth`, `active` and `inflight` are one snapshot, taken
-// under a single lock inside thumbs.Stats, and together they are the exact
-// conjunction thumbs.Service.idle() tests: all four zero means every thumbnail
-// the service was ever handed has been renamed into place under the cache
-// directory. The last two exist for that reason alone — the queue depths on
-// their own count a decode that is still writing as finished, which is the same
-// inaccuracy internal/app/covers.go documents for the scan's `covers` phase.
+// under a single lock inside thumbs.Stats, and together they are exactly the
+// `quiet` condition of thumbs.Service.idle() — which also waits on the
+// dimension backfill, so they are not idle() itself. All four zero means that,
+// at the snapshot, no thumbnail job is queued, being decoded, or still being
+// written: every job the service was handed has finished, successfully or not.
+// A failed or dropped job also ends at zero, so whether a given file exists is
+// for the caller to check — the E2E gate does. The last two exist because the
+// queue depths on their own count a decode that is still writing as finished,
+// which is the same inaccuracy internal/app/covers.go documents for the scan's
+// `covers` phase.
 //
-// One honesty note against the "diagnostics, not contract" line on
-// HealthVerbose above: that remains true of the block as a whole, but the E2E
-// gate in scripts/e2e-assert.py waits on these four before it judges the covers
-// the scan pre-generated, so renaming or dropping one of them breaks a gate
-// rather than a dashboard.
+// Those four are contract — amendment A-15, ruling E-57, arch §7.4 — because
+// the E2E gate in scripts/e2e-assert.py waits on them by name before it judges
+// the covers the scan pre-generated. Renaming or dropping one is a contract
+// change; scripts/contractcheck compares their tags here with arch §7.4 and the
+// gate's tuple. The other fields stay diagnostics.
 type ThumbCounter struct {
 	Hits       int64 `json:"hits"`
 	Queued     int64 `json:"queued"`

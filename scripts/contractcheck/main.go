@@ -51,6 +51,17 @@
 //     so the only thing that noticed a disagreement was `make e2e` twenty
 //     minutes in. See `checkCuratedSeries`.
 //
+//  7. **The thumb flush signal of amendment A-15** (ruling E-57). Four fields of
+//     `GET /api/health?verbose=1` are contract because the E2E gate waits on
+//     them by name. No golden carries `?verbose=1` and no client type reads
+//     it, so the names are compared across the three places that spell them:
+//     arch §7.4, `ThumbCounter`'s JSON tags, and the gate's own tuple. See
+//     `checkThumbFlushFields`.
+//
+//  8. **The amendment table** (open item bc). Every `AMENDMENT A-n` written
+//     into arch-backend.md has its row in impl-plan §0.3, and the rows run
+//     A-1, A-2, … with no gap and no repeat. See `checkAmendments`.
+//
 // # What is deliberately not compared
 //
 // Request bodies, status codes, and the query parameters of the other
@@ -61,12 +72,18 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -219,6 +236,20 @@ func check(root string) (findings, checked []string, err error) {
 	}
 	findings = append(findings, curatedFindings...)
 	checked = append(checked, fmt.Sprintf("%-28s -> the curated e2e series", "scripts/e2e-config.sh"))
+
+	flushFindings, err := checkThumbFlushFields(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	findings = append(findings, flushFindings...)
+	checked = append(checked, fmt.Sprintf("%-28s -> A-15 thumb flush fields", "internal/httpapi/dto.go"))
+
+	amendFindings, err := checkAmendments(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	findings = append(findings, amendFindings...)
+	checked = append(checked, fmt.Sprintf("%-28s -> impl-plan §0.3 amendments", "docs/arch-backend.md"))
 	return findings, checked, nil
 }
 
@@ -672,6 +703,304 @@ func checkBookKinds(root string, ts *tsTypes) ([]string, error) {
 	return findings, nil
 }
 
+// thumbFlushCopies holds the three spellings of A-15's four fields.
+type thumbFlushCopies struct {
+	arch   []string // the declaration, in arch §7.4's order
+	goTags []string // every JSON tag of ThumbCounter
+	py     []string // the gate's `keys` tuple, in its order
+}
+
+// flushHealthRow opens the one §7.4 table row the A-15 declaration lives on.
+const flushHealthRow = "| `GET /api/health` |"
+
+var (
+	reFlushArch   = regexp.MustCompile("AMENDMENT A-15[^\n]*?`verbose\\.thumbs\\.\\{([a-z_,]+)\\}`")
+	reFlushWait   = regexp.MustCompile(`(?m)^def wait_for_thumb_quiescence\(`)
+	reTopLevelDef = regexp.MustCompile(`(?m)^(?:async\s+def|def|class)\s`)
+	reFlushTuple  = regexp.MustCompile(`(?m)^\s*keys = \(([^)]*)\)`)
+	rePyString    = regexp.MustCompile(`"([^"\n]*)"|'([^'\n]*)'`)
+)
+
+// checkThumbFlushFields compares the three places that name amendment A-15's
+// fields (ruling E-57): arch §7.4 declares them, `ThumbCounter` serves them,
+// and scripts/e2e-assert.py waits until all of them are zero before it judges
+// the covers a scan pre-generated.
+//
+// The four were load-bearing for the gate long before anyone ruled them
+// contract — dto.go called the whole block "diagnostics, not contract" while
+// the gate polled it — and nothing linked the spellings: a renamed tag would
+// have surfaced as an E2E failure twenty minutes in, and a field dropped from
+// the tuple as no failure at all, the wait simply ending early.
+func checkThumbFlushFields(root string) ([]string, error) {
+	read := func(rel string) (string, error) {
+		b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			return "", fmt.Errorf("reading %s: %w", rel, err)
+		}
+		return string(b), nil
+	}
+	arch, err := read("docs/arch-backend.md")
+	if err != nil {
+		return nil, err
+	}
+	dto, err := read("internal/httpapi/dto.go")
+	if err != nil {
+		return nil, err
+	}
+	py, err := read("scripts/e2e-assert.py")
+	if err != nil {
+		return nil, err
+	}
+	c, err := parseThumbFlush(arch, dto, py)
+	if err != nil {
+		return nil, err
+	}
+	return compareThumbFlush(c), nil
+}
+
+// parseThumbFlush extracts each copy. A copy it cannot find is an error rather
+// than an empty list, because three empty lists agree.
+func parseThumbFlush(archSrc, dtoSrc, pySrc string) (*thumbFlushCopies, error) {
+	c := &thumbFlushCopies{}
+	var err error
+	if c.arch, err = parseFlushArch(archSrc); err != nil {
+		return nil, err
+	}
+	if c.goTags, err = parseFlushTags(dtoSrc); err != nil {
+		return nil, err
+	}
+	if c.py, err = parseFlushTuple(pySrc); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// parseFlushArch reads the declaration off the GET /api/health row of §7.4 and
+// nowhere else. A first-match search of the whole file would let any earlier
+// line carrying an A-15 list — a changelog entry, a superseded draft — vouch
+// for a row that has since lost a field, so a second such line anywhere is an
+// error: there is no telling which of the two the authors meant.
+func parseFlushArch(src string) ([]string, error) {
+	var rows []string
+	declared := 0
+	for _, line := range strings.Split(src, "\n") {
+		if reFlushArch.MatchString(line) {
+			declared++
+		}
+		if strings.HasPrefix(line, flushHealthRow) {
+			rows = append(rows, line)
+		}
+	}
+	if declared > 1 {
+		return nil, fmt.Errorf("docs/arch-backend.md: %d lines carry an `AMENDMENT A-15 … verbose.thumbs.{…}` list; want exactly the %s row", declared, flushHealthRow)
+	}
+	if len(rows) != 1 {
+		return nil, fmt.Errorf("docs/arch-backend.md: %d lines start %s; want exactly one", len(rows), flushHealthRow)
+	}
+	m := reFlushArch.FindStringSubmatch(rows[0])
+	if m == nil {
+		return nil, fmt.Errorf("docs/arch-backend.md: the %s row has no `AMENDMENT A-15 … verbose.thumbs.{…}` declaration", flushHealthRow)
+	}
+	return strings.Split(m[1], ","), nil
+}
+
+// parseFlushTags reads ThumbCounter's JSON names the way encoding/json does —
+// through the parsed struct, not the text. A regex over the source counted a
+// commented-out field as served, and a tag `inflight2` as `inflight`.
+func parseFlushTags(src string) ([]string, error) {
+	f, err := parser.ParseFile(token.NewFileSet(), "dto.go", src, parser.SkipObjectResolution)
+	if err != nil {
+		return nil, fmt.Errorf("internal/httpapi/dto.go: %w", err)
+	}
+	var st *ast.StructType
+	ast.Inspect(f, func(n ast.Node) bool {
+		if ts, ok := n.(*ast.TypeSpec); ok && ts.Name.Name == "ThumbCounter" {
+			st, _ = ts.Type.(*ast.StructType)
+		}
+		return st == nil
+	})
+	if st == nil {
+		return nil, errors.New("internal/httpapi/dto.go: no ThumbCounter struct")
+	}
+	var tags []string
+	for _, field := range st.Fields.List {
+		if field.Tag == nil {
+			continue
+		}
+		raw, err := strconv.Unquote(field.Tag.Value)
+		if err != nil {
+			return nil, fmt.Errorf("internal/httpapi/dto.go: ThumbCounter tag %s: %w", field.Tag.Value, err)
+		}
+		name, _, _ := strings.Cut(reflect.StructTag(raw).Get("json"), ",")
+		if name != "" && name != "-" {
+			tags = append(tags, name)
+		}
+	}
+	return tags, nil
+}
+
+// parseFlushTuple reads the `keys` tuple inside wait_for_thumb_quiescence —
+// from its def to the next top-level def or class — and requires exactly one.
+// The first `keys = (…)` in the file would be whichever helper happens to sit
+// higher up, and two inside the wait leave no telling which one it polls.
+// Every string literal in the tuple is taken, whatever its quotes or spelling,
+// so a name the arch line does not declare surfaces as a finding instead of
+// being skipped.
+func parseFlushTuple(src string) ([]string, error) {
+	loc := reFlushWait.FindStringIndex(src)
+	if loc == nil {
+		return nil, errors.New("scripts/e2e-assert.py: no top-level `def wait_for_thumb_quiescence(`")
+	}
+	body := src[loc[1]:]
+	if next := reTopLevelDef.FindStringIndex(body); next != nil {
+		body = body[:next[0]]
+	}
+	tuples := reFlushTuple.FindAllStringSubmatch(body, -1)
+	if len(tuples) != 1 {
+		return nil, fmt.Errorf("scripts/e2e-assert.py: wait_for_thumb_quiescence holds %d `keys = (…)` tuples; want exactly one", len(tuples))
+	}
+	var names []string
+	for _, m := range rePyString.FindAllStringSubmatch(tuples[0][1], -1) {
+		names = append(names, m[1]+m[2])
+	}
+	return names, nil
+}
+
+// compareThumbFlush: every declared field is served, and the gate waits on
+// exactly the declared fields — not fewer (it would stop while a thumbnail is
+// still being written) and not more (it would wait on a counter nobody
+// promised to keep).
+func compareThumbFlush(c *thumbFlushCopies) []string {
+	var findings []string
+	for _, f := range c.arch {
+		if !contains(c.goTags, f) {
+			findings = append(findings, fmt.Sprintf(
+				"internal/httpapi/dto.go: ThumbCounter has no JSON field %q; arch §7.4 (A-15) declares it", f))
+		}
+		if !contains(c.py, f) {
+			findings = append(findings, fmt.Sprintf(
+				"scripts/e2e-assert.py: the flush wait does not read %q; arch §7.4 (A-15) declares it", f))
+		}
+	}
+	for _, f := range c.py {
+		if !contains(c.arch, f) {
+			findings = append(findings, fmt.Sprintf(
+				"scripts/e2e-assert.py: the flush wait reads %q; arch §7.4 (A-15) does not declare it", f))
+		}
+	}
+	return findings
+}
+
+var (
+	reAmendArch = regexp.MustCompile(`AMENDMENT A-([0-9]+)\b`)
+	reAmendRow  = regexp.MustCompile(`(?m)^\| \*\*A-([0-9]+)\*\* \|`)
+	reAmendHead = regexp.MustCompile(`(?m)^### 0\.3 .*$`)
+	reNextHead  = regexp.MustCompile(`(?m)^#{1,3} `)
+)
+
+// checkAmendments compares arch-backend.md's inline `AMENDMENT A-n` notes with
+// the table of impl-plan §0.3 (open item bc).
+//
+// A-7 makes the table the place a contract change is written first, and it was
+// broken twice — A-12 and A-13 went into arch alone and a later session
+// back-filled the rows — because arch is where someone changing §7 already is
+// and the table is in another file. The rule cannot make that less natural, so
+// this makes skipping it visible. Only one direction is required: a row with
+// no inline note is legitimate (A-5, A-6 and A-7 change no arch text of their
+// own), a note with no row is the defect.
+func checkAmendments(root string) ([]string, error) {
+	read := func(rel string) (string, error) {
+		b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			return "", fmt.Errorf("reading %s: %w", rel, err)
+		}
+		return string(b), nil
+	}
+	archSrc, err := read("docs/arch-backend.md")
+	if err != nil {
+		return nil, err
+	}
+	planSrc, err := read("docs/impl-plan.md")
+	if err != nil {
+		return nil, err
+	}
+	arch, table, err := parseAmendments(archSrc, planSrc)
+	if err != nil {
+		return nil, err
+	}
+	return compareAmendments(arch, table), nil
+}
+
+// parseAmendments returns the distinct amendment numbers arch names, ascending,
+// and the §0.3 row numbers in table order. Rows outside §0.3 do not count. An
+// empty side is an error, because an empty table agrees with anything.
+func parseAmendments(archSrc, planSrc string) (arch, table []int, err error) {
+	seen := map[int]bool{}
+	for _, m := range reAmendArch.FindAllStringSubmatch(archSrc, -1) {
+		n, _ := strconv.Atoi(m[1])
+		if !seen[n] {
+			seen[n] = true
+			arch = append(arch, n)
+		}
+	}
+	if len(arch) == 0 {
+		return nil, nil, errors.New("docs/arch-backend.md: no `AMENDMENT A-n` notes found")
+	}
+	sort.Ints(arch)
+
+	head := reAmendHead.FindStringIndex(planSrc)
+	if head == nil {
+		return nil, nil, errors.New("docs/impl-plan.md: no `### 0.3` section")
+	}
+	section := planSrc[head[1]:]
+	if next := reNextHead.FindStringIndex(section); next != nil {
+		section = section[:next[0]]
+	}
+	for _, m := range reAmendRow.FindAllStringSubmatch(section, -1) {
+		n, _ := strconv.Atoi(m[1])
+		table = append(table, n)
+	}
+	if len(table) == 0 {
+		return nil, nil, errors.New("docs/impl-plan.md: §0.3 has no `| **A-n** |` rows")
+	}
+	return arch, table, nil
+}
+
+// compareAmendments: every arch note has a row, and the rows are A-1…A-max in
+// order, each once.
+func compareAmendments(arch, table []int) []string {
+	var findings []string
+	rows := map[int]int{}
+	for _, n := range table {
+		rows[n]++
+	}
+	for _, n := range arch {
+		if rows[n] == 0 {
+			findings = append(findings, fmt.Sprintf(
+				"docs/arch-backend.md: AMENDMENT A-%d has no row in docs/impl-plan.md §0.3 (A-7: the table is written first)", n))
+		}
+	}
+	for i, n := range table {
+		if want := i + 1; n != want {
+			if rows[want] == 0 {
+				findings = append(findings, fmt.Sprintf(
+					"docs/impl-plan.md §0.3: row A-%d is missing (the table goes from A-%d to A-%d)", want, i, n))
+			} else {
+				findings = append(findings, fmt.Sprintf(
+					"docs/impl-plan.md §0.3: row %d is A-%d, want A-%d (repeated or out of order)", i+1, n, want))
+			}
+			break
+		}
+	}
+	for n, count := range rows {
+		if count > 1 {
+			findings = append(findings, fmt.Sprintf("docs/impl-plan.md §0.3: A-%d has %d rows", n, count))
+		}
+	}
+	sort.Strings(findings)
+	return findings
+}
+
 // stripLineComments removes `// …` from every line. The only strings in the
 // const arrays this parser reads are enum members — plain lowercase
 // identifiers — so there is no string literal a `//` could legitimately be
@@ -863,7 +1192,7 @@ type nameList struct {
 //
 // The seventh, integration/harness_test.go, is compared ONE WAY: every name it
 // holds must be in CURATED, but CURATED may hold names it does not, because it
-// deliberately runs impl-plan §6.3's original ten rather than all fifteen. It
+// deliberately runs impl-plan §6.3's original ten rather than all sixteen. It
 // was added after that copy was found carrying the `[만화] ` prefix the
 // collection had dropped six sessions earlier — see the comment at the check
 // itself for what that cost.
@@ -1113,7 +1442,7 @@ func compareCurated(c *curatedCopies) []string {
 	// 7 — the integration harness, checked ONE WAY ONLY.
 	//
 	// `integration/harness_test.go` deliberately runs a subset: impl-plan §6.3's
-	// original ten, not the fifteen CURATED has grown to, because the rounds it
+	// original ten, not the sixteen CURATED has grown to, because the rounds it
 	// drives (a full scan, a whole-volume stream, a cache wipe) cost minutes per
 	// series. So a name in CURATED and not here is not a finding.
 	//
