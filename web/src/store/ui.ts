@@ -90,6 +90,17 @@ export interface UiState {
    * open, **else** close the viewer") has an unambiguous top.
    */
   overlays: Overlay[]
+  /**
+   * Whether `view` is the reader's — saved in `shelf.ui`, sent by the server or
+   * picked — rather than the store's default `grid` (**item ⑤**). The library
+   * holds its first paint until this is true or `/api/settings` has failed: a
+   * skeleton drawn as the default grid and then swapped for a remembered list
+   * is a layout shift.
+   *
+   * Deliberately outside `PersistedUi`. It says where *this load's* `view` came
+   * from, so the persist `merge` derives it from storage on every load instead.
+   */
+  libraryViewKnown: boolean
 
   /**
    * Applies `data-theme` at once. Saving it is the caller's — the 테마 switch
@@ -148,6 +159,7 @@ export const useUiStore = create<UiState>()(
       drawerOpen: false,
       revealSeries: null,
       overlays: [],
+      libraryViewKnown: false,
 
       setTheme: (theme) => {
         set({ theme })
@@ -155,7 +167,7 @@ export const useUiStore = create<UiState>()(
       },
 
       setView: (view) => {
-        set({ view })
+        set({ view, libraryViewKnown: true })
       },
 
       setScope: (scope) => {
@@ -222,8 +234,15 @@ export const useUiStore = create<UiState>()(
       },
 
       hydrateFromSettings: (settings) => {
-        set(settings)
-        if (settings.theme !== undefined) applyTheme(settings.theme)
+        const { theme, ...rest } = settings
+        // Item ⑤: in the same `set` as the view, so no render sees it "unknown".
+        const known = rest.view === undefined ? {} : { libraryViewKnown: true }
+        if (theme === undefined) {
+          set({ ...rest, ...known })
+          return
+        }
+        set({ ...rest, ...known, theme })
+        applyTheme(theme)
       },
     }),
     {

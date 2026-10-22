@@ -907,6 +907,13 @@ Left → right:
 
 **Hidden entirely when there is nothing in progress** (and hidden during the skeleton state).
 
+> **Amended by E-60 — whether the band exists is settled before the cards are shown, and the skeleton
+> shows nothing that survives it.** The band reserves no height, so one that lands after the cards pushes
+> all of them down by its own height (263px at 1440, CLS 0.134 — 01-library 6.1, and every return from
+> the viewer). The cards therefore wait for `/api/continue` — or for its first failure, or 1 s after their
+> own page — and once shown, the band can leave but never arrive; a late answer shows on the next visit.
+> The §4.4 section header is not drawn over the skeleton either (see Loading — skeleton below).
+
 `padding:16px` ~~`; border-bottom:2px solid rule`~~ — **no border.** E-32 replaced the divider with space
 and the cards' own elevation (`ContinueRow.tsx`, `flex-none p-4`).
 
@@ -1013,6 +1020,14 @@ background:var(--color-bg); z-index:2; border-bottom:1px solid var(--rule)`
 > The `border-bottom` struck by E-32 stays struck — the rule is *inside* the header now, running to the
 > right edge, not under it. `SectionHeader.tsx` exports the pair as `SectionRule` so the two bands cannot
 > drift apart.
+
+> **Amended by E-60 — not rendered during the skeleton state.** The §4.3 band above it is unknown until
+> `/api/continue` answers, so a header drawn over the skeleton was pushed 263px down whenever the band
+> arrived (273px at 1100). Chrome's layout-shift API does not report a `position:sticky` element moving,
+> so no CLS check saw it; the check is the header's first painted `top` against its settled `top`. The
+> header first appears in the same commit as the band and the cards. At 768–1023, where the scope name
+> lives in this header, the name is therefore absent while the skeleton is up — on the first load only,
+> since search, scope and sort changes do not return to the skeleton.
 
 ### 4.5 Body
 
@@ -1128,7 +1143,15 @@ Data row: `padding:4px 8px; border-bottom:1px solid var(--rule); cursor:pointer`
 
 Reference: [`library-skeleton-loading-1440.png`](./ui-shots/library-skeleton-loading-1440.png)
 
-Same grid template, 18 placeholder cells, **no layout shift** (UI-5.3). Continue-reading row is hidden.
+Same grid template, 18 placeholder cells, **no layout shift** (UI-5.3). Continue-reading row is hidden,
+**and so is the section header (E-60)** — the skeleton is replaced whole, so nothing on it can move. The
+reference shot above predates E-60 and still draws the header. A header over the skeleton was pushed 263px
+down whenever the 이어보기 band arrived above it (273px at 1100), and because it is `position:sticky`,
+Chrome's layout-shift API does not report that move: no CLS check could see it. The check is the header's
+first painted `top` against its settled `top`.
+Nothing view-shaped is drawn until the store knows the 보기 방식 — remembered in `shelf.ui`, taken from the
+server, or picked by the reader (E-60 §2-4). A remembered view paints at once; only a browser with no `shelf.ui`
+shows the band empty, for up to 1 s (the grace), rather than showing the grid skeleton to a list reader.
 Each cell: `display:flex; flex-direction:column; gap:7px` containing
 
 - `aspect-ratio:2/3; background:var(--fill-track); animation: shimmer 1.6s ease-in-out infinite;
@@ -2171,7 +2194,7 @@ All files live in [`docs/ui-shots/`](./ui-shots/). Captured live from the runnin
 | `library-sidebar-scope-active-1440.png` | Sidebar active scope (읽는 중): accent 8% fill + 3px accent left border; scope name in the section header |
 | `library-scanning-progress-1440.png` | Scan in progress: 96×2px bar + `63%` in the top bar, accent dot in the sidebar footer |
 | `library-empty-search-1440.png` | No-results band between two 2px rules, with 검색 지우기 |
-| `library-skeleton-loading-1440.png` | Shimmer skeleton grid, 이어보기 row suppressed, no layout shift |
+| `library-skeleton-loading-1440.png` | Shimmer skeleton grid, 이어보기 row **and section header** suppressed (E-60), no layout shift — **the shot predates E-60 and still draws the header; re-capture pending** |
 | `onboarding-no-roots-1440.png` | First-run onboarding: accent kicker, 42px h1, 2px rules, primary/secondary pair, path hints |
 | `series-detail-grid-1440.png` | Series detail header (176×264 cover, path, 4 stats, action row, 읽기 방향 seg) + volume grid |
 | `series-detail-volume-error-badge-1440.png` | Scrolled volume grid — volume 9 encrypted: accent-900@82% scrim, 암호화 badge, reason text |

@@ -3053,6 +3053,9 @@ async function setupViewerThenLibrary(
     scope: options.scope ?? LIBRARY_SCOPE,
     query: options.query ?? LIBRARY_QUERY,
     view: options.view ?? 'grid',
+    // The view above is the reader's own, so the library paints its shape at once
+    // rather than waiting on `/api/settings` for it (item ⑤).
+    libraryViewKnown: true,
   })
 
   const client = new QueryClient({

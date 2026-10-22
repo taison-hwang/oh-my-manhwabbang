@@ -1,8 +1,8 @@
 import { SearchX } from 'lucide-react'
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-import { useSettings } from '../../api/queries'
+import { useContinue, useSettings } from '../../api/queries'
 import type { ContinueItem, ID, SeriesSummary } from '../../api/types'
 import { EmptyState } from '../../components/ds/EmptyState'
 import { useUiStore } from '../../store/ui'
@@ -12,7 +12,15 @@ import { Onboarding } from './Onboarding'
 import { SectionHeader } from './SectionHeader'
 import { SeriesGrid } from './SeriesGrid'
 import { SeriesList } from './SeriesList'
-import { useLibrary, useLibrarySettingsSync } from './useLibrary'
+import { CONTINUE_MAX_CARDS, useLibrary, useLibrarySettingsSync } from './useLibrary'
+
+/**
+ * How long the cards wait for the 이어보기 answer once their own page is in.
+ * Past it they open without the band. Measured locally, the band's answer lags
+ * the series page by 0–13 ms when it lags at all, so this only ever ends a
+ * request that is stuck.
+ */
+const CONTINUE_GRACE_MS = 1000
 
 /**
  * Screen 1 — Home / Library (ui-spec §4, FR-LIB-001 … FR-LIB-010).
@@ -42,12 +50,76 @@ export function LibraryPage() {
   const library = useLibrary()
   useLibrarySettingsSync()
 
+  // `library_view` reaches the store in an effect after `/api/settings` lands
+  // (the shell's `useLibrarySettingsSync`) — a painted frame later — and a
+  // browser with no `shelf.ui` in localStorage starts the store on `grid`. So nothing
+  // view-shaped is drawn until the store *knows* the view: remembered in
+  // `shelf.ui`, taken from the server, or picked by the reader
+  // (`libraryViewKnown`). For a list reader the grid skeleton was swapped for
+  // the list one (CLS 0.012–0.039), and with the settings late, grid cards were
+  // revealed and then swapped for list rows. A first failure, or the grace
+  // below, settles it on the store. So does CONTINUE_GRACE_MS from mount, on
+  // its own clock: the grace below waits for the cards' page, and the blank
+  // band must not wait with it.
+  const settings = useSettings()
+  const viewKnown = useUiStore((s) => s.libraryViewKnown)
+  const [viewSettled, setViewSettled] = useState(false)
+  if (!viewSettled && (viewKnown || settings.failureCount > 0)) {
+    setViewSettled(true)
+  }
+  useEffect(() => {
+    if (viewSettled) return
+    const timer = setTimeout(() => {
+      setViewSettled(true)
+    }, CONTINUE_GRACE_MS)
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [viewSettled])
+
+  // The 이어보기 band reserves no height (ui-spec §4.3), so a band that lands
+  // after the cards pushes every card down by its own height — 263px at 1440,
+  // CLS 0.134. Two paths did that: `/api/continue` answering after the series
+  // page (01-library 6.1, e2e round b2-syn1), and coming back from the viewer,
+  // where the progress write left the cached list stale-but-empty and the
+  // refetch on mount brought the band in under cards painted from the cache.
+  //
+  // So whether the band exists is settled *before* the cards are revealed —
+  // by an answer that is not being refetched (fresh from the cache or fetched
+  // for this mount), by a first failure (the retries are not waited out), or
+  // by CONTINUE_GRACE_MS after the cards' own page — and after that it can
+  // leave but never arrive, not even back after it left. A late answer shows
+  // up on the next visit. Same query as `ContinueRow`'s, so no extra request.
+  const continuing = useContinue(CONTINUE_MAX_CARDS)
+  const hasBand = (continuing.data?.items.length ?? 0) > 0
+  const bandKnown = continuing.failureCount > 0 || (!continuing.isPending && !continuing.isFetching)
+  const ready = !library.isLoading
+  const [graceOver, setGraceOver] = useState(false)
+  const [revealed, setRevealed] = useState<{ band: boolean } | null>(null)
+  const settled = bandKnown && viewSettled
+  useEffect(() => {
+    if (revealed !== null || !ready || settled) return
+    const timer = setTimeout(() => {
+      setGraceOver(true)
+    }, CONTINUE_GRACE_MS)
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [revealed, ready, settled])
+  if (revealed === null && ready && (settled || graceOver)) {
+    setRevealed({ band: hasBand })
+  }
+  // An emptied list (a scan's invalidation) takes the band away for good.
+  if (revealed?.band === true && !hasBand) {
+    setRevealed({ band: false })
+  }
+  const loading = revealed === null
+
   // `Settings.server.config_path` (amendment A-10) and
   // `.root_editing_enabled` (amendment A-11) for the onboarding screen. The
   // same query `useLibrarySettingsSync` already runs, so this costs no request;
   // it is read here rather than inside `Onboarding` because the empty state is
   // a presentational component and stays one.
-  const settings = useSettings()
   const configPath = settings.data?.server.config_path
   // `false` while the payload is in flight, which is the safe direction: the
   // C-5 screen is correct for every server, and one request later the screen
@@ -176,12 +248,19 @@ export function LibraryPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <ContinueRow suppressed={library.isLoading} onResume={resumeBook} />
-      <SectionHeader label={library.scopeName} count={library.total} />
+      <ContinueRow suppressed={revealed?.band !== true} onResume={resumeBook} />
+      {/* E-60: not over the skeleton. Until the band above is settled its
+          height is unknown, and a sticky header moved by it is a shift
+          Chrome's layout-shift API does not report. */}
+      {loading ? null : <SectionHeader label={library.scopeName} count={library.total} />}
 
-      {library.isLoading ? (
-        <div className="min-h-0 flex-1 overflow-y-auto" style={{ scrollbarGutter: 'stable' }}>
-          <GridSkeleton variant={library.view} />
+      {loading ? (
+        <div
+          data-testid="library-loading"
+          className="min-h-0 flex-1 overflow-y-auto"
+          style={{ scrollbarGutter: 'stable' }}
+        >
+          {viewSettled ? <GridSkeleton variant={library.view} /> : null}
         </div>
       ) : library.isError ? (
         <div className="min-h-0 flex-1 overflow-y-auto p-4" data-testid="library-error">

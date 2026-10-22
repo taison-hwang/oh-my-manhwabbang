@@ -13,6 +13,7 @@ const reset = (): void => {
     paletteQuery: '',
     drawerOpen: false,
     overlays: [],
+    libraryViewKnown: false,
   })
 }
 
@@ -20,6 +21,19 @@ beforeEach(() => {
   localStorage.clear()
   reset()
 })
+
+/**
+ * A page load: a new module whose `persist` reads `shelf.ui` once. Storage is
+ * emptied first because `reset()` goes through `persist` and saves a `view`.
+ */
+const freshStore = async (saved?: Record<string, unknown>) => {
+  localStorage.clear()
+  if (saved !== undefined) {
+    localStorage.setItem(UI_STORAGE_KEY, JSON.stringify({ state: saved, version: 0 }))
+  }
+  vi.resetModules()
+  return (await import('./ui')).useUiStore
+}
 
 describe('sortable headers (ui-spec §4.5)', () => {
   it('sorts 시리즈명 ascending on the first click', () => {
@@ -178,6 +192,87 @@ describe('theme (item bq)', () => {
 
     fresh.getState().hydrateFromSettings({ theme: 'dark' })
     expect(fresh.getState().theme).toBe('dark')
+  })
+})
+
+/**
+ * Item ⑤: the library's first paint must already have the reader's shape. A
+ * fresh store says `view: 'grid'` whether or not anyone chose it, so the page
+ * needs a second bit — "this `view` came from storage, the server or the reader"
+ * — to know whether it may draw now or must wait for `/api/settings`.
+ */
+describe('libraryViewKnown (item ⑤)', () => {
+  it('is false in a fresh store with nothing saved', async () => {
+    const fresh = await freshStore()
+    expect(fresh.getState()).toMatchObject({ view: 'grid', libraryViewKnown: false })
+  })
+
+  it('is false when the saved state carries no view', async () => {
+    const themeOnly = await freshStore({ theme: 'dark' })
+    expect(themeOnly.getState()).toMatchObject({ theme: 'dark', libraryViewKnown: false })
+
+    const nullView = await freshStore({ theme: 'dark', view: null })
+    expect(nullView.getState().libraryViewKnown).toBe(false)
+  })
+
+  // Storage is outside the type system: a cast does not make `'invalid'` a view.
+  // An unreadable one is dropped — the store keeps its own, and is not "known".
+  it.each([null, 'invalid', false, {}])('drops a saved view it cannot read (%j)', async (view) => {
+    const fresh = await freshStore({ theme: 'dark', view })
+    expect(fresh.getState()).toMatchObject({ theme: 'dark', view: 'grid', libraryViewKnown: false })
+  })
+
+  it('is true after rehydrating a saved view, the default one included', async () => {
+    for (const view of ['list', 'grid'] as const) {
+      const fresh = await freshStore({ theme: 'light', view, scope: 'all', sort: 'name', order: 'asc' })
+      expect(fresh.getState()).toMatchObject({ view, libraryViewKnown: true })
+    }
+  })
+
+  it('is set by a settings payload that carries a view, in the same update', () => {
+    // One notification per payload: no render ever sees the new view still "unknown".
+    const seen: { view: string; known: boolean }[] = []
+    const unsubscribe = useUiStore.subscribe((s) => {
+      seen.push({ view: s.view, known: s.libraryViewKnown })
+    })
+    try {
+      // Without a theme. The server's `grid` equals the default: the view does not change, the flag must.
+      useUiStore.getState().hydrateFromSettings({ view: 'grid' })
+      expect(seen).toEqual([{ view: 'grid', known: true }])
+
+      // With a theme, the other branch.
+      useUiStore.setState({ libraryViewKnown: false })
+      seen.length = 0
+      useUiStore.getState().hydrateFromSettings({ theme: 'dark', view: 'list' })
+      expect(seen).toEqual([{ view: 'list', known: true }])
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  it('is left alone by a payload without a view', () => {
+    useUiStore.getState().hydrateFromSettings({ theme: 'dark', scope: 'reading', sort: 'size', order: 'desc' })
+    expect(useUiStore.getState().libraryViewKnown).toBe(false)
+
+    useUiStore.setState({ libraryViewKnown: true })
+    useUiStore.getState().hydrateFromSettings({ theme: 'light' })
+    expect(useUiStore.getState().libraryViewKnown).toBe(true)
+  })
+
+  it('is set when the reader picks a view', () => {
+    useUiStore.getState().setView('grid')
+    expect(useUiStore.getState().libraryViewKnown).toBe(true)
+  })
+
+  it('never goes through localStorage, in either direction', async () => {
+    useUiStore.getState().setView('list')
+    const parsed = JSON.parse(localStorage.getItem(UI_STORAGE_KEY) ?? '{}') as {
+      state?: Record<string, unknown>
+    }
+    expect(parsed.state).not.toHaveProperty('libraryViewKnown')
+
+    const fresh = await freshStore({ theme: 'dark', libraryViewKnown: true })
+    expect(fresh.getState().libraryViewKnown).toBe(false)
   })
 })
 

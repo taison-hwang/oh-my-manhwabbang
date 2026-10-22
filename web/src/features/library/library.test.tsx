@@ -186,6 +186,11 @@ interface Scenario {
    * a different request (amendment A-10).
    */
   holdSettings: boolean
+  /**
+   * Holds `GET /api/continue` open while `/api/series` answers — the order a
+   * just-restarted server produced in e2e round b2-syn1 (01-library 6.1).
+   */
+  holdContinue: boolean
   /** `queued` answers 202 once per series before the image. */
   cover: 'image' | 'queued' | 'missing'
 }
@@ -201,6 +206,8 @@ let releaseSeries: () => void
 let seriesGate: Promise<void>
 let releaseSettings: () => void
 let settingsGate: Promise<void>
+let releaseContinue: () => void
+let continueGate: Promise<void>
 
 function compareSeries(key: string, a: SeriesSummary, b: SeriesSummary): number {
   switch (key) {
@@ -248,7 +255,10 @@ const server = setupServer(
     return HttpResponse.json(scenario.settings)
   }),
 
-  http.get(`${ORIGIN}/api/continue`, () => HttpResponse.json({ items: scenario.continueItems })),
+  http.get(`${ORIGIN}/api/continue`, async () => {
+    if (scenario.holdContinue) await continueGate
+    return HttpResponse.json({ items: scenario.continueItems })
+  }),
 
   http.get(`${ORIGIN}/api/series`, async ({ request }) => {
     const url = new URL(request.url)
@@ -555,9 +565,12 @@ function stubRects(height: number): void {
  * does — `invalidateRootState` in `api/queries.ts` invalidates `roots` *and*
  * `settings` on every root add/remove. Callers that do not need it may ignore
  * the return value.
+ *
+ * Pass a client back in to mount the page again over a cache the previous
+ * mount filled — the reader coming back from the viewer.
  */
-function renderLibrary(): QueryClient {
-  const client = new QueryClient({
+function renderLibrary(existing?: QueryClient): QueryClient {
+  const client = existing ?? new QueryClient({
     // `retry` here is advisory only — `queries.ts` pins its own `retryQuery` on
     // every hook, and a 5xx is retried twice on purpose. `retryDelay: 0` is
     // *not* overridden, so the failure path resolves without three seconds of
@@ -581,10 +594,15 @@ function renderLibrary(): QueryClient {
   return client
 }
 
-/** Waits for the first list *and* the settings hydration to have landed. */
+/**
+ * Waits for the first list *and* the settings hydration to have landed.
+ *
+ * The loading band, not the skeleton: before the store holds the server's
+ * 보기 방식 the band is up with no skeleton in it, which is still loading.
+ */
 async function waitForLibrary(): Promise<void> {
   await waitFor(() => {
-    expect(screen.queryByTestId('library-skeleton')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('library-loading')).not.toBeInTheDocument()
   })
   await waitFor(() => {
     expect(settingsReads).toBeGreaterThan(0)
@@ -617,6 +635,7 @@ beforeEach(() => {
     settings: { ...settingsFixture },
     hold: false,
     holdSettings: false,
+    holdContinue: false,
     cover: 'image',
   }
   seriesRequests = []
@@ -631,9 +650,15 @@ beforeEach(() => {
   settingsGate = new Promise<void>((resolve) => {
     releaseSettings = resolve
   })
+  continueGate = new Promise<void>((resolve) => {
+    releaseContinue = resolve
+  })
   localStorage.clear()
   useUiStore.setState({
     view: 'grid',
+    // Not persisted, so it outlives a test unless reset: a test that hydrated
+    // or picked a view would hand the next one a view it never learned.
+    libraryViewKnown: false,
     scope: 'all',
     sort: 'name',
     order: 'asc',
@@ -3003,21 +3028,168 @@ describe('이어보기 (FR-LIB-010)', () => {
     expect(within(card).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '0')
   })
 
-  it('stays hidden during the skeleton state', async () => {
+  /**
+   * **E-60 — and so does the section header.** The band's height is unknown
+   * until `/api/continue` answers, so a header drawn over the skeleton was
+   * pushed 263px down whenever the band arrived (273px at 1100). The header is
+   * `position: sticky`, and Chrome's layout-shift API does not report a sticky
+   * element moving — no CLS gate ever saw it. Nothing on the skeleton may
+   * survive into the loaded page, so it is replaced whole.
+   */
+  it('stays hidden during the skeleton state, and so does the section header (E-60)', async () => {
     scenario.hold = true
     scenario.continueItems = [makeContinueItem()]
     renderLibrary()
 
     expect(await screen.findByTestId('library-skeleton')).toBeInTheDocument()
+    // The series request leaves only once /api/roots has answered — the point
+    // at which the old header had its scope name and was on screen.
     await waitFor(() => {
-      expect(screen.getByText('전체 시리즈')).toBeInTheDocument()
+      expect(seriesRequests.length).toBeGreaterThan(0)
     })
+    expect(screen.queryByText('전체 시리즈')).not.toBeInTheDocument()
     expect(screen.queryByText('이어보기')).not.toBeInTheDocument()
 
     act(() => {
       releaseSeries()
     })
     expect(await screen.findByText('이어보기')).toBeInTheDocument()
+    expect(screen.getByText('전체 시리즈')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: GUNGYE.name })).toBeInTheDocument()
+  })
+
+  /**
+   * **The other order — the one that failed 01-library 6.1 with CLS 0.135.**
+   *
+   * The test above holds `/api/series`; this one holds `/api/continue`. On a warm
+   * server the band always wins (the series request waits for `/api/roots`
+   * first), so the grid and the band arrive in one commit. A just-restarted
+   * server answered `/api/continue` last (e2e round b2-syn1, desktop-1440): the
+   * cards painted, then a ~263px band appeared above them and pushed all of
+   * them down. The band is unreserved by design (ui-spec §4.3 — no empty
+   * rectangle), so the cards must wait for it instead.
+   */
+  it('does not paint the cards before 이어보기 has answered (01-library 6.1 CLS)', async () => {
+    scenario.holdContinue = true
+    scenario.continueItems = [makeContinueItem()]
+    const client = renderLibrary()
+
+    await waitFor(() => {
+      const lists = client.getQueryCache().findAll({ queryKey: queryKeys.series.all })
+      expect(lists.some((query) => query.state.status === 'success')).toBe(true)
+    })
+    expect(screen.getByTestId('library-skeleton')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: GUNGYE.name })).not.toBeInTheDocument()
+    expect(screen.queryByText('이어보기')).not.toBeInTheDocument()
+
+    act(() => {
+      releaseContinue()
+    })
+    expect(await screen.findByText('이어보기')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: GUNGYE.name })).toBeInTheDocument()
+  })
+
+  it('still opens the library when 이어보기 fails', async () => {
+    server.use(
+      http.get(`${ORIGIN}/api/continue`, () =>
+        HttpResponse.json({ error: { code: 'internal', message: 'boom' } }, { status: 500 }),
+      ),
+    )
+    renderLibrary()
+
+    expect(await screen.findByRole('button', { name: GUNGYE.name })).toBeInTheDocument()
+    expect(screen.queryByTestId('library-skeleton')).not.toBeInTheDocument()
+    expect(screen.queryByText('이어보기')).not.toBeInTheDocument()
+  })
+
+  /**
+   * The test above needs the waiting to end. These three pin *how* it ends, and
+   * that a band which answered too late is not slid in under painted cards.
+   * Measured in Chrome before the fix: a `/api/continue` that never answered
+   * kept the skeleton up for as long as anyone watched, with the series already
+   * in hand; and the read-one-book-and-come-back path below painted the cached
+   * cards and then pushed them 263px down — CLS 0.134, no delay needed.
+   */
+  it('opens the library without the band when 이어보기 never answers, and keeps it out', async () => {
+    scenario.holdContinue = true
+    scenario.continueItems = [makeContinueItem()]
+    renderLibrary()
+
+    expect(await screen.findByRole('button', { name: GUNGYE.name }, { timeout: 3000 })).toBeInTheDocument()
+    expect(screen.queryByText('이어보기')).not.toBeInTheDocument()
+
+    const card = screen.getByRole('button', { name: GUNGYE.name })
+    act(() => {
+      releaseContinue()
+    })
+    // Long enough for the late answer to land and render; the band must not.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    })
+    expect(screen.queryByText('이어보기')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: GUNGYE.name })).toBe(card)
+  })
+
+  it('does not sit out the retries when 이어보기 fails once', async () => {
+    let calls = 0
+    server.use(
+      http.get(`${ORIGIN}/api/continue`, async () => {
+        calls += 1
+        if (calls === 1) {
+          return HttpResponse.json({ error: { code: 'internal', message: 'boom' } }, { status: 500 })
+        }
+        await continueGate
+        return HttpResponse.json({ items: [makeContinueItem()] })
+      }),
+    )
+    renderLibrary()
+
+    // The retry is still out (held by the gate) — the cards must not wait for it.
+    expect(await screen.findByRole('button', { name: GUNGYE.name })).toBeInTheDocument()
+    expect(calls).toBe(2)
+
+    act(() => {
+      releaseContinue()
+    })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    })
+    expect(screen.queryByText('이어보기')).not.toBeInTheDocument()
+  })
+
+  /**
+   * The codex-review case: a band that was there at reveal and then left must
+   * not come back on the same mount. A scan's invalidation can empty the list
+   * and a later one fill it again — the second answer is a band arriving above
+   * painted cards, the same 263px push. It shows on the next visit.
+   */
+  it('does not bring the band back once it has left after the reveal', async () => {
+    scenario.continueItems = [makeContinueItem()]
+    const client = renderLibrary()
+    expect(await screen.findByText('이어보기')).toBeInTheDocument()
+    const card = await screen.findByRole('button', { name: GUNGYE.name })
+
+    scenario.continueItems = []
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: queryKeys.continueReading.all })
+    })
+    await waitFor(() => {
+      expect(screen.queryByText('이어보기')).not.toBeInTheDocument()
+    })
+
+    scenario.continueItems = [makeContinueItem()]
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: queryKeys.continueReading.all })
+    })
+    // Observers are notified on a later tick; long enough for that to render.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    })
+    // The refetch has landed with the item back in the cache; the band must not.
+    const lists = client.getQueryCache().findAll({ queryKey: queryKeys.continueReading.all })
+    expect(lists.map((query) => (query.state.data as { items: unknown[] } | undefined)?.items.length)).toEqual([1])
+    expect(screen.queryByText('이어보기')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: GUNGYE.name })).toBe(card)
   })
 
   /**
@@ -3246,6 +3418,132 @@ describe('skeleton (prd §5.3, WP-09 acceptance 9)', () => {
     // above is satisfied while every row still moves by 16px when data lands —
     // which the Layout Instability API cannot see either.
     expect(bandWrapper?.parentElement).toHaveClass(...LIST_CARD_CLASS.split(/\s+/))
+  })
+
+  /**
+   * **Nothing view-shaped before the store holds the server's 보기 방식.**
+   *
+   * The two tests above wait for `view === 'list'` before they look, so they
+   * allow whatever was drawn before it. A browser with no `shelf.ui` in
+   * localStorage starts the store on `grid`, and `useLibrarySettingsSync` only
+   * applies `library_view` in an effect after `/api/settings` lands — a
+   * painted frame later. Measured in Chrome for a list reader: a grid skeleton
+   * swapped for the list one, CLS 0.012–0.039 across five widths; with the
+   * settings 800ms late, grid *cards* were revealed and then swapped for list
+   * rows (a swap the layout-shift API scores 0).
+   */
+  it('draws no skeleton for a list reader until the store has the server view', async () => {
+    scenario.hold = true
+    scenario.holdSettings = true
+    scenario.settings = { ...scenario.settings, library_view: 'list' }
+    renderLibrary()
+
+    await waitFor(() => {
+      expect(seriesRequests.length).toBeGreaterThan(0)
+    })
+    expect(useUiStore.getState().view).toBe('grid')
+    expect(screen.queryByTestId('library-skeleton')).not.toBeInTheDocument()
+
+    act(() => {
+      releaseSettings()
+    })
+    expect(await screen.findByTestId('library-skeleton-header')).toBeInTheDocument()
+    expect(useUiStore.getState().view).toBe('list')
+  })
+
+  it('does not reveal grid cards to a list reader before the settings answer', async () => {
+    scenario.holdSettings = true
+    scenario.settings = { ...scenario.settings, library_view: 'list' }
+    const client = renderLibrary()
+
+    await waitFor(() => {
+      const lists = client.getQueryCache().findAll({ queryKey: queryKeys.series.all })
+      expect(lists.some((query) => query.state.status === 'success')).toBe(true)
+    })
+    expect(screen.queryByRole('button', { name: GUNGYE.name })).not.toBeInTheDocument()
+
+    act(() => {
+      releaseSettings()
+    })
+    expect(await screen.findByTestId('library-list-header')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: GUNGYE.name })).toBeInTheDocument()
+  })
+
+  /**
+   * The other side of the rule above: a reader whose browser remembers the
+   * view must not wait for the server to be told it. 25's analysis (⑤) caught
+   * the first cut of that rule leaving a returning reader's band blank until
+   * `/api/settings` answered (1045 ms with it held) where the remembered
+   * skeleton used to paint at once.
+   */
+  it('paints a remembered list view at once while the settings are in flight', async () => {
+    localStorage.setItem('shelf.ui', JSON.stringify({ state: { view: 'list' }, version: 0 }))
+    await useUiStore.persist.rehydrate()
+    scenario.hold = true
+    scenario.holdSettings = true
+    scenario.settings = { ...scenario.settings, library_view: 'list' }
+    renderLibrary()
+
+    // Well inside the 1 s grace: the remembered view is already known.
+    expect(await screen.findByTestId('library-skeleton-header', {}, { timeout: 400 })).toBeInTheDocument()
+  })
+
+  it('settles on the store view at the first settings failure, without the grace', async () => {
+    scenario.hold = true
+    // Only the first read fails; the retry is held, so the query cannot reach
+    // its terminal error while we look — an `isError` gate would stay blank.
+    let releaseRetry!: () => void
+    const retryGate = new Promise<void>((resolve) => {
+      releaseRetry = resolve
+    })
+    let reads = 0
+    server.use(
+      http.get(`${ORIGIN}/api/settings`, async () => {
+        reads += 1
+        if (reads > 1) await retryGate
+        return HttpResponse.json({ error: { code: 'internal', message: 'boom' } }, { status: 500 })
+      }),
+    )
+    const client = renderLibrary()
+
+    // Well inside the 1 s grace: a failed answer is an answer.
+    expect(await screen.findByTestId('library-skeleton', {}, { timeout: 400 })).toBeInTheDocument()
+    const queries = client.getQueryCache().findAll({ queryKey: queryKeys.settings, exact: true })
+    expect(queries).toHaveLength(1)
+    expect(queries[0]?.state.status).toBe('pending')
+    expect(queries[0]?.state.fetchFailureCount).toBe(1)
+    expect(useUiStore.getState().view).toBe('grid')
+
+    act(() => {
+      releaseRetry()
+    })
+  })
+
+  it('opens on the store view when the settings never answer', async () => {
+    scenario.holdSettings = true
+    scenario.settings = { ...scenario.settings, library_view: 'list' }
+    renderLibrary()
+
+    // The grace that ends a stuck 이어보기 answer ends a stuck settings answer too.
+    expect(await screen.findByRole('button', { name: GUNGYE.name }, { timeout: 3000 })).toBeInTheDocument()
+    expect(useUiStore.getState().view).toBe('grid')
+    expect(screen.queryByTestId('library-list-header')).not.toBeInTheDocument()
+  })
+
+  /**
+   * The codex-review case: settings and the series page both stuck. The grace
+   * above only starts once the cards' own page is in, so the blank band must
+   * not outlast it on its own clock — it falls back to the store's skeleton.
+   */
+  it('draws the store skeleton when the settings and the series page are both stuck', async () => {
+    scenario.hold = true
+    scenario.holdSettings = true
+    scenario.settings = { ...scenario.settings, library_view: 'list' }
+    renderLibrary()
+
+    expect(await screen.findByTestId('library-skeleton', {}, { timeout: 3000 })).toBeInTheDocument()
+    expect(useUiStore.getState().view).toBe('grid')
+    expect(screen.queryByTestId('library-skeleton-header')).not.toBeInTheDocument()
   })
 })
 
