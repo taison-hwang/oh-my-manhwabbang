@@ -325,6 +325,120 @@ func TestScan_coversPhase_reportsRealNumbersWhenTheQueueCan(t *testing.T) {
 	}
 }
 
+// The queue's counters are cumulative for the process (CoverProgressReporter
+// says so, and app's coverBridge is), but covers_done/covers_total are a run's
+// status. The second scan of the same two series must report 2/2 again, not
+// the 4/4 the queue has seen in total — a progress bar drawn from that would
+// have the wrong denominator from the second scan on.
+func TestScan_coversPhase_countsThisRunNotTheProcess(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, map[string]any{
+		"시리즈 a": map[string]any{"01권.zip": jpegZIP(t, "001.jpg")},
+		"시리즈 b": map[string]any{"01권.zip": jpegZIP(t, "001.jpg")},
+	})
+	reporting := &reportingCoverQueue{}
+	sc, err := New(Options{
+		Index: h.idx, Books: h.lister, Roots: h.rootSet,
+		ConfigRoots: h.cfgRoots, Scan: h.scanCfg,
+		Covers: reporting, Logger: quietLogger(),
+	})
+	if err != nil {
+		t.Fatalf("constructing the scanner: %v", err)
+	}
+	t.Cleanup(func() { _ = sc.Close() })
+
+	for run := 1; run <= 2; run++ {
+		// Full, so the second run re-enqueues both covers rather than skipping
+		// unchanged series — the queue then really has seen 4.
+		if _, err := sc.Run(t.Context(), Request{Full: true}); err != nil {
+			t.Fatalf("scan %d: %v", run, err)
+		}
+		st := sc.Status()
+		if st.CoversTotal != 2 || st.CoversDone != 2 {
+			t.Errorf("scan %d: covers done/total = %d/%d, want 2/2 (the queue has seen %d in total)",
+				run, st.CoversDone, st.CoversTotal, reporting.count())
+		}
+	}
+	if got := reporting.count(); got != 4 {
+		t.Fatalf("the queue received %d covers over two full scans, want 4 — "+
+			"without that this test does not exercise a cumulative counter", got)
+	}
+}
+
+// An earlier run's covers can still be draining when the next run starts, so for
+// a while the queue finishes covers the run did not count. covers_done must hold
+// at 0 through that stretch rather than go negative.
+func TestScan_coversPhase_neverReportsNegativeWhileAnEarlierRunDrains(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, map[string]any{
+		"시리즈 a": map[string]any{"01권.zip": jpegZIP(t, "001.jpg")},
+		"시리즈 b": map[string]any{"01권.zip": jpegZIP(t, "001.jpg")},
+	})
+	// Ten covers from an earlier run are accepted and none finished. Draining
+	// one per 100 ms poll keeps the run's share below zero for most of a
+	// second, several times publishInterval, so a negative would be published.
+	draining := &drainingCoverQueue{total: 10}
+	sc, err := New(Options{
+		Index: h.idx, Books: h.lister, Roots: h.rootSet,
+		ConfigRoots: h.cfgRoots, Scan: h.scanCfg,
+		Covers: draining, Logger: quietLogger(),
+	})
+	if err != nil {
+		t.Fatalf("constructing the scanner: %v", err)
+	}
+	t.Cleanup(func() { _ = sc.Close() })
+	draining.status = sc.Status
+
+	if _, err := sc.Run(t.Context(), Request{Full: true}); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	seen := draining.coversDoneSeen()
+	if len(seen) == 0 {
+		t.Fatal("never observed the covers phase — the test did not reach the drain")
+	}
+	for i, d := range seen {
+		if d < 0 {
+			t.Fatalf("covers_done was %d at poll %d (all: %v), want never below 0", d, i, seen)
+		}
+	}
+	if st := sc.Status(); st.CoversDone != 2 || st.CoversTotal != 2 {
+		t.Errorf("covers done/total = %d/%d at the end, want 2/2", st.CoversDone, st.CoversTotal)
+	}
+}
+
+// drainingCoverQueue finishes one cover per progress poll, oldest first, and
+// records what the scanner was publishing for the covers phase at each poll.
+type drainingCoverQueue struct {
+	mu          sync.Mutex
+	done, total int64
+	status      func() *ScanStatus
+	seen        []int64
+}
+
+func (q *drainingCoverQueue) EnqueueCover(_ context.Context, _ CoverRequest) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.total++
+}
+
+func (q *drainingCoverQueue) CoverProgress() (done, total int64) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.status != nil {
+		if st := q.status(); st.State == PhaseCovers {
+			q.seen = append(q.seen, st.CoversDone)
+		}
+	}
+	q.done = min(q.done+1, q.total)
+	return q.done, q.total
+}
+
+func (q *drainingCoverQueue) coversDoneSeen() []int64 {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return append([]int64(nil), q.seen...)
+}
+
 type reportingCoverQueue struct {
 	mu   sync.Mutex
 	seen int64

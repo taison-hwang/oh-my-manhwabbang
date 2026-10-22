@@ -165,7 +165,7 @@ func TestBooksAt_returnsVolumesInReadingOrder(t *testing.T) {
 }
 
 // An ordinary book is the answer for a rename, so it must not be filtered out.
-// An `inner_path <> ''` filter would look like a safety rail and would silently
+// An `inner_path <> ”` filter would look like a safety rail and would silently
 // make every renamed row unrepairable.
 func TestBooksAt_includesAnOrdinaryBook(t *testing.T) {
 	t.Parallel()

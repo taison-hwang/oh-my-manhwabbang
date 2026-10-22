@@ -1095,6 +1095,66 @@ func TestStats_activeAndInflight_separateWorkInProgressFromWorkNotYetStarted(t *
 	}
 }
 
+// Stats() reads the two queue depths, `active` and `inflight` in one hold of
+// s.mu, and its comment calls that load-bearing rather than tidy: a snapshot
+// torn across two holds can read a job as already out of the queue and not yet
+// in a worker's turn, i.e. idle while a file is still missing. Nothing exercised
+// that — every other Stats() call in this file reads a pool at rest, so moving
+// those reads out of the lock stayed green under -race (HANDOFF §5.6.1 F).
+//
+// This one polls Stats() from its own goroutine for as long as a real pool is
+// moving jobs between the queue, the workers and the singleflight map, which is
+// the only shape in which the race detector can see an unlocked read. It is a
+// -race test: without the detector it still asserts that the poller saw the
+// pool busy, so it cannot pass by polling a pool that had already finished.
+func TestStats_readConcurrentlyWithAMovingPool_isOneLockedSnapshot(t *testing.T) {
+	t.Parallel()
+	const workers = 4
+	const jobs = 48
+
+	h := newHarness(t, func(o *Options) { o.Workers = workers })
+
+	stop := make(chan struct{})
+	polled := make(chan int, 1)
+	go func() {
+		busy := 0
+		for {
+			select {
+			case <-stop:
+				polled <- busy
+				return
+			default:
+			}
+			st := h.svc.Stats()
+			if st.Active+st.Inflight+st.CoverDepth+st.PageDepth > 0 {
+				busy++
+			}
+		}
+	}()
+
+	for i := range jobs {
+		req := h.writeLoose(fmt.Sprintf("race%d.jpg", i), testutil.TinyJPEG(t, 40+i, 70))
+		req.Priority = PriorityCover
+		if err := h.svc.Enqueue(req); err != nil {
+			t.Fatalf("Enqueue(%d): %v", i, err)
+		}
+	}
+	h.drain()
+	close(stop)
+
+	if busy := <-polled; busy == 0 {
+		t.Fatal("the poller never saw the pool doing anything, so it raced nothing; " +
+			"the test needs the jobs to still be moving while Stats() is read")
+	}
+	// Generated against Queued, not against `jobs`: two tiny JPEGs of the same
+	// size written in the same mtime tick share a content version, hence a
+	// cache key, and Enqueue rightly takes the second as the same job.
+	if st := h.svc.Stats(); st.Queued == 0 || st.Generated != st.Queued || st.Failed != 0 {
+		t.Fatalf("queued=%d generated=%d failed=%d, want every accepted job generated",
+			st.Queued, st.Generated, st.Failed)
+	}
+}
+
 // impl-plan WP-07 acceptance 3: readers racing a writer never observe a
 // truncated JPEG. The property comes from write-to-temp + rename(2), which is
 // atomic on every supported platform.

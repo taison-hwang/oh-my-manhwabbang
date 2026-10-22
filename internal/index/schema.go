@@ -156,7 +156,9 @@ CREATE INDEX IF NOT EXISTS ix_scanlog_run ON scan_log(run_id, id DESC);
 // widened for the 45 container-of-ZIPs books in the collection).
 //
 // It is empty for every ordinary book, and that is the whole compatibility
-// story — the rows migrated below get `''` and mean exactly what they meant.
+// story — the rows migrated below get the empty string and mean exactly what
+// they meant. (Not spelled as SQL's two-quote literal here: gofmt rewrites a
+// doubled ASCII quote in a comment into a typographic one.)
 //
 // The table has to be rebuilt rather than ALTERed because the uniqueness rule
 // changes: 39 volumes of `겟 벡커스 1~39완.zip` share one (root_name, rel_path)

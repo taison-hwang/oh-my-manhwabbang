@@ -53,7 +53,7 @@ func TestScan_seesARenameAsOneBookMoving(t *testing.T) {
 
 	before := testutil.BuildTree(t, map[string]any{
 		"[만화] 몬스터 1~18권.zip": file(monster),
-		"별개의 책.zip":           file(other),
+		"별개의 책.zip":          file(other),
 	})
 	after := testutil.BuildTree(t, map[string]any{
 		"몬스터 1~18권.zip": file(monster),

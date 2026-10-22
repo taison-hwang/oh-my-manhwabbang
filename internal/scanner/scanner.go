@@ -557,6 +557,10 @@ func (s *Scanner) run(ctx context.Context, req Request, runID string, begun *beg
 
 	seen := s.beginSeen(ctx, start.Unix())
 
+	// Before this run enqueues anything: the queue counts for the process, and
+	// the `covers` phase reports this run.
+	coverBase := s.coverBaseline()
+
 	s.progress.setPhase(PhaseWalking)
 	for _, r := range roots {
 		if ctx.Err() != nil {
@@ -566,7 +570,7 @@ func (s *Scanner) run(ctx context.Context, req Request, runID string, begun *beg
 	}
 	s.finishSeen(ctx, seen, req, len(roots), res)
 
-	s.waitForCovers(ctx)
+	s.waitForCovers(ctx, coverBase)
 
 	if _, err := s.index.TrimLog(context.WithoutCancel(ctx), index.LogRetention); err != nil {
 		s.log.Warn("trimming the scan log", "run_id", runID, "err", err)
@@ -1778,10 +1782,28 @@ func (s *Scanner) writeSeries(ctx context.Context, w *index.Writer, rt *rootRun,
 	return nil
 }
 
+// coverBaseline is the queue's accepted count before a run enqueues anything,
+// or 0 when the queue cannot report. See waitForCovers.
+func (s *Scanner) coverBaseline() int64 {
+	reporter, ok := s.covers.(CoverProgressReporter)
+	if !ok {
+		return 0
+	}
+	_, total := reporter.CoverProgress()
+	return total
+}
+
 // waitForCovers is arch §4.12's `covers` phase. It only runs when the queue can
 // actually report progress; a queue that cannot simply gets its covers enqueued
 // and the scan ends, rather than the status pretending to know something.
-func (s *Scanner) waitForCovers(ctx context.Context) {
+//
+// The queue counts for the process and covers_done/covers_total are this run's,
+// so both are taken relative to base, the accepted count before the run began.
+// With done = total − depth on the queue's side, the run's share is
+// total − base accepted and done − base finished; the second goes negative while
+// an earlier run's leftovers drain, and is held at 0. The exit test is the same
+// `done >= total` as on the raw counters, so the phase ends exactly when it did.
+func (s *Scanner) waitForCovers(ctx context.Context, base int64) {
 	if s.covers == nil {
 		return
 	}
@@ -1795,6 +1817,7 @@ func (s *Scanner) waitForCovers(ctx context.Context) {
 	defer ticker.Stop()
 	for {
 		done, total := reporter.CoverProgress()
+		done, total = max(done-base, 0), total-base
 		s.progress.coversProgress(done, total)
 		if done >= total || !time.Now().Before(deadline) {
 			return

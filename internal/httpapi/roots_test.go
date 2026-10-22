@@ -1352,6 +1352,71 @@ func TestDeleteRoot_movesTheAdoptedDigestBackAfterAnAddIsUndone(t *testing.T) {
 	}
 }
 
+// The other half of the digest guard in `adoptRoot` and `releaseRoot`: the
+// baseline moves only when the file a write started from is the file this
+// process had already adopted. When *something else* edited the file first,
+// `config_changed_on_disk` is reporting that edit, and our own write — which
+// re-reads the file and keeps the hand edit — must not clear the flag.
+//
+// Every other test here drives the guard's passing branch, so deleting the
+// condition (always moving the baseline) stayed green (HANDOFF §5.7.9 ai). The
+// hand edit is made before the request rather than during it: the request
+// reads the file under `rootEdit` before it writes, so "before" is the one
+// interleaving a test can make deterministic, and it takes the same branch a
+// mid-write edit would.
+func TestRootEdits_neverClearTheNoticeForAHandEditTheyDidNotMake(t *testing.T) {
+	handEdit := func(t *testing.T, e *env) {
+		t.Helper()
+		raw, err := os.ReadFile(e.cfg.AbsFilePath())
+		if err != nil {
+			t.Fatalf("reading the config: %v", err)
+		}
+		mustWrite(t, e.cfg.AbsFilePath(), string(raw)+"\n# edited by hand while the server ran\n")
+		if s := decodeBody[Settings](t, e.get("/api/settings"), http.StatusOK); !s.Server.ConfigChangedOnDisk {
+			t.Fatal("config_changed_on_disk is false right after a hand edit; this test would prove nothing")
+		}
+	}
+
+	t.Run("POST", func(t *testing.T) {
+		e := newEnv(t, withRootEditing())
+		handEdit(t, e)
+
+		dir := filepath.Join(t.TempDir(), "손편집 뒤에 더한 루트")
+		mustMkdir(t, dir)
+		decodeBody[RootEntry](t,
+			e.jsonBody(http.MethodPost, "/api/roots", `{"path":`+quoteJSON(dir)+`}`),
+			http.StatusCreated)
+
+		if s := decodeBody[Settings](t, e.get("/api/settings"), http.StatusOK); !s.Server.ConfigChangedOnDisk {
+			t.Error("config_changed_on_disk is false after a hot add, but the file still carries " +
+				"a hand edit this process never loaded; adoptRoot moved the baseline past it")
+		}
+	})
+
+	t.Run("DELETE", func(t *testing.T) {
+		e := newEnv(t, withRootEditing())
+		dir := filepath.Join(t.TempDir(), "손편집 전에 더한 루트")
+		mustMkdir(t, dir)
+		entry := decodeBody[RootEntry](t,
+			e.jsonBody(http.MethodPost, "/api/roots", `{"path":`+quoteJSON(dir)+`}`),
+			http.StatusCreated)
+		// The premise: the add itself was adopted, so any notice from here on
+		// is the hand edit's.
+		if s := decodeBody[Settings](t, e.get("/api/settings"), http.StatusOK); s.Server.ConfigChangedOnDisk {
+			t.Fatal("config_changed_on_disk is true after a clean hot add; A-12 moves the baseline forward")
+		}
+		handEdit(t, e)
+
+		if w := e.do(http.MethodDelete, "/api/roots/"+entry.Name, nil); w.Code != http.StatusNoContent {
+			t.Fatalf("DELETE = %d: %s", w.Code, w.Body.String())
+		}
+		if s := decodeBody[Settings](t, e.get("/api/settings"), http.StatusOK); !s.Server.ConfigChangedOnDisk {
+			t.Error("config_changed_on_disk is false after a removal, but the file still carries " +
+				"a hand edit this process never loaded; releaseRoot moved the baseline past it")
+		}
+	})
+}
+
 // AMENDMENT A-13 (ruling E-41) — `DELETE` drops the root from A-12's added set,
 // so `GET /api/browse` stops calling its directory `duplicate`.
 //

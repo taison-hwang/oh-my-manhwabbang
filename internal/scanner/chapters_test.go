@@ -216,7 +216,7 @@ func TestScan_singleWrapperDirectory_staysOneBook(t *testing.T) {
 
 	h := newHarness(t, map[string]any{
 		"01권.zip": chapterZIP(t, map[string]int{"01권": 3}),
-		"평평.zip":   jpegZIP(t, "001.jpg", "002.jpg"),
+		"평평.zip":  jpegZIP(t, "001.jpg", "002.jpg"),
 	})
 	h.run(Request{})
 
@@ -451,7 +451,7 @@ func TestScan_chapterContainer_progressTotalsAgree(t *testing.T) {
 
 	h := newHarness(t, map[string]any{
 		"시리즈.zip": chapterZIP(t, map[string]int{"01": 2, "02": 2, "03": 2}),
-		"평평.zip":   jpegZIP(t, "001.jpg"),
+		"평평.zip":  jpegZIP(t, "001.jpg"),
 	})
 	h.run(Request{})
 
