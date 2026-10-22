@@ -83,6 +83,17 @@ const (
 	coverWaitLimit    = 2 * time.Minute
 )
 
+// logCommitInterval is how often the writer drains the log buffer and commits
+// its open batch even when no series arrives (open item `ab`, ruling E-59). The
+// index's own batch age is checked only on a write, and one big archive can
+// keep the writer idle for minutes; this is the same 1 s a reader polls the
+// status at (D-16). Wall clock, like the cover pacing above.
+//
+// It is the cadence of the idle commit, not a bound on visibility: a tick that
+// falls during a slow writeSeries, a wait for the write permit or a slow commit
+// is taken only after it, so a row can take longer than 1 s to appear.
+const logCommitInterval = time.Second
+
 // Errors callers match with errors.Is.
 var (
 	// ErrBusy reports that a scan is already running. The HTTP layer maps it to
@@ -183,6 +194,10 @@ type Scanner struct {
 	// pages bounds the index.Page rows the pipeline holds between a worker and
 	// the writer. One scan runs at a time, so one budget serves the Scanner.
 	pages *pageBudget
+	// commitTicks yields the idle-commit tick channel and its stop func. It is
+	// a field only so a test can drive the tick itself; New sets it to a real
+	// logCommitInterval ticker, so production behaviour is unchanged.
+	commitTicks func() (<-chan time.Time, func())
 
 	mu      sync.Mutex
 	running bool
@@ -230,6 +245,10 @@ func New(opts Options) (*Scanner, error) {
 		includeGlobs:   globSet(opts.Scan.IncludeGlobs),
 		progress:       newProgress(now),
 		pages:          newPageBudget(maxInFlightPages),
+		commitTicks: func() (<-chan time.Time, func()) {
+			t := time.NewTicker(logCommitInterval)
+			return t.C, t.Stop
+		},
 	}
 	if s.maxDepth < 0 {
 		s.maxDepth = 0
@@ -1569,7 +1588,28 @@ func (s *Scanner) writeResults(ctx context.Context, rt *rootRun, resCh <-chan *s
 	stamps := &genStamps{}
 	var firstErr error
 
-	for t := range resCh {
+	ticks, stopTicks := s.commitTicks()
+	defer stopTicks()
+results:
+	for {
+		var t *seriesTask
+		select {
+		case next, ok := <-resCh:
+			if !ok {
+				break results
+			}
+			t = next
+		case <-ticks:
+			// The ticker is only read here, between two series — writeSeries is
+			// never interrupted, so this Flush never commits half of one.
+			if firstErr == nil {
+				if err := s.commitIdle(ctx, w, rt); err != nil {
+					firstErr = err
+					abort()
+				}
+			}
+			continue
+		}
 		if firstErr != nil {
 			// Keep draining so the producers never block — and give the page
 			// budget back, or a failed root would starve the rest of the run.
@@ -1606,6 +1646,17 @@ func (s *Scanner) writeResults(ctx context.Context, rt *rootRun, resCh <-chan *s
 		firstErr = err
 	}
 	return firstErr
+}
+
+// commitIdle is logCommitInterval's work: whatever the walk and the workers have
+// logged goes into the batch, and the batch is committed, so `GET /api/scan/log`
+// sees it within a second. It also hands the write permit back — an open batch
+// holds it for as long as it stays open.
+func (s *Scanner) commitIdle(ctx context.Context, w *index.Writer, rt *rootRun) error {
+	if err := s.drainLogs(ctx, w, rt); err != nil {
+		return err
+	}
+	return w.Flush(ctx)
 }
 
 func (s *Scanner) drainLogs(ctx context.Context, w *index.Writer, rt *rootRun) error {

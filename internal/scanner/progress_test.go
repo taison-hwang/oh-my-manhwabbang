@@ -462,6 +462,202 @@ func (q *reportingCoverQueue) count() int64 {
 	return q.seen
 }
 
+// Open item `ab` (ruling E-59): a scan's log rows become readable while nothing
+// is being written. Reading one big archive can stall the writer for minutes,
+// and the index's own batch age is only checked on a write, so without an idle
+// commit of its own a row logged before the stall sat in an open, uncommitted
+// batch until the stall ended.
+//
+// The 1 s cadence itself is the constant logCommitInterval; what is asserted
+// here is that one tick of it commits. The test owns the tick channel, so there
+// is no wall-clock deadline to miss under load.
+//
+// The walk logs the info row first (natsort puts a digit before Hangul), then
+// series 가 is written before the stall begins, so both rows are in the open
+// batch and that batch holds the write permit. Seeing them only after a tick
+// proves the idle commit committed the batch and so handed the permit back.
+func TestScan_anIdleTickMakesLogRowsAndTheOpenBatchReadable(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, map[string]any{
+		"0 읽어보세요.txt": "메모", // one info row, logged by the walk before any series
+		"가 시리즈":       map[string]any{"01권.zip": jpegZIP(t, "001.jpg")},
+		"나 멈춘 시리즈":    map[string]any{"01권.zip": jpegZIP(t, "001.jpg")},
+	})
+	stalled := &stallingLister{
+		inner: h.lister, dir: "나 멈춘 시리즈",
+		entered: make(chan struct{}), release: make(chan struct{}),
+	}
+	sc, err := New(Options{
+		Index: h.idx, Books: stalled, Roots: h.rootSet,
+		ConfigRoots: h.cfgRoots, Scan: h.scanCfg, Logger: quietLogger(),
+	})
+	if err != nil {
+		t.Fatalf("constructing the scanner: %v", err)
+	}
+	// Unbuffered: a send returns only once the writer's select has taken it.
+	ticks := make(chan time.Time)
+	sc.commitTicks = func() (<-chan time.Time, func()) { return ticks, func() {} }
+	// The walk order and the worker count decide nothing here: the stalled
+	// book waits until a series has taken page budget and the writer has given
+	// it back, which it does only after writeSeries returned. Only 가 can be
+	// that series — 나 takes its budget after this Open returns.
+	stalled.after = func() bool {
+		held, _, taken, _ := sc.pages.stats()
+		return taken > 0 && held == 0
+	}
+	// Cleanups run last-registered first: the stall is released before Close
+	// waits on a run that could otherwise never finish.
+	t.Cleanup(func() { _ = sc.Close() })
+	t.Cleanup(stalled.unblock)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := sc.Run(context.WithoutCancel(t.Context()), Request{Full: true})
+		done <- err
+	}()
+	finish := func() error {
+		stalled.unblock()
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(10 * time.Second):
+			t.Fatal("the scan did not finish within 10 s of the stall being released")
+			return nil
+		}
+	}
+	select {
+	case <-stalled.entered:
+	case <-time.After(10 * time.Second):
+		_ = finish()
+		t.Fatal("the stall was never reached after the first series was written")
+	}
+
+	// Precondition: no tick has been sent, so nothing has committed the batch.
+	// If either row were already readable, the fixture would prove nothing.
+	if hasInfoRow(t, h) || hasSeries(t, h, "가 시리즈") {
+		_ = finish()
+		t.Fatal("rows were readable before any idle tick — the batch was not open, so the fixture proves nothing")
+	}
+
+	tick := func(n int) {
+		t.Helper()
+		select {
+		case ticks <- time.Now():
+		case <-time.After(10 * time.Second):
+			_ = finish()
+			t.Fatalf("the writer never took tick %d", n)
+		}
+	}
+	// The writer is one goroutine and resCh is idle while 나 is stalled, so it
+	// can take the second tick only after it has finished handling the first.
+	tick(1)
+	tick(2)
+	logSeen, seriesSeen := hasInfoRow(t, h), hasSeries(t, h, "가 시리즈")
+
+	if err := finish(); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if !logSeen {
+		t.Errorf("the walk's info row was not readable after an idle tick during the stall; "+
+			"after the scan it is there: %v", hasInfoRow(t, h))
+	}
+	if !seriesSeen {
+		t.Errorf("series 가, written before the stall, was not readable after an idle tick — "+
+			"its batch, and the write permit, stayed open; after the scan it is there: %v",
+			hasSeries(t, h, "가 시리즈"))
+	}
+}
+
+func hasInfoRow(t *testing.T, h *harness) bool {
+	t.Helper()
+	for _, e := range h.logs() {
+		if e.Level == index.LevelInfo && e.RelPath == "0 읽어보세요.txt" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasSeries(t *testing.T, h *harness, name string) bool {
+	t.Helper()
+	for _, s := range h.series() {
+		if s.DisplayName == name {
+			return true
+		}
+	}
+	return false
+}
+
+// commitIdle's own two steps, without a walk to order around: a row only the
+// buffer holds — no series has been written, so no batch is open to carry it —
+// is readable after one idle commit. The scan-level test above cannot pin the
+// drain, because whether a walker row reaches the buffer before or after the
+// last series write is up to the scheduler.
+func TestCommitIdle_drainsABufferedRowWithNoBatchOpen(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, map[string]any{})
+	rt := &rootRun{
+		cfg: h.cfgRoots[0], runID: "run-idle", logs: &logBuffer{},
+		log: quietLogger(), now: time.Now,
+	}
+	rt.info("메모.txt", "ignored: not a container")
+
+	w := h.idx.Writer(index.WriterOptions{})
+	t.Cleanup(func() { _ = w.Close() })
+	if len(h.logs()) != 0 {
+		t.Fatal("the scan log is not empty before the commit; this test would prove nothing")
+	}
+
+	if err := h.scanner.commitIdle(t.Context(), w, rt); err != nil {
+		t.Fatalf("commitIdle: %v", err)
+	}
+	rows := h.logs()
+	if len(rows) != 1 || rows[0].RelPath != "메모.txt" || rows[0].RunID != "run-idle" {
+		t.Fatalf("scan log after one idle commit = %+v, want the one buffered row", rows)
+	}
+	if left := rt.logs.take(); len(left) != 0 {
+		t.Errorf("%d rows are still in the buffer after the commit", len(left))
+	}
+}
+
+// stallingLister holds the books under dir open until released, standing in for
+// one archive that takes minutes to read. Every other book passes straight
+// through. A stalled book first waits for after to report true, so the stall
+// begins at a point the test chooses rather than wherever the workers race to.
+type stallingLister struct {
+	inner   BookLister
+	dir     string
+	after   func() bool
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+	signal  sync.Once
+}
+
+func (l *stallingLister) Open(ctx context.Context, b source.Book) (source.BookSource, error) {
+	if !strings.HasPrefix(b.RelPath, l.dir+"/") {
+		return l.inner.Open(ctx, b)
+	}
+	for l.after != nil && !l.after() {
+		select {
+		case <-time.After(5 * time.Millisecond):
+		case <-l.release:
+			return l.inner.Open(ctx, b)
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	l.signal.Do(func() { close(l.entered) })
+	select {
+	case <-l.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return l.inner.Open(ctx, b)
+}
+
+func (l *stallingLister) unblock() { l.once.Do(func() { close(l.release) }) }
+
 // The scan-log buffer is bounded, so a pathological tree turns diagnostics into
 // a dropped counter rather than a memory leak.
 func TestLogBuffer_isBoundedAndCountsWhatItDropped(t *testing.T) {

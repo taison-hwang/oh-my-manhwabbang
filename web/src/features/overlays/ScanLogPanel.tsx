@@ -1,6 +1,6 @@
 import { TriangleAlert } from 'lucide-react'
 
-import { useScanLog } from '../../api/queries'
+import { useScanLog, useScanStatus } from '../../api/queries'
 import type { LogLevel, ScanLogEntry } from '../../api/types'
 import { cn } from '../../lib/cn'
 import { formatCount } from '../../lib/format'
@@ -49,7 +49,11 @@ function countLevel(items: readonly ScanLogEntry[], level: LogLevel): number {
 }
 
 export function ScanLogPanel() {
-  const log = useScanLog({ limit: SCAN_LOG_LIMIT })
+  // The status poll the rest of the app already runs (same key, no new
+  // request loop) says whether there is a run to follow.
+  const status = useScanStatus()
+  const scanning = status.data !== undefined && status.data.state !== 'idle'
+  const log = useScanLog({ limit: SCAN_LOG_LIMIT }, { follow: scanning })
   const items: readonly ScanLogEntry[] = log.data?.items ?? []
   const warns = countLevel(items, 'warn')
   const errors = countLevel(items, 'error')

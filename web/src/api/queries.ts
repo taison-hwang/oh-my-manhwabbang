@@ -627,16 +627,65 @@ export function useScanStatus(options: EnabledOption = {}): UseQueryResult<ScanS
   })
 }
 
+/**
+ * The scan log, newest first, read **incrementally** after the first page.
+ *
+ * `follow` re-reads it every `SCAN_POLL_MS` — the caller passes "a run is in
+ * progress" off the status poll, so outside a run this sets no timer (D-16's
+ * budget during a run becomes the status poll plus this one, and one more in a
+ * second that wrote more than a page — see `readScanLog`; HANDOFF `ab`).
+ * The end of a run needs no special case here: `useScanCompletionRefresh`
+ * invalidates `scan.logs`, and that refetch is incremental like any other, so
+ * it is what brings in the tail written after the last poll.
+ */
 export function useScanLog(
   params: ScanLogParams = {},
-  options: EnabledOption = {},
+  options: EnabledOption & { follow?: boolean } = {},
 ): UseQueryResult<ScanLogResponse> {
+  const queryClient = useQueryClient()
+  const queryKey = queryKeys.scan.log(params)
   return useQuery({
-    queryKey: queryKeys.scan.log(params),
-    queryFn: ({ signal }) => getScanLog(params, { signal }),
+    queryKey,
+    queryFn: ({ signal }) =>
+      readScanLog(params, queryClient.getQueryData<ScanLogResponse>(queryKey), signal),
     enabled: options.enabled ?? true,
     retry: retryQuery,
+    refetchInterval: options.follow === true ? SCAN_POLL_MS : false,
   })
+}
+
+/** arch §7.10: `limit` defaults to 200 on the wire. */
+const SCAN_LOG_WIRE_LIMIT = 200
+
+/**
+ * One read of the log, given what the cache already holds (newest first).
+ *
+ * `index.ListLog` answers newest-first without `since_id` and **oldest-first**
+ * after it, `limit` rows either way. So the rows after the newest one held are
+ * fetched, reversed and put on top, and the page is cut back to `limit`. A
+ * reply that fills the whole page may not be all of them — the run wrote more
+ * than a page since the last read — and those rows are the *oldest* of the
+ * new ones, i.e. already behind; the newest page is read instead, which is the
+ * one this view shows.
+ *
+ * A caller that passes its own `since_id` gets the server's answer as it is —
+ * oldest first — and none of this.
+ */
+async function readScanLog(
+  params: ScanLogParams,
+  held: ScanLogResponse | undefined,
+  signal: AbortSignal,
+): Promise<ScanLogResponse> {
+  const newest = held?.items[0]?.id
+  if (held === undefined || newest === undefined || params.since_id !== undefined) {
+    return getScanLog(params, { signal })
+  }
+  const limit = params.limit ?? SCAN_LOG_WIRE_LIMIT
+  const fresh = await getScanLog({ ...params, since_id: newest }, { signal })
+  if (fresh.items.length >= limit) return getScanLog(params, { signal })
+  const added = fresh.items.filter((item) => item.id > newest).reverse()
+  if (added.length === 0) return held
+  return { items: [...added, ...held.items].slice(0, limit) }
 }
 
 export function useStartScan(): UseMutationResult<ScanRunResponse, Error, ScanStartRequest> {
@@ -681,7 +730,13 @@ function invalidateAfterScan(queryClient: QueryClient): void {
   void queryClient.invalidateQueries({ queryKey: queryKeys.series.all })
   void queryClient.invalidateQueries({ queryKey: queryKeys.roots })
   void queryClient.invalidateQueries({ queryKey: queryKeys.continueReading.all })
-  void queryClient.invalidateQueries({ queryKey: queryKeys.scan.logs })
+  // Cancelled first: an invalidation does not cancel an in-flight fetch of a
+  // query that has no data yet — it returns that same promise — so a log read
+  // the server answered before the run's last rows would stand as the final
+  // one, with nothing polling after it (HANDOFF `ab`).
+  void queryClient
+    .cancelQueries({ queryKey: queryKeys.scan.logs })
+    .then(() => queryClient.invalidateQueries({ queryKey: queryKeys.scan.logs }))
 }
 
 /**
