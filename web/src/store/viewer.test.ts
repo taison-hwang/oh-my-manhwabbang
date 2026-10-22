@@ -9,10 +9,11 @@ import {
   selectAtVolumeEnd,
   selectStaleAckOwed,
   useViewerStore,
+  type ViewerOpenOptions,
 } from './viewer'
 
 const open = (pageCount: number, page = 1): void => {
-  useViewerStore.getState().open('bk', { pageCount, page })
+  useViewerStore.getState().open('bk', { pageCount, page, fit: DEFAULT_FIT })
 }
 
 beforeEach(() => {
@@ -28,8 +29,8 @@ afterEach(() => {
 describe('defaults', () => {
   it('fits to height (C-13 — the prototype capture, not the config guess)', () => {
     expect(DEFAULT_FIT).toBe('height')
-    open(10)
-    expect(useViewerStore.getState().fit).toBe('height')
+    // The store's own starting state; `open()` always carries the book's fit.
+    expect(useViewerStore.getInitialState().fit).toBe('height')
   })
 
   it('uses the frozen wire vocabulary, not the ui-spec labels', () => {
@@ -161,6 +162,14 @@ describe('opening chromeless (ruling E-27)', () => {
       expect(useViewerStore.getState().fit).toBe(fit)
     }
   })
+
+  it('will not open without a fit — the caller always has one (au)', () => {
+    // A type-level contract, checked by `pnpm typecheck`: `BookPrefs.fit_mode`
+    // is non-nullable, so "no fit given" has no caller and no fallback.
+    // @ts-expect-error — `fit` is required.
+    const missing: ViewerOpenOptions = { pageCount: 10 }
+    expect(missing).not.toHaveProperty('fit')
+  })
 })
 
 describe('changing volume is a continuation, not an entry', () => {
@@ -175,7 +184,7 @@ describe('changing volume is a continuation, not an entry', () => {
     settle()
     expect(useViewerStore.getState().hintVisible).toBe(false)
 
-    useViewerStore.getState().open('bk-2', { pageCount: 8, page: 1 })
+    useViewerStore.getState().open('bk-2', { pageCount: 8, page: 1, fit: DEFAULT_FIT })
 
     expect(useViewerStore.getState().bookId).toBe('bk-2')
     expect(useViewerStore.getState().page).toBe(1)
@@ -189,7 +198,7 @@ describe('changing volume is a continuation, not an entry', () => {
 
   it('leaves a chromeless reader chromeless, and still does not arm a hide', () => {
     open(10, 10)
-    useViewerStore.getState().open('bk-2', { pageCount: 8, page: 1 })
+    useViewerStore.getState().open('bk-2', { pageCount: 8, page: 1, fit: DEFAULT_FIT })
     expect(useViewerStore.getState().chromeVisible).toBe(false)
     vi.advanceTimersByTime(CHROME_AUTOHIDE_MS * 3)
     expect(useViewerStore.getState().chromeVisible).toBe(false)
@@ -198,7 +207,7 @@ describe('changing volume is a continuation, not an entry', () => {
   it('re-arms the auto-hide for chrome that carried over', () => {
     open(10, 10)
     settle()
-    useViewerStore.getState().open('bk-2', { pageCount: 8, page: 1 })
+    useViewerStore.getState().open('bk-2', { pageCount: 8, page: 1, fit: DEFAULT_FIT })
     vi.advanceTimersByTime(CHROME_AUTOHIDE_MS)
     // Carried over, not pinned: it still goes away on its own.
     expect(useViewerStore.getState().chromeVisible).toBe(false)
@@ -227,12 +236,12 @@ describe('changing volume is a continuation, not an entry', () => {
    * the two with opposite judgements.
    */
   it('re-asks the changed-file question on the next volume, but not the hint', () => {
-    useViewerStore.getState().open('bk', { pageCount: 10, stale: true })
+    useViewerStore.getState().open('bk', { pageCount: 10, stale: true, fit: DEFAULT_FIT })
     vi.advanceTimersByTime(STALE_NOTICE_MS)
     expect(useViewerStore.getState().staleVisible).toBe(false)
     expect(useViewerStore.getState().hintVisible).toBe(false)
 
-    useViewerStore.getState().open('bk-2', { pageCount: 8, page: 1, stale: true })
+    useViewerStore.getState().open('bk-2', { pageCount: 8, page: 1, stale: true, fit: DEFAULT_FIT })
     // A different file, so it is asked again — and armed under *its own* id.
     expect(useViewerStore.getState().staleVisible).toBe(true)
     expect(useViewerStore.getState().staleBookId).toBe('bk-2')
@@ -249,11 +258,11 @@ describe('changing volume is a continuation, not an entry', () => {
     // press 다음 권 읽기 **inside** the 3 400 ms window. The timer used to
     // survive the volume change and latch a moment later, and the screen — bound
     // to the route's `:bid` — signed it as volume 2.
-    useViewerStore.getState().open('bk', { pageCount: 10, stale: true })
+    useViewerStore.getState().open('bk', { pageCount: 10, stale: true, fit: DEFAULT_FIT })
     vi.advanceTimersByTime(STALE_NOTICE_MS - 1)
     expect(useViewerStore.getState().staleVisible).toBe(true)
 
-    useViewerStore.getState().open('bk-2', { pageCount: 8, page: 1, stale: false })
+    useViewerStore.getState().open('bk-2', { pageCount: 8, page: 1, stale: false, fit: DEFAULT_FIT })
     // One millisecond later volume 1's timer would have fired.
     vi.advanceTimersByTime(1)
     expect(useViewerStore.getState().staleSeen).toBe(false)
@@ -287,7 +296,7 @@ describe('the changed-file notice has a lifetime (ruling E-45)', () => {
   })
 
   it('stays up for its whole lifetime and then acknowledges itself', () => {
-    useViewerStore.getState().open('bk', { pageCount: 10, stale: true })
+    useViewerStore.getState().open('bk', { pageCount: 10, stale: true, fit: DEFAULT_FIT })
     expect(useViewerStore.getState().staleVisible).toBe(true)
     expect(useViewerStore.getState().staleSeen).toBe(false)
 
@@ -309,7 +318,7 @@ describe('the changed-file notice has a lifetime (ruling E-45)', () => {
   })
 
   it('owes no acknowledgement when the reader leaves inside the window', () => {
-    useViewerStore.getState().open('bk', { pageCount: 10, stale: true })
+    useViewerStore.getState().open('bk', { pageCount: 10, stale: true, fit: DEFAULT_FIT })
     vi.advanceTimersByTime(STALE_NOTICE_MS - 1)
     useViewerStore.getState().close()
 
@@ -322,18 +331,18 @@ describe('the changed-file notice has a lifetime (ruling E-45)', () => {
   })
 
   it('warns again on a fresh entry into the same book', () => {
-    useViewerStore.getState().open('bk', { pageCount: 10, stale: true })
+    useViewerStore.getState().open('bk', { pageCount: 10, stale: true, fit: DEFAULT_FIT })
     vi.advanceTimersByTime(STALE_NOTICE_MS)
     useViewerStore.getState().close()
 
-    useViewerStore.getState().open('bk', { pageCount: 10, stale: false })
+    useViewerStore.getState().open('bk', { pageCount: 10, stale: false, fit: DEFAULT_FIT })
     expect(useViewerStore.getState().staleVisible).toBe(false)
-    useViewerStore.getState().open('bk', { pageCount: 10, stale: true })
+    useViewerStore.getState().open('bk', { pageCount: 10, stale: true, fit: DEFAULT_FIT })
     expect(useViewerStore.getState().staleVisible).toBe(true)
   })
 
   it('consumes the latch on dismiss, so one notice cannot be acknowledged twice', () => {
-    useViewerStore.getState().open('bk', { pageCount: 10, stale: true })
+    useViewerStore.getState().open('bk', { pageCount: 10, stale: true, fit: DEFAULT_FIT })
     vi.advanceTimersByTime(STALE_NOTICE_MS)
     expect(useViewerStore.getState().staleSeen).toBe(true)
 
@@ -356,7 +365,7 @@ describe('the changed-file notice has a lifetime (ruling E-45)', () => {
    * from two files agreeing; this is that place.
    */
   it('owes the acknowledgement to the book it was armed for, and to no other', () => {
-    useViewerStore.getState().open('bk', { pageCount: 10, stale: true })
+    useViewerStore.getState().open('bk', { pageCount: 10, stale: true, fit: DEFAULT_FIT })
     expect(useViewerStore.getState().staleBookId).toBe('bk')
     // Not owed before the notice has served its whole life.
     expect(selectStaleAckOwed(useViewerStore.getState(), 'bk')).toBe(false)
@@ -382,7 +391,7 @@ describe('the changed-file notice has a lifetime (ruling E-45)', () => {
    * every single entry for ever.
    */
   it('arms nothing for a book with no pages, whatever the server said', () => {
-    useViewerStore.getState().open('bk', { pageCount: 0, stale: true })
+    useViewerStore.getState().open('bk', { pageCount: 0, stale: true, fit: DEFAULT_FIT })
     expect(useViewerStore.getState().staleVisible).toBe(false)
     expect(useViewerStore.getState().staleBookId).toBeNull()
     vi.advanceTimersByTime(STALE_NOTICE_MS * 2)
@@ -518,7 +527,7 @@ describe('chrome auto-hide (ui-spec §8.2, widened to 2 600 ms by E-27)', () => 
     useViewerStore.getState().wake()
     useViewerStore.getState().holdChrome()
 
-    useViewerStore.getState().open('bk-2', { pageCount: 10, page: 1 })
+    useViewerStore.getState().open('bk-2', { pageCount: 10, page: 1, fit: DEFAULT_FIT })
     expect(
       useViewerStore.getState().chromeVisible,
       'E-28 §3: a continuation keeps the chrome the reader had raised',

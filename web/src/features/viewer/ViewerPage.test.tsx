@@ -44,7 +44,8 @@ import {
   useViewerStore,
 } from '../../store/viewer'
 import { PROGRESS_DEBOUNCE_MS, queryKeys } from '../../api/queries'
-import { EDGE_STRIP_PX, POINTER_IDLE_MS, ViewerPage } from './ViewerPage'
+import { CHROME_HINT, EDGE_STRIP_PX, POINTER_IDLE_MS, ViewerPage } from './ViewerPage'
+import { PREFS_SAVE_DEBOUNCE_MS, resetPrefsWriter } from './prefsWriter'
 import { OVERRIDE_CHIP_LABEL } from './ViewerTopBar'
 import { THUMB_SLOT_PX, THUMB_SLOT_TOUCH_PX } from './ThumbnailStrip'
 import { LOADING_INDICATOR_DELAY_MS } from './useDelayedFlag'
@@ -139,12 +140,14 @@ interface Recorded {
    */
   progressWrites: { bid: string; body: ProgressPutBody }[]
   prefsPuts: unknown[]
+  /** The same writes, each with the book it landed on (av: 다음 권 must not carry a choice over). */
+  prefsWrites: { bid: string; body: unknown }[]
   /** Every URL handed to `new Image()` by the prefetcher. */
   prefetched: string[]
 }
 
 function newRecorded(): Recorded {
-  return { progressPuts: [], progressWrites: [], prefsPuts: [], prefetched: [] }
+  return { progressPuts: [], progressWrites: [], prefsPuts: [], prefsWrites: [], prefetched: [] }
 }
 
 type PrefsPatch = Partial<Record<'reading_direction' | 'display_mode' | 'fit_mode', string | null>>
@@ -225,9 +228,10 @@ function handlers(detail: BookDetail, recorded: Recorded, prefetch = 4) {
       recorded.progressWrites.push({ bid: String(params.bid), body })
       return HttpResponse.json(progressOf())
     }),
-    http.put(`${ORIGIN}/api/books/:bid/prefs`, async ({ request }) => {
+    http.put(`${ORIGIN}/api/books/:bid/prefs`, async ({ request, params }) => {
       const body = (await request.json()) as PrefsPatch
       recorded.prefsPuts.push(body)
+      recorded.prefsWrites.push({ bid: String(params.bid), body })
       return HttpResponse.json(applyPrefsPatch(detail.prefs, body))
     }),
     // Thumbnails are lazy (FR-THM-004); nothing on this screen may break on one.
@@ -460,6 +464,16 @@ const viewerRoot = (): HTMLElement => need('viewer')
 const topBar = (): HTMLElement => need('viewer-top-bar')
 const zones = (): HTMLElement => need('stage-zones')
 
+/** A seg option by its label. A click is one native `change`, which is one arrow-key step. */
+const radio = (name: string): HTMLElement => screen.getByRole('radio', { name })
+
+/** Advance the fake clock inside `act`, yielding so MSW and React Query can run. */
+async function advance(ms: number): Promise<void> {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms)
+  })
+}
+
 /**
  * The boundary event a **browser** dispatches, which jsdom has no constructor
  * for (`window.PointerEvent` is undefined in jsdom 26).
@@ -618,6 +632,9 @@ afterEach(() => {
   server.resetHandlers()
   resetBasePath()
   cancelChromeAutoHide()
+  // The prefs queue is module-level (it has to outlive a mounted viewer), so it
+  // must not carry one case's buffer into the next.
+  resetPrefsWriter()
   vi.unstubAllGlobals()
   // A fake clock installed by one case must not be inherited by the next: the
   // cases that time things install it *before* their first render, so a leaked
@@ -658,7 +675,7 @@ describe('the chromeless ground (acceptance 1, 2; ui-spec §6.1, ruling E-27)', 
       'false',
     )
     // …and the reader is told where it went, or the screen is a black box.
-    expect(screen.getByRole('status')).toHaveAttribute('data-role', 'viewer-chrome-hint')
+    expect(screen.getByRole('status')).toHaveTextContent(CHROME_HINT)
   })
 
   it('hides the cursor when the *pointer* idles, and never wakes the chrome doing it', async () => {
@@ -1005,7 +1022,7 @@ describe('the chromeless ground (acceptance 1, 2; ui-spec §6.1, ruling E-27)', 
     expect(useViewerStore.getState().chromeVisible).toBe(false)
     // It used to ride along with the chrome. After E-27 that would have deleted
     // it: the chrome no longer comes up on its own.
-    expect(screen.getByText('파일이 변경되었습니다')).toBeInTheDocument()
+    expect(staleNotice()).toHaveTextContent('파일이 변경되었습니다')
     // Chromeless it is an overlay, so the reading ground keeps its full height.
     const notice = document.querySelector('[data-role="stale-progress"]')
     expect([...(notice?.classList ?? [])]).toContain('absolute')
@@ -1689,20 +1706,24 @@ describe('page transitions (acceptance 9, 10; ui-spec §6.3, §6.4)', () => {
 
   it('shows nothing for a fast page and the 페이지 로딩 indicator for a slow one', async () => {
     await setup()
+    const indicator = (): Element | null => document.querySelector('[data-role="page-loading"]')
     decodeShownPages()
-    expect(screen.queryByText('페이지 로딩')).not.toBeInTheDocument()
+    expect(indicator()).toBeNull()
 
     fireEvent.keyDown(window, { key: 'ArrowRight' })
     // Below the threshold a spinner reads as jank, not as progress.
-    expect(screen.queryByText('페이지 로딩')).not.toBeInTheDocument()
+    expect(indicator()).toBeNull()
 
-    await screen.findByText('페이지 로딩', undefined, {
-      timeout: LOADING_INDICATOR_DELAY_MS * 4,
-    })
+    await waitFor(
+      () => {
+        expect(indicator()).toHaveTextContent('페이지 로딩')
+      },
+      { timeout: LOADING_INDICATOR_DELAY_MS * 4 },
+    )
 
     decodeShownPages()
     await waitFor(() => {
-      expect(screen.queryByText('페이지 로딩')).not.toBeInTheDocument()
+      expect(indicator()).toBeNull()
     })
   })
 
@@ -1869,6 +1890,66 @@ const signedFor = (recorded: Recorded): Recorded['progressWrites'] =>
 const writesTo = (recorded: Recorded, bid: string): ProgressPutBody[] =>
   recorded.progressWrites.filter((write) => write.bid === bid).map((write) => write.body)
 
+// ---------------------------------------------------------------------------
+// ba — one live region, always mounted
+// ---------------------------------------------------------------------------
+
+describe('the viewer speaks through one live region that is always there (ba)', () => {
+  /** By attribute, not `getAllByRole`: an `aria-hidden` stray would slip past the role query. */
+  const regions = (): Element[] => [...viewerRoot().querySelectorAll('[role="status"]')]
+  const region = (): Element => {
+    const [only, ...rest] = regions()
+    expect(rest, 'exactly one role="status" in the viewer').toEqual([])
+    if (only === undefined) throw new Error('the viewer has no role="status" at all')
+    return only
+  }
+
+  it('is mounted, empty, before there is anything to say, and stays the only one', async () => {
+    vi.useFakeTimers()
+    mount({ detail: { progress: progressOf({ stale: true }) } })
+    // The book has not loaded: no message yet, and the region is already there
+    // for the first one to change.
+    const node = region()
+    expect(node).toBeEmptyDOMElement()
+    // Off, explicitly: `role="status"` implies `aria-atomic="true"`, which would
+    // re-read every message whenever one joins.
+    expect(node).toHaveAttribute('aria-atomic', 'false')
+
+    await tickUntil(() => document.querySelector('img[alt*="page_"]') !== null)
+    // Settled pages, so 페이지 로딩 is not what is left in the region at the end.
+    decodeShownPages()
+    // The same node, filled — not a new region mounted with its message.
+    expect(region()).toBe(node)
+    expect(node).toHaveTextContent(CHROME_HINT)
+    expect(node).toHaveTextContent(STALE_NOTICE)
+    // The visible notices are not regions, and are not read a second time.
+    for (const role of ['viewer-chrome-hint', 'stale-progress']) {
+      expect(need(role), role).not.toHaveAttribute('role')
+      expect(need(role), role).toHaveAttribute('aria-hidden', 'true')
+    }
+
+    await advance(STALE_NOTICE_MS)
+    expect(staleNotice()).toBeNull()
+    expect(region()).toBe(node)
+    expect(node).toBeEmptyDOMElement()
+  })
+
+  it('announces 페이지 로딩 through the same region', async () => {
+    await setupOnFakeClock()
+    decodeShownPages()
+    fireEvent.keyDown(window, { key: 'ArrowRight' })
+    await advance(LOADING_INDICATOR_DELAY_MS)
+    await tickUntil(() => document.querySelector('[data-role="page-loading"]') !== null)
+    expect(region()).toHaveTextContent('페이지 로딩')
+    expect(need('page-loading')).not.toHaveAttribute('role')
+    expect(need('page-loading')).toHaveAttribute('aria-hidden', 'true')
+
+    decodeShownPages()
+    await tickUntil(() => document.querySelector('[data-role="page-loading"]') === null)
+    expect(region()).not.toHaveTextContent('페이지 로딩')
+  })
+})
+
 /**
  * `파일이 변경되었습니다` — the half of E-45 that lives in the browser.
  *
@@ -1911,8 +1992,9 @@ describe('the changed-file notice has a lifetime (ruling E-45)', () => {
     const { recorded, client } = await setupOnFakeClock(staleBook)
     expect(staleNotice()).toBeInTheDocument()
     // A notice that removes itself and has no live region has a lifetime of
-    // zero on a screen reader (E-45 §1); the chrome hint already had one.
-    expect(staleNotice()).toHaveAttribute('role', 'status')
+    // zero on a screen reader (E-45 §1). It is spoken through the viewer's one
+    // region (ba).
+    expect(screen.getByRole('status')).toHaveTextContent(STALE_NOTICE)
 
     // Nobody touched anything: this write exists because the book loaded.
     await letTheAutomaticWriteLand(recorded)
@@ -1926,7 +2008,7 @@ describe('the changed-file notice has a lifetime (ruling E-45)', () => {
     )
     // …and the latched one keeps it up, because the reader has not seen it yet.
     expect(staleNotice()).toBeInTheDocument()
-    expect(screen.getByText(STALE_NOTICE)).toBeInTheDocument()
+    expect(staleNotice()).toHaveTextContent(STALE_NOTICE)
   })
 
   it('goes down when its lifetime runs out, and acknowledges itself only then', async () => {
@@ -2138,19 +2220,19 @@ describe('the changed-file notice has a lifetime (ruling E-45)', () => {
 })
 
 describe('per-book preferences (FR-VWR-002 / D-35)', () => {
-  it('persists the display mode, direction and fit to the book', async () => {
-    const recorded = await setup()
-    await userEvent.click(screen.getByRole('radio', { name: '양면' }))
-    await userEvent.click(screen.getByRole('radio', { name: 'R→L' }))
-    await userEvent.click(screen.getByRole('radio', { name: '너비' }))
+  it('persists the display mode, direction and fit to the book, as one write per burst (av)', async () => {
+    const { recorded } = await setupOnFakeClock()
+    fireEvent.click(radio('양면'))
+    fireEvent.click(radio('R→L'))
+    fireEvent.click(radio('너비'))
+    await advance(PREFS_SAVE_DEBOUNCE_MS)
+    await tickUntil(() => recorded.prefsPuts.length > 0)
+    await advance(PREFS_SAVE_DEBOUNCE_MS * 2)
 
-    await waitFor(() => {
-      expect(recorded.prefsPuts).toHaveLength(3)
-    })
+    // Three segs inside one window are one merged patch — the server applies
+    // each present field and leaves the rest (`enumPatch`).
     expect(recorded.prefsPuts).toEqual([
-      { display_mode: 'spread' },
-      { reading_direction: 'rtl' },
-      { fit_mode: 'width' },
+      { display_mode: 'spread', reading_direction: 'rtl', fit_mode: 'width' },
     ])
     // C-1: the wire value, never `double`.
     expect(useViewerStore.getState().mode).toBe('spread')
@@ -2161,16 +2243,19 @@ describe('per-book preferences (FR-VWR-002 / D-35)', () => {
     // The other end of the round trip the test above walks for 너비. It is worth
     // its own case because 화면 is the one fit whose *press* had no code path at
     // all under E-27 §1 — the segment did not exist, so nothing could send this
-    // body, and `openingFit` would have turned the stored value back into
+    // body, and the store's open path would have turned the stored value back into
     // `height` on the next open. Both ends are asserted: the wire word (C-2 —
     // `contain`, never `screen`) and the `data-fit` the stage actually resolves
     // its geometry from (`fit.ts`).
     const recorded = await setup()
     await userEvent.click(screen.getByRole('radio', { name: '화면' }))
 
-    await waitFor(() => {
-      expect(recorded.prefsPuts).toEqual([{ fit_mode: 'contain' }])
-    })
+    await waitFor(
+      () => {
+        expect(recorded.prefsPuts).toEqual([{ fit_mode: 'contain' }])
+      },
+      { timeout: PREFS_SAVE_DEBOUNCE_MS * 4 },
+    )
     expect(stage()).toHaveAttribute('data-fit', 'contain')
     expect(screen.getByRole('radio', { name: '화면' })).toBeChecked()
   })
@@ -2185,16 +2270,181 @@ describe('per-book preferences (FR-VWR-002 / D-35)', () => {
   })
 
   it('keeps the reader in place when a preference is saved', async () => {
-    // `useSetPrefs` writes the new prefs into the book cache; a naive effect
+    // The prefs write puts the new prefs into the book cache; a naive effect
     // would treat that as a fresh book and throw the reader back to page 42.
-    await setup()
+    const recorded = await setup()
     fireEvent.keyDown(window, { key: 'ArrowRight' })
     expect(counter()).toBe('13 / 214')
     await userEvent.click(screen.getByRole('radio', { name: '양면' }))
-    await waitFor(() => {
-      expect(useViewerStore.getState().mode).toBe('spread')
-    })
+    await waitFor(
+      () => {
+        expect(recorded.prefsPuts).toHaveLength(1)
+      },
+      { timeout: PREFS_SAVE_DEBOUNCE_MS * 4 },
+    )
+    expect(useViewerStore.getState().mode).toBe('spread')
     expect(counter()).toBe('13 / 214')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// av — seg changes apply at once; the write is debounced
+// ---------------------------------------------------------------------------
+
+describe('a burst of seg changes is one write of where the reader stopped (av)', () => {
+  it('applies every step at once and saves only the last, PREFS_SAVE_DEBOUNCE_MS after it', async () => {
+    const { recorded } = await setupOnFakeClock()
+    // Native ←/→ in a radio group fire one `change` per step; a click is the same event.
+    for (const [name, value] of [
+      ['너비', 'width'],
+      ['화면', 'contain'],
+      ['원본', 'original'],
+    ] as const) {
+      fireEvent.click(radio(name))
+      // The screen does not wait for the write.
+      expect(radio(name)).toBeChecked()
+      expect(stage()).toHaveAttribute('data-fit', value)
+      await advance(PREFS_SAVE_DEBOUNCE_MS / 5)
+    }
+    await advance(PREFS_SAVE_DEBOUNCE_MS - PREFS_SAVE_DEBOUNCE_MS / 5 - 1)
+    expect(recorded.prefsPuts, 'nothing goes out inside the window').toEqual([])
+
+    await advance(1)
+    await tickUntil(() => recorded.prefsPuts.length > 0)
+    await advance(PREFS_SAVE_DEBOUNCE_MS * 2)
+    expect(recorded.prefsWrites).toEqual([{ bid: BOOK_ID, body: { fit_mode: 'original' } }])
+  })
+
+  it('raises the 이 권 전용 설정 chip at the first step, before the write goes out', async () => {
+    const { recorded } = await setupOnFakeClock({ prefs: { is_override: false } })
+    expect(chip()).toBeNull()
+    fireEvent.click(radio('너비'))
+    await advance(5)
+    expect(chip()).not.toBeNull()
+    expect(recorded.prefsPuts).toEqual([])
+  })
+
+  it('sends the buffered choice the moment the reader leaves through 뒤로', async () => {
+    const { recorded } = await setupOnFakeClock()
+    fireEvent.click(radio('너비'))
+    fireEvent.click(screen.getByRole('button', { name: '뒤로' }))
+    expect(screen.getByTestId('location')).toHaveTextContent(`/series/${SERIES_ID}`)
+    // `tickUntil` gives up long before the window would have closed on its own.
+    await tickUntil(() => recorded.prefsWrites.length > 0)
+    expect(recorded.prefsWrites).toEqual([{ bid: BOOK_ID, body: { fit_mode: 'width' } }])
+  })
+
+  it('sends the buffered choice to the volume it was made on when 다음 권 changes the book', async () => {
+    const { recorded } = await setupOnFakeClock({ search: '?page=214' })
+    await tickUntil(() => screen.queryByText('권의 마지막 페이지') !== null)
+    fireEvent.click(radio('너비'))
+    fireEvent.click(screen.getByRole('button', { name: '다음 권 읽기' }))
+    await tickUntil(() => recorded.prefsWrites.length > 0)
+    expect(recorded.prefsWrites).toEqual([{ bid: BOOK_ID, body: { fit_mode: 'width' } }])
+  })
+
+  it('sends the buffered choice when the page is hidden', async () => {
+    const { recorded } = await setupOnFakeClock()
+    fireEvent.click(radio('너비'))
+    fireEvent(window, new Event('pagehide'))
+    await tickUntil(() => recorded.prefsPuts.length > 0)
+    expect(recorded.prefsPuts).toEqual([{ fit_mode: 'width' }])
+  })
+
+  it('lets the 이 권 전용 설정 reset absorb a buffered step instead of being undone by it', async () => {
+    const { recorded } = await setupOnFakeClock({
+      prefs: { fit_mode: 'original', is_override: true },
+    })
+    fireEvent.click(radio('너비'))
+    const button = chip()
+    if (button === null) throw new Error('the override chip was not raised')
+    fireEvent.click(button)
+    await tickUntil(() => recorded.prefsPuts.length > 0)
+    await advance(PREFS_SAVE_DEBOUNCE_MS * 2)
+    expect(recorded.prefsPuts).toEqual([
+      { reading_direction: null, display_mode: null, fit_mode: null },
+    ])
+    expect(useViewerStore.getState().fit).toBe('height')
+  })
+
+  it('keeps a choice made while the reset was on the wire, and resets only the rest', async () => {
+    const overridden: Partial<BookPrefs> = {
+      display_mode: 'spread',
+      fit_mode: 'original',
+      is_override: true,
+    }
+    const { recorded } = await setupOnFakeClock({ prefs: overridden })
+    const releases: (() => void)[] = []
+    server.use(
+      http.put(`${ORIGIN}/api/books/:bid/prefs`, async ({ request }) => {
+        const body = (await request.json()) as PrefsPatch
+        recorded.prefsPuts.push(body)
+        // Only the reset is held; anything after it answers at once.
+        if (recorded.prefsPuts.length === 1) {
+          await new Promise<void>((resolve) => releases.push(resolve))
+        }
+        return HttpResponse.json(applyPrefsPatch(detailOf(overridden).prefs, body))
+      }),
+    )
+    const button = chip()
+    if (button === null) throw new Error('the override chip was not raised')
+    fireEvent.click(button)
+    await tickUntil(() => releases.length === 1)
+
+    fireEvent.click(radio('너비'))
+    releases[0]?.()
+    await tickUntil(() => useViewerStore.getState().mode === 'single')
+    expect(useViewerStore.getState().fit, 'the reset must not take back 너비').toBe('width')
+    expect(radio('너비')).toBeChecked()
+
+    await advance(PREFS_SAVE_DEBOUNCE_MS)
+    await tickUntil(() => recorded.prefsPuts.length === 2)
+    expect(recorded.prefsPuts).toEqual([
+      { reading_direction: null, display_mode: null, fit_mode: null },
+      { fit_mode: 'width' },
+    ])
+    expect(useViewerStore.getState().fit).toBe('width')
+  })
+
+  it('sends one write at a time, so an early answer arriving late cannot undo a later choice', async () => {
+    const { client } = await setupOnFakeClock({ prefs: { is_override: false } })
+    const releases: (() => void)[] = []
+    /** The order the server *applied* the writes in — what survives in `user.db`. */
+    const applied: unknown[] = []
+    let inFlight = 0
+    let maxInFlight = 0
+    server.use(
+      http.put(`${ORIGIN}/api/books/:bid/prefs`, async ({ request }) => {
+        const body = (await request.json()) as PrefsPatch
+        inFlight += 1
+        maxInFlight = Math.max(maxInFlight, inFlight)
+        await new Promise<void>((resolve) => releases.push(resolve))
+        inFlight -= 1
+        applied.push(body)
+        return HttpResponse.json(applyPrefsPatch(detailOf({ is_override: false }).prefs, body))
+      }),
+    )
+    const cachedFit = (): string | undefined =>
+      client.getQueryData<BookDetail>(queryKeys.books.detail(BOOK_ID))?.prefs.fit_mode
+
+    fireEvent.click(radio('너비'))
+    await advance(PREFS_SAVE_DEBOUNCE_MS)
+    await tickUntil(() => releases.length === 1)
+    fireEvent.click(radio('원본'))
+    await advance(PREFS_SAVE_DEBOUNCE_MS * 2)
+    expect(releases, 'the second write waits for the first to be answered').toHaveLength(1)
+
+    releases[0]?.()
+    await tickUntil(() => releases.length === 2)
+    expect(cachedFit(), 'the first answer must not put back a superseded fit').toBe('original')
+    releases[1]?.()
+    await tickUntil(() => applied.length === 2)
+    await advance(5)
+
+    expect(applied).toEqual([{ fit_mode: 'width' }, { fit_mode: 'original' }])
+    expect(maxInFlight).toBe(1)
+    expect(cachedFit()).toBe('original')
+    expect(useViewerStore.getState().fit).toBe('original')
   })
 })
 

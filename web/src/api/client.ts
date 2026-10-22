@@ -80,7 +80,16 @@ export interface RequestOptions {
   signal?: AbortSignal
 }
 
-interface RequestSpec extends RequestOptions {
+/**
+ * A write that may have to outlive the page (`fetch`'s `keepalive`). Browsers cap a
+ * keepalive body at 64 KiB; a prefs patch is three short enum fields, well under 1 KiB,
+ * and a settings patch is at most nine short fields (a root name the longest).
+ */
+export interface WriteOptions extends RequestOptions {
+  keepalive?: boolean
+}
+
+interface RequestSpec extends WriteOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE'
   /** Serialised as JSON. Only the fields of the typed body are sent — §7.1 rejects extras. */
   body?: unknown
@@ -213,6 +222,7 @@ async function send(path: string, spec: RequestSpec): Promise<Response> {
     headers['Content-Type'] = JSON_CONTENT_TYPE
     init.body = JSON.stringify(spec.body)
   }
+  if (spec.keepalive === true) init.keepalive = true
   const signal = spec.signal
   const url = toAbsoluteUrl(path)
   if (signal === undefined) return fetch(url, init)
@@ -395,7 +405,7 @@ export function getBookPrefs(bid: ID, options?: RequestOptions): Promise<BookPre
 export function putBookPrefs(
   bid: ID,
   update: BookPrefsUpdate,
-  options?: RequestOptions,
+  options?: WriteOptions,
 ): Promise<BookPrefs> {
   return requestJson<BookPrefs>(bookPrefsUrl(bid), { ...options, method: 'PUT', body: update })
 }

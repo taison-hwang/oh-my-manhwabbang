@@ -15,6 +15,9 @@
  * the radio dot — which is why `rounded-full` appears here and nowhere else in
  * the viewer.
  */
+/** The indicator's word; `ViewerPage` also speaks it through the viewer's live region (ba). */
+export const PAGE_LOADING_LABEL = '페이지 로딩'
+
 export interface PageLoadingIndicatorProps {
   /** Already delayed by `useDelayedFlag`; this component does no timing. */
   visible: boolean
@@ -25,8 +28,7 @@ export function PageLoadingIndicator({ visible }: PageLoadingIndicatorProps) {
   return (
     <div
       data-role="page-loading"
-      role="status"
-      aria-live="polite"
+      aria-hidden="true"
       className="pointer-events-none absolute bottom-6 right-6 flex items-center gap-2 text-xs uppercase tracking-[.06em] text-ink-faint"
     >
       <span
@@ -34,7 +36,7 @@ export function PageLoadingIndicator({ visible }: PageLoadingIndicatorProps) {
         className="h-[11px] w-[11px] animate-spin rounded-full border-2 border-neutral-700"
         style={{ borderTopColor: 'var(--color-accent-400)' }}
       />
-      페이지 로딩
+      {PAGE_LOADING_LABEL}
     </div>
   )
 }

@@ -9,7 +9,7 @@ import {
 } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 
-import { useBook, useSeries, useSetPrefs, useSettings } from '../../api/queries'
+import { useBook, useSeries, useSettings } from '../../api/queries'
 import type { BookSummary } from '../../api/types'
 import { EmptyState } from '../../components/ds/EmptyState'
 import { cn } from '../../lib/cn'
@@ -27,11 +27,12 @@ import {
   type ReadingDirection,
 } from '../../store/viewer'
 import { NextVolumeCard } from './NextVolumeCard'
-import { PageLoadingIndicator } from './PageLoadingIndicator'
+import { PAGE_LOADING_LABEL, PageLoadingIndicator } from './PageLoadingIndicator'
 import { PageStage } from './PageStage'
 import { ViewerBottomBar } from './ViewerBottomBar'
 import { ViewerTopBar } from './ViewerTopBar'
 import { makeDimsLookup, nextPage, prevPage, stagePages, type PageDims } from './fit'
+import { usePrefsWriter } from './prefsWriter'
 import { useDelayedFlag } from './useDelayedFlag'
 import { DEFAULT_PREFETCH, usePrefetch } from './usePrefetch'
 import { useProgressSync } from './useProgressSync'
@@ -63,7 +64,7 @@ import { useViewerKeys } from './useViewerKeys'
  *  * **Where each page number comes from.** The store owns the current page;
  *    the *opening* page is the route's `?page=` (set by the series screen) or
  *    the server's `progress.last_page` (FR-VWR-009 resume). The guard is a ref
- *    on the book id, not a dependency list — `useSetPrefs` writes the fresh
+ *    on the book id, not a dependency list — the prefs write puts the fresh
  *    prefs into the book cache, and a re-run would throw the reader back to
  *    where they resumed on every 양면/화면 press.
  *  * **Which page turn.** `nextPage`/`prevPage` committed through the store's
@@ -137,7 +138,10 @@ function edgeBandAt(clientY: number): EdgeBand | null {
 }
 
 /** The one sentence that explains a viewer which opens with nothing on it. */
-const CHROME_HINT = '좌·우 클릭으로 페이지 · 중앙 클릭 또는 상하 가장자리로 컨트롤'
+export const CHROME_HINT = '좌·우 클릭으로 페이지 · 중앙 클릭 또는 상하 가장자리로 컨트롤'
+
+/** FR-VWR-009's one line. */
+const STALE_NOTICE = '파일이 변경되었습니다'
 
 /** The two surfaces a resting pointer is allowed to hold the chrome open from. */
 const CHROME_BARS = '[data-role="viewer-top-bar"],[data-role="viewer-bottom-bar"]'
@@ -162,7 +166,7 @@ export function ViewerPage() {
   // Only for the next-volume card's title/meta; the series detail is almost
   // always already in the cache because that is the screen the reader came from.
   const series = useSeries(seriesId, { enabled: seriesId !== '' })
-  const setPrefs = useSetPrefs(bookId)
+  const { save: savePrefs, saveNow: savePrefsNow } = usePrefsWriter(bookId)
 
   const themeSetting = useUiStore((s) => s.theme)
   const systemDark = useMediaQuery(DARK_MEDIA_QUERY)
@@ -387,7 +391,8 @@ export function ViewerPage() {
   // Per-book preferences (FR-VWR-002 / D-35)
   // -------------------------------------------------------------------------
 
-  const { mutate: savePrefs } = setPrefs
+  // Seg changes apply at once; the write is debounced (`usePrefsWriter`), so a
+  // burst — native radio ←/→ fire one `change` per step — is one PUT of where the reader stopped.
   const applyMode = useCallback(
     (next: DisplayMode) => {
       setMode(next)
@@ -402,23 +407,6 @@ export function ViewerPage() {
     },
     [detail, savePrefs, setDirection],
   )
-  /**
-   * **Known, and left alone: arrowing across 맞춤 persists every fit it passes.**
-   *
-   * `Seg` is a native radio group — one `useId()` shared as every option's
-   * `name` (`web/src/components/ds/Seg.tsx:50`, `:65`), no keydown handler
-   * anywhere — and native ←/→ *change the selection* as they move the focus.
-   * Every step is a real `change`, so every step lands here, and there is no
-   * debounce on `savePrefs`. E-44 makes that visible rather than new: with 화면
-   * back in the
-   * row and sitting third (`ViewerTopBar.tsx:146`), a keyboard reader going
-   * 너비 → 원본 now fires **three** `PUT /prefs` where it fired two, and the
-   * middle one writes `contain` — so they persist a fit they only travelled
-   * through. Harmless today (last write wins, the reader ends on the fit they
-   * stopped at, and `is_override` was going true anyway), which is why this is a
-   * note and not a patch: debouncing, or only saving on blur, changes when a
-   * reader's choice becomes durable, and nobody has ruled on that.
-   */
   const applyFit = useCallback(
     (next: FitMode) => {
       setFit(next)
@@ -436,7 +424,7 @@ export function ViewerPage() {
    * the global default". The response is the re-merged `BookPrefs`, i.e. the
    * defaults themselves, with `is_override: false`.
    *
-   * **And the store has to be told, by name.** `useSetPrefs.onSuccess` writes the
+   * **And the store has to be told, by name.** The prefs writer's answer writes the
    * query cache and nothing else; `open()` is guarded by `openedRef` and runs
    * once per book — correctly, because re-running it throws the reader back to
    * where they resumed on every press. So a reset that only invalidated would
@@ -452,30 +440,23 @@ export function ViewerPage() {
    *
    * The fit, by contrast, is **not** wrapped: it is set from the response as it
    * came back, exactly like the `setMode(prefs.display_mode)` two lines above
-   * it. It used to go through `openingFit`, for E-27 §1's `contain` → `height`
-   * coercion and nothing else — the grounds being that a global default of
-   * `contain` had no button to select;
-   * **E-44 restored 화면 to `FIT_OPTIONS`** (`ViewerTopBar.tsx:146`), so that
-   * grounds is gone and the coercion with it. What is left in `openingFit` is
-   * an `undefined` fallback this site cannot reach — `BookPrefs.fit_mode` is
-   * non-nullable (`web/src/api/types.ts:429`) and `onSuccess` is handed a whole
-   * re-merged `BookPrefs` — so wrapping it here would be an identity dressed as
-   * a rule, and the next reader would look for the rule. Every fit the server
-   * can name now has a segment, this one included.
+   * it. Every fit the server can name has a segment since E-44 restored 화면,
+   * so there is nothing to coerce.
    */
   const resetPrefs = useCallback(() => {
     if (detail === undefined) return
-    savePrefs(
+    savePrefsNow(
       { reading_direction: null, display_mode: null, fit_mode: null },
-      {
-        onSuccess: (prefs) => {
-          setMode(prefs.display_mode)
-          setDirection(openingDirection(prefs, seedDir))
-          setFit(prefs.fit_mode)
-        },
+      (prefs, untouched) => {
+        // The answer can land after the reader has left or moved to 다음 권, and
+        // a seg chosen while it was on the wire is newer than it.
+        if (useViewerStore.getState().bookId !== bookId) return
+        if (untouched.has('display_mode')) setMode(prefs.display_mode)
+        if (untouched.has('reading_direction')) setDirection(openingDirection(prefs, seedDir))
+        if (untouched.has('fit_mode')) setFit(prefs.fit_mode)
       },
     )
-  }, [detail, savePrefs, seedDir, setDirection, setFit, setMode])
+  }, [bookId, detail, savePrefsNow, seedDir, setDirection, setFit, setMode])
 
   // -------------------------------------------------------------------------
   // Page turns, keys, taps, prefetch
@@ -800,6 +781,9 @@ export function ViewerPage() {
     if (!atVolumeEnd) setEndCardDismissed(false)
   }, [atVolumeEnd])
 
+  /** The opening hint is up — shown and announced on the same condition. */
+  const hintShown = hintVisible && !chromeVisible && detail !== undefined
+
   return (
     <div
       ref={rootRef}
@@ -905,10 +889,10 @@ export function ViewerPage() {
         </span>
       )}
 
-      {hintVisible && !chromeVisible && detail !== undefined && (
+      {hintShown && (
         <div
           data-role="viewer-chrome-hint"
-          role="status"
+          aria-hidden="true"
           className="pointer-events-none absolute bottom-[22px] left-1/2 -translate-x-1/2 border border-neutral-800 bg-bg px-3 py-[7px] text-center text-xs tracking-[.04em] text-neutral-400"
         >
           {CHROME_HINT}
@@ -961,9 +945,8 @@ export function ViewerPage() {
           is dropped and re-asked on every volume, because the next volume is a
           different file.
 
-          `role="status"` is not decoration (E-45 §1): a notice that removes
-          itself and has no live region has a lifetime of zero on a screen
-          reader. The chrome hint above already carried one; this did not.
+          It is spoken through the viewer's one live region below (ba), so the
+          box itself is `aria-hidden` and carries no role.
 
           The DOM shape is load-bearing — the paper grain is declared on the
           **span** rather than on this wrapper (`base.css:384` for the
@@ -976,7 +959,7 @@ export function ViewerPage() {
       {staleVisible && (
         <div
           data-role="stale-progress"
-          role="status"
+          aria-hidden="true"
           className={cn(
             'pointer-events-none flex justify-center',
             chromeVisible
@@ -987,10 +970,20 @@ export function ViewerPage() {
           {/* `text-on-accent`: the dark theme's `--ink` is 4.33 washed on this
               fill under E-46's palette. See the longer note in PageError.tsx. */}
           <span className="bg-accent px-[7px] py-[3px] font-ui text-3xs uppercase tracking-[.1em] text-on-accent">
-            파일이 변경되었습니다
+            {STALE_NOTICE}
           </span>
         </div>
       )}
+
+      {/* The viewer's one live region (ba). Always mounted and only its text
+          changes: a region inserted together with its message is often never
+          announced. Each message is its own node and `aria-atomic` is off, so a
+          message joining one already up is read alone. */}
+      <div data-role="viewer-status" role="status" aria-atomic="false" className="sr-only">
+        {staleVisible && <p>{STALE_NOTICE}</p>}
+        {hintShown && <p>{CHROME_HINT}</p>}
+        {showIndicator && <p>{PAGE_LOADING_LABEL}</p>}
+      </div>
 
       <ViewerBottomBar
         visible={chromeVisible}

@@ -94,8 +94,8 @@ const DIR_OPTIONS: readonly SegOption<ReadingDirection>[] = [
  * 네 종 — 너비 · 높이 · 화면 · 원본 (ruling **E-44**, prd FR-VWR-005 restored).
  *
  * E-44 overturns **E-27 §1**, and only that clause: E-27 cut 화면 from this
- * array and paired the cut with a coercion in `openingFit`
- * (`web/src/store/viewer.ts:66`) that opened a book stored at `contain` on 높이.
+ * array and paired the cut with a coercion in the store's open path (since
+ * removed) that opened a book stored at `contain` on 높이.
  * The two halves only ever made sense together — the coercion existed solely so
  * that no reader could be parked on a fit whose button did not exist — so they
  * come back out together. With the button restored, the coercion is the thing

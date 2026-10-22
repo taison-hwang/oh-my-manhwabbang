@@ -47,42 +47,14 @@ export const CHROME_HINT_MS = 3400
  */
 export const STALE_NOTICE_MS = 3400
 
-/** Default fit is `height`, per C-13 — the prototype capture, not the guess. */
-export const DEFAULT_FIT: FitMode = 'height'
-
 /**
- * The fit a book is *opened* at — **every stored fit, exactly as stored**.
+ * Default fit is `height`, per C-13 — the prototype capture, not the guess.
  *
- * The one job left is the `undefined` fallback, and it has **one** call site:
- * `open()` below, where `ViewerOpenOptions.fit` is optional (`:94`). This is
- * where "no fit was given" is turned into `DEFAULT_FIT` once, in the store, so
- * that a caller who omits it and a caller who passes `undefined` cannot drift
- * apart. `viewer.test.ts:28-32` is its only guard — the `open(10)` helper there
- * passes no `fit` — and its only exercise: the single production caller,
- * `ViewerPage`'s open effect (`web/src/features/viewer/ViewerPage.tsx:287`),
- * always has one to pass, because `BookPrefs.fit_mode` is non-nullable
- * (`web/src/api/types.ts:429`). The fallback stays regardless: the field is
- * optional in this store's own type, so the store owes an answer for it.
- *
- * **The 이 권 전용 설정 reset no longer calls this.** It used to
- * (E-33 §3), for the coercion below and only for that; with the coercion gone
- * the call was a provable identity — `useSetPrefs.onSuccess` is handed a whole
- * `BookPrefs`, never `undefined` — so `ViewerPage.tsx:474` now reads
- * `setFit(prefs.fit_mode)`, unwrapped like the `setMode` beside it.
- *
- * **The `contain` → `height` branch is gone (ruling E-44).** E-27 §1 put it
- * here because it had just deleted 화면 from `FIT_OPTIONS`
- * (`web/src/features/viewer/ViewerTopBar.tsx:146`), and a reader parked on a fit
- * with no button can neither see which one they are on nor leave it. E-44
- * restores the button, which removes the branch's entire reason and inverts its
- * effect: coercing now means a reader who deliberately chose 화면 last session
- * is opened on 높이, with the 화면 segment visibly unselected and their stored
- * preference contradicted by the very control that is meant to show it. Read
- * this together with the note on `FIT_OPTIONS` — the pair moves as a pair.
+ * Only the store's initial state reads it. `open()` takes its fit from the
+ * caller, which always has one (`BookPrefs.fit_mode` is non-nullable), so
+ * `ViewerOpenOptions.fit` is required and there is no fallback to keep (au).
  */
-export function openingFit(fit: FitMode | undefined): FitMode {
-  return fit ?? DEFAULT_FIT
-}
+export const DEFAULT_FIT: FitMode = 'height'
 export const DEFAULT_MODE: DisplayMode = 'single'
 export const DEFAULT_DIRECTION: ReadingDirection = 'ltr'
 
@@ -91,7 +63,7 @@ export interface ViewerOpenOptions {
   page?: number
   mode?: DisplayMode
   dir?: ReadingDirection
-  fit?: FitMode
+  fit: FitMode
   /**
    * `progress.stale` **as it read at the moment this book was opened** (E-45 §1).
    *
@@ -378,7 +350,7 @@ export const useViewerStore = create<ViewerState>()((set, get) => ({
       page: clampPage(options.page ?? 1, options.pageCount),
       mode: options.mode ?? DEFAULT_MODE,
       dir: options.dir ?? DEFAULT_DIRECTION,
-      fit: openingFit(options.fit),
+      fit: options.fit,
       chromeVisible: continuing ? s.chromeVisible : false,
       hintVisible: continuing ? s.hintVisible : true,
       staleVisible: stale,

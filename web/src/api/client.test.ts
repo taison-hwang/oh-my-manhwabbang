@@ -65,6 +65,7 @@ import {
   seriesListResponse,
   settings,
 } from './fixtures'
+import { DISPLAY_MODES, FIT_MODES, READING_DIRS } from './types'
 import { pageThumbUrl, resetBasePath, seriesCoverUrl, setBasePath } from './urls'
 import { failUnhandled } from '../test/msw'
 
@@ -367,6 +368,31 @@ describe('request bodies', () => {
     const box = capture('put', `/api/books/${BOOK_ID}/prefs`, () => HttpResponse.json(bookPrefs))
     await putBookPrefs(BOOK_ID, { reading_direction: 'rtl', fit_mode: null })
     expect(await box.current?.json()).toEqual({ reading_direction: 'rtl', fit_mode: null })
+  })
+
+  it('PUT prefs carries keepalive into the request init only when asked (unload write)', async () => {
+    const original = globalThis.fetch.bind(globalThis)
+    const spy = vi.spyOn(globalThis, 'fetch')
+    spy.mockImplementation((input, init) => original(input, init))
+    server.use(http.put(`${ORIGIN}/api/books/${BOOK_ID}/prefs`, () => HttpResponse.json(bookPrefs)))
+
+    await putBookPrefs(BOOK_ID, { fit_mode: 'width' }, { keepalive: true })
+    await putBookPrefs(BOOK_ID, { fit_mode: 'width' })
+
+    const [withFlag, without] = spy.mock.calls.map((call) => call[1])
+    expect(withFlag).toMatchObject({ method: 'PUT', keepalive: true, credentials: 'same-origin' })
+    expect(without, 'every other write is unchanged').not.toHaveProperty('keepalive')
+  })
+
+  it('PUT prefs bodies stay far under the 64 KiB a keepalive request may carry', () => {
+    const longest = (values: readonly string[]): string =>
+      values.reduce((a, b) => (b.length > a.length ? b : a))
+    const largest = {
+      reading_direction: longest(READING_DIRS),
+      display_mode: longest(DISPLAY_MODES),
+      fit_mode: longest(FIT_MODES),
+    }
+    expect(new TextEncoder().encode(JSON.stringify(largest)).length).toBeLessThan(1024)
   })
 
   it('GET prefs returns the effective values', async () => {

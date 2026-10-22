@@ -1378,7 +1378,8 @@ hand is on the mouse, which is what E-27 removed. A call that does not change th
 **The opening hint.** While the chrome is away and the hint is unanswered, one line sits 22px off the
 bottom, horizontally centred: `border:1px solid var(--color-neutral-800); background:var(--color-bg);
 padding:7px 12px; font-size:11px; letter-spacing:.04em; text-align:center;
-color:var(--color-neutral-400)`, `role="status"`, `pointer-events:none`. Its text is
+color:var(--color-neutral-400)`, `aria-hidden="true"` (announced through the viewer's one live region —
+see the item-ba note under the changed-book notice), `pointer-events:none`. Its text is
 
 `좌·우 클릭으로 페이지 · 중앙 클릭 또는 상하 가장자리로 컨트롤`
 
@@ -1590,19 +1591,16 @@ coincidence.
 **And it has a lifetime (E-45 §1).** Like the opening hint it is **timed, not dismissible** — **3400 ms**
 (`STALE_NOTICE_MS`, `store/viewer.ts:48`), deliberately the same value as `CHROME_HINT_MS` but a
 *separate* constant, so that retuning the hint cannot silently retune a warning about the reader's saved
-place. It carries `role="status"`: a notice that removes itself and has no live region has a lifetime of
-zero on a screen reader.
+place. A notice that removes itself and has no live region has a lifetime of zero on a screen reader, so
+its text is also announced through the viewer's one live region (below); the visible box is `aria-hidden`.
 
-> **Open item — the two live regions are *mounted*, not filled.** This notice and the opening hint above
-> are both `role="status"` elements that are inserted into the DOM **with their text already in them**, and
-> a live region created that way is frequently never announced: the assistive tech has nothing to observe a
-> *change* against. They can also arrive in the same commit (a fresh entry into a changed book raises both),
-> where two polite regions appearing at once are serialised or one is dropped. Their *placement* does not
-> collide — bottom-centre pill vs `top:56px` / in-column row, measured — so this is an announcement defect,
-> not a layout one. The remedy is one permanently-mounted region whose **content** is swapped, which is a
-> change to both notices at once and interacts with the paper layer (§2.7: the grain is an `::after` at
-> `inset:0` on each notice's own box, so an always-present empty wrapper would lay a wash over the artwork).
-> **No ruling covers that trade, so it is left open rather than guessed at.**
+> **Closed (item ba, 2026-10-18) — one permanently-mounted live region.** The two notices used to be
+> `role="status"` boxes inserted **with their text already in them**, which is frequently never announced,
+> and a fresh entry into a changed book raised both in one commit. Now one always-mounted `sr-only`
+> `role="status"` element (`data-role="viewer-status"`, `ViewerPage.tsx`) holds the change notice, the
+> opening hint and the page-loading message (`PageLoadingIndicator` no longer carries its own role), and only
+> its **content** changes. The paper-layer concern (§2.7) does not arise: the region is a separate node,
+> not either notice's box, so it has no grain `::after` and paints nothing.
 
 **Armed once per _book_ — not per entry (E-45 §1 REVISION).** The first cut reused `open()`'s `continuing`
 judgement here, so 다음 권 읽기 inherited whatever answer volume 1 had given. That is right for the opening

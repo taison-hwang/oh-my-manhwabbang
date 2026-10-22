@@ -63,7 +63,7 @@ describe('Ctrl/Cmd + K', () => {
   })
 
   it('works from inside the viewer', async () => {
-    useViewerStore.getState().open('bk', { pageCount: 10 })
+    useViewerStore.getState().open('bk', { pageCount: 10, fit: 'height' })
     render(<Harness />)
     await userEvent.keyboard('{Control>}k{/Control}')
     expect(useUiStore.getState().overlays).toEqual(['palette'])
@@ -74,7 +74,7 @@ describe('Ctrl/Cmd + K', () => {
 describe('the Esc ladder', () => {
   it('closes the topmost overlay before touching the viewer', async () => {
     const onExitViewer = vi.fn()
-    useViewerStore.getState().open('bk', { pageCount: 10 })
+    useViewerStore.getState().open('bk', { pageCount: 10, fit: 'height' })
     useUiStore.getState().openOverlay('settings')
     useUiStore.getState().openOverlay('palette')
     render(<Harness onExitViewer={onExitViewer} />)
