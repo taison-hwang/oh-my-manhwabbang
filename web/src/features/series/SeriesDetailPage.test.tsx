@@ -32,6 +32,7 @@ import {
   VOLUME_ROW_GAP_PX,
   VOLUME_ROW_GRID_CLASS,
 } from './VolumeRow'
+import { failUnhandled } from '../../test/msw'
 
 /**
  * Screen 2 end to end against MSW: prd UI-002 / FR-LIB-009 (the volume list and
@@ -50,7 +51,7 @@ function at<T>(items: readonly T[], index: number): T {
 const server = setupServer()
 
 beforeAll(() => {
-  server.listen({ onUnhandledRequest: 'error' })
+  server.listen({ onUnhandledRequest: failUnhandled })
 
   // jsdom/undici interop, not a product concern: React Router v7 builds a
   // `Request` per navigation and hands it a jsdom `AbortSignal`, which undici's
@@ -420,7 +421,7 @@ describe('series header (prd UI-002, ui-spec §5.1)', () => {
       expect(useSeriesDirStore.getState().bySeries[SERIES_ID]).toBe('rtl')
     })
     // Nothing was written to the server: PUT /api/settings has no handler, and
-    // `onUnhandledRequest: 'error'` would have failed the test if one fired.
+    // `src/test/msw.ts` would have failed the test if one fired.
   })
 })
 

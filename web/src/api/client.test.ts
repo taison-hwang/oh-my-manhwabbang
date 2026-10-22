@@ -66,11 +66,12 @@ import {
   settings,
 } from './fixtures'
 import { pageThumbUrl, resetBasePath, seriesCoverUrl, setBasePath } from './urls'
+import { failUnhandled } from '../test/msw'
 
 const server = setupServer()
 
 beforeAll(() => {
-  server.listen({ onUnhandledRequest: 'error' })
+  server.listen({ onUnhandledRequest: failUnhandled })
 })
 afterEach(() => {
   server.resetHandlers()

@@ -41,6 +41,7 @@ import { LibraryPage } from './features/library/LibraryPage'
 import { useShellData } from './lib/shellData'
 import { ShellDataProvider } from './router'
 import { useUiStore } from './store/ui'
+import { failUnhandled } from './test/msw'
 
 const server = setupServer()
 
@@ -55,7 +56,7 @@ function page(total: number): SeriesListResponse {
 }
 
 beforeAll(() => {
-  server.listen({ onUnhandledRequest: 'error' })
+  server.listen({ onUnhandledRequest: failUnhandled })
 })
 beforeEach(() => {
   seriesQueries = []

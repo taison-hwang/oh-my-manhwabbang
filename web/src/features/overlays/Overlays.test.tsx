@@ -20,6 +20,7 @@ import type { Settings } from '../../api/types'
 import { resetBasePath } from '../../api/urls'
 import { useUiStore } from '../../store/ui'
 import { Overlays } from './Overlays'
+import { failUnhandled } from '../../test/msw'
 
 /**
  * Overlays are **state, not routes** (impl-plan §5.2): `store/ui.ts` owns the
@@ -54,11 +55,11 @@ const SETTINGS_PATHS = [
  * `seriesRequests` pattern of `features/library/library.test.tsx`.
  *
  * A recorder is the only thing that can assert about a request that *did not*
- * happen. `onUnhandledRequest: 'error'` cannot: `msw/node` fails the **request**
- * — the fetch rejects and React Query swallows it into an error state nothing
- * here reads — so it never fails the test. Measured, not assumed: adding
- * `useSettings()` to `Overlays.tsx` left this file at 5/5 and exit 0 while MSW
- * printed `intercepted a request without a matching request handler` to stderr.
+ * happen. The unhandled-request check (`src/test/msw.ts`) fails a test for a
+ * request no handler answers, but a settings request this file's handlers do
+ * answer is invisible to it — and before that check, `onUnhandledRequest:
+ * 'error'` failed only the request: adding `useSettings()` to `Overlays.tsx`
+ * left this file at 5/5 while MSW printed the warning to stderr.
  */
 let settingsRequests: string[] = []
 
@@ -105,7 +106,7 @@ async function flushPendingRequests(): Promise<void> {
 }
 
 beforeAll(() => {
-  server.listen({ onUnhandledRequest: 'error' })
+  server.listen({ onUnhandledRequest: failUnhandled })
 })
 afterEach(() => {
   server.resetHandlers()

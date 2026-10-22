@@ -4,9 +4,9 @@ import { fileURLToPath } from 'node:url'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vitest/config'
 
-// A shared setup file (jest-dom matchers, MSW server lifecycle) is optional:
-// no work package owns one yet, and referencing a file that does not exist
-// makes every vitest run fail before it starts. Wire it in when it appears.
+// The shared setup file makes an MSW request no handler answers fail its test
+// (src/test/msw.ts). It stays optional here because referencing a file that
+// does not exist makes every vitest run fail before it starts.
 const setupFile = fileURLToPath(new URL('./src/test/setup.ts', import.meta.url))
 
 export default defineConfig({

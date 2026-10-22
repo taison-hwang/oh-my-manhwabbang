@@ -16,6 +16,7 @@ import { queryKeys, useAuthStatus, useLogin, useRoots, useScanStatus, useSeriesL
 import { resetBasePath } from '../../api/urls'
 import { DEFAULT_SHELL_DATA, ShellDataContext, type ShellData } from '../../lib/shellData'
 import { useUiStore } from '../../store/ui'
+import { failUnhandled } from '../../test/msw'
 
 /**
  * Ruling E-17 — **in-app re-authentication**.
@@ -42,7 +43,7 @@ import { useUiStore } from '../../store/ui'
 const server = setupServer()
 
 beforeAll(() => {
-  server.listen({ onUnhandledRequest: 'error' })
+  server.listen({ onUnhandledRequest: failUnhandled })
 
   // jsdom/undici interop, not a product concern — the same workaround
   // `appShell.test.tsx` documents: React Router builds a `Request` per navigation

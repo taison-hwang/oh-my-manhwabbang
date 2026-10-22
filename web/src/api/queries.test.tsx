@@ -68,11 +68,12 @@ import {
 } from './queries'
 import type { ScanStatus } from './types'
 import { resetBasePath } from './urls'
+import { failUnhandled } from '../test/msw'
 
 const server = setupServer()
 
 beforeAll(() => {
-  server.listen({ onUnhandledRequest: 'error' })
+  server.listen({ onUnhandledRequest: failUnhandled })
 })
 afterEach(() => {
   server.resetHandlers()

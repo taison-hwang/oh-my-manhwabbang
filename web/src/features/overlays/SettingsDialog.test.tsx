@@ -25,6 +25,7 @@ import type { Root, ScanStatus, ServerSettings, Settings, SettingsUpdate } from 
 import { resetBasePath } from '../../api/urls'
 import { useUiStore } from '../../store/ui'
 import { SettingsDialog } from './SettingsDialog'
+import { failUnhandled } from '../../test/msw'
 
 /**
  * 설정 (prd UI-004, ui-spec §8.6, WP-10 acceptance 6 and 9).
@@ -58,7 +59,7 @@ interface Recorded {
 let recorded: Recorded
 
 beforeAll(() => {
-  server.listen({ onUnhandledRequest: 'error' })
+  server.listen({ onUnhandledRequest: failUnhandled })
 })
 afterEach(() => {
   server.resetHandlers()
@@ -127,10 +128,10 @@ beforeEach(() => {
       recorded.purges.push(new URL(request.url).searchParams.get('kind'))
       return HttpResponse.json({ deleted_files: 4_935, freed_bytes: 285_000_000 })
     }),
-    // Amendment A-11. Registered for every test, not only the A-11 block: MSW
-    // runs with `onUnhandledRequest: 'error'`, so a component that fired one of
-    // these while the capability is off would fail the *gate* tests loudly
-    // rather than silently no-op.
+    // Amendment A-11. Registered for every test, not only the A-11 block: a
+    // request no handler answers fails its test (`src/test/msw.ts`), so a
+    // component that fired one of these while the capability is off would
+    // fail the *gate* tests loudly rather than silently no-op.
     http.post(`${ORIGIN}/api/roots`, async ({ request }) => {
       recorded.rootPosts.push(await request.json())
       return HttpResponse.json(rootEntry, {

@@ -48,6 +48,7 @@ import { EDGE_STRIP_PX, POINTER_IDLE_MS, ViewerPage } from './ViewerPage'
 import { OVERRIDE_CHIP_LABEL } from './ViewerTopBar'
 import { THUMB_SLOT_PX, THUMB_SLOT_TOUCH_PX } from './ThumbnailStrip'
 import { LOADING_INDICATOR_DELAY_MS } from './useDelayedFlag'
+import { failUnhandled } from '../../test/msw'
 
 /**
  * Screen 3 end to end against MSW — the composition WP-11 is actually judged on
@@ -597,7 +598,7 @@ function decodeShownPages(): void {
 }
 
 beforeAll(() => {
-  server.listen({ onUnhandledRequest: 'error' })
+  server.listen({ onUnhandledRequest: failUnhandled })
   // jsdom/undici interop, not a product concern: React Router builds a
   // `Request` per navigation and hands it a jsdom `AbortSignal`, which undici's
   // `instanceof` check rejects. Both are native and consistent in a browser.
@@ -2429,10 +2430,10 @@ describe('a book that cannot be opened', () => {
  * The extra handlers the *series* screen needs, on top of `handlers()`.
  *
  * `SeriesHeader` reads `useRoots()` for the 원본 경로 and `useCoverImage`, and
- * the page polls `useScanStatus`. Without them MSW fails the **request** rather
- * than the test (`onUnhandledRequest: 'error'` is not a test-level assertion),
- * and the screen renders in a degraded shape that would still let a wrong
- * assertion pass.
+ * the page polls `useScanStatus`. Without them the request fails, the screen
+ * renders in a degraded shape, and the test goes red only through
+ * `src/test/msw.ts` — naming the endpoint, not the wrong assertion that shape
+ * would otherwise have let pass.
  */
 function seriesScreenHandlers() {
   return [

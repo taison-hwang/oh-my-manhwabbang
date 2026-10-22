@@ -10,6 +10,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { ORIGIN, rootEntry, rootsResponse } from '../../api/fixtures'
 import { resetBasePath } from '../../api/urls'
 import { AddRootForm } from './AddRootForm'
+import { failUnhandled } from '../../test/msw'
 
 /**
  * 루트 추가 — amendment **A-11** (ruling E-26), picker and hot add by **A-12**
@@ -46,7 +47,7 @@ const server = setupServer(
 )
 
 beforeAll(() => {
-  server.listen({ onUnhandledRequest: 'bypass' })
+  server.listen({ onUnhandledRequest: failUnhandled })
 })
 afterEach(() => {
   server.resetHandlers()

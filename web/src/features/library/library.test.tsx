@@ -28,6 +28,7 @@ import { matchRange } from '../../lib/chosung'
 import { seriesCardDomId, useUiStore } from '../../store/ui'
 import { LibraryPage } from './LibraryPage'
 import { LIST_CARD_CLASS } from './useLibrary'
+import { failUnhandled } from '../../test/msw'
 
 /**
  * The Home / Library screen against MSW (impl-plan §6.1, WP-09).
@@ -546,7 +547,7 @@ function lastSeriesRequest(): URLSearchParams {
 }
 
 beforeAll(() => {
-  server.listen({ onUnhandledRequest: 'error' })
+  server.listen({ onUnhandledRequest: failUnhandled })
 })
 afterEach(() => {
   server.resetHandlers()
@@ -1849,8 +1850,9 @@ describe('view toggle (FR-LIB-002)', () => {
  *     values there whether or not a `PUT` went out. The only observable
  *     difference is the request, so `settingsUpdates` — the same recorder
  *     pattern as `seriesRequests` — is the subject.
- *  2. **`onUnhandledRequest: 'error'` is not an assertion.** `msw/node` fails
- *     the *request*, not the test, and the handler here answers `PUT` anyway.
+ *  2. **The unhandled-request check cannot see it.** It fails a test only for
+ *     a request no handler answers (`src/test/msw.ts`), and the handler here
+ *     answers `PUT` anyway.
  *
  * And an empty recorder proves nothing on its own, so the negative case carries
  * its own positive control, through the same recorder and the same flush.
@@ -1978,8 +1980,8 @@ describe('settings write-back (A-5)', () => {
    * tab could silently revert the other tab's library preferences on the server.
    *
    * The subject is the request list, for the same two reasons the block header
-   * gives: hydration moves the store either way, and `onUnhandledRequest` fails
-   * requests rather than tests.
+   * gives: hydration moves the store either way, and the unhandled-request
+   * check never sees a `PUT` the handler answers.
    */
   it('re-hydrates from a refetch carrying new values instead of writing the old ones back', async () => {
     scenario.settings = { ...settingsFixture, ...REMOTE }

@@ -13,6 +13,7 @@ import { continueResponse, ORIGIN, seriesSummary, SERIES_ID } from '../../api/fi
 import type { ContinueItem, SeriesSummary } from '../../api/types'
 import { resetBasePath } from '../../api/urls'
 import { CommandPalette } from './CommandPalette'
+import { failUnhandled } from '../../test/msw'
 
 /**
  * FR-LIB-011 / FR-LIB-006 (WP-10 acceptance 5).
@@ -35,7 +36,7 @@ const server = setupServer()
 let seriesRequests: string[] = []
 
 beforeAll(() => {
-  server.listen({ onUnhandledRequest: 'error' })
+  server.listen({ onUnhandledRequest: failUnhandled })
   const Base = globalThis.Request
   class SignallessRequest extends Base {
     constructor(input: RequestInfo | URL, init?: RequestInit) {

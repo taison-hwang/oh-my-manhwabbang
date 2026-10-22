@@ -11,6 +11,7 @@ import { errorEnvelope, ORIGIN } from '../../api/fixtures'
 import type { BrowseEntry, BrowseResponse } from '../../api/types'
 import { resetBasePath } from '../../api/urls'
 import { FolderPicker } from './FolderPicker'
+import { failUnhandled } from '../../test/msw'
 
 /**
  * 폴더 찾아보기 — amendment **A-12**, ruling **E-40** (ui-spec §8.6 §1).
@@ -75,7 +76,7 @@ function defaultHandler() {
 const server = setupServer(defaultHandler())
 
 beforeAll(() => {
-  server.listen({ onUnhandledRequest: 'error' })
+  server.listen({ onUnhandledRequest: failUnhandled })
 })
 afterEach(() => {
   server.resetHandlers(defaultHandler())
