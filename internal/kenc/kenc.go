@@ -95,6 +95,37 @@ const (
 	EncUnknown = "unknown"
 )
 
+// suspicion orders the labels from the one an operator most needs to see to
+// the one that needs no attention at all: a name that may be wrong, then one
+// whose producer lied, then the two legacy readings, then plain UTF-8.
+//
+// It is the only copy of the order. internal/source folds a book's entries with
+// it and internal/httpapi folds a series' books with it (`SeriesDetail.encoding`,
+// ruling E-56), so the two levels cannot come to disagree about which label is
+// worse.
+var suspicion = [...]string{EncUnknown, EncUTF8Invalid, EncCP932, EncCP949, EncUTF8}
+
+// MostSuspect returns the most suspect of labels, or "" when none of them is a
+// label this package reports — an empty list, or nothing but "".
+//
+// "" is not a label: it is how a caller says "no verdict" (a book whose listing
+// failed before any name was decoded), and a verdict is never invented from
+// its absence.
+func MostSuspect(labels ...string) string {
+	best := len(suspicion)
+	for _, l := range labels {
+		for rank, s := range suspicion {
+			if l == s && rank < best {
+				best = rank
+			}
+		}
+	}
+	if best == len(suspicion) {
+		return ""
+	}
+	return suspicion[best]
+}
+
 // replacement is U+FFFD, both the substitution the EUC-KR decoder emits for
 // unmappable bytes and the one used when repairing invalid UTF-8.
 const replacement = "�"

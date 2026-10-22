@@ -3,6 +3,8 @@ package source
 import (
 	"path"
 	"strings"
+
+	"shelf/internal/kenc"
 )
 
 // FR-IDX-006 and FR-IDX-011, implemented once for every book kind.
@@ -185,11 +187,23 @@ func ContentType(ext string) string {
 // `cp932` and `cp949` cannot both appear — the archive-level decision in
 // zipidx.resolveArchiveNames rewrites every legacy name to the one encoding it
 // settled on — but the fold is total anyway rather than relying on that.
+//
+// The order is kenc's, not a copy of it: the series level folds books with the
+// same kenc.MostSuspect (ruling E-56), and two lists would drift.
+//
+// A book with no entries at all is "utf-8". That is not a guess about names it
+// does not have — there is nothing to misread — and it keeps every successful
+// listing carrying a label, which the scanner's one-time relist depends on: an
+// ok book recorded without one is re-read on every scan (scanner.unchanged).
 func nameEncoding(seen map[string]int) string {
-	for _, enc := range []string{"unknown", "utf-8-invalid", "cp932", "cp949"} {
-		if seen[enc] > 0 {
-			return enc
+	labels := make([]string, 0, len(seen))
+	for enc, n := range seen {
+		if n > 0 {
+			labels = append(labels, enc)
 		}
 	}
-	return "utf-8"
+	if enc := kenc.MostSuspect(labels...); enc != "" {
+		return enc
+	}
+	return kenc.EncUTF8
 }

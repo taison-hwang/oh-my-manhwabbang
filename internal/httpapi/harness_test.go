@@ -684,12 +684,16 @@ func (e *env) seed(ctx context.Context) {
 		Kind: "zip", PageCount: int64(len(e.zipPages)), TotalBytes: 2048,
 		FileSize: zipSize, FileMtime: zipMtime,
 		ContentVersion: cvZip, DimsState: "partial", Status: "ok", ScanGen: 1,
+		// The folder series' two volumes disagree, so series_detail.json shows
+		// the fold of E-56: cp949 is more suspect than utf-8 and wins.
+		NameEncoding: "cp949",
 	}, {
 		ID: e.bookDirID, SeriesID: e.seriesFolderID, RootName: rootName, RelPath: bookDirPath,
 		DisplayName: "군계(軍鷄) 02권", SortKey: natsort.Key("군계(軍鷄) 02권"), Ord: 1,
 		Kind: "dir", PageCount: 2, TotalBytes: 1024,
 		FileSize: 0, FileMtime: fixedMtime.Unix(), DirFingerprint: "fp0001",
 		ContentVersion: cvDir, DimsState: "none", Status: "ok", ScanGen: 1,
+		NameEncoding: "utf-8",
 	}, {
 		ID: e.bookCloverID, SeriesID: e.seriesCloverID, RootName: rootName, RelPath: bookCloverPath,
 		DisplayName: "클로버 01권.zip", SortKey: natsort.Key("클로버 01권.zip"), Ord: 0,
@@ -719,6 +723,7 @@ func (e *env) seed(ctx context.Context) {
 		Kind: "pdf", PageCount: pdfPageCount, TotalBytes: 0,
 		FileSize: pdfSize, FileMtime: pdfMtime,
 		ContentVersion: cvPDF, DimsState: "none", Status: "ok", ScanGen: 1,
+		NameEncoding: "utf-8",
 	}}
 	for _, b := range books {
 		if err := w.UpsertBook(ctx, b); err != nil {

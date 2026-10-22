@@ -3510,6 +3510,88 @@ package.json에서 제거됐다.** 스크립트는 항상 exit 2로 죽었고 `-
 그러면 `tokens.test.ts`의 E-55 케이스 둘, `cascade.test.ts` 2건, `nameLang.test.tsx` 8건이
 죽는다 — 의도적으로, 그 자리에서.
 
+## E-56 — **`SeriesDetail.encoding`을 와이어에 싣는다. 어휘는 kenc의 다섯 라벨이다 (AMENDMENT A-16)** (사용자 결정 "계약을 코드 어휘에 맞춤", 2026-10-18) — BINDING
+
+**출처.** HANDOFF §5.7.12 항목 `be`. 16세션차 스펙 감사가 찾았다. `SeriesDetail.encoding`은 출하 이래
+**늘 `null`** 이었다. `internal/httpapi/series.go`가 `Encoding: nil`을 하드코딩했고, `index.db`에는 컬럼이
+없었고, 스캐너는 `res.nameEncoding`을 만들고 버렸다. 빠진 것은 배선만이 아니었다. 계약(`arch-backend.md`
+§7.5)이 약속한 `"utf-8" | "cp949" | "mixed" | null`과 kenc가 실제로 만드는 값은 **어휘부터 달랐다.**
+
+| | 값 |
+|---|---|
+| kenc가 만드는 것 (`internal/kenc/kenc.go` `Enc*`) | `utf-8` · `utf-8-invalid` · `cp949` · **`cp932`** · `unknown` |
+| 옛 계약 | `utf-8` · `cp949` · **`mixed`** · `null` |
+
+### 1. 결론
+
+- **와이어 값은 kenc의 다섯 라벨이고, 판정이 없으면 `null`이다.** `mixed`는 만드는 곳이 없어서 뺀다.
+  **사용자 결정은 여기까지다**(어휘를 코드에 맞춤, `mixed` 삭제).
+- **계약 개정 A-16이다.** arch §7.5의 `encoding` 타입이 `string | null`에서 닫힌 유니온 `NameEncoding | null`로
+  바뀌고, 값 하나(`mixed`)가 빠지고 셋(`utf-8-invalid`·`cp932`·`unknown`)이 더해진다. `impl-plan.md` §0.3의
+  A-16 행과 arch의 `AMENDMENT A-16` 표지가 이 판정을 가리킨다.
+- `cp932`도 다섯 값에 든다. 이 값은 HANDOFF §5.7.12가 쓰인 뒤에 생겼다(§4.4.1, 아카이브 단위
+  Shift_JIS 폴백). 그래서 그 절의 표에는 없지만 코드 어휘이고, 실데이터에 네 권이 있다(`海の御先` 세 권,
+  `天上天下 20`). "코드 어휘에 맞춤"에 포함된다고 **메인이 확인했다.**
+- 아래 셋(저장 단위, 시리즈 집계 규칙, v3 라벨 다시 읽기)은 사용자 결정이 아니라 **ea의 설계이고, 메인이 확인했다.**
+- **저장은 책 단위, 와이어는 시리즈 필드 하나다.** 저장 자리는 `books.name_encoding TEXT`(nullable)이고,
+  §4.4가 원래 "recorded per book so the UI can surface it"이라고 쓴 자리다. 와이어는 기존
+  `SeriesDetail.encoding` 하나만 쓴다.
+- **시리즈 값은 가장 의심스러운 라벨이다.** 순서는 `unknown` > `utf-8-invalid` > `cp932` > `cp949` > `utf-8`이다.
+  판정 없는 책(`""`·NULL)은 빼고, 모든 책이 판정 없음이면 `null`이다.
+- **schema v3와 한 번만 하는 라벨 다시 읽기.** `ALTER TABLE books ADD COLUMN name_encoding TEXT`를 쓴다.
+  `scanner.unchanged`는 라벨 없는 ok 책을 건너뛰지 않고, **재색인 없이 라벨만 다시 읽는다**(`relabel`).
+  자리가 그대로인 책은 `Writer.SetBookNameEncoding`으로 그 한 열만 쓴다.
+
+### 2. 근거
+
+- `unknown`이 다섯 값 가운데 가장 중요하다. `kenc.go`가 스스로 "the only value that means 'these characters
+  may be wrong'"이라고 적는 값인데, 옛 계약에는 이 값을 실을 이름이 없었다.
+- "가장 의심스러운 값"은 새로 만든 규칙이 아니다. 항목을 책으로 접는 `internal/source` `nameEncoding`이
+  이미 이 순서였다("The worst outcome wins … the thing an operator most needs to see"). 같은 순서를 한
+  단계 위, 책에서 시리즈로 접을 때 쓴다. **순서는 `kenc.suspicion`과 `kenc.MostSuspect` 한 곳에만 있다.**
+  `internal/source`와 `internal/httpapi`가 둘 다 이것을 부르므로 두 단계의 순서는 갈라질 수 없다.
+- 컬럼만 더하면 기존 라이브러리는 영원히 `null`로 남는다. `unchanged`가 (size, mtime)이 같은 ok 책을
+  열지 않기 때문이다. 그러면 `be` 결함이 그대로 산다. 그래서 라벨을 다시 읽어야 한다.
+- 다시 읽을 때는 행 전체가 아니라 그 한 열만 쓴다. 행 전체를 다시 쓰면, 읽어 둔 옛 `dims_state`가 썸네일
+  워커가 방금 잰 쪽 치수를 덮을 수 있다. 자리가 바뀐 책은 원래대로 행을 통째로 다시 쓴다. 목록 읽기가
+  실패하면 일반 경로로 떨어져 사유를 남긴다. 그러지 않으면 "ok인데 라벨 없음"으로 남아 스캔마다 다시 읽힌다.
+
+### 3. 대안과 기각 이유
+
+| 대안 | 기각 이유 |
+|---|---|
+| 옛 계약(`mixed`)을 유지하고 kenc 값을 거기에 매핑 | `mixed`를 만드는 곳이 없다. `unknown`이 들어갈 자리도 없다. 사용자가 반대 방향을 골랐다 |
+| 시리즈 값을 "갈렸으면 `mixed`"로 접기 | `unknown` 한 권을 평균에 묻는다. 진단 필드를 다시 무용하게 만든다 |
+| `BookSummary.encoding` 추가 | 쓰는 곳 없는 계약 확장이다. UI 표시는 이번 범위 밖이다. 저장이 책 단위라 나중에 필드 하나로 열린다 |
+| v3에서 전체 재색인 | 쪽 행 143만 개를 다시 쓰고 측정된 치수를 지운다(FR-VWR-004가 책을 열 때 다시 잰다). 단어 하나를 얻는 데 낼 비용이 아니다 |
+
+### 4. 검증
+
+- `TestEverySourceKind_labelsASuccessfulListing`이 "한 번만"을 지킨다. source 레지스트리를 돌면서 종류마다
+  성공한 목록 읽기가 빈 값 아닌 라벨을 내는지 보고, 케이스 없는 종류가 등록되면 실패한다. 한 종류라도 빠지면
+  그 종류의 책은 스캔마다 다시 읽힌다. nopdf 빌드의 PDF는 ok가 될 수 없으므로 E-39에 따라 이미 매번
+  다시 검사된다.
+- `contractcheck`의 `checkNameEncodings`는 kenc의 `Enc*`와 `types.ts`의 `NAME_ENCODINGS`를 **선언 대 선언**으로
+  비교한다. 옛 필드는 `string | null`이라 enum 규칙이 발화할 수 없었다. 골든 `series_detail.json`이 이제
+  `"cp949"`를 실으므로 값 쪽 enum 검사도 한 번 돈다. `types.ts`는 `encoding: NameEncoding | null`(닫힌 유니온)이다.
+- 비용은 업그레이드 후 첫 스캔 한 번이다. 책마다 중앙 디렉터리를 한 번 읽고, D-70 중첩 권은 안쪽 아카이브를
+  한 번 inflate한다(권당 ~500 ms). **쪽 페이로드 0, 쪽 행 쓰기 0**(D-70 중첩 권의 안쪽 아카이브 inflate는 위에 적은 대로 있다). 상한은 쪽 행 쓰기까지 하는 전체 스캔이다.
+  실 라이브러리 사본에서 **112초**였다(1,112시리즈 · 17,617권 · 143만 쪽). 두 번째 스캔부터는 평소의 무변경
+  재스캔(NFR-PRF-004, 0.50초)과 같다.
+- `--rebuild-index`, AC-005(인덱스 삭제 후 복구), AC-006(진행률, `user.db`)은 영향이 없다.
+
+### 5. 남은 공백
+
+- **실서버에서 첫 스캔을 재지 않았다.** 디스크가 사본과 다를 수 있다. 사용자가 처음 재시작하면 첫 스캔이
+  최대 ~2분 걸릴 수 있다(추정).
+- e2e는 와이어 값을 보는 단언이 없다. `e2e-assert.py`는 Shift_JIS 판정을 라벨이 아니라 쪽 이름으로 단언한다.
+  `encoding == "cp932"` 같은 단언은 아직 없다(`e2e-assert.py`의 울프가이 블록). 54가 합친 트리 라운드에서 추가할 예정이다(`be` 단언).
+- UI 표시("이름이 틀렸을 수 있음" 같은 진단)는 범위 밖이다. 타입만 맞췄다.
+- **되돌리기.** v3 rung은 append-only라 되돌리지 않는다. 컬럼이 남아도 무해하다. 단, **바이너리를 이전 릴리스로
+  되돌리면 v3 `index.db`를 `ErrSchemaTooNew`로 거부한다.** 그때는 `index.db*`를 지우거나 `--rebuild-index`로
+  다시 만든다. 파생 데이터라 손실은 없다(AC-005). 동작만 되돌리려면 `seriesEncoding`이 nil을 돌려주게 하고
+  `unchanged`의 라벨 줄을 지우면 된다.
+
 ## E-57 — **썸네일 큐 카운터 넷을 계약으로 올린다 (A-15)** (사용자 결정 "계약 승격", 2026-10-18) — BINDING
 
 **출처.** HANDOFF §5.6.1 항목 `D`. 이 문서의 "what was deliberately NOT ruled" #1이 판정을 남겨 두었다.

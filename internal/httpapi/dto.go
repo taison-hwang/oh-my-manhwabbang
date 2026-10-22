@@ -275,7 +275,9 @@ type SeriesSummary struct {
 type SeriesDetail struct {
 	SeriesSummary
 	Books []BookSummary `json:"books"`
-	// Encoding is diagnostics: "utf-8" | "cp949" | "mixed" | null.
+	// Encoding is diagnostics, ruling E-56: one of kenc's Enc* labels —
+	// "utf-8" | "utf-8-invalid" | "cp949" | "cp932" | "unknown" — folded over
+	// the series' books by seriesEncoding, or null when no book has a verdict.
 	Encoding *string `json:"encoding"`
 }
 

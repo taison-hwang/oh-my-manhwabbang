@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"shelf/internal/index"
+	"shelf/internal/kenc"
 	"shelf/internal/scanner"
 	"shelf/internal/thumbs"
 )
@@ -137,16 +138,33 @@ func (s *Server) handleSeriesDetail(w http.ResponseWriter, r *http.Request) erro
 	writeJSON(w, http.StatusOK, SeriesDetail{
 		SeriesSummary: toSeriesSummary(detail.SeriesRow),
 		Books:         books,
-		// `encoding` is diagnostics and is typed `string | null`. index.db has
-		// no column for it: arch §4.4 says the chosen encoding "is recorded per
-		// book", but the landed §3.5 schema (WP-03, frozen) carries no such
-		// column and source.Listing.NameEncoding is discarded at scan time.
-		// Reporting null — the contract's own "unknown" — is the honest
-		// answer; inventing a guess from decoded names would be worse than
-		// saying nothing. Recorded as proposed amendment A-9.
-		Encoding: nil,
+		Encoding:      seriesEncoding(detail.Books),
 	})
 	return nil
+}
+
+// seriesEncoding folds the books' name_encoding into the series' one label
+// (ruling E-56): the most suspect wins, by the same kenc order that folded each
+// book's entries, so a series with one `unknown` volume says `unknown` — the
+// value that means "these characters may be wrong" is the one an operator must
+// not have averaged away. A book without a verdict ("" — its listing failed
+// before any name was decoded, or it predates schema v3 and has not been
+// re-read yet) is left out rather than counted as anything; when no book has
+// one, the answer is null.
+//
+// The contract used to promise "mixed" here. Nothing ever produced it, and the
+// labels kenc does produce had no place on the wire; E-56 matched the contract
+// to the code rather than inventing a roll-up nobody had defined.
+func seriesEncoding(books []index.BookRow) *string {
+	labels := make([]string, 0, len(books))
+	for _, b := range books {
+		labels = append(labels, b.NameEncoding)
+	}
+	enc := kenc.MostSuspect(labels...)
+	if enc == "" {
+		return nil
+	}
+	return &enc
 }
 
 // handleSeriesCover is `GET /api/series/{sid}/cover` (arch §7.5, FR-THM-003).

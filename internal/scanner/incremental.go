@@ -85,6 +85,7 @@ func contentVersion(kind source.Kind, size, mtime int64, fingerprint string) str
 // unchanged decides whether a book can be skipped (arch §4.6).
 //
 //	status != 'ok'                              -> never skip, re-examine
+//	no name_encoding recorded                   -> not skipped: relabelled once
 //	archive / PDF   (size, mtime) both equal    -> skip, never open the file
 //	directory       fingerprint equal           -> skip, never re-enumerate
 //	full: true                                  -> never skip
@@ -112,7 +113,28 @@ func contentVersion(kind source.Kind, size, mtime int64, fingerprint string) str
 // — exactly the cost the 'unsupported' exception already accepted, and bounded
 // by a quantity that is small in any healthy library (57 of 11,261 books in the
 // real collection, 0.5%, none of which reads an entry payload: FR-IDX-002).
+//
+// The second line is ruling E-56. Schema v3 added books.name_encoding with
+// every existing row NULL, and an ok book is otherwise only ever re-read when
+// its file changes — so without this line the label of an unchanged library
+// would stay NULL, and `SeriesDetail.encoding` null, for ever. Such a book is
+// not re-indexed, though: fileUnchanged still holds, so indexUnit relabels it
+// (one listing, the label taken, every other column and every page row kept).
+// Every successful listing records a label, so this happens once per book on
+// the first scan after the upgrade and never again. An ok book that lands here
+// twice is a source kind that stopped labelling its listing, and
+// TestEverySourceKind_labelsASuccessfulListing is what catches that.
 func unchanged(u bookUnit, prior index.Book, full bool) bool {
+	if prior.NameEncoding == "" {
+		return false
+	}
+	return fileUnchanged(u, prior, full)
+}
+
+// fileUnchanged is unchanged without the label rule: the recorded answer was a
+// successful read and the file is the one it was read from. It is what lets a
+// book with no label be relabelled rather than re-indexed (E-56).
+func fileUnchanged(u bookUnit, prior index.Book, full bool) bool {
 	if full {
 		return false
 	}

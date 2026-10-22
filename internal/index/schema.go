@@ -4,7 +4,7 @@ package index
 // index.db stamped with a *higher* number was written by a newer SHELF and is
 // refused (ErrSchemaTooNew) rather than silently mis-read; a lower number is
 // migrated forward through the ladder below.
-const schemaVersion = 2
+const schemaVersion = 3
 
 // idVersion pins the identifier scheme of arch-backend §3.4. It is duplicated
 // here rather than imported from internal/ids on purpose: the storage layer must
@@ -36,6 +36,7 @@ type migration struct {
 var migrations = []migration{
 	{to: 1, sql: schemaV1},
 	{to: 2, sql: schemaV2},
+	{to: 3, sql: schemaV3},
 }
 
 // schemaV1 is the DDL of arch-backend §3.5, verbatim.
@@ -210,6 +211,24 @@ ALTER TABLE books_v2 RENAME TO books;
 CREATE INDEX IF NOT EXISTS ix_books_series ON books(series_id, ord);
 CREATE INDEX IF NOT EXISTS ix_books_gen    ON books(scan_gen);
 CREATE INDEX IF NOT EXISTS ix_books_status ON books(status) WHERE status <> 'ok';
+`
+
+// schemaV3 adds books.name_encoding: the label kenc settled on for the book's
+// entry names (arch §4.4), folded over its entries by internal/source — one of
+// kenc's Enc* constants, or NULL for "no verdict" (ruling E-56).
+//
+// arch §4.4 always said the encoding "is recorded per book so the UI can
+// surface it"; the scanner computed it and dropped it, and `SeriesDetail.encoding`
+// was a hard-coded null. This is the column that was missing.
+//
+// A plain ADD COLUMN, so every existing row reads NULL. That is a migration
+// with a consequence, and it is handled where it bites: scanner.unchanged
+// refuses to skip an `ok` book whose label is NULL, so the first scan after the
+// upgrade re-reads each book's directory once — never a page payload — and the
+// column is full from then on. Without that rule an unchanged file would never
+// be opened again and the field would stay null for ever, which is the defect.
+const schemaV3 = `
+ALTER TABLE books ADD COLUMN name_encoding TEXT;
 `
 
 // dropAllSQL removes every object schemaV1 creates. It backs Reset, the

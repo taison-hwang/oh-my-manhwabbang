@@ -637,3 +637,28 @@ func FuzzArchiveFallback(f *testing.F) {
 		}
 	})
 }
+
+// MostSuspect is the one order both folds use — entries into a book
+// (internal/source) and books into a series (internal/httpapi), ruling E-56.
+func TestMostSuspect_ordersEveryLabelAndIgnoresNonLabels(t *testing.T) {
+	t.Parallel()
+	order := []string{kenc.EncUnknown, kenc.EncUTF8Invalid, kenc.EncCP932, kenc.EncCP949, kenc.EncUTF8}
+	for i, worse := range order {
+		for _, better := range order[i+1:] {
+			if got := kenc.MostSuspect(better, worse); got != worse {
+				t.Errorf("MostSuspect(%q, %q) = %q, want %q", better, worse, got, worse)
+			}
+			if got := kenc.MostSuspect(worse, better); got != worse {
+				t.Errorf("MostSuspect(%q, %q) = %q, want %q (argument order must not matter)", worse, better, got, worse)
+			}
+		}
+	}
+	for _, none := range [][]string{nil, {""}, {"", ""}, {"mixed"}, {"UTF-8"}} {
+		if got := kenc.MostSuspect(none...); got != "" {
+			t.Errorf("MostSuspect(%q) = %q, want \"\" (no verdict)", none, got)
+		}
+	}
+	if got := kenc.MostSuspect("", kenc.EncCP949, "mixed"); got != kenc.EncCP949 {
+		t.Errorf("MostSuspect ignoring non-labels = %q, want cp949", got)
+	}
+}

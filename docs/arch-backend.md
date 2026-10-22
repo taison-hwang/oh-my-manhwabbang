@@ -534,6 +534,8 @@ CREATE TABLE IF NOT EXISTS meta (
     value  TEXT NOT NULL
 );
 -- rows: schema_version='1', id_version='shelf-id/1', app_version, created_at
+--   (index.db is at schema_version '3': v2 added books.inner_path, v3 added
+--   books.name_encoding — ruling E-56. The DDL below is the current shape.)
 
 CREATE TABLE IF NOT EXISTS roots (
     name            TEXT PRIMARY KEY,       -- config roots[].name, the identity anchor
@@ -615,6 +617,12 @@ CREATE TABLE IF NOT EXISTS books (
         -- 'unsupported'         PDF in a nopdf build, or an unknown method
     error           TEXT,                   -- human-readable, shown in the UI
     scan_gen        INTEGER NOT NULL,
+    name_encoding   TEXT,                   -- kenc's label for the entry names (§4.4),
+                                            --   folded over the book's entries:
+                                            --   'utf-8' | 'utf-8-invalid' | 'cp949' |
+                                            --   'cp932' | 'unknown'; NULL = no verdict
+                                            --   (listing failed first, or a row from
+                                            --   before v3 not yet re-read). E-56
     UNIQUE (root_name, rel_path, inner_path)
 );
 CREATE INDEX IF NOT EXISTS ix_books_series ON books(series_id, ord);
@@ -1038,7 +1046,7 @@ func DecodeEntryName(raw []byte, utf8Flag bool) (name string, enc string) {
 
 So on this collection step 3 fires cleanly 14,630 times out of 14,630 and AC-002 holds. Step 2 costs nothing here but protects the many flagless-yet-UTF-8 archives produced by modern tools. (Across *all* 33,456 flagless entries, 18,826 were valid UTF-8 — those are the pure-ASCII `001.jpg` names, which step 2 also handles correctly.)
 
-The chosen encoding is recorded per book so the UI can surface it, and `pages.name` stores the **decoded** string. Page access itself never needs the name again — it uses offsets — but the raw bytes are kept on `archive.Entry.RawName` for the archive-level pass below.
+The chosen encoding is recorded per book so the UI can surface it, and `pages.name` stores the **decoded** string. **Ruling E-56** made that true: `books.name_encoding` holds the book's label — the entries folded by `kenc.MostSuspect`, the most suspect label winning — and `SeriesDetail.encoding` (§7.5) folds the books the same way. Before it, the scanner computed the label and dropped it, and the field was a hard-coded `null`. Page access itself never needs the name again — it uses offsets — but the raw bytes are kept on `archive.Entry.RawName` for the archive-level pass below.
 
 #### 4.4.1 Where the per-entry rule stops: Shift_JIS (extends FR-IDX-008)
 
@@ -1151,6 +1159,17 @@ Reading progress recorded against the *container* does not move to a chapter, an
 * **Any book whose recorded `status` is not `'ok'`** — never skipped. It costs one open plus one
   central-directory read per non-ok book per scan (57 of 11,261 books in the real collection: 0.5%), reads no
   entry payload (FR-IDX-002), and is exactly the cost the `'unsupported'` exception already accepted. *(E-39.)*
+* **An `'ok'` book with no `name_encoding`** — not skipped, but not re-indexed either: it is *relabelled
+  once*. Schema v3 added the column NULL for every existing row, and an `ok` book whose file has not changed
+  is otherwise never opened again, so without this line the label of an existing library would stay NULL
+  for ever. When the file is unchanged the book is listed for its label alone: a book that has not moved
+  gets that one column written (`Writer.SetBookNameEncoding`), and its other columns, its page rows and the
+  page dimensions the thumbnail worker measured into them are left as they are; one that moved is rewritten
+  from its prior row as any moved skipped book is. A listing that no longer succeeds falls through to the
+  ordinary re-index, which records why. Every successful listing records a label (`internal/source`'s
+  tests hold every registered kind to it), so the cost is one listing per book on the first scan after the
+  upgrade — a central-directory read, plus one inflate of the inner archive for a D-70 nested volume; no
+  entry payload, no page rows written — and nothing on any scan after it. *(E-56.)*
 * **Archive and PDF books** — skip entirely when `stat.Size() == books.file_size && stat.ModTime().Unix() == books.file_mtime`. The central directory is not read, `pages` rows are left untouched, `scan_gen` is stamped forward. This is the whole of NFR-PRF-004.
 * **Directory books** — `stat` on a directory does not change when a nested file changes, so we compute a **fingerprint** over one `os.ReadDir` of the book directory: FNV-1a-64 over the natural-sorted tuples `(name, size, mtimeUnix, isDir)` of its *direct* children, rendered as 16 hex chars. Unchanged fingerprint → skip page re-enumeration.
 * **Series level** — the same fingerprint over the series directory's direct children decides whether `collectBooks` re-runs. Unchanged → we still descend to let each book run its own cheap check, because a nested archive can change without the series directory's fingerprint moving.
@@ -1544,7 +1563,7 @@ Measured contributions: base process + sqlite ≈ 33 MiB RSS; pdfium pool +43 Mi
 
 The frontend is built against this section in parallel with the backend. It is binding.
 
-> **Binding as amended.** The contract is this section **plus amendments A-1…A-11** in `impl-plan.md` §0.3
+> **Binding as amended.** The contract is this section **plus amendments A-1…A-16** in `impl-plan.md` §0.3
 > (D-47). Amendments in force: **A-4** `GET /api/series?progress=any|reading|done|unread`; **A-5**
 > `Settings.library_scope: string`; **A-6** default `w` on `/cover` and `/thumbs/{n}` is **120**
 > (`widths[0]` under A-1's `[120, 240, 400, 640]`); **A-8** `GET /api/series?scope=all|added` backed by
@@ -1554,8 +1573,14 @@ The frontend is built against this section in parallel with the backend. It is b
 > and `DELETE /api/roots/{name}` writing the `roots:` list of that file, gated by the new
 > `server.allow_root_editing` and adopted only at restart, with `ErrorCode` gaining `forbidden` and
 > `Settings.server` gaining `root_editing_enabled` and `config_changed_on_disk` (§7.2, §7.4, §7.8, §3.2,
-> §12 OQ-3, ruling **E-26**). **A-7** freezes everything else verbatim, and requires this table to be
-> updated before anything else moves — which is what A-8, A-9, A-10 and A-11 did.
+> §12 OQ-3, ruling **E-26**); **A-12** `GET /api/browse` and a `POST /api/roots` that opens the root it wrote,
+> with `server.browse_bases` (§7.4, §3.2, ruling **E-40**); **A-13** `DELETE /api/roots/{name}` moves the
+> adopted digest back (§7.4, ruling **E-41**); **A-14** `ProgressUpdate.stale_seen?` and a `page_count` that an
+> unacknowledged write preserves (§7.6, ruling **E-45**); **A-15** `verbose.thumbs.{cover_depth,page_depth,
+> active,inflight}` of `GET /api/health?verbose=1` (§7.4, ruling **E-57**); **A-16** `SeriesDetail.encoding:
+> NameEncoding | null`, kenc's five labels, `mixed` gone (§7.5, ruling **E-56**). **A-7** freezes everything
+> else verbatim, and requires this table to be updated before anything else moves — which is what A-8
+> through A-16 did.
 > Rulings **E-14** (the `series.status` fold, §3.5/§7.3) and **E-15** (`Settings.library_sort` is the closed
 > FR-LIB-004 set, §7.8) are *sharpenings*, not amendments: they narrow a type to the values the server
 > already produced and accepted, so no client that was correct becomes incorrect.
@@ -2267,10 +2292,20 @@ plus `series_count` per root from `GET /api/roots` (§7.4), which is unchanged.
 // 200
 interface SeriesDetail extends SeriesSummary {
   books: BookSummary[];         // natural-sorted by ord
-  encoding: string | null;      // "utf-8" | "cp949" | "mixed" | null — diagnostics
+  encoding: NameEncoding | null; // AMENDMENT A-16 (ruling E-56). diagnostics — see below
 }
+type NameEncoding = "utf-8" | "utf-8-invalid" | "cp949" | "cp932" | "unknown";
 ```
 `404 not_found` for an unknown `sid`.
+
+**`encoding` — AMENDMENT A-16 (ruling E-56).** The vocabulary is `internal/kenc`'s own labels (§4.4, §4.4.1), and the
+series value is the **most suspect** of its books' `books.name_encoding`, in kenc's one order —
+`unknown` > `utf-8-invalid` > `cp932` > `cp949` > `utf-8` — the same fold that turned each book's
+entries into its label. A book with no verdict is left out; `null` means no book has one. `unknown` is the
+value that means "these characters may be wrong", so it is the one a fold must never average away.
+~~`"utf-8" | "cp949" | "mixed" | null`~~ was the contract until E-56: nothing produced `mixed`, and
+`utf-8-invalid`, `cp932` and `unknown` — which the scanner did produce — had no place on the wire.
+`contractcheck` compares `NAME_ENCODINGS` in `types.ts` with kenc's `Enc*` constants.
 
 #### `GET /api/series/{sid}/cover`
 

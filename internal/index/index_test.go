@@ -130,6 +130,8 @@ type seedBook struct {
 	// "unsupported"). Empty means "ok", so every fixture written before broken
 	// books mattered keeps its meaning.
 	status string
+	// encoding is books.name_encoding (ruling E-56); empty writes NULL.
+	encoding string
 }
 
 // seed writes a whole small library through the single-writer API.
@@ -196,6 +198,7 @@ func seed(t *testing.T, idx *index.DB, rootName string, all []seedSeries) {
 				PageCount: int64(b.pages), TotalBytes: int64(b.pages) * 1000,
 				FileSize: int64(b.pages) * 900, FileMtime: s.mtime,
 				ContentVersion: "cv" + b.id, Status: bookStatus, ScanGen: 1,
+				NameEncoding: b.encoding,
 			}
 			if bk.Kind == "" {
 				bk.Kind = "zip"
@@ -296,8 +299,8 @@ func TestOpen_freshDirectory_appliesSchemaInWALMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SchemaVersion: %v", err)
 	}
-	if got != 2 {
-		t.Errorf("schema version = %d, want 2", got)
+	if got != 3 {
+		t.Errorf("schema version = %d, want 3", got)
 	}
 	if v, ok, _ := idx.Meta(ctx, "id_version"); !ok || v != "shelf-id/1" {
 		t.Errorf("meta id_version = %q (present %v), want shelf-id/1", v, ok)
@@ -317,7 +320,7 @@ func TestOpen_schema_matchesArchDDL(t *testing.T) {
 		"meta":     {"key", "value"},
 		"roots":    {"name", "path", "label", "enabled", "series_count", "book_count", "page_count", "total_bytes", "last_scan_start", "last_scan_end", "last_scan_error"},
 		"series":   {"id", "root_name", "rel_path", "display_name", "sort_key", "search_key", "choseong_key", "kind", "book_count", "page_count", "total_bytes", "mtime", "added_at", "cover_kind", "cover_book_id", "cover_page_no", "cover_rel_path", "status", "error", "scan_gen"},
-		"books":    {"id", "series_id", "root_name", "rel_path", "inner_path", "display_name", "sort_key", "ord", "kind", "page_count", "total_bytes", "file_size", "file_mtime", "dir_fingerprint", "content_version", "dims_state", "status", "error", "scan_gen"},
+		"books":    {"id", "series_id", "root_name", "rel_path", "inner_path", "display_name", "sort_key", "ord", "kind", "page_count", "total_bytes", "file_size", "file_mtime", "dir_fingerprint", "content_version", "dims_state", "status", "error", "scan_gen", "name_encoding"},
 		"pages":    {"book_id", "page_no", "name", "entry_path", "ext", "size", "comp_size", "method", "local_hdr_off", "crc32", "mtime", "width", "height"},
 		"scan_log": {"id", "ts", "run_id", "level", "root_name", "rel_path", "message"},
 	}
@@ -398,6 +401,107 @@ func TestOpen_futureSchemaVersion_isRefused(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "99") {
 		t.Errorf("error %q does not name the offending version", err)
+	}
+}
+
+// Ruling E-56: books.name_encoding round-trips, and "" is stored as NULL rather
+// than as an empty label — NULL is "no verdict", which is what the scanner's
+// one-time relist keys on.
+func TestBooks_nameEncoding_roundTripsAndEmptyIsNull(t *testing.T) {
+	t.Parallel()
+	idx, _, dir := newDBs(t)
+	seed(t, idx, "manga", []seedSeries{{
+		id: "s1", name: "天上天下", sortKey: "a", mtime: 1, addedAt: 1,
+		books: []seedBook{
+			{id: "b1", name: "20.zip", ord: 0, pages: 3, encoding: "cp932"},
+			{id: "b2", name: "21.zip", ord: 1, pages: 3},
+		},
+	}})
+
+	ctx := t.Context()
+	for id, want := range map[string]string{"b1": "cp932", "b2": ""} {
+		got, err := idx.GetBook(ctx, id)
+		if err != nil {
+			t.Fatalf("GetBook %s: %v", id, err)
+		}
+		if got.NameEncoding != want {
+			t.Errorf("GetBook(%s).NameEncoding = %q, want %q", id, got.NameEncoding, want)
+		}
+	}
+	d, err := idx.GetSeries(ctx, "s1")
+	if err != nil {
+		t.Fatalf("GetSeries: %v", err)
+	}
+	if len(d.Books) != 2 || d.Books[0].NameEncoding != "cp932" || d.Books[1].NameEncoding != "" {
+		t.Errorf("GetSeries books' NameEncoding = %+v, want cp932 then empty", d.Books)
+	}
+
+	raw := openRaw(t, filepath.Join(dir, "index.db"))
+	var nulls int
+	if err := raw.QueryRow(`SELECT count(*) FROM books WHERE name_encoding IS NULL`).Scan(&nulls); err != nil {
+		t.Fatalf("counting NULL labels: %v", err)
+	}
+	if nulls != 1 {
+		t.Errorf("rows with NULL name_encoding = %d, want 1 (the book written with \"\")", nulls)
+	}
+}
+
+// Ruling E-56: an index.db written at schema v2 opens, migrates to v3 and
+// keeps every row — the new column reads NULL, which the scanner then fills on
+// its next pass. A v2 file is made by taking the column back out of a fresh
+// one, which is exactly the shape the v3 rung has to accept.
+func TestOpen_v2Index_migratesToV3KeepingRows(t *testing.T) {
+	t.Parallel()
+	idx, _, dir := newDBs(t)
+	seed(t, idx, "manga", library())
+	before, err := idx.ListBooks(t.Context(), library()[0].id)
+	if err != nil {
+		t.Fatalf("ListBooks before: %v", err)
+	}
+	if err := idx.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	raw := openRaw(t, filepath.Join(dir, "index.db"))
+	for _, q := range []string{
+		`ALTER TABLE books DROP COLUMN name_encoding`,
+		`UPDATE meta SET value = '2' WHERE key = 'schema_version'`,
+	} {
+		if _, err := raw.Exec(q); err != nil {
+			t.Fatalf("making a v2 file (%s): %v", q, err)
+		}
+	}
+	_ = raw.Close()
+
+	idx2, err := index.Open(t.Context(), index.Options{
+		Path:     filepath.Join(dir, "index.db"),
+		UserPath: filepath.Join(dir, "user.db"),
+		Logger:   quietLogger(),
+	})
+	if err != nil {
+		t.Fatalf("Open on a v2 index: %v", err)
+	}
+	t.Cleanup(func() { _ = idx2.Close() })
+
+	if v, err := idx2.SchemaVersion(t.Context()); err != nil || v != 3 {
+		t.Errorf("schema version after migrating = %d (%v), want 3", v, err)
+	}
+	after, err := idx2.ListBooks(t.Context(), library()[0].id)
+	if err != nil {
+		t.Fatalf("ListBooks after: %v", err)
+	}
+	if len(after) != len(before) || len(after) == 0 {
+		t.Fatalf("books after migrating = %d, want the %d there were", len(after), len(before))
+	}
+	for i := range after {
+		if after[i].ID != before[i].ID || after[i].ContentVersion != before[i].ContentVersion {
+			t.Errorf("book %d = %s/%s, want %s/%s unchanged", i,
+				after[i].ID, after[i].ContentVersion, before[i].ID, before[i].ContentVersion)
+		}
+		if after[i].NameEncoding != "" {
+			t.Errorf("book %s NameEncoding = %q after migrating, want \"\" (NULL: no verdict yet)",
+				after[i].ID, after[i].NameEncoding)
+		}
 	}
 }
 
@@ -2703,8 +2807,8 @@ func TestReset_emptiesTheIndexWithoutTouchingUserData(t *testing.T) {
 	if list.Total != 0 {
 		t.Errorf("series after Reset = %d, want 0", list.Total)
 	}
-	if v, err := idx.SchemaVersion(ctx); err != nil || v != 2 {
-		t.Errorf("schema version after Reset = %d (%v), want 2", v, err)
+	if v, err := idx.SchemaVersion(ctx); err != nil || v != 3 {
+		t.Errorf("schema version after Reset = %d (%v), want 3", v, err)
 	}
 	if _, err := ud.GetProgress(ctx, "b1aaaaaaaaaaaaaa"); err != nil {
 		t.Errorf("Reset destroyed reading progress: %v", err)

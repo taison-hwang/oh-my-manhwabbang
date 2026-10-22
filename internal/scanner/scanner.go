@@ -815,6 +815,11 @@ type bookResult struct {
 	priorOrd      int
 	priorSeriesID string
 
+	// relabeled marks a skipped book whose only change is the name_encoding
+	// it was missing (ruling E-56): the label is written, and its page rows are
+	// left alone like any other skipped book's.
+	relabeled bool
+
 	// aborted marks a book abandoned because the run was cancelled. Its series
 	// is not written at all, so a cancelled scan never records a spurious
 	// error status.
@@ -1146,16 +1151,38 @@ func (s *Scanner) indexUnit(ctx context.Context, rt *rootRun, t *seriesTask, u b
 	// A series the index has never seen cannot have a prior row for this book,
 	// so a cold scan never issues the lookup at all.
 	if !rt.full && t.priorSeries.ID != "" {
-		if prior, ok := s.priorBook(ctx, res.id); ok && unchanged(u, prior, rt.full) {
-			res.skipped = true
-			res.status = prior.Status
-			res.errMsg = prior.Error
-			res.pageCount = prior.PageCount
-			res.totalBytes = prior.TotalBytes
-			res.contentVersion = prior.ContentVersion
-			res.dimsState = prior.DimsState
-			res.priorOrd, res.priorSeriesID = prior.Ord, prior.SeriesID
-			return res
+		if prior, ok := s.priorBook(ctx, res.id); ok {
+			keep := func() bookResult {
+				res.skipped = true
+				res.status = prior.Status
+				res.errMsg = prior.Error
+				res.pageCount = prior.PageCount
+				res.totalBytes = prior.TotalBytes
+				res.contentVersion = prior.ContentVersion
+				res.dimsState = prior.DimsState
+				// Carried like every other field the skip keeps: a skipped book
+				// that moved is rewritten in full (writeSeries), and a label left
+				// empty here would write NULL over the one the last scan recorded.
+				res.nameEncoding = prior.NameEncoding
+				res.priorOrd, res.priorSeriesID = prior.Ord, prior.SeriesID
+				return res
+			}
+			if unchanged(u, prior, rt.full) {
+				return keep()
+			}
+			// E-56's one-time relabel: the file is the one already read
+			// successfully and only its label is missing (a row from before
+			// schema v3). Re-indexing it would rewrite every page row and throw
+			// away the measured page dimensions to learn one word, so it is
+			// listed for the label and otherwise kept. A listing that no longer
+			// succeeds falls through to the ordinary path, which records why.
+			if fileUnchanged(u, prior, rt.full) {
+				if enc := s.relabel(ctx, rt, u, res.id); enc != "" {
+					kept := keep()
+					kept.nameEncoding, kept.relabeled = enc, true
+					return kept
+				}
+			}
 		}
 	}
 
@@ -1224,6 +1251,25 @@ func (s *Scanner) indexUnit(ctx context.Context, rt *rootRun, t *seriesTask, u b
 		return expanded
 	}
 	return res
+}
+
+// relabel lists one unchanged book for its name encoding alone (ruling E-56)
+// and returns it, or "" when the listing does not succeed — the caller then
+// re-indexes the book the ordinary way, which records the failure.
+func (s *Scanner) relabel(ctx context.Context, rt *rootRun, u bookUnit, id string) string {
+	src, err := s.books.Open(ctx, source.Book{
+		ID: id, Kind: u.kind, RootName: rt.cfg.Name, RelPath: u.relPath,
+		InnerPath: u.innerPath, FileSize: u.size, FileMtime: u.mtime,
+	})
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = src.Close() }()
+	listing, err := src.List(ctx)
+	if err != nil || listing == nil {
+		return ""
+	}
+	return listing.NameEncoding
 }
 
 // expandContainer turns a book that is really a container of volumes into one
@@ -1727,8 +1773,18 @@ func (s *Scanner) writeSeries(ctx context.Context, w *index.Writer, rt *rootRun,
 
 		// The pure incremental path: the row is already right, so it is stamped
 		// forward instead of rewritten and its page rows are not touched at all.
+		// A relabelled book that has not moved is the same row lacking only its
+		// label (E-56), so the label is the one column written: rewriting the
+		// row would put back the dims_state read before the thumbnail worker
+		// could move it. One that moved takes the full rewrite below, which
+		// carries the new label with everything else.
 		if r.skipped && r.priorSeriesID == t.id && r.priorOrd == ord {
 			stamps.books = append(stamps.books, r.id)
+			if r.relabeled {
+				if err := w.SetBookNameEncoding(ctx, r.id, r.nameEncoding); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 
@@ -1749,6 +1805,7 @@ func (s *Scanner) writeSeries(ctx context.Context, w *index.Writer, rt *rootRun,
 			Status:         r.status,
 			Error:          r.errMsg,
 			ScanGen:        rt.gen,
+			NameEncoding:   r.nameEncoding,
 		}); err != nil {
 			return err
 		}

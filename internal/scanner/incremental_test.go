@@ -88,34 +88,34 @@ func TestUnchanged_appliesTheArchSkipRule(t *testing.T) {
 		want  bool
 	}{
 		{name: "archive, size and mtime both equal", unit: zipUnit,
-			prior: index.Book{Status: StatusOK, FileSize: 1024, FileMtime: 1_500_000_000}, want: true},
+			prior: index.Book{Status: StatusOK, NameEncoding: "cp949", FileSize: 1024, FileMtime: 1_500_000_000}, want: true},
 		{name: "archive, size moved", unit: zipUnit,
-			prior: index.Book{Status: StatusOK, FileSize: 1025, FileMtime: 1_500_000_000}},
+			prior: index.Book{Status: StatusOK, NameEncoding: "cp949", FileSize: 1025, FileMtime: 1_500_000_000}},
 		{name: "archive, mtime moved", unit: zipUnit,
-			prior: index.Book{Status: StatusOK, FileSize: 1024, FileMtime: 1_500_000_001}},
+			prior: index.Book{Status: StatusOK, NameEncoding: "cp949", FileSize: 1024, FileMtime: 1_500_000_001}},
 		{name: "a full scan never skips", unit: zipUnit, full: true,
-			prior: index.Book{Status: StatusOK, FileSize: 1024, FileMtime: 1_500_000_000}},
+			prior: index.Book{Status: StatusOK, NameEncoding: "cp949", FileSize: 1024, FileMtime: 1_500_000_000}},
 		{name: "directory, fingerprint equal", unit: dirUnit,
-			prior: index.Book{Status: StatusOK, DirFingerprint: "aaaaaaaaaaaaaaaa"}, want: true},
+			prior: index.Book{Status: StatusOK, NameEncoding: "cp949", DirFingerprint: "aaaaaaaaaaaaaaaa"}, want: true},
 		{name: "directory, fingerprint moved", unit: dirUnit,
-			prior: index.Book{Status: StatusOK, DirFingerprint: "bbbbbbbbbbbbbbbb"}},
+			prior: index.Book{Status: StatusOK, NameEncoding: "cp949", DirFingerprint: "bbbbbbbbbbbbbbbb"}},
 		{name: "directory with no recorded fingerprint", unit: dirUnit,
-			prior: index.Book{Status: StatusOK}},
+			prior: index.Book{Status: StatusOK, NameEncoding: "cp949"}},
 		{
 			// Ruling E-39 (draft). 'error' is not reliably a property of the
 			// file — a transient read failure and a listing taken from a
 			// replaced inode both look exactly like this — so the timestamps
 			// may not settle it and the book is re-derived.
 			name: "a book recorded broken is re-examined", unit: zipUnit,
-			prior: index.Book{Status: StatusError, FileSize: 1024, FileMtime: 1_500_000_000},
+			prior: index.Book{NameEncoding: "cp949", Status: StatusError, FileSize: 1024, FileMtime: 1_500_000_000},
 		},
 		{
 			name: "a book recorded empty is re-examined", unit: zipUnit,
-			prior: index.Book{Status: StatusEmpty, FileSize: 1024, FileMtime: 1_500_000_000},
+			prior: index.Book{NameEncoding: "cp949", Status: StatusEmpty, FileSize: 1024, FileMtime: 1_500_000_000},
 		},
 		{
 			name: "a book recorded encrypted is re-examined", unit: dirUnit,
-			prior: index.Book{Status: StatusEncrypted, DirFingerprint: "aaaaaaaaaaaaaaaa"},
+			prior: index.Book{NameEncoding: "cp949", Status: StatusEncrypted, DirFingerprint: "aaaaaaaaaaaaaaaa"},
 		},
 		{
 			// 'unsupported' says "this BUILD cannot read it" — a PDF under
@@ -124,13 +124,25 @@ func TestUnchanged_appliesTheArchSkipRule(t *testing.T) {
 			// This was the only exception before E-39; it is now the general
 			// rule's first instance rather than a special case.
 			name: "an unsupported book is always re-examined", unit: zipUnit,
-			prior: index.Book{Status: StatusUnsupported, FileSize: 1024, FileMtime: 1_500_000_000},
+			prior: index.Book{NameEncoding: "cp949", Status: StatusUnsupported, FileSize: 1024, FileMtime: 1_500_000_000},
 		},
 		{
 			// A row with no status at all (a partially written book) is not
 			// evidence of a successful read either.
 			name: "a book with no recorded status is re-examined", unit: zipUnit,
-			prior: index.Book{FileSize: 1024, FileMtime: 1_500_000_000},
+			prior: index.Book{NameEncoding: "cp949", FileSize: 1024, FileMtime: 1_500_000_000},
+		},
+		{
+			// Ruling E-56. Schema v3 added books.name_encoding NULL for every
+			// existing row; an ok book is otherwise re-read only when its file
+			// changes, so an unchanged library would keep the NULL — and
+			// SeriesDetail.encoding null — for ever. The book is re-listed once.
+			name: "an ok archive with no recorded name encoding is re-listed", unit: zipUnit,
+			prior: index.Book{Status: StatusOK, FileSize: 1024, FileMtime: 1_500_000_000},
+		},
+		{
+			name: "an ok directory with no recorded name encoding is re-listed", unit: dirUnit,
+			prior: index.Book{Status: StatusOK, DirFingerprint: "aaaaaaaaaaaaaaaa"},
 		},
 	}
 	for _, tc := range cases {

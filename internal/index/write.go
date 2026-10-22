@@ -236,8 +236,8 @@ func (w *Writer) UpsertSeries(ctx context.Context, s Series) error {
 const upsertBookSQL = `
 INSERT INTO books (id, series_id, root_name, rel_path, inner_path, display_name, sort_key, ord,
     kind, page_count, total_bytes, file_size, file_mtime, dir_fingerprint,
-    content_version, dims_state, status, error, scan_gen)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    content_version, dims_state, status, error, scan_gen, name_encoding)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET
     series_id       = excluded.series_id,
     root_name       = excluded.root_name,
@@ -256,7 +256,8 @@ ON CONFLICT(id) DO UPDATE SET
     dims_state      = excluded.dims_state,
     status          = excluded.status,
     error           = excluded.error,
-    scan_gen        = excluded.scan_gen`
+    scan_gen        = excluded.scan_gen,
+    name_encoding   = excluded.name_encoding`
 
 // UpsertBook inserts or refreshes a book row and counts towards the batch.
 func (w *Writer) UpsertBook(ctx context.Context, b Book) error {
@@ -268,11 +269,23 @@ func (w *Writer) UpsertBook(ctx context.Context, b Book) error {
 		b.ID, b.SeriesID, b.RootName, b.RelPath, b.InnerPath, b.DisplayName, b.SortKey, b.Ord,
 		b.Kind, b.PageCount, b.TotalBytes, b.FileSize, b.FileMtime,
 		nullString(b.DirFingerprint), b.ContentVersion, dims, b.Status,
-		nullString(b.Error), b.ScanGen)
+		nullString(b.Error), b.ScanGen, nullString(b.NameEncoding))
 	if err != nil {
 		return fmt.Errorf("upserting book %q: %w", b.ID, err)
 	}
 	w.pending++
+	return w.maybeCommit(ctx)
+}
+
+// SetBookNameEncoding records one book's name_encoding and nothing else
+// (ruling E-56). It is the scanner's relabel of a book that is otherwise left
+// alone: a full UpsertBook would write back the dims_state it read before the
+// thumbnail worker had a chance to move it, which over the first scan after the
+// v3 migration is every book in the library. "" writes NULL.
+func (w *Writer) SetBookNameEncoding(ctx context.Context, bookID, enc string) error {
+	if err := w.exec(ctx, `UPDATE books SET name_encoding = ? WHERE id = ?`, nullString(enc), bookID); err != nil {
+		return fmt.Errorf("recording the name encoding of book %q: %w", bookID, err)
+	}
 	return w.maybeCommit(ctx)
 }
 

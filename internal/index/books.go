@@ -48,6 +48,11 @@ type Book struct {
 	Status  string
 	Error   string
 	ScanGen int64
+	// NameEncoding is the kenc label for the book's entry names (arch §4.4,
+	// ruling E-56), "" when there is no verdict — NULL in the column. A book
+	// whose listing failed before any name was decoded has none, and neither
+	// does a row written before schema v3 until the next scan re-reads it.
+	NameEncoding string
 }
 
 // BookProgress is the ud.progress row joined onto a book, if any.
@@ -70,7 +75,7 @@ const bookColumns = `
 	b.id, b.series_id, b.root_name, b.rel_path, b.inner_path, b.display_name, b.sort_key, b.ord,
 	b.kind, b.page_count, b.total_bytes, b.file_size, b.file_mtime,
 	COALESCE(b.dir_fingerprint, ''), b.content_version, b.dims_state, b.status,
-	COALESCE(b.error, ''), b.scan_gen,
+	COALESCE(b.error, ''), b.scan_gen, COALESCE(b.name_encoding, ''),
 	p.last_page, p.page_count, p.completed, p.started_at, p.updated_at`
 
 const bookJoins = `
@@ -83,7 +88,7 @@ func scanBookRow(sc interface{ Scan(...any) error }) (BookRow, error) {
 	err := sc.Scan(&r.ID, &r.SeriesID, &r.RootName, &r.RelPath, &r.InnerPath, &r.DisplayName, &r.SortKey,
 		&r.Ord, &r.Kind, &r.PageCount, &r.TotalBytes, &r.FileSize, &r.FileMtime,
 		&r.DirFingerprint, &r.ContentVersion, &r.DimsState, &r.Status, &r.Error, &r.ScanGen,
-		&lastPage, &progPages, &completed, &startedAt, &updatedAt)
+		&r.NameEncoding, &lastPage, &progPages, &completed, &startedAt, &updatedAt)
 	if err != nil {
 		return BookRow{}, err
 	}
@@ -411,7 +416,7 @@ func (db *DB) ListContinue(ctx context.Context, limit int) ([]ContinueItem, erro
 		err := rows.Scan(&b.ID, &b.SeriesID, &b.RootName, &b.RelPath, &b.InnerPath, &b.DisplayName, &b.SortKey,
 			&b.Ord, &b.Kind, &b.PageCount, &b.TotalBytes, &b.FileSize, &b.FileMtime,
 			&b.DirFingerprint, &b.ContentVersion, &b.DimsState, &b.Status, &b.Error, &b.ScanGen,
-			&lastPage, &progPages, &completed, &startedAt, &updatedAt,
+			&b.NameEncoding, &lastPage, &progPages, &completed, &startedAt, &updatedAt,
 			&seriesName, &coverKind)
 		if err != nil {
 			return nil, fmt.Errorf("scanning continue-reading book: %w", err)

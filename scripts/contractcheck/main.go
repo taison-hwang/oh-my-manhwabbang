@@ -223,6 +223,13 @@ func check(root string) (findings, checked []string, err error) {
 	findings = append(findings, kindFindings...)
 	checked = append(checked, fmt.Sprintf("%-28s -> BOOK_KINDS", "internal/source/source.go"))
 
+	encFindings, err := checkNameEncodings(root, ts)
+	if err != nil {
+		return nil, nil, err
+	}
+	findings = append(findings, encFindings...)
+	checked = append(checked, fmt.Sprintf("%-28s -> NAME_ENCODINGS", "internal/kenc/kenc.go"))
+
 	paramFindings, err := checkSeriesParams(root, ts)
 	if err != nil {
 		return nil, nil, err
@@ -698,6 +705,60 @@ func checkBookKinds(root string, ts *tsTypes) ([]string, error) {
 		if !server[k] {
 			findings = append(findings, fmt.Sprintf(
 				"web/src/api/types.ts: BOOK_KINDS lists %q; internal/source/source.go defines no such Kind", k))
+		}
+	}
+	return findings, nil
+}
+
+var reGoEncoding = regexp.MustCompile(`(?m)^\s*Enc[A-Za-z0-9_]+\s*=\s*"([a-z0-9-]+)"`)
+
+// checkNameEncodings compares the `Enc*` labels of internal/kenc/kenc.go with
+// `NAME_ENCODINGS` in types.ts (ruling E-56).
+//
+// `SeriesDetail.encoding` was typed `string | null` for its whole life, so no
+// enum rule could fire on it, and the contract's `"utf-8" | "cp949" | "mixed"`
+// disagreed with the five labels kenc actually produces without any gate
+// noticing — the field was a hard-coded null, and a golden can only show the
+// values a fixture happens to hold. The same remedy as BOOK_KINDS: compare the
+// declarations, so a label the server can send is one the client can name.
+func checkNameEncodings(root string, ts *tsTypes) ([]string, error) {
+	path := filepath.Join(root, "internal", "kenc", "kenc.go")
+	src, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+	client, ok := ts.constArrays["NAME_ENCODINGS"]
+	if !ok {
+		return []string{"web/src/api/types.ts: NAME_ENCODINGS is missing"}, nil
+	}
+	inClient := map[string]bool{}
+	for _, e := range client {
+		inClient[e] = true
+	}
+	server := map[string]bool{}
+	for _, m := range reGoEncoding.FindAllStringSubmatch(string(src), -1) {
+		server[m[1]] = true
+	}
+	if len(server) == 0 {
+		return nil, fmt.Errorf("no Enc* constants found in %s", path)
+	}
+
+	var findings []string
+	names := make([]string, 0, len(server))
+	for e := range server {
+		names = append(names, e)
+	}
+	sort.Strings(names)
+	for _, e := range names {
+		if !inClient[e] {
+			findings = append(findings, fmt.Sprintf(
+				"internal/kenc/kenc.go: name encoding %q: the scanner can record it; types.ts NAME_ENCODINGS does not list it", e))
+		}
+	}
+	for _, e := range client {
+		if !server[e] {
+			findings = append(findings, fmt.Sprintf(
+				"web/src/api/types.ts: NAME_ENCODINGS lists %q; internal/kenc/kenc.go defines no such label", e))
 		}
 	}
 	return findings, nil

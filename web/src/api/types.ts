@@ -66,6 +66,19 @@ export const BOOK_KINDS = [
 ] as const
 export type BookKind = (typeof BOOK_KINDS)[number]
 
+/**
+ * How a series' entry names were decoded — `SeriesDetail.encoding`, ruling
+ * E-56. These are `internal/kenc`'s `Enc*` labels, which `contractcheck`
+ * compares this list against; the series value is the most suspect of its
+ * books' labels, and `null` means no book has a verdict.
+ *
+ * `unknown` is the one that means "these characters may be wrong". The
+ * contract used to promise `mixed` instead, which nothing ever produced, while
+ * the labels the server did produce had no place here.
+ */
+export const NAME_ENCODINGS = ['utf-8', 'utf-8-invalid', 'cp949', 'cp932', 'unknown'] as const
+export type NameEncoding = (typeof NAME_ENCODINGS)[number]
+
 /** C-4: books say `dir`, series say `folder`. The badge text is FOLDER for both. */
 export const SERIES_KINDS = ['folder', 'zip', 'pdf'] as const
 export type SeriesKind = (typeof SERIES_KINDS)[number]
@@ -442,8 +455,8 @@ export interface SeriesListResponse {
 export interface SeriesDetail extends SeriesSummary {
   /** Natural-sorted by `ord`; the UI never re-sorts. */
   books: BookSummary[]
-  /** `"utf-8" | "cp949" | "mixed" | null` — diagnostics only. */
-  encoding: string | null
+  /** Diagnostics only (E-56): the most suspect book label, or `null` for no verdict. */
+  encoding: NameEncoding | null
 }
 
 /** `POST /api/series/{sid}/rescan` and `POST /api/scan` both answer `202 {run_id}`. */
