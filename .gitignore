@@ -78,7 +78,6 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
-.gstack/
 
 # ---- agent scratch ------------------------------------------------------------
 # `.claude/settings.local.json` is per-machine by name, and `.claude/worktrees/`
