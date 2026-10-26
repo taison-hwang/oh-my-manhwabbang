@@ -129,34 +129,14 @@ func TestI2_pageNames_decodeWithoutReplacementCharacters(t *testing.T) {
 		hangul, len(book.Pages))
 }
 
-// I-10 — the three classification outcomes the real collection forced into the
-// plan: duplicate books (D-6), a cover file rather than a one-page book (D-5),
-// and a container of sub-archives whose nested archives are not read (D-10 as
-// narrowed by ruling E-14).
+// I-10 — the classification outcomes the real collection forced into the plan:
+// a cover file rather than a one-page book (D-5), and the container shapes
+// below. Duplicate books (D-6) left the collection and are asserted on the
+// hermetic twin instead, in TestI10_D6_duplicateBooksAreAllListed.
 func TestI10_classification_matchesTheRealShapes(t *testing.T) {
 	s := sharedServer(t)
 
-	t.Run("D-6 duplicates are all listed", func(t *testing.T) {
-		d := detailOf(s, gungye)
-		var oneVolume []string
-		for _, b := range d.Books {
-			if strings.Contains(b.Name, "01권") {
-				oneVolume = append(oneVolume, b.Name)
-			}
-		}
-		if len(oneVolume) < 2 {
-			t.Errorf("군계 must show both the 01권 folder and the 01권 archive (ruling E-5); got %v",
-				oneVolume)
-		}
-		repairs := 0
-		for _, b := range d.Books {
-			if strings.Contains(b.Name, "repair") {
-				repairs++
-			}
-		}
-		if repairs == 0 {
-			t.Error("the .repair duplicates were hidden; ruling E-5 says list every volume")
-		}
+	t.Run("a named cover file is the series cover", func(t *testing.T) {
 		if !mustSeries(s, gungye).HasCover {
 			t.Error("군계 has a [cover].jpg and must use it (arch §4.10 step 1)")
 		}
@@ -245,3 +225,53 @@ func TestI10_classification_matchesTheRealShapes(t *testing.T) {
 		}
 	})
 }
+
+// I-10, D-6 (ruling E-5) — duplicate books are all listed: a folder and an
+// archive for the same volume are two books, and the `.repair` copies sit beside
+// the original instead of replacing it or being hidden. No dedup rule exists,
+// because two of the three 07권 copies are truncated and a preference could hide
+// the only readable one; each book carries its own status instead (FR-IDX-010).
+//
+// The real 군계 lost this shape when E-52 repaired it (25 plain archives now;
+// scripts/e2e-assert.py's real branch pins that state), so this runs on the
+// twin scripts/mkfixture builds on purpose — block 6, whose books are listed
+// below exactly.
+func TestI10_D6_duplicateBooksAreAllListed(t *testing.T) {
+	s := syntheticServer(t, gungye)
+	d := detailOf(s, gungye)
+
+	books := map[string]bookOf{}
+	var names []string
+	for _, b := range d.Books {
+		books[b.Name] = bookOf{kind: b.Kind, status: b.Status}
+		names = append(names, b.Name)
+	}
+	// 01권 twice (folder + ZIP), 02~06권, and 07권 three times.
+	if len(d.Books) != 10 {
+		t.Errorf("군계 lists %d books, want all 10 the fixture holds: %v", len(d.Books), names)
+	}
+	if b, ok := books["군계(軍鷄) 01권"]; !ok || b.kind != "dir" {
+		t.Errorf("the 01권 folder is not listed as a folder book (got %+v, present %v): %v", b, ok, names)
+	}
+	if b, ok := books["군계(軍鷄) 01권.zip"]; !ok || b.kind != "zip" {
+		t.Errorf("the 01권 archive is not listed beside its folder (got %+v, present %v): %v", b, ok, names)
+	}
+	if b, ok := books["군계(軍鷄) 07권.zip"]; !ok || b.status != "ok" {
+		t.Errorf("the readable 07권 original is missing or not ok (got %+v, present %v)", b, ok)
+	}
+	for _, name := range []string{"군계(軍鷄) 07권.repair.zip", "군계(軍鷄) 07권 (2).repair.zip"} {
+		b, ok := books[name]
+		if !ok {
+			t.Errorf("%s was hidden; ruling E-5 lists every copy: %v", name, names)
+			continue
+		}
+		if b.status != "error" {
+			t.Errorf("%s is a truncated copy; FR-IDX-010 lists it with status \"error\", got %q", name, b.status)
+		}
+	}
+	if !mustSeries(s, gungye).HasCover {
+		t.Error("군계 has a [cover].jpg and must use it (arch §4.10 step 1)")
+	}
+}
+
+type bookOf struct{ kind, status string }

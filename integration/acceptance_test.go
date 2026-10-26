@@ -474,7 +474,13 @@ func residentKB(t *testing.T) int {
 		return 0
 	}
 	runtime.GC()
-	data, err := os.ReadFile("/proc/self/status")
+	return vmRSSKB("/proc/self/status")
+}
+
+// vmRSSKB reads the VmRSS line of a /proc/<pid>/status file, in kB; 0 when the
+// file or the line cannot be read.
+func vmRSSKB(status string) int {
+	data, err := os.ReadFile(status)
 	if err != nil {
 		return 0
 	}

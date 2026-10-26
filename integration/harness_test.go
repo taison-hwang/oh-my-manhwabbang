@@ -7,7 +7,10 @@
 //
 // Without a usable SHELF_TEST_ROOT every test that reads the collection skips
 // (testutil.MediaRoot), or fails under SHELF_TEST_REQUIRE_ROOT=1, which gate
-// 5/5 sets so that a run that lost its root is not recorded as a run.
+// 5/5 sets so that a run that lost its root is not recorded as a run. The one
+// exception is a shape the collection no longer holds: its test builds the
+// hermetic twin (scripts/mkfixture) and runs whether the volume is there or not
+// — see syntheticServer.
 //
 // # Nothing is copied
 //
@@ -34,6 +37,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -118,15 +122,24 @@ func requireRoot(t *testing.T) string {
 	return testutil.MediaRoot(t)
 }
 
-// writeConfig renders the curated-subset configuration into stateDir.
-func writeConfig(t *testing.T, root, stateDir string) *config.Config {
+// writeConfig renders a configuration narrowed to the series in names. The
+// port is a placeholder: the in-process server is handed its own listener.
+func writeConfig(t *testing.T, root, stateDir string, names []string) *config.Config {
+	t.Helper()
+	cfg, _ := writeConfigOn(t, root, stateDir, names, 8792)
+	return cfg
+}
+
+// writeConfigOn is writeConfig on a given port, also returning the file's
+// path, for a server started as a process of its own.
+func writeConfigOn(t *testing.T, root, stateDir string, names []string, port int) (*config.Config, string) {
 	t.Helper()
 	var globs strings.Builder
-	for _, name := range curated {
+	for _, name := range names {
 		fmt.Fprintf(&globs, "    - %q\n", escapeGlob(name))
 	}
 	body := fmt.Sprintf(`
-server: {listen: "127.0.0.1", port: 8792, shutdown_grace: "5s"}
+server: {listen: "127.0.0.1", port: %d, shutdown_grace: "5s"}
 roots:
   - {name: "mangga", label: "만화 (integration subset)", path: %q}
 storage: {data_dir: %q, cache_dir: %q}
@@ -138,7 +151,7 @@ scan:
 thumbnails: {widths: [120, 240, 400, 640], workers: 4}
 pdf: {enabled: true, workers: 1}
 log: {level: "warn", format: "text", http_requests: false}
-`, root, filepath.Join(stateDir, "data"), filepath.Join(stateDir, "cache"), globs.String())
+`, port, root, filepath.Join(stateDir, "data"), filepath.Join(stateDir, "cache"), globs.String())
 
 	path := filepath.Join(stateDir, "shelf.yaml")
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
@@ -148,7 +161,7 @@ log: {level: "warn", format: "text", http_requests: false}
 	if err != nil {
 		t.Fatalf("loading the configuration:\n%v", err)
 	}
-	return cfg
+	return cfg, path
 }
 
 // server is a running SHELF plus the HTTP helpers the tests use.
@@ -167,7 +180,13 @@ type server struct {
 // reason that has nothing to do with the product.
 func startServer(t *testing.T, root, stateDir string, rebuildIndex bool) *server {
 	t.Helper()
-	cfg := writeConfig(t, root, stateDir)
+	return startServerOver(t, root, stateDir, curated, rebuildIndex)
+}
+
+// startServerOver is startServer narrowed to the series in names.
+func startServerOver(t *testing.T, root, stateDir string, names []string, rebuildIndex bool) *server {
+	t.Helper()
+	cfg := writeConfig(t, root, stateDir, names)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -200,7 +219,19 @@ func startServer(t *testing.T, root, stateDir string, rebuildIndex bool) *server
 			t.Errorf("closing the app: %v", err)
 		}
 	}
+	// A server that never becomes ready is stopped here, because the caller
+	// never receives it and so cannot stop it: waitReady's t.Fatal would
+	// otherwise leave it running into a state directory the test is about to
+	// delete. Once ready, stopping is the caller's (the shared server outlives
+	// this t, so a plain t.Cleanup(s.stop) would end it with the first test).
+	ready := false
+	t.Cleanup(func() {
+		if !ready {
+			s.stop()
+		}
+	})
 	s.waitReady()
+	ready = true
 	return s
 }
 
@@ -474,6 +505,42 @@ func sharedServer(t *testing.T) *server {
 // sharedScanSeconds is how long the one full curated scan took, reported by
 // the perf tests rather than measured again.
 var sharedScanSeconds float64
+
+// syntheticServer builds scripts/mkfixture's tree in a temporary directory,
+// starts a server over the series in names and scans it once.
+//
+// It is for a shape the real collection has lost. Rule 05 is that a lost
+// sample is rebuilt synthetically rather than restored, and the tree built
+// here is the same twin `make e2e-synthetic` reads, so the two tiers agree on
+// what the shape is. It does not skip without SHELF_TEST_ROOT: the fixture
+// needs only the toolchain this suite was compiled by (`go test` puts its own
+// GOROOT/bin first on PATH).
+func syntheticServer(t *testing.T, names ...string) *server {
+	t.Helper()
+	repo, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatalf("locating the repository: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "scripts", "mkfixture")); err != nil {
+		t.Fatalf("scripts/mkfixture is not at %s: %v", repo, err)
+	}
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "fixture")
+	cmd := exec.Command("go", "run", "./scripts/mkfixture", "-out", fixture)
+	cmd.Dir = repo
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("building the synthetic fixture (go run ./scripts/mkfixture): %v\n%s\n"+
+			"Run the suite through `make test-int`, which supplies GOPROXY/GOTOOLCHAIN.", err, out)
+	}
+	state := filepath.Join(dir, "state")
+	if err := os.Mkdir(state, 0o700); err != nil {
+		t.Fatalf("creating the state directory: %v", err)
+	}
+	s := startServerOver(t, fixture, state, names, false)
+	t.Cleanup(s.stop)
+	s.scan(true, 2*time.Minute)
+	return s
+}
 
 // seriesByName indexes the whole library by display name.
 func seriesByName(s *server) map[string]seriesSummary {
