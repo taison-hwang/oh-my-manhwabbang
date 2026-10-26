@@ -179,6 +179,25 @@ function renderDialog(harness = false): void {
   )
 }
 
+/**
+ * The outline inside the dialog (10-23 accessibility audit #5). The four
+ * section labels were `<h6>` under a title that was not a heading at all; the
+ * dialog's title is now its level-2 heading (`components/ds/Dialog.tsx`), so the
+ * sections are level 3. Their look is the `.h6` class's, not the tag's.
+ */
+describe('section headings (a11y audit #5)', () => {
+  it('puts all four sections at level 3', async () => {
+    renderDialog()
+    await screen.findByText('만화')
+    // Level 3 only makes sense under the dialog's own level-2 title.
+    expect(screen.getByRole('heading', { level: 2, name: '설정' })).toBeInTheDocument()
+    for (const name of ['루트 관리', '캐시', '읽기 기본값', '스캔 로그']) {
+      expect(screen.getByRole('heading', { level: 3, name })).toBeInTheDocument()
+    }
+    expect(screen.queryAllByRole('heading', { level: 6 })).toHaveLength(0)
+  })
+})
+
 // ---------------------------------------------------------------------------
 // 루트 관리 — ruling E-3 / C-5
 // ---------------------------------------------------------------------------

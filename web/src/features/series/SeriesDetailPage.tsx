@@ -113,7 +113,7 @@ export function SeriesDetailPage() {
           header: the hero above is a card now and the volume view below is
           another, so the label sits in the space between them. */}
       <div className="flex items-baseline gap-3 px-4 pb-3 pt-2">
-        <h6>권 목록</h6>
+        <h2 className="h6">권 목록</h2>
         <span className="text-xs tabular-nums text-ink-dim">
           {formatVolumeCount(detail.books.length)}
         </span>

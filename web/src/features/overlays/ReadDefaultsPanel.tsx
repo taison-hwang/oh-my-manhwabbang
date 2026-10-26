@@ -82,7 +82,7 @@ export function ReadDefaultsPanel() {
 
   return (
     <section className="flex min-w-0 flex-1 flex-col gap-3">
-      <h6>읽기 기본값</h6>
+      <h3 className="h6">읽기 기본값</h3>
 
       <div className="flex items-center gap-3">
         <span className="flex-1 text-base">읽기 방향</span>

@@ -337,6 +337,20 @@ describe('series header (prd UI-002, ui-spec §5.1)', () => {
     expect(header.classList.contains('border-rule-strong')).toBe(false)
   })
 
+  /**
+   * The outline (10-23 accessibility audit #5): the series name was an `<h2>`
+   * with no `<h1>` above it and 권 목록 an `<h6>` under it, a jump of four
+   * levels. The name is what the screen is, so it is the one level-1 heading;
+   * 권 목록 is a section of it. The look stays the old tags' (base.css classes).
+   */
+  it('is the screen’s one level-1 heading, with 권 목록 at level 2 (a11y audit #5)', async () => {
+    await setup()
+    const titles = screen.getAllByRole('heading', { level: 1 })
+    expect(titles).toHaveLength(1)
+    expect(within(screen.getByRole('banner')).getByRole('heading', { level: 1 })).toBe(titles[0])
+    expect(screen.getByRole('heading', { level: 2, name: '권 목록' })).toBeInTheDocument()
+  })
+
   it('shows the cover, name, source path and the four stats', async () => {
     await setup(detailOf({ path: '[만화] 군계 1~25 (root-relative)' }))
     const header = screen.getByRole('banner')

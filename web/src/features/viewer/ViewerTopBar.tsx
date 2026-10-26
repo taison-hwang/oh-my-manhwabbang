@@ -249,8 +249,11 @@ export function ViewerTopBar({
         라이브러리
       </Button>
 
-      <div className="flex min-w-0 flex-col">
-        {/* E-32: 800 → 700. The viewer title is a card title, not a heading. */}
+      {/* The screen's one level-1 heading — the viewer had none (10-23 a11y
+          audit #5). A role rather than an <h1>: base.css styles `h1` (42px,
+          heading face and weight) and the volume name would inherit it. */}
+      <div className="flex min-w-0 flex-col" role="heading" aria-level={1}>
+        {/* E-32: 800 → 700. Styled as a card title, not a display heading. */}
         <span
           className="truncate font-heading text-base font-bold text-ink"
           lang={textLang(seriesName)}

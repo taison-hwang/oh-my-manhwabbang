@@ -137,13 +137,13 @@ describe('the auth gate (NFR-SEC-002)', () => {
     })
     expect(screen.getByRole('heading', { name: '비밀번호를 입력하세요' })).toBeInTheDocument()
     // Auth is all-or-nothing: no chrome leaks past it.
-    expect(screen.queryByRole('complementary')).toBeNull()
+    expect(screen.queryByRole('navigation')).toBeNull()
     expect(screen.queryByPlaceholderText('시리즈 검색 (초성 가능)')).toBeNull()
   })
 
   it('shows the shell once authenticated', () => {
     renderShell({ ...LOADED_ROOTS, auth: { auth_required: true, authenticated: true } })
-    expect(screen.getByRole('complementary', { name: '라이브러리 탐색' })).toBeInTheDocument()
+    expect(screen.getByRole('navigation', { name: '라이브러리 탐색' })).toBeInTheDocument()
   })
 
   it('surfaces a rejected login as an alert without unmounting the form', async () => {
@@ -161,7 +161,7 @@ describe('the auth gate (NFR-SEC-002)', () => {
 describe('the onboarding gate (ui-spec §4.6)', () => {
   it('drops the chrome entirely when there are no roots', () => {
     renderShell({ rootsLoaded: true, roots: [] })
-    expect(screen.queryByRole('complementary')).toBeNull()
+    expect(screen.queryByRole('navigation')).toBeNull()
     expect(screen.queryByPlaceholderText('시리즈 검색 (초성 가능)')).toBeNull()
     // The route still renders — onboarding is a screen, not a shell state.
     expect(screen.getByText('library')).toBeInTheDocument()
@@ -169,7 +169,7 @@ describe('the onboarding gate (ui-spec §4.6)', () => {
 
   it('does not flash onboarding before /api/roots has answered', () => {
     renderShell({ rootsLoaded: false, roots: [] })
-    expect(screen.getByRole('complementary', { name: '라이브러리 탐색' })).toBeInTheDocument()
+    expect(screen.getByRole('navigation', { name: '라이브러리 탐색' })).toBeInTheDocument()
   })
 })
 
@@ -256,12 +256,12 @@ describe('routing (ui-spec §3)', () => {
     // … and still in the main landmark, which the undisplayed shell's is not.
     expect(screen.getByRole('main')).toContainElement(viewer)
     // The shell: mounted …
-    const nav = screen.getByRole('complementary', { name: '라이브러리 탐색', hidden: true })
+    const nav = screen.getByRole('navigation', { name: '라이브러리 탐색', hidden: true })
     expect(nav).toBeInTheDocument()
     // … not displayed — `aria-hidden` alone would leave it laid out and focusable …
     expect(nav).not.toBeVisible()
     // … and out of reach: neither the sidebar nor the top bar is in the tree.
-    expect(screen.queryByRole('complementary', { name: '라이브러리 탐색' })).toBeNull()
+    expect(screen.queryByRole('navigation', { name: '라이브러리 탐색' })).toBeNull()
     expect(screen.queryByRole('searchbox')).toBeNull()
     expect(screen.queryByRole('button', { name: '라이브러리' })).toBeNull()
   })
@@ -274,14 +274,14 @@ describe('routing (ui-spec §3)', () => {
   it('keeps the same shell and the same viewer from the library through the viewer and back (E-61)', async () => {
     viewerMounts = 0
     const memory = renderShell(LOADED_ROOTS, '/', <ViewerMountProbe />)
-    const nav = screen.getByRole('complementary', { name: '라이브러리 탐색' })
+    const nav = screen.getByRole('navigation', { name: '라이브러리 탐색' })
     const search = screen.getByRole('searchbox')
 
     await act(async () => {
       await memory.navigate('/series/abc/books/def')
     })
     expect(screen.getByText('viewer')).toBeVisible()
-    expect(screen.getByRole('complementary', { name: '라이브러리 탐색', hidden: true })).toBe(nav)
+    expect(screen.getByRole('navigation', { name: '라이브러리 탐색', hidden: true })).toBe(nav)
     expect(screen.getByRole('searchbox', { hidden: true })).toBe(search)
     expect(nav).not.toBeVisible()
     expect(search).not.toBeVisible()
@@ -299,10 +299,51 @@ describe('routing (ui-spec §3)', () => {
       await memory.navigate('/')
     })
     expect(await screen.findByText('library')).toBeVisible()
-    expect(screen.getByRole('complementary', { name: '라이브러리 탐색' })).toBe(nav)
+    expect(screen.getByRole('navigation', { name: '라이브러리 탐색' })).toBe(nav)
     expect(screen.getByRole('searchbox')).toBe(search)
     expect(nav).toBeVisible()
     expect(search).toBeVisible()
+  })
+})
+
+/**
+ * One banner, one navigation, one main, each holding what its name says.
+ *
+ * The 10-23 accessibility audit found only the last: the top bar was a `<div>`
+ * — inside `<main>`, where even a `<header>` is not a banner — and the sidebar
+ * an `<aside>`, a complementary region, though all it holds is the way around
+ * the library. A screen reader's landmark list read "main" and "라이브러리 탐색
+ * (complementary)", with search, sort and 보기 방식 nowhere but inside main.
+ * jsdom's role table does not apply the scoping rule, so "main does not hold
+ * the banner" is asserted rather than assumed.
+ */
+describe('landmarks (a11y audit #6)', () => {
+  it('gives the top bar the banner, the sidebar the navigation and the route the main', () => {
+    renderShell(LOADED_ROOTS)
+    const banner = screen.getByRole('banner')
+    expect(within(banner).getByRole('searchbox')).toBeInTheDocument()
+    expect(screen.getByRole('navigation', { name: '라이브러리 탐색' })).toBeInTheDocument()
+    const main = screen.getByRole('main')
+    expect(within(main).getByText('library')).toBeInTheDocument()
+    expect(main).not.toContainElement(banner)
+    expect(screen.queryByRole('complementary')).toBeNull()
+  })
+
+  it('keeps the icon rail a navigation landmark between 768 and 1023', () => {
+    stubViewport(768)
+    renderShell(LOADED_ROOTS)
+    expect(screen.getByRole('navigation', { name: '라이브러리 탐색' })).toHaveClass('sidebar-rail')
+  })
+
+  it('carries the navigation into the drawer below 768', async () => {
+    stubViewport(400)
+    renderShell(LOADED_ROOTS)
+    expect(screen.queryByRole('navigation')).toBeNull()
+
+    await userEvent.click(screen.getByRole('button', { name: '라이브러리 탐색 열기' }))
+
+    const drawer = screen.getByRole('dialog', { name: '라이브러리 탐색' })
+    expect(within(drawer).getByRole('navigation', { name: '라이브러리 탐색' })).toBeInTheDocument()
   })
 })
 
@@ -310,7 +351,7 @@ describe('the responsive layer (ui-spec §7, NFR-CMP-002)', () => {
   it('keeps the 240px sidebar with labels at 1440', () => {
     stubViewport(1440)
     renderShell(LOADED_ROOTS)
-    const nav = screen.getByRole('complementary', { name: '라이브러리 탐색' })
+    const nav = screen.getByRole('navigation', { name: '라이브러리 탐색' })
     expect(nav).not.toHaveClass('sidebar-rail')
     expect(screen.getByText('01. mangga')).toBeInTheDocument()
   })
@@ -318,7 +359,7 @@ describe('the responsive layer (ui-spec §7, NFR-CMP-002)', () => {
   it('collapses to the icon rail between 768 and 1023', () => {
     stubViewport(768)
     renderShell(LOADED_ROOTS)
-    expect(screen.getByRole('complementary', { name: '라이브러리 탐색' })).toHaveClass(
+    expect(screen.getByRole('navigation', { name: '라이브러리 탐색' })).toHaveClass(
       'sidebar-rail',
     )
   })
@@ -326,7 +367,7 @@ describe('the responsive layer (ui-spec §7, NFR-CMP-002)', () => {
   it('keeps the full sidebar at 1024', () => {
     stubViewport(1024)
     renderShell(LOADED_ROOTS)
-    expect(screen.getByRole('complementary', { name: '라이브러리 탐색' })).not.toHaveClass(
+    expect(screen.getByRole('navigation', { name: '라이브러리 탐색' })).not.toHaveClass(
       'sidebar-rail',
     )
   })
@@ -334,7 +375,7 @@ describe('the responsive layer (ui-spec §7, NFR-CMP-002)', () => {
   it('opens the full sidebar as an overlay drawer over the rail (768–1023)', async () => {
     stubViewport(900)
     renderShell(LOADED_ROOTS)
-    const rail = screen.getByRole('complementary', { name: '라이브러리 탐색' })
+    const rail = screen.getByRole('navigation', { name: '라이브러리 탐색' })
     expect(rail).toHaveClass('sidebar-rail')
     // The rail carries no root name and no count — every icon is the same
     // FolderOpen, so without the drawer the three real roots are one blur.

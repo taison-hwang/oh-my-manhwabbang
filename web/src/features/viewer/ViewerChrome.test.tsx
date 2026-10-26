@@ -89,6 +89,24 @@ describe('the E-33 override chip is filled, not outlined (E-32 §4 contrast)', (
   })
 })
 
+/**
+ * The viewer had no heading at all (10-23 accessibility audit #5): a screen
+ * reader's heading list was empty on the screen a reader spends the most time
+ * in. The series and the volume are what the screen is, so the pair is its one
+ * level-1 heading. A `role`, not an `<h1>`: base.css styles `h1` at 42px with the
+ * heading face and weight, which the volume's name would inherit.
+ */
+describe('the viewer title is the screen’s heading (a11y audit #5)', () => {
+  it('names the series and the volume as one level-1 heading', () => {
+    renderTopBar()
+    const heading = screen.getByRole('heading', { level: 1 })
+
+    expect(heading).toHaveTextContent('[만화] 몬스터 1~18')
+    expect(heading).toHaveTextContent('01권.zip')
+    expect(screen.getAllByRole('heading')).toHaveLength(1)
+  })
+})
+
 describe('E-32 §1 — the "current" markers are --color-hot', () => {
   it('marks the current thumbnail, and only the current one', () => {
     const { container, unmount } = render(

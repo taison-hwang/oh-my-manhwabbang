@@ -371,7 +371,7 @@ grid class is stated there.
 |---|---|---|
 | `body` | 14px / 1.45 / 400 | 14px, not the DS's 15px: density beats comfort here (design.md #4) |
 | `h1` … `h5` | 42 / 32 / 25 / 20 / 16px | Archivo 800, `line-height: 1.12`, `letter-spacing: -0.015em` |
-| `h6` | 16px, `-0.01em`, mixed case | **E-32 restyled the section label and kept the tag.** It used to be 13px uppercase +0.08em. The prototype reaches the new look by swapping every `<h6>`/`<h4>` for a styled `<div>`, which E-32 §4 refuses: that deletes the document outline, kills screen-reader heading navigation, and breaks `e2e/06-settings.spec.ts`'s `getByRole('heading')`. The *style* moves; the *tag* stays |
+| `h6` | 16px, `-0.01em`, mixed case | **E-32 restyled the section label and kept the tag.** It used to be 13px uppercase +0.08em. The prototype reaches the new look by swapping every `<h6>`/`<h4>` for a styled `<div>`, which E-32 §4 refuses: that deletes the document outline, kills screen-reader heading navigation, and breaks `e2e/06-settings.spec.ts`'s `getByRole('heading')`. The *style* moves; the *tag* stays. The section-label look is `h6`/`.h6`; the tag follows the outline (`<h2 class="h6">` on a screen, `<h3 class="h6">` in 설정 — a11y audit #5) |
 | `.card-meta` / muted copy | 11px | `--ink-meta` |
 
 ### 1.2 The shape of `tokens.css` — structure here, values in the file
@@ -918,7 +918,7 @@ Left → right:
 and the cards' own elevation (`ContinueRow.tsx`, `flex-none p-4`).
 
 - Header: `display:flex; align-items:baseline; gap:8px; margin-bottom:12px`.
-  `<h6>이어보기</h6>` + count `font-size:11px; tabular-nums; color:var(--ink-dim)` (e.g. `5개`).
+  `<h2 class="h6">이어보기</h2>` + count `font-size:11px; tabular-nums; color:var(--ink-dim)` (e.g. `5개`).
 - Track: `display:flex; gap:12px; overflow-x:auto; padding-bottom:` ~~`4px`~~ **`16px`** (`pb-4`,
   `--space-4` — the hover lift needs somewhere to go or the scroller clips the card's shadow).
   Max 5 cards. **Below 768 it is also a snap scroller: `scroll-snap-type:x mandatory`, turned off
@@ -1006,7 +1006,7 @@ and the cards' own elevation (`ContinueRow.tsx`, `flex-none p-4`).
 `padding:16px 16px 12px; display:flex; align-items:baseline; gap:12px; position:sticky; top:0;
 background:var(--color-bg); z-index:2; border-bottom:1px solid var(--rule)`
 
-`<h4>{scopeLabel}</h4>` (전체 시리즈 / 읽는 중 / 최근 추가 / 완독 / root name) +
+`<h2 class="h6">{scopeLabel}</h2>` (전체 시리즈 / 읽는 중 / 최근 추가 / 완독 / root name; the screen's `<h1>` is a visually hidden 라이브러리 — a11y audit #5) +
 `font-size:11px; tabular-nums; color:var(--ink-dim)` result count (`24개 시리즈`).
 
 > **Amended by E-46 — the masthead: name, latin, rule, count.**
@@ -1209,7 +1209,7 @@ grid/list toggle now switches the **volume** list.
 - **Cover** — `flex:0 0 176px; height:264px; overflow:hidden; background:var(--fill-track);
   border:1px solid var(--rule)`. Falls back to the same striped placeholder as the grid card.
 - **Body** — `flex:1; min-width:0; display:flex; flex-direction:column; gap:12px`:
-  - `<h2>` series title, `text-wrap:pretty`
+  - `<h1 class="h2">` series title, `text-wrap:pretty`
   - Path — `font-size:12px; letter-spacing:.02em; color:var(--ink-dim); ellipsis; nowrap`.
     *The only place a filesystem path is shown* (UI 5.3 / design.md IA).
   - `<hr class="hr" style="margin:4px 0">`
@@ -1241,7 +1241,7 @@ and did not. A test that asserts on the store cannot see that; assert on what th
 ### 5.2 Volume list header
 
 `padding:16px 16px 12px; display:flex; align-items:baseline; gap:12px; border-bottom:1px solid var(--rule)`
-→ `<h6>권 목록</h6>` + `font-size:11px; tabular; color:var(--ink-dim)` count (`12권`).
+→ `<h2 class="h6">권 목록</h2>` + `font-size:11px; tabular; color:var(--ink-dim)` count (`12권`).
 
 ### 5.3 Volumes — grid mode
 
@@ -1978,12 +1978,12 @@ Reference: [`settings-dialog-1440.png`](./ui-shots/settings-dialog-1440.png)
 `.dialog` `width:min(760px,100%); max-height:88vh; overflow-y:auto; gap:24px`.
 Header: `.dialog-title` `flex:1` `설정` + `.btn.btn-secondary` `font-size:12px` `esc`.
 
-1. **루트 관리** — `<h6>` + one row per root:
+1. **루트 관리** — `<h3 class="h6">` + one row per root:
    `display:flex; align-items:center; gap:12px; padding:8px 0; border-bottom:1px solid var(--rule)`.
    Name `13px`; path `11px; color:var(--ink-dim); ellipsis; nowrap`; stats `11px; tabular;
    color:var(--ink-muted)` → `21 · 4.9 TB`; `.btn.btn-secondary` `재스캔`; `.btn.btn-ghost` `제거`.
    Then `.btn.btn-secondary` `align-self:flex-start; margin-top:8px` → `+ 루트 추가`.
-   - **스캔 진행 (new)** — between the `<h6>` and the first row, **present only while
+   - **스캔 진행 (new)** — between the `<h3>` and the first row, **present only while
      `ScanStatus.state !== "idle"`**. `display:flex; flex-direction:column; gap:4px`: a baseline row
      with `formatScanLabel` (`11px; color:var(--accent-text)` → `스캔 중 41 / 96`) and `scanPercent`
      (`11px; tabular; color:var(--ink-muted)` → `42%`), then `ProgressBar` `height:6`, then
@@ -2020,11 +2020,11 @@ Header: `.dialog-title` `flex:1` `설정` + `.btn.btn-secondary` `font-size:12px
      재시작 후 적용. The row is computed from what the server actually did, so this line must not
      contradict it in advance.
 2. **Two columns** `display:flex; gap:24px` (stack below 768px):
-   - **캐시** — `<h6>` · value row `display:flex; align-items:baseline; gap:8px` with the number in
+   - **캐시** — `<h3 class="h6">` · value row `display:flex; align-items:baseline; gap:8px` with the number in
      **Archivo 800 32px tabular** and the unit in `13px; color:var(--ink-muted)` → `1.84` `GB / 4.00 GB` ·
      bar `height:4px` (`--fill-track` / accent) · note `11px; color:var(--ink-dim)` ·
      `.btn.btn-secondary` `전체 삭제` (FR-THM-008).
-   - **읽기 기본값** — `<h6>` then rows `display:flex; align-items:center; gap:12px` with a
+   - **읽기 기본값** — `<h3 class="h6">` then rows `display:flex; align-items:center; gap:12px` with a
      `flex:1; font-size:13px` label:
      `읽기 방향` → `.seg` L→R / R→L ·
      `표시 모드` → `.seg` 단면 / 양면 / 세로 ·
@@ -2032,7 +2032,7 @@ Header: `.dialog-title` `flex:1` `설정` + `.btn.btn-secondary` `font-size:12px
      **`테마` → the prototype only prints the static text `다크 (뷰어 고정)`. Replace it with a real
      `.seg` of 라이트 / 다크 / 시스템 (NFR-CMP-003) that writes `data-theme` on `<html>`; keep a note beside it
      that the viewer stays dark regardless.**
-3. **스캔 로그** — header `display:flex; align-items:baseline; gap:12px` with `<h6>` `flex:1` and a summary
+3. **스캔 로그** — header `display:flex; align-items:baseline; gap:12px` with `<h3 class="h6">` `flex:1` and a summary
    `11px; color:var(--accent-text)` → `경고 3 · 오류 2`.
    Body `border-top:2px solid var(--rule-strong); max-height:200px; overflow-y:auto; font-size:12px;
    letter-spacing:.01em`; each line `display:flex; gap:12px; padding:3px 0; border-bottom:1px solid var(--rule)`:

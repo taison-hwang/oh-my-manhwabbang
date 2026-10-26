@@ -268,7 +268,7 @@ export function RootsPanel() {
 
   return (
     <section className="flex flex-col gap-2">
-      <h6>루트 관리</h6>
+      <h3 className="h6">루트 관리</h3>
 
       {/* Above the rows, not below them: this is the answer to the button the
           user just pressed, and the dialog scrolls. */}

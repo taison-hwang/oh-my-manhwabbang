@@ -2,10 +2,12 @@ import '@testing-library/jest-dom/vitest'
 
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { RouterProvider, createMemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { ShellListCounts, ShellRoot } from '../../lib/shellData'
 import { MobileDrawer } from './MobileDrawer'
+import { RouteErrorScreen } from './RouteScaffold'
 import { ScanIndicator } from './ScanIndicator'
 import { Sidebar } from './Sidebar'
 import { TopBar } from './TopBar'
@@ -43,7 +45,7 @@ function renderSidebar(overrides: Partial<Parameters<typeof Sidebar>[0]> = {}) {
 describe('Sidebar (ui-spec §4.1)', () => {
   it('lists the roots with their series counts, then the three smart lists in order', () => {
     renderSidebar()
-    const nav = screen.getByRole('complementary', { name: '라이브러리 탐색' })
+    const nav = screen.getByRole('navigation', { name: '라이브러리 탐색' })
     const rows = within(nav).getAllByRole('button')
     // 3 roots + 읽는 중 / 최근 추가 / 완독, then the scan indicator and the
     // two footer buttons.
@@ -93,7 +95,7 @@ describe('Sidebar (ui-spec §4.1)', () => {
   it('collapses to icons in the 56px rail but keeps every row reachable', () => {
     // ui-spec §7, 768–1023: the labels go, the accessible names stay.
     renderSidebar({ variant: 'rail' })
-    const nav = screen.getByRole('complementary', { name: '라이브러리 탐색' })
+    const nav = screen.getByRole('navigation', { name: '라이브러리 탐색' })
     expect(nav).toHaveClass('sidebar-rail')
     expect(within(nav).getByRole('button', { name: '읽는 중' })).toBeInTheDocument()
     expect(within(nav).getByRole('button', { name: '01. mangga' })).toBeInTheDocument()
@@ -263,5 +265,28 @@ describe('MobileDrawer (ui-spec §7, D-42)', () => {
     expect(backdrop).not.toBeNull()
     if (backdrop !== null) await userEvent.click(backdrop)
     expect(onClose).toHaveBeenCalledTimes(3)
+  })
+})
+
+/**
+ * The router's error screen stands alone on the page when a route throws, so
+ * its message is the page's one heading. It was an `<h3>` with nothing above
+ * it (10-23 accessibility audit #5); the look stays the `h3`'s (`.h3`).
+ */
+describe('the route error screen (a11y audit #5)', () => {
+  it('heads the page with one level-1 heading', async () => {
+    const silence = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const Boom = (): never => {
+      throw new Error('boom')
+    }
+    const memory = createMemoryRouter([
+      { path: '/', element: <Boom />, errorElement: <RouteErrorScreen /> },
+    ])
+    render(<RouterProvider router={memory} />)
+
+    const titles = await screen.findAllByRole('heading', { level: 1 })
+    expect(titles).toHaveLength(1)
+    expect(titles[0]).toHaveTextContent('화면을 열 수 없습니다')
+    silence.mockRestore()
   })
 })

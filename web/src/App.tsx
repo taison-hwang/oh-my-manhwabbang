@@ -169,7 +169,9 @@ export function App() {
               CSS alone would leave a second copy of every nav row in the
               accessibility tree once the drawer opens. */}
           {!isMobile && sidebar(isRail ? 'rail' : 'full')}
-          <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {/* Audit #6: the top bar sits outside <main> so it can be the banner —
+              a <header> inside <main> is not one. <main> holds the route. */}
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <TopBar
               showBack={seriesId !== null}
               onBack={goLibrary}
@@ -187,10 +189,10 @@ export function App() {
                 setDrawerOpen(true)
               }}
             />
-            <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+            <main className="min-h-0 min-w-0 flex-1 overflow-hidden">
               {inViewer ? null : <Outlet />}
-            </div>
-          </main>
+            </main>
+          </div>
         </div>
       )}
       {/* The viewer's route element, outside the undisplayed shell (E-61). The

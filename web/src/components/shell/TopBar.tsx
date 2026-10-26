@@ -73,7 +73,8 @@ export function TopBar({
   className,
 }: TopBarProps) {
   return (
-    <div
+    // The banner landmark (audit #6).
+    <header
       className={cn(
         // E-32: the 2px bottom rule becomes a surface + an elevation. The bar
         // has to be *positioned* and stacked for that shadow to fall on the
@@ -233,6 +234,6 @@ export function TopBar({
         />
       </div>
       <VisuallyHidden>{view === 'grid' ? '그리드 보기' : '리스트 보기'}</VisuallyHidden>
-    </div>
+    </header>
   )
 }

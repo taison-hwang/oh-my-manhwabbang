@@ -21,7 +21,7 @@ export function RouteErrorScreen() {
   const message = routeErrorMessage(error)
   return (
     <div className="flex h-full flex-col items-start gap-3 p-8">
-      <h3>화면을 열 수 없습니다</h3>
+      <h1 className="h3">화면을 열 수 없습니다</h1>
       <p className="text-sm text-ink-muted">{message}</p>
     </div>
   )

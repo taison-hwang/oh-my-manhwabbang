@@ -3978,3 +3978,64 @@ describe('the E-34 §2 reveal reaches a series the loaded pages do not hold', ()
     }
   })
 })
+
+/**
+ * The document outline (10-23 accessibility audit #5).
+ *
+ * Every section label in the product was an `<h6>` and no screen but the two
+ * full-page messages had an `<h1>`, so a screen reader's heading list began at
+ * level 6 and named no screen. The library's name is not printed anywhere on
+ * it — the scope name in the section header is what a reader reads — so its
+ * `<h1>` is visually hidden, and the two bands under it are level 2. The look
+ * is the `.h6` class's, not the tag's (base.css), and is checked in a browser.
+ */
+describe('headings (a11y audit #5)', () => {
+  it('names the screen with one level-1 heading and puts both bands at level 2', async () => {
+    scenario.continueItems = [makeContinueItem()]
+    renderLibrary()
+    await waitForLibrary()
+    await screen.findByRole('region', { name: '이어보기' })
+
+    const titles = screen.getAllByRole('heading', { level: 1 })
+    expect(titles).toHaveLength(1)
+    expect(titles[0]).toHaveTextContent('라이브러리')
+    expect(screen.getByRole('heading', { level: 2, name: /이어보기/ })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: /전체 시리즈/ })).toBeInTheDocument()
+    expect(screen.queryAllByRole('heading', { level: 6 })).toHaveLength(0)
+  })
+
+  it('keeps the one level-1 heading while the skeleton is up', () => {
+    scenario.hold = true
+    renderLibrary()
+
+    expect(screen.getByTestId('library-loading')).toBeInTheDocument()
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
+  })
+
+  it('keeps the outline unbroken when the list fails: 1, then the section, then the message', async () => {
+    server.use(
+      http.get(`${ORIGIN}/api/series`, () =>
+        HttpResponse.json({ error: { code: 'internal', message: 'boom' } }, { status: 500 }),
+      ),
+    )
+    renderLibrary()
+
+    await screen.findByText('목록을 불러오지 못했습니다')
+    const levels = screen.getAllByRole('heading').map((h) => Number(h.tagName.slice(1)))
+    expect(levels[0]).toBe(1)
+    expect(levels.filter((l) => l === 1)).toHaveLength(1)
+    for (const [i, level] of levels.entries()) {
+      if (i > 0) expect(level).toBeLessThanOrEqual((levels[i - 1] ?? 0) + 1)
+    }
+  })
+
+  it('leaves the onboarding screen its own level-1 heading, and only that one', async () => {
+    scenario.roots = []
+    renderLibrary()
+
+    await screen.findByText('읽을 폴더를 등록하세요')
+    const titles = screen.getAllByRole('heading', { level: 1 })
+    expect(titles).toHaveLength(1)
+    expect(titles[0]).toHaveTextContent('읽을 폴더를 등록하세요')
+  })
+})

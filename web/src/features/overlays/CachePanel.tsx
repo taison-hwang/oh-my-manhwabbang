@@ -32,7 +32,7 @@ export function CachePanel() {
 
   return (
     <section className="flex min-w-0 flex-1 flex-col gap-2">
-      <h6>캐시</h6>
+      <h3 className="h6">캐시</h3>
 
       <div className="flex items-baseline gap-2">
         <span className="font-heading text-[32px] font-extrabold tabular-nums">{value}</span>

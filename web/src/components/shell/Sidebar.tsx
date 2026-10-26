@@ -147,7 +147,7 @@ export function Sidebar({
   const smartCounts: Record<(typeof SMART_LISTS)[number]['key'], number> = counts
 
   return (
-    <aside
+    <nav
       className={cn('sidebar', rail && 'sidebar-rail', className)}
       aria-label="라이브러리 탐색"
     >
@@ -248,6 +248,6 @@ export function Sidebar({
           </Button>
         </div>
       </div>
-    </aside>
+    </nav>
   )
 }

@@ -130,9 +130,9 @@ export function SeriesHeader({
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col gap-3">
-        <h2 className="text-pretty" lang={textLang(series.name)}>
+        <h1 className="h2 text-pretty" lang={textLang(series.name)}>
           {series.name}
-        </h2>
+        </h1>
         <p
           data-role="series-source-path"
           className="truncate whitespace-nowrap text-sm tracking-[.02em] text-ink-dim"

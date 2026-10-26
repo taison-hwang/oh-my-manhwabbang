@@ -33,7 +33,7 @@ export function ContinueRow({ suppressed, onResume }: ContinueRowProps) {
       {/* The same masthead the shelf header below carries (`SectionHeader`):
           name, latin, rule, count. E-46 — the two bands are one document. */}
       <div className="mb-3 flex items-baseline gap-2">
-        <h6>이어보기</h6>
+        <h2 className="h6">이어보기</h2>
         <SectionRule word="Continue" />
         <span className="text-xs tabular-nums text-ink-dim">{formatItemCount(items.length)}</span>
       </div>

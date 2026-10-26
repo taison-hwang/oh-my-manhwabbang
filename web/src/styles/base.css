@@ -85,9 +85,10 @@
      case. The prototype gets there by swapping every `<h6>`/`<h4>` for a styled
      `<div>`, which E-32 §4 refuses: that deletes the document outline, kills
      screen-reader heading navigation and breaks `e2e/06-settings.spec.ts`'s
-     `getByRole('heading')`. So the *style* moves and the *tag* stays, and the
-     seven section headers in the product all say `<h6>` (they used to be six
-     `<h6>` and one `<h4>` — `SectionHeader`). */
+     `getByRole('heading')`. So the *style* moves and the *tag* stays. The
+     section-label look is `h6`/`.h6`; the tags follow the outline (10-23 a11y
+     audit #5 — `<h2>` on a screen, `<h3>` in the settings dialog) and carry
+     `.h6`. */
   h1,
   h2,
   h3,
@@ -109,13 +110,18 @@
     margin: 0;
   }
 
+  /* Only the size differs by level, so a class twin lets a tag keep another
+     level's look (`<h1 class="h2">`). The class beats the element selector by
+     specificity in this same layer, whatever the order. */
   h1 {
     font-size: 42px;
   }
-  h2 {
+  h2,
+  .h2 {
     font-size: 32px;
   }
-  h3 {
+  h3,
+  .h3 {
     font-size: 25px;
   }
   h4 {
@@ -124,7 +130,8 @@
   h5 {
     font-size: 16px;
   }
-  h6 {
+  h6,
+  .h6 {
     font-size: 16px;
   }
 

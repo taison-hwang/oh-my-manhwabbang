@@ -346,7 +346,7 @@ describe('the sidebar and a pending root (A-11 / R2, ruling E-26)', () => {
    */
   it('shows a pending root as not yet loaded rather than as an empty scope', async () => {
     renderShellFromServer()
-    const nav = await screen.findByRole('complementary', { name: '라이브러리 탐색' })
+    const nav = await screen.findByRole('navigation', { name: '라이브러리 탐색' })
     const row = await within(nav).findByRole('button', { name: new RegExp(pendingRoot.label) })
 
     // The whole row, exactly: the note is present *and* the phantom `0` is not.
@@ -363,7 +363,7 @@ describe('the sidebar and a pending root (A-11 / R2, ruling E-26)', () => {
 
   it('refuses to scope the library to a root the server has not opened', async () => {
     renderShellFromServer()
-    const nav = await screen.findByRole('complementary', { name: '라이브러리 탐색' })
+    const nav = await screen.findByRole('navigation', { name: '라이브러리 탐색' })
     const row = await within(nav).findByRole('button', { name: new RegExp(pendingRoot.label) })
 
     await userEvent.click(row)
@@ -386,7 +386,7 @@ describe('the sidebar and a pending root (A-11 / R2, ruling E-26)', () => {
       }),
     )
     renderShellFromServer()
-    const nav = await screen.findByRole('complementary', { name: '라이브러리 탐색' })
+    const nav = await screen.findByRole('navigation', { name: '라이브러리 탐색' })
     const loaded = await within(nav).findByRole('button', { name: new RegExp(root.label) })
 
     expect(loaded).toBeEnabled()
@@ -434,7 +434,7 @@ describe('the sidebar and a pending root (A-11 / R2, ruling E-26)', () => {
     )
     renderLibraryShellFromServer()
 
-    const nav = await screen.findByRole('complementary', { name: '라이브러리 탐색' })
+    const nav = await screen.findByRole('navigation', { name: '라이브러리 탐색' })
     const row = await within(nav).findByRole('button', { name: new RegExp(pendingRoot.label) })
 
     // The premise, measured rather than assumed: the settings payload really did
@@ -461,7 +461,7 @@ describe('the sidebar and a pending root (A-11 / R2, ruling E-26)', () => {
   it('carries the note into the accessible name in the icon rail', async () => {
     stubViewport(900)
     renderShellFromServer()
-    const nav = await screen.findByRole('complementary', { name: '라이브러리 탐색' })
+    const nav = await screen.findByRole('navigation', { name: '라이브러리 탐색' })
     expect(nav).toHaveClass('sidebar-rail')
 
     const row = await within(nav).findByRole('button', {
@@ -820,7 +820,7 @@ describe('library preferences changed off the library screen (A-5 write-back)', 
     await libraryReady()
     await openSeries()
 
-    const nav = screen.getByRole('complementary', { name: '라이브러리 탐색' })
+    const nav = screen.getByRole('navigation', { name: '라이브러리 탐색' })
     const row = within(nav).getByRole('button', { name: new RegExp(root.label) })
     expect(row, 'premise: a loaded root, selectable and not current').toBeEnabled()
     expect(row).toHaveAttribute('data-active', 'false')
@@ -902,7 +902,7 @@ describe('the root route as the app mounts it (RootLayout)', () => {
     // The provider: a root's row and a scope's count reach the sidebar only
     // through it (`GET /api/roots`, and `GET /api/series?progress=reading`'s
     // total of 4 above).
-    const nav = await screen.findByRole('complementary', { name: '라이브러리 탐색' })
+    const nav = await screen.findByRole('navigation', { name: '라이브러리 탐색' })
     expect(await within(nav).findByRole('button', { name: /^만화/ })).toBeInTheDocument()
     expect(await within(nav).findByRole('button', { name: /읽는 중\s*4/ })).toBeInTheDocument()
 

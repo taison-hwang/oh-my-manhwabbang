@@ -249,6 +249,10 @@ export function LibraryPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {/* The library's name is printed nowhere on it, so its level-1 heading is
+          hidden (10-23 a11y audit #5). `sr-only` is absolutely positioned and
+          takes no room in the column. Onboarding above has its own. */}
+      <h1 className="sr-only">라이브러리</h1>
       <ContinueRow suppressed={revealed?.band !== true} onResume={resumeBook} />
       {/* E-60: not over the skeleton. Until the band above is settled its
           height is unknown, and a sticky header moved by it is a shift

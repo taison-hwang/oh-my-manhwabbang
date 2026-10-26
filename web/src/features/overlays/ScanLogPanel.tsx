@@ -61,7 +61,7 @@ export function ScanLogPanel() {
   return (
     <section className="flex min-w-0 flex-col gap-2">
       <div className="flex items-baseline gap-3">
-        <h6 className="flex-1">스캔 로그</h6>
+        <h3 className="h6 flex-1">스캔 로그</h3>
         <span className="flex items-center gap-[6px] text-xs tabular-nums text-accent-text">
           <TriangleAlert size={12} aria-hidden={true} />
           {`경고 ${formatCount(warns)} · 오류 ${formatCount(errors)}`}
