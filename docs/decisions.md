@@ -4060,3 +4060,60 @@ ui-spec §4.3은 이어보기 줄에 자리를 예약하지 않는다(진행 중
 - `ViewerTopBar.tsx`·`ViewerBottomBar.tsx`: 숨으면 바 루트에 `inert`(layout effect, `toggleAttribute`).
 - `useViewerKeys.ts`: 텍스트가 아닌 input에서 `H`만 통과.
 - `docs/ui-spec.md` §6.1 크롬 표·보류 문단, §8.2·§8.3, §9 12행. §6.1의 소스 줄 번호는 심볼 이름으로 바꿨다(코드가 움직이면 다시 틀어지므로).
+
+## E-63 — **SPA의 JS·CSS는 gzip으로만 embed한다. gzip을 받는 요청에는 그 바이트를, 받지 않는 요청에는 한 번 푼 바이트를 준다** (사용자 채택 B안·ea 설계, 메인 판단 2026-10-26 — 화면 변화 없음, HTTP 계약표(arch §7) 변화 없음) — BINDING
+
+### 1. 문제
+
+릴리스 크기 예산(E-19, `internal/buildinfo/release_budget_test.go`)의 여유가 linux/amd64 기본 변형에서 약 49 KB만 남았다. 새 기능 하나로 넘칠 크기다.
+SPA는 JS·CSS(약 475 KB)를 압축 없이 embed하고, 정적 핸들러도 압축 없이 보낸다(`Accept-Encoding`을 보지 않는다).
+분석 근거는 `handoffs/precompress-analysis.md`(ea, 2026-10-23, 실제 빌드 세 변형 측정)다.
+
+### 2. 판정
+
+1. 빌드(`make web`, 따라서 `make build`·`make release`)는 `pnpm build` 뒤 `scripts/precompress`로 `web/dist/assets/` 아래 `*.js`·`*.css`를
+   `*.gz`로 바꾸고 원본을 지운다. Go 표준 라이브러리 `compress/gzip`(BestCompression, 헤더의 시각·이름 비움)이므로 출력 바이트는 입력과 Go 버전에만 묶이고,
+   그 버전은 `MEASURED_TOOLCHAIN`이 이미 고정한다. node zlib나 시스템 gzip은 버전마다 바이트가 달라질 수 있어 쓰지 않는다.
+2. 폰트(woff2, 이미 brotli 압축)·`index.html`(요청마다 `<base href>`를 끼운다)·그 밖의 파일은 그대로 둔다.
+3. 서버(`internal/httpapi/spa.go`)는 `assets/` 아래 이름이 없고 `이름.gz`가 있을 때만 압축 표현으로 다룬다.
+   `Accept-Encoding`이 gzip을 허용하면(RFC 9110 §12.5.3: 명시한 `gzip`의 q > 0, 명시가 없으면 `*`의 q > 0) 그 바이트를 `Content-Encoding: gzip`으로,
+   아니면 프로세스당 한 번 푼 바이트를 보낸다. 둘 다 `Vary: Accept-Encoding`과 기존 `immutable`을 단다. `Content-Type`은 원래 확장자로 정한다.
+   Range·HEAD는 지금처럼 `http.ServeContent`가 처리하고, Range는 고른 표현에 적용된다. 오류 응답(416 등)에는 `Content-Encoding`을 달지 않는다.
+4. 원본이 있으면 지금과 똑같이 보낸다. 그래서 `make web-gates`의 build(검증용, 압축 안 함)로 만든 `web/dist`를 embed한 바이너리도 그대로 동작한다.
+   반대로 압축을 거친 `web/dist`는 `vite preview`가 자산을 읽지 못한다. `pnpm build`를 다시 하면 돌아온다.
+5. 크기 숫자(`MEASURED_*`, README `## Build`)는 커밋 직전 최종 측정에서 한꺼번에 바꾼다. 분석 때 실측한 절감은 default·nopdf 315 392 B, avif 327 680 B다.
+
+### 3. 기각한 대안
+
+- **현행 유지.** 여유 약 49 KB.
+- **brotli만 embed + 해제 폴백.** 표준 라이브러리에 brotli 디코더가 없다. `github.com/andybalholm/brotli` 링크 비용이 +2 281 472 B(실측)로 절감의 여섯 배를 넘는다.
+- **brotli + gzip을 둘 다 embed.** 절감이 약 203 KB(계산)로 줄고, 전송은 약 22 KB 줄지만 LAN에서는 의미가 없으며, 빌드에 brotli 인코더가 하나 더 필요하다.
+- **원본과 gzip을 둘 다 embed.** 절감이 사라진다.
+- **응답 압축 미들웨어.** 바이너리는 줄지 않고 요청마다 CPU를 쓴다.
+- `pdfium.wasm` 압축(약 2.8 MB)은 E-19가 제3자 바이너리 vendoring 비용으로 기각한 그대로 둔다(사용자, 2026-10-26).
+
+### 4. 검증
+
+- 유닛: `scripts/precompress/main_test.go`는 원본 교체와 왕복, 결정성(사본 둘의 바이트 일치, 헤더 시각·이름 비움, BestCompression), 멱등,
+  rename 실패 때 원본 보존과 재실행 수렴, 심볼릭 링크 건너뜀을 본다. `internal/httpapi/spa_precompressed_test.go`는 협상표(q=0, `*`, 대소문자,
+  `x-gzip`, 형식 오류 q, `gzip;q=0, identity;q=0`), `Vary`·`Content-Type`·`Content-Length`, HEAD, 단일 Range(양쪽 표현), 다중 Range, 416에 gzip 표시 없음,
+  index.html·클라이언트 라우트·평문 자산 불변, 깨진 `.gz`, 동시 첫 요청의 해제 1회, 서버별 캐시, 서버와 함께 수거되는 캐시를 본다.
+  테스트를 먼저 써서 수정 전 코드에서 빨갛게 나오는 것을 확인했다. 스크래치 뮤테이션 19개(Vary 제거, q=0 허용, Content-Encoding을 먼저 설정, 416 표시,
+  캐시 생략·전역화·잠금 없는 check-then-set, 원본 선삭제 등)가 전부 RED였다.
+- 다중 Range: go.mod가 `go 1.25`라 go1.26.9의 GODEBUG 기본값 `httpservecontentmaxranges=1`이 지금은 다중 Range를 막아 결함이 가려진다.
+  go.mod를 올리는 순간 드러나므로 테스트가 GODEBUG를 1.26 기본값으로 고정하고 본다.
+- 리뷰: codex 1회. 수용(다중 Range + gzip이 multipart 봉투에 gzip을 붙임 / 캐시가 패키지 전역이라 Server가 수거되지 않음 / 동시 첫 해제·두 서버 테스트 / precompress 실패 경로 테스트),
+  반박(`identity;q=0`이면 406 — RFC 9110은 헤더를 무시하고 압축 없이 보내는 것을 허용하고, 그쪽이 어느 클라이언트에게도 틀리지 않는다),
+  보류(평문 자산에도 있던 동작: `If-Match`에 대한 412가 `immutable`을 그대로 단다. 브라우저는 하위 자원에 If-Match를 보내지 않는다). 수정은 구현자가 아닌 에이전트가 했다.
+- 게이트: 합친 트리 사본에서 `make lint`·`make test` exit 0. 좁은 `-race -count=3`도 통과.
+- 실바이너리(`make build`, go1.26.9): `precompress: 2 files, 476469 -> 147774 bytes`. curl로 gzip 요청 → `Content-Encoding: gzip`, 본문이 embed된 `.gz`와 바이트 일치.
+  `Accept-Encoding` 없음 → 원본 429 076 B를 그대로 보냄. HEAD·Range·`gzip;q=0`도 기대대로이고, `/`에는 `Content-Encoding`·`Vary`가 없다.
+  Chrome 156(1440): JS 137 332 B를 받아 429 076 B로 풀고 CSS가 적용된다. 라이브러리가 렌더링되고 콘솔 오류 0.
+- e2e 영향(54 확인): 자산 헤더·크기를 단언하는 곳이 없다. 9단계는 web/dist를 prune하고, `--no-build` 신선도 검사(`find web/dist -newer $BIN`)는
+  `web`이 `build-go`보다 앞서므로 영향이 없다. 실 e2e 라운드는 이 판정에서 돌리지 않았다.
+
+### 5. 바뀐 것
+
+- `scripts/precompress/`(새), `Makefile`의 `web:` 레시피.
+- `internal/httpapi/spa.go`, `internal/httpapi/spa_precompressed_test.go`(새).
+- `docs/arch-backend.md` §2(그림의 `middleware.go`에 있지도 않던 "gzip-exempt"를 정정), §2.1 Serving rules 한 줄, §11 빌드 한 줄.

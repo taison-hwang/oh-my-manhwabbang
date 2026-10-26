@@ -193,7 +193,7 @@ zip-viewer/
 │   ├── pdfium/                     //go:build !nopdf — pool lifecycle, wazero cache
 │   ├── httpapi/                    the whole of §7
 │   │   ├── router.go               ServeMux wiring + base_path + SPA fallback
-│   │   ├── middleware.go           request id, slog, recover, auth, gzip-exempt
+│   │   ├── middleware.go           request id, slog, recover, auth (no response compression)
 │   │   ├── errors.go               the single error envelope
 │   │   ├── dto.go                  every struct in §7, with json tags
 │   │   ├── series.go books.go pages.go thumbs.go progress.go scan.go settings.go cache.go auth.go
@@ -245,6 +245,7 @@ Serving rules:
 * `GET {base}/assets/*` — hashed Vite filenames → `Cache-Control: public, max-age=31536000, immutable`.
 * `GET {base}/` and any unmatched non-`/api/` path → `index.html` with `Cache-Control: no-cache` (SPA fallback for client-side routing).
 * Anything under `{base}/api/` that does not match a route → JSON 404 in the §7.2 envelope, **never** the SPA fallback.
+* `assets/*.js` and `*.css` are embedded gzip-only as `*.gz` (E-63). A request whose `Accept-Encoding` admits gzip gets those bytes with `Content-Encoding: gzip`; any other request gets them decompressed once per process. Both carry `Vary: Accept-Encoding`. An asset embedded uncompressed, and `index.html`, are served as stored.
 
 ---
 
@@ -2914,6 +2915,7 @@ export GOTOOLCHAIN=auto
 
 # frontend first — go:embed needs web/dist to exist
 cd web && pnpm install --frozen-lockfile && pnpm build && cd ..
+go run ./scripts/precompress web/dist   # assets/*.js|*.css → *.gz (E-63)
 
 # single static binary (NFR-OPS-001)
 CGO_ENABLED=0 go build -trimpath \

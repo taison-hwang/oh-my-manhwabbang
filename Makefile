@@ -146,8 +146,17 @@ print-%:
 	@printf '%s\n' '$($*)'
 
 ## web — build the SPA that go:embed swallows (arch §2.1). Must precede `go build`.
+#
+# E-63: the second line replaces every web/dist/assets/**/*.js and *.css with a
+# deterministic .gz (scripts/precompress), because go:embed stores bytes as they
+# are and the release would otherwise carry the SPA's text uncompressed. The
+# server serves either form (internal/httpapi/spa.go: the .gz as-is to a gzip
+# client, inflated once otherwise), so `web-gates`'s build, which is a check and
+# not a release input, stays uncompressed. A precompressed dist is for the
+# binary only: `vite preview` cannot load its assets — rerun `pnpm build`.
 web:
 	cd web && $(PNPM) install --frozen-lockfile && $(PNPM) build
+	$(BUILDENV) $(GO) run ./scripts/precompress web/dist
 
 ## build — the single static binary of NFR-OPS-001: SPA embedded, cgo-free.
 build: web build-go
