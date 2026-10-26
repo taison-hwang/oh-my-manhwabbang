@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"maps"
 	"path/filepath"
 	"sort"
@@ -500,6 +501,192 @@ func TestScan_firstSeen_cancelledBootstrapRun_leavesTheMarkerForTheNextRun(t *te
 		t.Errorf("meta first_seen_bootstrap = %q (present %v, %v) after the run that did "+
 			"finish; a completed bootstrap must close bootstrapping", v, ok, err)
 	}
+}
+
+// twoOldRoots is a two-root library whose only series have been on disk for over
+// a year, so a bootstrap run must date both from their mtimes. Roots run one
+// after another in name order, so "manga" always finishes, sightings flushed,
+// before "nas" begins.
+func twoOldRoots(t *testing.T) *harness {
+	t.Helper()
+	h := newHarnessAt(t, map[string]string{
+		"manga": testutil.BuildTree(t, map[string]any{
+			"[만화] 앞 시리즈": map[string]any{"01권.zip": jpegZIP(t, "001.jpg")},
+		}),
+		"nas": testutil.BuildTree(t, map[string]any{
+			"[만화] 뒤 시리즈": map[string]any{"01권.zip": jpegZIP(t, "001.jpg")},
+		}),
+	})
+	for root, rel := range map[string]string{"manga": "[만화] 앞 시리즈", "nas": "[만화] 뒤 시리즈"} {
+		dir := filepath.Join(h.rootDirs[root], rel)
+		testutil.Touch(t, filepath.Join(dir, "01권.zip"), -400*24*time.Hour)
+		testutil.Touch(t, dir, -400*24*time.Hour)
+	}
+	return h
+}
+
+// assertBootstrapStillOpen checks the marker a bootstrap run that did not finish
+// must leave alone, then runs the recovering scan and checks that it still
+// bootstraps: the series the first run left undated is dated from its mtime,
+// 최근 추가 stays empty, and the marker is stamped now.
+func assertBootstrapStillOpen(t *testing.T, h *harness, clk *fakeClock, undatedRoot, undatedRel string) {
+	t.Helper()
+	if v, ok, err := h.ud.Meta(t.Context(), "first_seen_bootstrap"); err != nil || ok {
+		t.Fatalf("meta first_seen_bootstrap = %q (present %v, %v) after a run that did not "+
+			"date the whole library; it must stay unset so the next run still bootstraps", v, ok, err)
+	}
+	if need, err := h.ud.FirstSeenBootstrapNeeded(t.Context()); err != nil || !need {
+		t.Fatalf("FirstSeenBootstrapNeeded = %v (%v), want true", need, err)
+	}
+
+	h.run(Request{})
+
+	seen := h.firstSeenOf(undatedRoot, undatedRel)
+	if want := h.seriesAt(undatedRoot, undatedRel).Mtime; seen != want {
+		t.Errorf("the recovering run stamped %s at %d, want its mtime %d: the earlier "+
+			"run must not have consumed the bootstrap", undatedRel, seen, want)
+	}
+	if names, total := h.recentlyAdded(clk.unix() - 14*86400); total != 0 {
+		t.Errorf("최근 추가 = %v (total %d), want empty: a year-old library must not look "+
+			"new (AC-006)", names, total)
+	}
+	if v, ok, err := h.ud.Meta(t.Context(), "first_seen_bootstrap"); err != nil || !ok || v == "" {
+		t.Errorf("meta first_seen_bootstrap = %q (present %v, %v) after the run that did "+
+			"finish; a completed bootstrap must close bootstrapping", v, ok, err)
+	}
+}
+
+// TestScan_firstSeen_cancelledBootstrapRun_leavesTheMarkerForTheNextRun cancels
+// before anything is recorded, and that shape cannot tell two guards apart:
+// with no rows on record, "the run recorded no first sightings" keeps the marker
+// unset even if cancellation is never checked. The shape arch §3.6 rule 6
+// (ruling E-16) describes is the common one: an
+// interrupted run "has usually already committed *some* rows". Here the first
+// root finishes and records its series, and the run is cancelled inside the
+// second. The marker is write-once, so stamping it now is permanent, and the
+// next run would date the second root's year-old series with its own clock
+// (test audit, 10-26).
+func TestScan_firstSeen_bootstrapCancelledAfterARootRecorded_leavesTheMarkerForTheNextRun(t *testing.T) {
+	t.Parallel()
+	h := twoOldRoots(t)
+	clk := h.freezeClock(time.Now())
+	// freezeClock rebuilds the scanner, so the lister is wrapped afterwards.
+	plain := h.lister.inner
+	parked := make(chan struct{})
+	h.lister.inner = &parkingLister{
+		inner:  plain,
+		park:   map[string]bool{"[만화] 뒤 시리즈/01권.zip": true},
+		parked: parked,
+	}
+
+	done := make(chan struct{})
+	var res *Result
+	go func() {
+		defer close(done)
+		var err error
+		if res, err = h.scanner.Run(t.Context(), Request{}); err != nil {
+			t.Errorf("a cancelled scan must return cleanly, got %v", err)
+		}
+	}()
+	select {
+	case <-parked:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the scan never reached the parked book")
+	}
+	if !h.scanner.Cancel() {
+		t.Fatal("Cancel reported that nothing was running")
+	}
+	<-done
+	if res == nil {
+		t.Fatal("the cancelled scan returned no result")
+	}
+
+	// Preconditions, not the assertion. Every other guard must be unable to keep
+	// the marker unset, so that only the cancellation check can: a row was
+	// recorded, both roots are in the result, and neither reports an error.
+	if !res.Cancelled {
+		t.Fatal("the run was not reported as cancelled")
+	}
+	if len(res.Roots) != 2 {
+		t.Fatalf("the result holds %d roots, want both", len(res.Roots))
+	}
+	for _, rr := range res.Roots {
+		if rr.Err != nil {
+			t.Fatalf("root %s reported %v; a cancelled root is not a failed one", rr.Name, rr.Err)
+		}
+	}
+	got := h.firstSeen()
+	if _, ok := got[ids.SeriesID("manga", "[만화] 앞 시리즈")]; !ok || len(got) != 1 {
+		t.Fatalf("first sightings after the cancelled run = %v, want exactly the "+
+			"finished root's series", got)
+	}
+
+	h.lister.inner = plain
+	assertBootstrapStillOpen(t, h, clk, "nas", "[만화] 뒤 시리즈")
+}
+
+// failFirstMark stands in for a user.db that is locked for exactly one batch:
+// the first MarkSeriesSeen fails and every later one goes through.
+type failFirstMark struct {
+	SeriesSeenWriter
+	calls atomic.Int64
+}
+
+func (f *failFirstMark) MarkSeriesSeen(ctx context.Context, rows []userdata.SeriesSeen) error {
+	if f.calls.Add(1) == 1 {
+		return errors.New("userdata: database is locked")
+	}
+	return f.SeriesSeenWriter.MarkSeriesSeen(ctx, rows)
+}
+
+// arch §3.6 rule 6 names one more run that may not close bootstrapping: one
+// that "lost a batch to a locked user.db". flushSeen only logs that failure,
+// because the index is right either way, so the run's tally is the only record
+// that a root's series were never dated. The second root's batch does land,
+// so the "recorded nothing" guard cannot cover for a tally that is ignored
+// (test audit, 10-26).
+func TestScan_firstSeen_bootstrapRunThatLostABatch_leavesTheMarkerForTheNextRun(t *testing.T) {
+	t.Parallel()
+	h := twoOldRoots(t)
+	clk := h.freezeClock(time.Now())
+	locked := &failFirstMark{SeriesSeenWriter: h.ud}
+	sc, err := New(Options{
+		Index: h.idx, Books: h.lister, Roots: h.rootSet,
+		ConfigRoots: h.cfgRoots, Scan: h.scanCfg, Seen: locked,
+		Now: clk.Now, Logger: quietLogger(),
+	})
+	if err != nil {
+		t.Fatalf("constructing the scanner: %v", err)
+	}
+	t.Cleanup(func() { _ = sc.Close() })
+
+	res, err := sc.Run(t.Context(), Request{})
+	if err != nil {
+		t.Fatalf("a lost first-sighting batch must not fail the scan, got %v", err)
+	}
+
+	// Preconditions, not the assertion. Every other guard must be unable to keep
+	// the marker unset, so that only the tally can: the run was not cancelled,
+	// both roots are in the result without an error, and one batch was recorded.
+	if res.Cancelled || len(res.Roots) != 2 {
+		t.Fatalf("cancelled %v with %d roots, want a complete run over both", res.Cancelled, len(res.Roots))
+	}
+	for _, rr := range res.Roots {
+		if rr.Err != nil {
+			t.Fatalf("root %s reported %v; a lost first-sighting batch is logged, not "+
+				"returned (arch §3.6 rule 7)", rr.Name, rr.Err)
+		}
+	}
+	if got := locked.calls.Load(); got != 2 {
+		t.Fatalf("MarkSeriesSeen was called %d times, want once per root", got)
+	}
+	got := h.firstSeen()
+	if _, ok := got[ids.SeriesID("nas", "[만화] 뒤 시리즈")]; !ok || len(got) != 1 {
+		t.Fatalf("first sightings after the run = %v, want exactly the second root's "+
+			"series: the first root's batch was the one lost", got)
+	}
+
+	assertBootstrapStillOpen(t, h, clk, "manga", "[만화] 앞 시리즈")
 }
 
 // The same rule for a run that covered only part of the library. A root that was

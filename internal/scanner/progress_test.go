@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"shelf/internal/config"
@@ -270,6 +271,81 @@ func (p *parkingLister) Open(ctx context.Context, b source.Book) (source.BookSou
 		return nil, ctx.Err()
 	}
 	return p.inner.Open(ctx, b)
+}
+
+// arch §4.1 + §4.9 on a warm index: a cancelled run commits what it has and
+// deletes nothing, because a row it never reached is not evidence that the
+// file is gone (E-50 §1: decideSweep refuses a cancelled scan).
+//
+// The two other cancel tests cannot see the sweep. The one above cancels a
+// first scan, so there is no older row to delete; the one in scanner_test.go
+// cancels before Run starts, so no root pass ever reaches decideSweep. Here
+// the index already holds all three series, the rescan is cancelled with
+// 시리즈 b in flight, and b and c — never re-stamped by this run — must keep
+// their rows and pages. (test audit, 10-26)
+func TestScan_cancelMidRun_onAWarmIndex_keepsEverySeriesItDidNotReach(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, map[string]any{
+		"시리즈 a": map[string]any{"01권.zip": jpegZIP(t, "001.jpg")},
+		"시리즈 b": map[string]any{"01권.zip": jpegZIP(t, "001.jpg")},
+		"시리즈 c": map[string]any{"01권.zip": jpegZIP(t, "001.jpg", "002.jpg")},
+	}, func(sc *config.Scan) { sc.Workers = 1 })
+	h.run(Request{})
+	want := []string{"시리즈 a", "시리즈 b", "시리즈 c"}
+	if got := seriesRels(h.series()); !equalStrings(got, want) {
+		t.Fatalf("first scan indexed %v, want %v", got, want)
+	}
+
+	parked := make(chan struct{})
+	h.lister.inner = &parkingLister{
+		inner:  h.lister.inner,
+		park:   map[string]bool{"시리즈 b/01권.zip": true},
+		parked: parked,
+	}
+	done := make(chan *Result, 1)
+	go func() {
+		// Full: an unchanged book is otherwise skipped without being opened
+		// (FR-IDX-003), and the park would never be reached.
+		res, err := h.scanner.Run(h.t.Context(), Request{Full: true})
+		if err != nil {
+			t.Errorf("a cancelled scan must return cleanly, got %v", err)
+		}
+		done <- res
+	}()
+	select {
+	case <-parked:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the scan never reached the parked book")
+	}
+	if !h.scanner.Cancel() {
+		t.Fatal("Cancel reported that nothing was running")
+	}
+	res := <-done
+	if res == nil {
+		t.Fatal("the cancelled run returned no result")
+	}
+
+	if !res.Cancelled {
+		t.Error("Result.Cancelled is false after Cancel")
+	}
+	// Precondition: no root error, so the cancellation is the only thing
+	// standing between this run and the sweep. Otherwise the root-error guard
+	// would be the one holding, and this test would prove nothing about cancel.
+	if len(res.Roots) != 1 || res.Roots[0].Err != nil {
+		t.Fatalf("root result = %+v; want one root with no error", res.Roots)
+	}
+	if res.Roots[0].Swept != (index.SweepResult{}) {
+		t.Errorf("a cancelled run swept %+v", res.Roots[0].Swept)
+	}
+	if got := seriesRels(h.series()); !equalStrings(got, want) {
+		t.Fatalf("after the cancelled rescan the index holds %v; want %v — nothing the run did not reach may go", got, want)
+	}
+	for rel, pages := range map[string]int{"시리즈 b": 1, "시리즈 c": 2} {
+		books := h.books("manga", rel)
+		if len(books) != 1 || books[0].Status != StatusOK || len(h.pages(books[0].ID)) != pages {
+			t.Errorf("%s after the cancelled rescan = %+v; want its one ok book with %d page(s)", rel, books, pages)
+		}
+	}
 }
 
 // FR-IDX-004's per-root breakdown has to survive a root that failed.
@@ -566,6 +642,35 @@ func TestScan_anIdleTickMakesLogRowsAndTheOpenBatchReadable(t *testing.T) {
 			"its batch, and the write permit, stayed open; after the scan it is there: %v",
 			hasSeries(t, h, "가 시리즈"))
 	}
+}
+
+// E-59 (BINDING, the user's "1초 주기"): the writer's idle commit runs on a 1 s
+// ticker. The test above owns its tick channel, so it proves one tick commits
+// but never looks at the ticker New wires in for production. This calls that
+// very closure inside a synctest bubble, where the ticker runs on virtual time:
+// the first two ticks must land at exactly 1 s and 2 s. A wrong interval shows
+// up as a wrong virtual timestamp at once, so nothing waits on the wall clock
+// and load cannot make it flaky. (test audit, 10-26)
+func TestNew_wiresTheIdleCommitToAOneSecondTicker(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, map[string]any{})
+	sc, err := New(Options{Index: h.idx, Books: h.lister, Roots: h.rootSet, Logger: quietLogger()})
+	if err != nil {
+		t.Fatalf("constructing the scanner: %v", err)
+	}
+	t.Cleanup(func() { _ = sc.Close() })
+
+	synctest.Test(t, func(t *testing.T) {
+		ticks, stop := sc.commitTicks()
+		defer stop()
+		start := time.Now()
+		for n := 1; n <= 2; n++ {
+			<-ticks
+			if got, want := time.Since(start), time.Duration(n)*time.Second; got != want {
+				t.Fatalf("idle-commit tick %d came after %v, want %v (E-59: every 1 s)", n, got, want)
+			}
+		}
+	})
 }
 
 func hasInfoRow(t *testing.T, h *harness) bool {

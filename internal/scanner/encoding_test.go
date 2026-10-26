@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"shelf/internal/archive"
+	"shelf/internal/index"
 	"shelf/internal/testutil"
 )
 
@@ -126,6 +127,81 @@ func TestScan_skippedBookThatMoved_keepsItsNameEncoding(t *testing.T) {
 	}
 	if got := books[1].NameEncoding; got != "cp949" {
 		t.Errorf("moved, skipped 02권.zip NameEncoding = %q, want cp949 carried from the last scan", got)
+	}
+}
+
+// The label is one of the fields keep() carries into that full rewrite; the
+// test above watches only it. The others reach index.db by the same UpsertBook
+// and each has its own way of going wrong when left at bookResult's zero value:
+//
+//   - content_version — the file has not changed, so neither may its cv
+//     (arch §3.5, FR-THM-006: cv moves exactly when (size, mtime) does). An
+//     empty or different cv re-keys every thumbnail of the book.
+//   - dims_state — the page rows are not rewritten (the book is skipped), so
+//     the dimensions the thumbnail worker measured into them are still there,
+//     and the flag that says so must survive with them (arch §5.8, FR-VWR-004).
+//     The cold scan leaves it 'none', which is also the zero value, so the
+//     worker's pass is replayed through its own API first — without it this
+//     field could not fail.
+//   - total_bytes — the sum of the uncompressed page bytes (arch §3.5 books DDL):
+//     the one JPEG entry inside cp949ZIP.
+//
+// (test audit, 10-26)
+func TestScan_skippedBookThatMoved_keepsItsContentVersionDimsAndPageBytes(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, map[string]any{"[만화] 군계 1~25": map[string]any{
+		"02권.zip": cp949ZIP(t),
+	}})
+	h.run(Request{})
+	cold := h.books("manga", "[만화] 군계 1~25")
+	if len(cold) != 1 || len(cold[0].ContentVersion) != 16 {
+		t.Fatalf("cold scan: %+v, want one book with a 16-hex content_version", cold)
+	}
+	if want := int64(len(jpeg(t))); cold[0].TotalBytes != want {
+		t.Fatalf("cold scan total_bytes = %d, want %d (the one page, uncompressed)", cold[0].TotalBytes, want)
+	}
+	if err := h.idx.UpdateDims(t.Context(), cold[0].ID, []index.PageDims{{PageNo: 1, Width: 111, Height: 222}}); err != nil {
+		t.Fatalf("measuring the page as the thumbnail worker does: %v", err)
+	}
+	if got := h.books("manga", "[만화] 군계 1~25")[0].DimsState; got != "done" {
+		t.Fatalf("dims_state after the worker's pass = %q, want done", got)
+	}
+
+	testutil.BuildTreeAt(t, filepath.Join(h.rootDirs["manga"], "[만화] 군계 1~25"),
+		map[string]any{"01권.zip": jpegZIP(t, "001.jpg")})
+
+	h.lister.reset()
+	h.run(Request{})
+	if got := h.lister.listedPaths(); !equalStrings(got, []string{"[만화] 군계 1~25/01권.zip"}) {
+		t.Fatalf("the scan read %v, want only the new volume (02권 must be skipped for this test to mean anything)", got)
+	}
+	books := h.books("manga", "[만화] 군계 1~25")
+	if len(books) != 2 || books[1].DisplayName != "02권.zip" || books[1].Ord != 1 {
+		t.Fatalf("books = %v, want 02권.zip moved to ord 1", bookNames(books))
+	}
+	moved := books[1]
+	if moved.ContentVersion != cold[0].ContentVersion {
+		t.Errorf("moved, skipped 02권.zip content_version = %q, want %q — the file did not change",
+			moved.ContentVersion, cold[0].ContentVersion)
+	}
+	if moved.DimsState != "done" {
+		t.Errorf("moved, skipped 02권.zip dims_state = %q, want done kept with its measured pages", moved.DimsState)
+	}
+	if moved.TotalBytes != cold[0].TotalBytes {
+		t.Errorf("moved, skipped 02권.zip total_bytes = %d, want %d carried from the last scan",
+			moved.TotalBytes, cold[0].TotalBytes)
+	}
+	// One page, as cp949ZIP built it: a move that kept the book's metadata but
+	// lost its page rows must not pass the loop below by having nothing to loop
+	// over.
+	pages := h.pages(moved.ID)
+	if len(pages) != 1 {
+		t.Fatalf("moved, skipped 02권.zip has %d page rows, want its 1", len(pages))
+	}
+	for _, p := range pages {
+		if p.Width == nil || p.Height == nil || *p.Width != 111 || *p.Height != 222 {
+			t.Errorf("page %d lost its measured 111x222 in the move (width %v, height %v)", p.PageNo, p.Width, p.Height)
+		}
 	}
 }
 

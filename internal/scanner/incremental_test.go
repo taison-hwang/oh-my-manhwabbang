@@ -262,10 +262,21 @@ func TestScan_full_neverSkipsAnything(t *testing.T) {
 // volume would misorder every later one while every later one is "unchanged".
 func TestScan_incremental_insertedVolume_rewritesTheOrdOfLaterBooks(t *testing.T) {
 	t.Parallel()
+	// Every mtime is pinned. The skip rule compares (size, mtime) in whole
+	// seconds (arch §4.6), and the two trees below are written at two different
+	// instants: left to the filesystem, a run that straddled a second boundary
+	// re-read both "unchanged" volumes, so the skip path this test exists for
+	// went unexercised — a mutation dropping keep()'s page count survived 1 run
+	// in 40. Distinct instants per volume keep any two of them from sharing a
+	// content_version (test audit, 10-26).
+	v1, v2, v3 := jpegZIP(t, "001.jpg"), jpegZIP(t, "001.jpg", "002.jpg"), jpegZIP(t, "001.jpg")
+	at := func(data []byte, sec int64) testutil.File {
+		return testutil.File{Data: data, ModTime: time.Unix(1_700_000_000+sec, 0)}
+	}
 	before := testutil.BuildTree(t, map[string]any{
 		"시리즈": map[string]any{
-			"01권.zip": jpegZIP(t, "001.jpg"),
-			"03권.zip": jpegZIP(t, "001.jpg"),
+			"01권.zip": at(v1, 1),
+			"03권.zip": at(v3, 3),
 		},
 	})
 	h := newHarnessAt(t, map[string]string{"manga": before})
@@ -279,15 +290,21 @@ func TestScan_incremental_insertedVolume_rewritesTheOrdOfLaterBooks(t *testing.T
 	// calling a write primitive (FR-CFG-005 lint guard).
 	after := testutil.BuildTree(t, map[string]any{
 		"시리즈": map[string]any{
-			"01권.zip": jpegZIP(t, "001.jpg"),
-			"02권.zip": jpegZIP(t, "001.jpg", "002.jpg"),
-			"03권.zip": jpegZIP(t, "001.jpg"),
+			"01권.zip": at(v1, 1),
+			"02권.zip": at(v2, 2),
+			"03권.zip": at(v3, 3),
 		},
 	})
 	h.rootDirs["manga"] = after
 	h.cfgRoots[0].Path = after
 	h.build()
 	h.run(Request{})
+	// The premise, asserted rather than assumed: only the new volume is read,
+	// so 01권 and 03권 reach the index through keep() (test audit, 10-26).
+	if got := h.lister.listedPaths(); !equalStrings(got, []string{"시리즈/02권.zip"}) {
+		t.Fatalf("the rescan read %v, want only [시리즈/02권.zip] — the unchanged volumes must be skipped "+
+			"for this test to mean anything", got)
+	}
 
 	books := h.books("manga", "시리즈")
 	if got := bookNames(books); !equalStrings(got, []string{"01권.zip", "02권.zip", "03권.zip"}) {
@@ -306,6 +323,67 @@ func TestScan_incremental_insertedVolume_rewritesTheOrdOfLaterBooks(t *testing.T
 			t.Errorf("unchanged book %q has %d pages, want 1", books[i].DisplayName, books[i].PageCount)
 		}
 	}
+	// The series row is a roll-up of all three volumes, two of them skipped, and
+	// it must be rewritten: book_count, page_count and total_bytes (arch §3.5 series
+	// DDL; total_bytes is the containers on disk, ruling E-11). Stamped forward as
+	// "unchanged", it would keep the cold scan's 2 books, which the library grid
+	// and the 용량 sort read straight off the row (test audit, 10-26).
+	assertSeriesRollUp(t, h.seriesAt("manga", "시리즈"), 3, 1+2+1, int64(len(v1)+len(v2)+len(v3)))
+}
+
+// assertSeriesRollUp checks the three aggregates writeSeries derives from a
+// series' books: how many, how many pages, and the bytes they occupy on disk
+// (test audit, 10-26).
+func assertSeriesRollUp(t *testing.T, s index.SeriesDetail, books, pages, bytes int64) {
+	t.Helper()
+	if s.BookCount != books || s.PageCount != pages || s.TotalBytes != bytes {
+		t.Errorf("series %q = %d books / %d pages / %d bytes, want %d / %d / %d",
+			s.DisplayName, s.BookCount, s.PageCount, s.TotalBytes, books, pages, bytes)
+	}
+}
+
+// The other direction of the same roll-up: a volume leaves a series the index
+// already holds. The sweep deletes the vanished book row and never touches the
+// series row (index.Writer.SweepRoot), so writeSeries rewriting the row from
+// the books that remain is the only thing that brings book_count down — and the
+// two survivors are skipped, so nothing else about the run looks changed
+// (FR-IDX-003, arch §4.9; test audit, 10-26).
+func TestScan_incremental_removedVolume_rewritesTheSeriesRollUp(t *testing.T) {
+	t.Parallel()
+	v1, v2, v3 := jpegZIP(t, "001.jpg"), jpegZIP(t, "001.jpg", "002.jpg"), jpegZIP(t, "001.jpg")
+	at := func(data []byte, sec int64) testutil.File {
+		return testutil.File{Data: data, ModTime: time.Unix(1_700_000_000+sec, 0)}
+	}
+	before := testutil.BuildTree(t, map[string]any{
+		"시리즈": map[string]any{
+			"01권.zip": at(v1, 1),
+			"02권.zip": at(v2, 2),
+			"03권.zip": at(v3, 3),
+		},
+	})
+	h := newHarnessAt(t, map[string]string{"manga": before})
+	h.run(Request{})
+	if s := h.seriesAt("manga", "시리즈"); s.BookCount != 3 || s.PageCount != 4 {
+		t.Fatalf("cold scan: %d books / %d pages, want 3 / 4", s.BookCount, s.PageCount)
+	}
+
+	after := testutil.BuildTree(t, map[string]any{
+		"시리즈": map[string]any{
+			"01권.zip": at(v1, 1),
+			"03권.zip": at(v3, 3),
+		},
+	})
+	h.rootDirs["manga"] = after
+	h.cfgRoots[0].Path = after
+	h.build()
+	h.run(Request{})
+	if got := h.lister.listedPaths(); len(got) != 0 {
+		t.Fatalf("the rescan read %v; both survivors must be skipped for this test to mean anything", got)
+	}
+	if got := bookNames(h.books("manga", "시리즈")); !equalStrings(got, []string{"01권.zip", "03권.zip"}) {
+		t.Fatalf("books = %v, want 02권.zip swept", got)
+	}
+	assertSeriesRollUp(t, h.seriesAt("manga", "시리즈"), 2, 1+1, int64(len(v1)+len(v3)))
 }
 
 // arch §4.9 + FR-IDX-003 together: an unchanged book must be stamped forward, or
@@ -352,6 +430,73 @@ func TestScan_incremental_stampsUnchangedRowsForwardSoTheSweepSparesThem(t *test
 	}
 	if got := len(h.books("manga", "시리즈")); got != 2 {
 		t.Fatalf("the library shrank to %d books over three no-change scans", got)
+	}
+}
+
+// sameSeriesRow is what chooses between rewriting a series row and stamping it
+// forward, so a column it forgets to compare is a column no rescan can change:
+// the row keeps the old value and is stamped as current. The three aggregates
+// are why this test exists. On disk they move together — a volume that arrives
+// or leaves changes the count, the pages and the bytes at once — so the roll-up
+// tests above notice all three comparisons going missing but not one of them.
+// Here each column moves alone, as TestFingerprintChildren_movesWithEveryTupleField
+// does for the fingerprint (test audit, 10-26).
+func TestSameSeriesRow_movesWithEveryColumnButTheGenerationAndAddedAt(t *testing.T) {
+	t.Parallel()
+	row := func() index.Series {
+		return index.Series{
+			ID: "s1", RootName: "manga", RelPath: "시리즈", DisplayName: "시리즈",
+			SortKey: []byte("시리즈"), SearchKey: "시리즈", ChoseongKey: "ㅅㄹㅈ", Kind: "folder",
+			BookCount: 3, PageCount: 4, TotalBytes: 2934, Mtime: 1_700_000_003, AddedAt: 1_700_000_100,
+			CoverKind: "page", CoverBookID: "b1", CoverPageNo: 1, CoverRelPath: "시리즈/01권.zip",
+			Status: StatusOK, ScanGen: 7,
+		}
+	}
+	if !sameSeriesRow(row(), row()) {
+		t.Fatal("an identical row is not recognised as unchanged; no series would ever be stamped forward")
+	}
+	if sameSeriesRow(index.Series{}, index.Series{}) {
+		t.Error("an empty prior row matched — a series the index never held must be written, not stamped")
+	}
+
+	// Left out on purpose (gen.go): the generation is what the stamp writes, and
+	// index.Writer never moves added_at forward.
+	for name, move := range map[string]func(*index.Series){
+		"scan_gen": func(s *index.Series) { s.ScanGen++ },
+		"added_at": func(s *index.Series) { s.AddedAt++ },
+	} {
+		next := row()
+		move(&next)
+		if !sameSeriesRow(row(), next) {
+			t.Errorf("a row whose %s alone moved is rewritten; that column is not part of the comparison", name)
+		}
+	}
+
+	for name, move := range map[string]func(*index.Series){
+		"book_count":     func(s *index.Series) { s.BookCount++ },
+		"page_count":     func(s *index.Series) { s.PageCount++ },
+		"total_bytes":    func(s *index.Series) { s.TotalBytes++ },
+		"id":             func(s *index.Series) { s.ID = "s2" },
+		"root_name":      func(s *index.Series) { s.RootName = "manga2" },
+		"rel_path":       func(s *index.Series) { s.RelPath = "시리즈2" },
+		"display_name":   func(s *index.Series) { s.DisplayName = "시리즈2" },
+		"sort_key":       func(s *index.Series) { s.SortKey = []byte("시리즈2") },
+		"search_key":     func(s *index.Series) { s.SearchKey = "시리즈2" },
+		"choseong_key":   func(s *index.Series) { s.ChoseongKey = "ㅅㄹㅈ2" },
+		"kind":           func(s *index.Series) { s.Kind = "zip" },
+		"mtime":          func(s *index.Series) { s.Mtime++ },
+		"cover_kind":     func(s *index.Series) { s.CoverKind = "file" },
+		"cover_book_id":  func(s *index.Series) { s.CoverBookID = "b2" },
+		"cover_page_no":  func(s *index.Series) { s.CoverPageNo++ },
+		"cover_rel_path": func(s *index.Series) { s.CoverRelPath = "시리즈/02권.zip" },
+		"status":         func(s *index.Series) { s.Status = StatusError },
+		"error":          func(s *index.Series) { s.Error = "읽을 수 있는 페이지가 없습니다" },
+	} {
+		next := row()
+		move(&next)
+		if sameSeriesRow(row(), next) {
+			t.Errorf("a row whose %s alone moved is stamped forward instead of rewritten", name)
+		}
 	}
 }
 

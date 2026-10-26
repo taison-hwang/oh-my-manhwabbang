@@ -101,6 +101,66 @@ func TestIDs_hashInput_isTheArchSpecString(t *testing.T) {
 	}
 }
 
+// TestNestedBookID_hashInput_isPinned does for a 권 inside a container — a D-70
+// inner archive or a D-73 chapter directory — what the two tests above do for
+// an ordinary book. arch §3.4 spells out only the two-field input; the nested
+// one is in no spec, so what is pinned here is the construction as shipped,
+// written down as the golden it has become (test audit, 10-26): these ids key
+// reading progress in user.db, and a refactor that moves the inner path, joins
+// it differently or normalises it orphans the progress of every nested 권 —
+// 623 inner archives (D-70) and 6,097 chapter directories (D-73) in the
+// measured collection — while every other test stays green.
+//
+//	"shelf-id/1" ‖ 0x00 ‖ "book" ‖ 0x00 ‖ <root name> ‖ 0x00 ‖ <container rel> ‖ 0x00 ‖ <inner path>
+//
+// The literal ids were computed outside Go (Python hashlib) from that byte
+// string, not by running the package.
+func TestNestedBookID_hashInput_isPinned(t *testing.T) {
+	t.Parallel()
+
+	spec := func(root, rel, inner string) string {
+		sum := sha256.Sum256([]byte("shelf-id/1" + "\x00" + "book" + "\x00" + root + "\x00" + rel + "\x00" + inner))
+		return base32.NewEncoding("abcdefghijklmnopqrstuvwxyz234567").
+			WithPadding(base32.NoPadding).EncodeToString(sum[:10])
+	}
+
+	cases := []struct {
+		what, rel, inner, want string
+	}{
+		{"an inner archive (D-70)", "[만화] 겟 벡커스 1~39완.zip", "겟 벡커스 01.zip", "2jnslramx2vemejh"},
+		{"a chapter directory (D-73)", "배틀로얄 1~15 [완결].zip", "배틀로얄 01", "lnh3yjvrv5ynp4ql"},
+		// "." rather than "", so the loose pages never share an id with the
+		// container read as an ordinary book (arch §4.5.2).
+		{"the loose pages (D-73)", "야와라! - YAWARA! (1-29).zip", ".", "vhfefr6o45sdov6a"},
+		// The inner path is hashed as given, unlike the container's rel path.
+		// These two spellings are the ones a normalisation would rewrite — `\`
+		// to `/`, a leading "./" cleaned away — so either one moves the id.
+		{"an inner path with `\\`", "[만화] 겟 벡커스 1~39완.zip", `겟 벡커스\겟 벡커스 02.zip`, "prlotvdsd6rzqmer"},
+		{"an inner path with ./", "[만화] 겟 벡커스 1~39완.zip", "./겟 벡커스 03.zip", "uara3gme6a5yytmx"},
+	}
+	for _, c := range cases {
+		if got := ids.NestedBookID(goldenRootName, c.rel, c.inner); got != c.want {
+			t.Errorf("%s: NestedBookID(%q, %q, %q) = %q, want %q — every nested 권's progress would be orphaned",
+				c.what, goldenRootName, c.rel, c.inner, got, c.want)
+		}
+		if got := spec(goldenRootName, c.rel, c.inner); got != c.want {
+			t.Errorf("%s: golden id is stale: the byte string says %q, the constant says %q", c.what, got, c.want)
+		}
+	}
+
+	// The container path is a rel path like any other, so a Windows spelling of
+	// the same container keeps the same 권 ids.
+	if got, want := ids.NestedBookID("manga", `a\b.zip`, "01.zip"), ids.NestedBookID("manga", "a/b.zip", "01.zip"); got != want {
+		t.Errorf(`NestedBookID(manga, "a\b.zip", 01.zip) = %q, want %q (the slash spelling)`, got, want)
+	}
+
+	// No inner path is an ordinary book, which keeps the id it had before
+	// nesting existed.
+	if got := ids.NestedBookID(goldenRootName, goldenBookName, ""); got != goldenBookID {
+		t.Errorf("NestedBookID(%q, %q, \"\") = %q, want BookID's %q", goldenRootName, goldenBookName, got, goldenBookID)
+	}
+}
+
 func TestIDs_shape_isSixteenLowercaseBase32Chars(t *testing.T) {
 	t.Parallel()
 

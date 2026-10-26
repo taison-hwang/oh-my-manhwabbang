@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -633,6 +634,84 @@ func TestScan_errorIsolation_everyPathologicalCase_completesAndReportsEachFailur
 	}
 }
 
+// withoutCentralDirectory cuts an archive off where its central directory
+// begins — the shape of E-54 §5's `타부(Taboo) 01.zip` and of a download that
+// stopped just short of the end. Every local header and payload is intact, so
+// E-52's salvage can recover every page; only the map is gone. The offset is
+// read from the end record rather than searched for, so entry data that happens
+// to contain a directory signature cannot move the cut. (test audit, 10-26)
+func withoutCentralDirectory(t testing.TB, archive []byte) []byte {
+	t.Helper()
+	const eocdLen = 22 // no archive comment: the end record is the last 22 bytes
+	n := len(archive)
+	if n < eocdLen || string(archive[n-eocdLen:n-eocdLen+4]) != "PK\x05\x06" {
+		t.Fatalf("fixture archive does not end in a comment-less end record")
+	}
+	cd := int(binary.LittleEndian.Uint32(archive[n-eocdLen+16:]))
+	if cd <= 0 || cd >= n-eocdLen || string(archive[cd:cd+4]) != "PK\x01\x02" {
+		t.Fatalf("fixture archive's central directory offset %d is not a directory record", cd)
+	}
+	return append([]byte(nil), archive[:cd]...)
+}
+
+// E-54 on the scanner's side of the seam. A container whose central directory
+// is gone still lists the pages its local headers carry (E-52), together with
+// an error; the scanner must record the book as `error` *and* keep those pages
+// — `page_count` and the page rows — because E-54 decides whether a damaged
+// book opens by `page_count > 0`. E-54 §5 measured exactly this shape on the
+// real `타부(Taboo) 01.zip`: status=error, 111쪽.
+//
+// The pathological-cases test above never reads an error book's page_count,
+// and httpapi's E-54 test seeds the index directly, so nothing stopped the
+// scanner from dropping the listing whenever List also returned an error.
+// Three pages, so "kept them all" cannot be mistaken for "kept one by
+// accident". (test audit, 10-26)
+func TestScan_damagedArchiveWithReadablePages_isAnErrorBookThatKeepsThem(t *testing.T) {
+	t.Parallel()
+	names := []string{"001.jpg", "002.jpg", "003.jpg"}
+	whole := jpegZIP(t, names...)
+	h := newHarness(t, map[string]any{
+		"시리즈": map[string]any{
+			"01권.zip": withoutCentralDirectory(t, whole),
+			"02권.zip": whole,
+		},
+	})
+
+	res := h.run(Request{})
+	if len(res.Roots) != 1 || res.Roots[0].Err != nil {
+		t.Fatalf("root result = %+v; a damaged book must not abort the root (FR-IDX-010)", res.Roots)
+	}
+	// FR-IDX-010: it is still a failure, reported as one.
+	if got := res.Roots[0].Errors; got != 1 {
+		t.Errorf("reported %d errors, want 1 — recovering pages does not make the book healthy (E-52)", got)
+	}
+
+	books := h.books("manga", "시리즈")
+	if len(books) != 2 {
+		t.Fatalf("indexed %d books (%v), want 2", len(books), bookRels(books))
+	}
+	damaged := books[0]
+	if filepath.Base(damaged.RelPath) != "01권.zip" {
+		t.Fatalf("first book = %q, want 01권.zip", damaged.RelPath)
+	}
+	// E-54 §4: the badge and its reason stay exactly as they were.
+	if damaged.Status != StatusError || damaged.Error == "" {
+		t.Errorf("damaged book = status %q error %q; want error with a reason (E-54 §4)",
+			damaged.Status, damaged.Error)
+	}
+	if damaged.PageCount != int64(len(names)) {
+		t.Errorf("damaged book page_count = %d, want %d — the pages its local headers carry (E-52, E-54 §5)",
+			damaged.PageCount, len(names))
+	}
+	if got := pageNames(h.pages(damaged.ID)); !equalStrings(got, names) {
+		t.Errorf("damaged book page rows = %v, want %v — E-54 serves these rows", got, names)
+	}
+	// The intact copy next door: the same pages, and ok.
+	if ok := books[1]; ok.Status != StatusOK || ok.PageCount != int64(len(names)) {
+		t.Errorf("intact book = status %q pages %d; want ok/%d", ok.Status, ok.PageCount, len(names))
+	}
+}
+
 // `series.total_bytes` is the 용량 the product shows (prd FR-LIB-003 list
 // column, FR-LIB-009 volume metadata, UI-002 series header) and the key
 // FR-LIB-004's `sort=size` orders by, so it has to be what the series occupies
@@ -875,6 +954,78 @@ func TestScan_unreachableRoot_isRecordedAndNeverSwept(t *testing.T) {
 	}
 }
 
+// arch §4.9's other trigger: "If a root's path does not exist **or os.ReadDir
+// fails at the top level**, the run aborts that root with
+// roots.last_scan_error set and deletes nothing." The test above covers a path
+// that is already gone when the roots are opened; this is a drive that drops
+// out *after* — the RootSet holds a handle, the unreachable branch never fires,
+// and the failure arrives mid-run as the walk's own error. No test produced
+// that error before, so a scan that swept anyway passed everything.
+//
+// How the drive goes away: the replacement tree lives in a subtest's TempDir.
+// The roots are opened inside the subtest, and the testing package deletes the
+// directory when the subtest returns, so the scan lists a handle whose
+// directory no longer exists (Linux: getdents fails with ENOENT). This package
+// may not chmod or delete a fixture itself — scripts/check-readonly.sh guard 1
+// (FR-CFG-005) covers tests too — and a vanished directory behaves the same
+// under uid 0, so no root-user Skip is needed. (test audit, 10-26)
+func TestScan_rootThatCannotBeListedMidRun_abortsThatRootAndSweepsNothing(t *testing.T) {
+	t.Parallel()
+	layout := func() map[string]any {
+		return map[string]any{
+			"시리즈 a": map[string]any{"01권.zip": jpegZIP(t, "001.jpg", "002.jpg")},
+			"시리즈 b": map[string]any{"01권.zip": jpegZIP(t, "001.jpg")},
+		}
+	}
+	h := newHarnessAt(t, map[string]string{"manga": testutil.BuildTree(t, layout())})
+	h.run(Request{})
+	if got := len(h.series()); got != 2 {
+		t.Fatalf("first scan indexed %d series, want 2", got)
+	}
+
+	t.Run("the drive drops out after its root was opened", func(st *testing.T) {
+		gone := testutil.BuildTree(st, layout())
+		h.rootDirs["manga"] = gone
+		h.cfgRoots[0].Path = gone
+		h.build()
+	})
+	// Precondition: the directory really is gone, yet the roots were opened
+	// while it existed. Otherwise this is the unreachable case above again.
+	if _, err := os.Stat(h.cfgRoots[0].Path); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the rebound root still exists (stat err %v); the fixture proves nothing", err)
+	}
+	if _, ok := h.rootSet.Root("manga"); !ok {
+		t.Fatal("the root did not open; the fixture proves nothing")
+	}
+
+	res := h.run(Request{})
+	if res.Cancelled {
+		t.Fatal("the scan reported itself cancelled")
+	}
+	if len(res.Roots) != 1 || res.Roots[0].Err == nil {
+		t.Fatalf("root result = %+v; a root whose listing failed must record an error (arch §4.9)", res.Roots)
+	}
+	if errors.Is(res.Roots[0].Err, errRootUnreachable) {
+		t.Fatalf("root error = %v; that is the open-time branch, not the walk this test is about", res.Roots[0].Err)
+	}
+	if res.Roots[0].Swept != (index.SweepResult{}) {
+		t.Errorf("a root that could not be listed was swept: %+v (%s)", res.Roots[0].Swept, res.Roots[0].SweepNote)
+	}
+	if got := seriesRels(h.series()); !equalStrings(got, []string{"시리즈 a", "시리즈 b"}) {
+		t.Fatalf("after the failed listing the index holds %v; want both series kept (arch §4.9)", got)
+	}
+	if books := h.books("manga", "시리즈 a"); len(books) != 1 || len(h.pages(books[0].ID)) != 2 {
+		t.Errorf("시리즈 a lost its book or pages: %+v", books)
+	}
+	root, err := h.idx.GetRoot(h.t.Context(), "manga")
+	if err != nil {
+		t.Fatalf("reading the root row: %v", err)
+	}
+	if root.LastScanError == "" {
+		t.Error("roots.last_scan_error is empty; arch §4.9 requires it to carry the failure")
+	}
+}
+
 // FR-CFG-002: a disabled root keeps its rows — disabling hides a root, it never
 // destroys the progress joined onto it.
 func TestScan_disabledRoot_keepsItsRowsAndIsNotScanned(t *testing.T) {
@@ -933,6 +1084,12 @@ func TestScan_cancel_commitsWhatItHasAndSweepsNothing(t *testing.T) {
 
 	// Rebind to an empty tree, then cancel before anything is walked. If a
 	// cancelled run swept, both series would vanish.
+	//
+	// A context cancelled before Run stops the run ahead of every root pass, so
+	// this case never reaches decideSweep: it guards the early exit, not the
+	// sweep rule. The cancelled-sweep case itself, mid-run on a warm index, is
+	// TestScan_cancelMidRun_onAWarmIndex_keepsEverySeriesItDidNotReach in
+	// progress_test.go. (test audit, 10-26)
 	empty := testutil.BuildTree(t, map[string]any{"자리표시자.txt": "x"})
 	h.rootDirs["manga"] = empty
 	h.cfgRoots[0].Path = empty

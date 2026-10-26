@@ -153,6 +153,49 @@ func TestScan_refusesToPairDuplicatedContent(t *testing.T) {
 	}
 }
 
+// The other half of the 1:1 rule (ruling E-49 §3): two vanishing rows that share
+// a fingerprint cannot say which of them moved. Pairing both with the one
+// survivor would report two relocations onto one book, and the reader's place
+// would be moved twice, the second move overwriting the first. The test above
+// only duplicates the surviving side, so it cannot see this half.
+//
+// The unrelated rename in the same run is the control. It shows the pairing ran
+// and paired what it could, so the twins' absence is the rule at work and not a
+// pass that never happened (test audit, 10-26).
+func TestScan_refusesToPairWhenTheVanishingSideIsDuplicated(t *testing.T) {
+	t.Parallel()
+	same := jpegZIP(t, "01.jpg", "02.jpg")
+	lone := jpegZIP(t, "a.jpg", "b.jpg", "c.jpg")
+
+	before := testutil.BuildTree(t, map[string]any{
+		"사본 A.zip":   file(same),
+		"사본 B.zip":   file(same),
+		"홀로 된 책.zip": file(lone),
+	})
+	after := testutil.BuildTree(t, map[string]any{
+		"사본 C.zip":    file(same), // A and B are both gone; one copy remains, renamed
+		"홀로 남은 책.zip": file(lone),
+	})
+
+	h := newHarnessAt(t, map[string]string{"manga": before})
+	h.run(Request{})
+	old := h.books("manga", "홀로 된 책.zip")
+	if len(old) != 1 {
+		t.Fatalf("fixture has %d books for the lone file, want 1", len(old))
+	}
+	rebind(t, h, after)
+
+	got := relocations(h.run(Request{}))
+	if len(got) != 1 {
+		t.Fatalf("got %d relocations, want only the lone rename: %+v", len(got), got)
+	}
+	if got[0].OldBookID != old[0].ID || got[0].NewRelPath != "홀로 남은 책.zip" {
+		t.Errorf("paired %s -> %q, want the lone file %s -> %q; two vanishing files "+
+			"share the copies' content, so neither is provably the one that moved",
+			got[0].OldBookID, got[0].NewRelPath, old[0].ID, "홀로 남은 책.zip")
+	}
+}
+
 // A file that is simply gone has no surviving twin, so there is nothing to pair.
 // This is the case the design must never guess at, and the sweep still does its
 // half of the job.
