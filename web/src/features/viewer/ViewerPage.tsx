@@ -337,11 +337,52 @@ export function ViewerPage() {
    * unmount flush writes it (D-13). No route render since the store was last
    * seen open means the close was the leave's, and it stands.
    *
+   * **Every leave takes the latch itself.** Left before its detail answers, a
+   * cold entry has opened nothing, so the leave found the latch empty — or
+   * holding the volume before, after 다음 권 — and a detail landing inside it
+   * opened the book: the unmount flush then wrote `?page=` as progress for a book
+   * the reader never saw, and moved it up 이어보기. So a leave latches the book
+   * the last committed route names, under that route (`latchLeave`), and that
+   * detail meets the rule above. A return to this URL before the leave commits
+   * renders the route again, so it still opens.
+   *
+   * *Every* leave, not the first: a return before the detail answers renders the
+   * route while the open effect, with no detail, stops at its first line and
+   * leaves the latch on the first leave's route — so a second leave that kept it
+   * made its own detail look navigated-to. And every leave, whoever makes it:
+   * `exit` and `goLibrary` latch before they close (`closeForLeave`), and any
+   * other close of an open store — the global `Esc` ladder, which closes the
+   * store itself and navigates — is caught by a store subscription.
+   *
+   * **What is left: the browser's Back out of a cold entry.** There is no
+   * `close()` to latch in, and until its transition commits nothing in the
+   * committed tree says a leave has begun, so a detail landing in that window
+   * still opens. What it writes is what an ordinary open writes.
+   *
    * The assumption this rests on: the router renders this route during a leave
    * only to land a navigation. True while no route has a `loader` (a pending
    * leave would publish a `loading` state first) — see `router.tsx`.
    */
   const openedRef = useRef<{ bookId: string; route: object } | null>(null)
+
+  /**
+   * The `params` of the last route render this instance **committed** — what a
+   * leave latches `openedRef` with. Written in an effect, not during render: a
+   * render that never commits (a transition that suspends) must not move it.
+   * A *layout* effect, not a passive one: the global `Esc` ladder is a native
+   * `keydown` listener, not a React event, so it can run between a commit and
+   * that commit's passive effects — and would latch the route before it.
+   */
+  const routeRef = useRef(params)
+  useLayoutEffect(() => {
+    routeRef.current = params
+  }, [params])
+
+  /** Latch the book the last committed route names, under that route — see `openedRef`. */
+  const latchLeave = useCallback(() => {
+    const route = routeRef.current
+    openedRef.current = { bookId: route.bid ?? '', route }
+  }, [])
 
   useEffect(() => {
     if (detail === undefined || bookId === '') return
@@ -377,19 +418,51 @@ export function ViewerPage() {
 
   // Leaving the screen must not leave a viewer open in the store — the global
   // `Esc` ladder and the shell both key off `bookId !== null`. The latch goes
-  // with it, for StrictMode's remount of this same instance (see `openedRef`).
+  // with it, for StrictMode's remount of this same instance (see `openedRef`),
+  // and goes *after* the close: the subscription below latches on that close if
+  // it is still listening, which depends only on declaration order, and a latch
+  // left over the remount (same instance, same `params`) never opens again.
   useEffect(
     () => () => {
-      openedRef.current = null
       useViewerStore.getState().close()
+      openedRef.current = null
     },
     [],
   )
 
-  const exit = useCallback(() => {
+  // Any close of an open store under this screen is a leave, whoever makes it.
+  // The global `Esc` ladder (`useHotkeys.ts`) closes the store itself before it
+  // navigates, and never comes through `closeForLeave`: on a cold 다음 권 the
+  // viewer's own keys are off (no detail yet) while the store still holds the
+  // volume before, so nothing else would latch the volume being left.
+  useEffect(
+    () =>
+      useViewerStore.subscribe((state, previous) => {
+        if (previous.bookId !== null && state.bookId === null) latchLeave()
+      }),
+    [latchLeave],
+  )
+
+  /**
+   * The close 뒤로 / 라이브러리 / `Esc` make before navigating away, latching
+   * first — always; see `openedRef`. On a book this instance has opened that
+   * rewrites the value already there: once the detail is in, the open effect
+   * re-runs on every route render (`params` is a dependency) and moves the
+   * latch's `route` to it, which is what `routeRef` holds by then. On a cold
+   * entry the open effect has not got that far, so the latch may hold an older
+   * route or another book, and only the leave can bring it up to date. The
+   * subscription above cannot do it for this close: a cold first entry's store
+   * was never open, so there is no close for it to see.
+   */
+  const closeForLeave = useCallback(() => {
+    latchLeave()
     useViewerStore.getState().close()
+  }, [latchLeave])
+
+  const exit = useCallback(() => {
+    closeForLeave()
     void navigate(seriesId === '' ? '/' : `/series/${seriesId}`)
-  }, [navigate, seriesId])
+  }, [closeForLeave, navigate, seriesId])
 
   /**
    * 라이브러리 — the whole shelf, not this book's volume list (**E-34**).
@@ -407,10 +480,10 @@ export function ViewerPage() {
    * prototype was reaching for when it reset the filters.
    */
   const goLibrary = useCallback(() => {
-    useViewerStore.getState().close()
+    closeForLeave()
     if (seriesId !== '') setRevealSeries(seriesId)
     void navigate('/')
-  }, [navigate, seriesId, setRevealSeries])
+  }, [closeForLeave, navigate, seriesId, setRevealSeries])
 
   // -------------------------------------------------------------------------
   // Progress (FR-VWR-009 / FR-VWR-012)

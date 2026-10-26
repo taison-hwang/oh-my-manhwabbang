@@ -1,11 +1,11 @@
 import '@testing-library/jest-dom/vitest'
 
-import { QueryClientProvider } from '@tanstack/react-query'
+import { QueryClientProvider, type QueryClient } from '@tanstack/react-query'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
 import { StrictMode, Suspense, type ReactNode } from 'react'
-import { createMemoryRouter, RouterProvider, useLocation, useNavigate } from 'react-router-dom'
+import { createMemoryRouter, matchPath, Outlet, RouterProvider, useLocation, useNavigate } from 'react-router-dom'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -19,8 +19,9 @@ import {
   settings,
 } from '../../api/fixtures'
 import type { BookDetail, PageInfo, Progress } from '../../api/types'
-import { createQueryClient, queryKeys } from '../../api/queries'
+import { createQueryClient, PROGRESS_DEBOUNCE_MS, queryKeys } from '../../api/queries'
 import { resetBasePath } from '../../api/urls'
+import { useGlobalHotkeys } from '../../lib/useHotkeys'
 import { cancelChromeAutoHide, useViewerStore } from '../../store/viewer'
 import { failUnhandled } from '../../test/msw'
 import { resetPrefsWriter } from './prefsWriter'
@@ -79,23 +80,26 @@ const detail: BookDetail = {
   prefs: { reading_direction: 'ltr', display_mode: 'single', fit_mode: 'height', is_override: true },
 }
 
+/** The server's detail for `bid`: 01권 is `detail`, any other id a 190-page 02권 nobody has read. */
+function detailOf(bid: string): BookDetail {
+  return bid === BOOK_ID
+    ? detail
+    : {
+        ...detail,
+        id: bid,
+        page_count: 190,
+        pages: PAGES.slice(0, 190),
+        next_book_id: null,
+        progress: null,
+      }
+}
+
 const progressWrites: { bid: string; body: unknown }[] = []
 
 const BOOK_URL = `/series/${SERIES_ID}/books/${BOOK_ID}?page=12`
 
 const server = setupServer(
-  http.get(`${ORIGIN}/api/books/:bid`, ({ params }) =>
-    params.bid === BOOK_ID
-      ? HttpResponse.json(detail)
-      : HttpResponse.json({
-          ...detail,
-          id: String(params.bid),
-          page_count: 190,
-          pages: PAGES.slice(0, 190),
-          next_book_id: null,
-          progress: null,
-        }),
-  ),
+  http.get(`${ORIGIN}/api/books/:bid`, ({ params }) => HttpResponse.json(detailOf(String(params.bid)))),
   http.get(`${ORIGIN}/api/series/:sid`, () =>
     HttpResponse.json({
       ...seriesDetail,
@@ -174,17 +178,62 @@ let seriesGate: Promise<void> | null = null
  */
 function holdTheSeriesScreen(): () => Promise<void> {
   let release = (): void => undefined
-  seriesGate = new Promise<void>((resolve) => {
+  const gate = new Promise<void>((resolve) => {
     release = resolve
   })
+  seriesGate = gate
+  // Each hold lets go of its own gate: a test can hold, be superseded, and hold
+  // again, and releasing the first must not await (or drop) the second.
   return async () => {
-    const gate = seriesGate
-    seriesGate = null
+    if (seriesGate === gate) seriesGate = null
     await act(async () => {
       release()
       await gate
     })
   }
+}
+
+/**
+ * Keep `bid`'s detail on the wire until the returned function is awaited — a
+ * cold entry whose `GET /api/books/{bid}` has not answered yet.
+ *
+ * The release waits for the answer to reach the cache and then lets React Query
+ * publish it, so whatever the open effect does with it has happened by the time
+ * the caller looks.
+ */
+function holdTheDetail(bid: string): (client: QueryClient) => Promise<void> {
+  let open = (): void => undefined
+  const gate = new Promise<void>((resolve) => {
+    open = resolve
+  })
+  server.use(
+    http.get(`${ORIGIN}/api/books/${bid}`, async () => {
+      await gate
+      return HttpResponse.json(detailOf(bid))
+    }),
+  )
+  return async (client) => {
+    await act(async () => {
+      open()
+      await gate
+    })
+    await waitFor(() => {
+      expect(client.getQueryState(queryKeys.books.detail(bid))?.status, 'the held detail never landed').toBe(
+        'success',
+      )
+    })
+    // React Query notifies on its own scheduler tick.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    })
+  }
+}
+
+/** Past the progress writer's debounce, so a save that was scheduled has gone out. */
+async function outlastTheDebounce(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, PROGRESS_DEBOUNCE_MS + 600))
+  })
 }
 
 /** The series route, standing in for SeriesDetailPage: just a way back in. */
@@ -204,12 +253,36 @@ function SeriesStandIn() {
   )
 }
 
+/**
+ * The shell, standing in for `App.tsx`: the global key ladder, wired the way the
+ * app wires it. Its `Esc` closes the store itself and then navigates, so it is a
+ * leave that never goes through the viewer's own handlers.
+ */
+function ShellStandIn() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const seriesId = matchPath('/series/:sid/*', location.pathname)?.params.sid ?? null
+  useGlobalHotkeys({
+    onExitViewer: () => {
+      void navigate(seriesId === null ? '/' : `/series/${seriesId}`)
+    },
+  })
+  return <Outlet />
+}
+
 /** A data router like `router.tsx`'s — its updates go through `startTransition`. */
 function mountApp(strict: boolean) {
   const router = createMemoryRouter(
     [
-      { path: '/series/:sid', element: <SeriesStandIn /> },
-      { path: '/series/:sid/books/:bid', element: <ViewerPage /> },
+      {
+        element: <ShellStandIn />,
+        children: [
+          // 라이브러리's destination; the stand-in is only a screen that can be held.
+          { path: '/', element: <SeriesStandIn /> },
+          { path: '/series/:sid', element: <SeriesStandIn /> },
+          { path: '/series/:sid/books/:bid', element: <ViewerPage /> },
+        ],
+      },
     ],
     { initialEntries: [BOOK_URL] },
   )
@@ -247,13 +320,18 @@ async function leaveThroughBack(): Promise<void> {
 }
 
 /** 뒤로, with the series screen held: the store is closed, the viewer still mounted. */
-async function startLeavingThroughBack(): Promise<() => Promise<void>> {
+function startLeavingThroughBack(): Promise<() => Promise<void>> {
+  return startLeavingThrough('뒤로')
+}
+
+/** 뒤로 or 라이브러리 (`goLibrary`), with the screen it goes to held. */
+async function startLeavingThrough(button: '뒤로' | '라이브러리'): Promise<() => Promise<void>> {
   const release = holdTheSeriesScreen()
   await act(async () => {
-    fireEvent.click(screen.getByRole('button', { name: '뒤로' }))
+    fireEvent.click(screen.getByRole('button', { name: button }))
     await Promise.resolve()
   })
-  expect(useViewerStore.getState().bookId, '뒤로 closed the store').toBeNull()
+  expect(useViewerStore.getState().bookId, `${button} closed the store`).toBeNull()
   expect(document.querySelector('[data-role="viewer"]'), 'the leave is still in flight').not.toBeNull()
   expect(screen.queryByTestId('location')).toBeNull()
   return release
@@ -444,5 +522,190 @@ describe('production paths (no StrictMode)', () => {
       await router.navigate(BOOK_URL)
     })
     await expectOpenOn(BOOK_ID, PAGE_COUNT)
+  })
+})
+
+/**
+ * Leaving a cold entry before its detail has answered.
+ *
+ * On a cold entry the leave has nothing to close: this instance has opened
+ * nothing yet, so `openedRef` is empty. A detail landing while the leave is in
+ * flight therefore looked like a first open and opened the book — and the
+ * unmount flush then wrote `?page=` as progress for a book the reader never saw,
+ * which also moves it up 이어보기 (D-13).
+ */
+describe('leaving a cold entry before its detail arrives (no StrictMode)', () => {
+  it('뒤로 before the detail opens nothing on the way out and writes no progress', async () => {
+    const releaseDetail = holdTheDetail(BOOK_ID)
+    const { client } = mountApp(false)
+    expect(client.getQueryData(queryKeys.books.detail(BOOK_ID)), 'a cold entry').toBeUndefined()
+    const watch = watchBookId()
+    const releaseLeave = await startLeavingThroughBack()
+
+    await releaseDetail(client)
+    expect(useViewerStore.getState().bookId, 'the detail opened the book under a leave in flight').toBeNull()
+
+    await releaseLeave()
+    await waitFor(() => {
+      expect(screen.getByTestId('location')).toHaveTextContent(`/series/${SERIES_ID}`)
+    })
+    await outlastTheDebounce()
+    watch.stop()
+    expect(watch.seen, 'the store opened a book the reader never saw').not.toContain(BOOK_ID)
+    expect(progressWrites, 'progress written for a book the reader never saw').toEqual([])
+  })
+
+  it('라이브러리 before the detail opens nothing on the way out and writes no progress', async () => {
+    const releaseDetail = holdTheDetail(BOOK_ID)
+    const { client } = mountApp(false)
+    expect(client.getQueryData(queryKeys.books.detail(BOOK_ID)), 'a cold entry').toBeUndefined()
+    const watch = watchBookId()
+    const releaseLeave = await startLeavingThrough('라이브러리')
+
+    await releaseDetail(client)
+    expect(useViewerStore.getState().bookId, 'the detail opened the book under a leave in flight').toBeNull()
+
+    await releaseLeave()
+    await waitFor(() => {
+      expect(screen.getByTestId('location').textContent).toBe('/')
+    })
+    await outlastTheDebounce()
+    watch.stop()
+    expect(watch.seen, 'the store opened a book the reader never saw').not.toContain(BOOK_ID)
+    expect(progressWrites, 'progress written for a book the reader never saw').toEqual([])
+  })
+
+  /**
+   * The guard on the fix: what stops the leave's own detail must not stop a
+   * return. Back before 뒤로 has committed lands this route again, and the
+   * detail that arrives after it is an entry like any other.
+   */
+  it('뒤로 superseded by the browser’s Back before the detail: the detail then opens the book', async () => {
+    const releaseDetail = holdTheDetail(BOOK_ID)
+    const { router, client } = mountApp(false)
+    const releaseLeave = await startLeavingThroughBack()
+
+    await act(async () => {
+      await router.navigate(-1)
+    })
+    expect(router.state.historyAction).toBe('POP')
+    await releaseDetail(client)
+    await expectOpenOn(BOOK_ID, PAGE_COUNT)
+    // The superseded leave's screen, let go: it lands nothing.
+    await releaseLeave()
+    expect(useViewerStore.getState().bookId).toBe(BOOK_ID)
+  })
+
+  /**
+   * Two leaves on one cold entry, with a return between them. The return renders
+   * this route again, but the detail is still on the wire, so the open effect
+   * stops at its first line and the latch keeps the *first* leave's route. The
+   * second leave is the same book, and a leave that latched only "if this
+   * instance has not latched this book yet" left that stale route in place — so
+   * the detail, landing under the second leave, looked navigated-to and opened
+   * the book.
+   */
+  it('뒤로, Back to the book, 뒤로 again — all before the detail: nothing opens, nothing is written', async () => {
+    const releaseDetail = holdTheDetail(BOOK_ID)
+    const { router, client } = mountApp(false)
+    expect(client.getQueryData(queryKeys.books.detail(BOOK_ID)), 'a cold entry').toBeUndefined()
+    const watch = watchBookId()
+    const releaseFirstLeave = await startLeavingThroughBack()
+
+    await act(async () => {
+      await router.navigate(-1)
+    })
+    expect(router.state.historyAction).toBe('POP')
+    expect(router.state.location.pathname).toBe(`/series/${SERIES_ID}/books/${BOOK_ID}`)
+    const releaseSecondLeave = await startLeavingThroughBack()
+
+    await releaseDetail(client)
+    expect(useViewerStore.getState().bookId, 'the detail opened the book under the second leave').toBeNull()
+
+    await releaseSecondLeave()
+    await releaseFirstLeave()
+    await waitFor(() => {
+      expect(screen.getByTestId('location')).toHaveTextContent(`/series/${SERIES_ID}`)
+    })
+    await outlastTheDebounce()
+    watch.stop()
+    expect(watch.seen, 'the store opened a book the reader never saw').not.toContain(BOOK_ID)
+    expect(progressWrites, 'progress written for a book the reader never saw').toEqual([])
+  })
+
+  /**
+   * 다음 권 is a cold entry on a warm instance: `openedRef` holds the volume
+   * before it, so "has this instance latched *this* book" is the question, not
+   * "has it latched anything".
+   */
+  it('다음 권, then 뒤로 before its detail: the next volume is neither opened nor written', async () => {
+    const releaseNext = holdTheDetail(NEXT_BOOK_ID)
+    const { router, client } = mountApp(false)
+    await expectOpenOn(BOOK_ID, PAGE_COUNT)
+    await act(async () => {
+      await router.navigate(`/series/${SERIES_ID}/books/${NEXT_BOOK_ID}?page=1`)
+    })
+    expect(client.getQueryData(queryKeys.books.detail(NEXT_BOOK_ID)), '다음 권 is a cold entry').toBeUndefined()
+    const watch = watchBookId()
+    const releaseLeave = await startLeavingThroughBack()
+
+    await releaseNext(client)
+    expect(useViewerStore.getState().bookId, 'the detail opened 다음 권 under a leave in flight').toBeNull()
+
+    await releaseLeave()
+    await waitFor(() => {
+      expect(screen.getByTestId('location')).toHaveTextContent(`/series/${SERIES_ID}`)
+    })
+    await outlastTheDebounce()
+    watch.stop()
+    expect(watch.seen, 'the store opened a volume the reader never saw').not.toContain(NEXT_BOOK_ID)
+    expect(
+      progressWrites.filter((w) => w.bid === NEXT_BOOK_ID),
+      'progress written for a volume the reader never saw',
+    ).toEqual([])
+  })
+
+  /**
+   * The global `Esc` ladder (`useHotkeys.ts`, wired by `App.tsx`) is a leave the
+   * viewer's own handlers never see. While 다음 권's detail is on the wire the
+   * viewer's keys are off (`enabled: detail !== undefined`) and the store still
+   * holds the volume before, so the ladder closes the store itself and
+   * navigates. Nothing latched the new volume, and its detail, landing under
+   * that leave, opened it and wrote progress for it.
+   */
+  it('다음 권, then the global Esc before its detail: the next volume is neither opened nor written', async () => {
+    const releaseNext = holdTheDetail(NEXT_BOOK_ID)
+    const { router, client } = mountApp(false)
+    await expectOpenOn(BOOK_ID, PAGE_COUNT)
+    await act(async () => {
+      await router.navigate(`/series/${SERIES_ID}/books/${NEXT_BOOK_ID}?page=1`)
+    })
+    expect(client.getQueryData(queryKeys.books.detail(NEXT_BOOK_ID)), '다음 권 is a cold entry').toBeUndefined()
+    expect(useViewerStore.getState().bookId, 'the store still holds the volume before').toBe(BOOK_ID)
+    const watch = watchBookId()
+
+    const releaseLeave = holdTheSeriesScreen()
+    await act(async () => {
+      fireEvent.keyDown(window, { key: 'Escape' })
+      await Promise.resolve()
+    })
+    expect(useViewerStore.getState().bookId, 'the global Esc closed the store').toBeNull()
+    expect(document.querySelector('[data-role="viewer"]'), 'the leave is still in flight').not.toBeNull()
+    expect(screen.queryByTestId('location')).toBeNull()
+
+    await releaseNext(client)
+    expect(useViewerStore.getState().bookId, 'the detail opened 다음 권 under a leave in flight').toBeNull()
+
+    await releaseLeave()
+    await waitFor(() => {
+      expect(screen.getByTestId('location')).toHaveTextContent(`/series/${SERIES_ID}`)
+    })
+    await outlastTheDebounce()
+    watch.stop()
+    expect(watch.seen, 'the store opened a volume the reader never saw').not.toContain(NEXT_BOOK_ID)
+    expect(
+      progressWrites.filter((w) => w.bid === NEXT_BOOK_ID),
+      'progress written for a volume the reader never saw',
+    ).toEqual([])
   })
 })
