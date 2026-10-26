@@ -140,6 +140,17 @@ describe('nextPage / prevPage', () => {
     expect(nextPage(7, 214, 'spread', dims)).toBe(8)
   })
 
+  it('steps back across a landscape scan onto the screens it showed going forward', () => {
+    // From page 1 the 양면 stage shows [1,2] [3,4] [5,6] [7] [8,9] — page 7 is the
+    // scan, alone (FR-VWR-004). Paging back must land on the same screens in
+    // reverse (fit.ts `prevPage`, ui-spec §8.2): a flat −2 from 8 would skip the
+    // scan and show 6 alone, one page out of phase.
+    expect(prevPage(10, 214, 'spread', dims)).toBe(8)
+    expect(prevPage(8, 214, 'spread', dims)).toBe(7)
+    expect(prevPage(7, 214, 'spread', dims)).toBe(5)
+    expect(prevPage(5, 214, 'spread', dims)).toBe(3)
+  })
+
   it('clamps to [1, page_count]', () => {
     expect(nextPage(214, 214, 'spread', dims)).toBe(214)
     expect(nextPage(213, 214, 'spread', dims)).toBe(214)
@@ -408,8 +419,16 @@ function stubLayout(name: string, descriptor: PropertyDescriptor): () => void {
 function installLayout(): () => void {
   const restores = [
     stubLayout('scrollTop', {
+      // A browser clamps a scroller into `[0, scrollHeight - clientHeight]` on
+      // layout, and reading `scrollTop` forces one. The clamp sticks: a document
+      // that grows back does not return the old offset. Unclamped, a stage that
+      // left 세로 for one page would keep its 90 000px offset, which none does.
       get(this: HTMLElement): number {
-        return scrollTops.get(this) ?? 0
+        const stored = scrollTops.get(this) ?? 0
+        if (!isStage(this)) return stored
+        const clamped = Math.min(stored, Math.max(0, this.scrollHeight - this.clientHeight))
+        scrollTops.set(this, clamped)
+        return clamped
       },
       set(this: HTMLElement, value: number) {
         scrollTops.set(this, value)
@@ -504,6 +523,23 @@ describe('PageStage 세로 alignment (the blocker, wired to the DOM)', () => {
     rerender(createElement(PageStage, stageProps({ mode: 'vertical' })))
     const stage = stageElement()
     expect(stage.scrollTop).toBe(100 * PAGE_H_HEIGHT_FIT)
+  })
+
+  it('re-aligns on coming back to 세로 on the same page, after leaving it', () => {
+    // 세로 → 단면 leaves one page in the stage, so the browser clamps the scroller
+    // to 0. Back in 세로 on the same page at the same geometry, nothing the aligner
+    // keys on has changed: unless leaving forgot what it had aligned, the scroller
+    // stays at 0 and the reader sees page 1 under a counter that says 101.
+    const { rerender } = mount()
+    expect(stageElement().scrollTop).toBe(100 * PAGE_H_HEIGHT_FIT)
+
+    rerender(createElement(PageStage, stageProps({ mode: 'single' })))
+    expect(stageElement().scrollTop, 'one page on the stage: clamped').toBe(0)
+
+    rerender(createElement(PageStage, stageProps({ mode: 'vertical' })))
+    const stage = stageElement()
+    expect(stage.scrollTop).toBe(100 * PAGE_H_HEIGHT_FIT)
+    expect(pageAtScroll(modelledTops(), stage.scrollTop)).toBe(101)
   })
 
   it('re-aligns when the fit changes, because the fit is what the heights are', () => {

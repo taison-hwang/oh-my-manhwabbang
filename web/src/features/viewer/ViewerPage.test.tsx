@@ -71,6 +71,17 @@ import { failUnhandled } from '../../test/msw'
 
 const NEXT_BOOK_ID = 'nextbook33333333'
 const PAGE_COUNT = 214
+/**
+ * Volume 2's length — what the series list says, and what its own detail says.
+ *
+ * Deliberately **not** `PAGE_COUNT`. The detail handler used to answer every bid
+ * with volume 1's 214, so "the next volume has loaded" and "volume 1's count
+ * carried over" were the same number and a test waiting for one was satisfied
+ * by the other: `open()` keeping the old `pageCount` across 다음 권 (a 190-page
+ * volume showing `/ 214`, a slider running to 214, an end card that never
+ * comes) went green here and in the store tier.
+ */
+const NEXT_PAGE_COUNT = 190
 
 /** Page 7 is a double-page scan (FR-VWR-004); everything else is portrait. */
 const PAGES: PageInfo[] = Array.from({ length: PAGE_COUNT }, (_, i) => {
@@ -86,17 +97,86 @@ const PAGES: PageInfo[] = Array.from({ length: PAGE_COUNT }, (_, i) => {
   }
 })
 
+/**
+ * The length a `stale: true` row recorded — anything but the book's own.
+ *
+ * `stale` is not stored; the server derives it from the recorded `page_count`
+ * against the index's current one (`isStale`, `internal/httpapi/convert.go`). A
+ * fixture that says `stale: true` beside `page_count: PAGE_COUNT` describes a row
+ * the server cannot hold, and `progressServer` below — which derives it the same
+ * way — would answer it `stale: false` on the first write. 99 is the baseline
+ * E-45 measured (`99 → 3`).
+ */
+const STALE_BASELINE = 99
+
 function progressOf(overrides: Partial<Progress> = {}): Progress {
   return {
     book_id: BOOK_ID,
     series_id: SERIES_ID,
     last_page: 42,
-    page_count: PAGE_COUNT,
+    page_count: overrides.stale === true ? STALE_BASELINE : PAGE_COUNT,
     completed: false,
     started_at: 1,
     updated_at: 2,
     stale: false,
     ...overrides,
+  }
+}
+
+/**
+ * `PUT /api/books/{bid}/progress` **as the server answers it** — one row per
+ * book, kept across writes (**E-45 §2**).
+ *
+ * `internal/httpapi/progress.go` hands `userdata.PutProgress` the index's
+ * *current* length and answers `toProgressFromUser(stored, current)`:
+ *
+ *  - `last_page` is the page clamped into `[1, current]`;
+ *  - `completed` is the body's, or `page >= current` when the body leaves it out;
+ *  - `page_count` is the recorded **baseline**. A first write (the INSERT)
+ *    records the current length; after that only a write carrying
+ *    `stale_seen: true` moves it, and only to a known (`> 0`) length;
+ *  - `stale` is `isStale(baseline, current)` — both known, and different;
+ *  - `started_at` is kept, `updated_at` is now.
+ *
+ * So a book that answered `stale: true` **keeps** answering it, write after
+ * write, until the acknowledgement lands. The handler this replaces answered
+ * `stale: false` to every write — the server *before* E-45, whose automatic write
+ * burnt the baseline — while its comment said it was the server.
+ *
+ * `seed` is the `progress` that `GET /api/books/{bid}` served. The book handler
+ * serves that one object under every bid, so its `page_count` is only volume 1's
+ * baseline; what carries to another bid is the verdict it showed the client —
+ * a seed the client saw as current starts at that bid's own length.
+ */
+function progressServer(
+  seed: Progress | null,
+  lengthOf: (bid: string) => number,
+): (bid: string, body: ProgressPutBody) => Progress {
+  const rows = new Map<string, Progress>()
+  let now = 1_000
+  return (bid, body) => {
+    const current = lengthOf(bid)
+    const prior =
+      rows.get(bid) ??
+      (seed === null
+        ? null
+        : { ...seed, book_id: bid, page_count: seed.stale ? seed.page_count : current })
+    const page = current > 0 ? Math.min(Math.max(1, body.page), current) : Math.max(1, body.page)
+    const baseline =
+      prior === null || (body.stale_seen === true && current > 0) ? current : prior.page_count
+    now += 1
+    const row: Progress = {
+      book_id: bid,
+      series_id: prior?.series_id ?? SERIES_ID,
+      last_page: page,
+      page_count: baseline,
+      completed: body.completed ?? (current > 0 && page >= current),
+      started_at: prior?.started_at ?? now,
+      updated_at: now,
+      stale: baseline !== 0 && current !== 0 && baseline !== current,
+    }
+    rows.set(bid, row)
+    return row
   }
 }
 
@@ -196,11 +276,22 @@ function applyPrefsPatch(effective: BookPrefs, patch: PrefsPatch): BookPrefs {
 }
 
 function handlers(detail: BookDetail, recorded: Recorded, prefetch = 4) {
+  // The same per-bid lengths the detail handler below serves.
+  const progress = progressServer(detail.progress, (bid) =>
+    bid === BOOK_ID ? detail.page_count : NEXT_PAGE_COUNT,
+  )
   return [
+    // Per bid: anything that is not volume 1 is volume 2, at volume 2's length.
     http.get(`${ORIGIN}/api/books/:bid`, ({ params }) =>
       params.bid === BOOK_ID
         ? HttpResponse.json(detail)
-        : HttpResponse.json({ ...detail, id: String(params.bid), next_book_id: null }),
+        : HttpResponse.json({
+            ...detail,
+            id: String(params.bid),
+            page_count: NEXT_PAGE_COUNT,
+            pages: PAGES.slice(0, NEXT_PAGE_COUNT),
+            next_book_id: null,
+          }),
     ),
     http.get(`${ORIGIN}/api/series/:sid`, () =>
       HttpResponse.json({
@@ -212,23 +303,24 @@ function handlers(detail: BookDetail, recorded: Recorded, prefetch = 4) {
             id: NEXT_BOOK_ID,
             name: '군계(軍鷄) 02권.zip',
             ord: 1,
-            page_count: 190,
+            page_count: NEXT_PAGE_COUNT,
             progress: null,
           },
         ],
       }),
     ),
     http.get(`${ORIGIN}/api/settings`, () => HttpResponse.json({ ...settings, prefetch })),
-    // Answers `progressOf()` — i.e. `stale: false` — exactly as the server does:
-    // `PUT` replies with the progress it just stored, and E-45's acknowledgement
-    // is the *only* thing that re-baselines it. This reply is what
-    // `useSaveProgress.onSuccess` writes over `books.detail` with, so it is also
-    // the murder weapon in the defect E-45 names.
+    // Answers what the server stores (`progressServer`): the reply is the row
+    // after the write, so a stale book stays `stale: true` until a write carries
+    // E-45's acknowledgement — the *only* thing that re-baselines it. This reply
+    // is what `useSaveProgress.onSuccess` writes over `books.detail` with; a
+    // reply of `stale: false` to the automatic write is the pre-E-45 server, the
+    // murder weapon in the defect E-45 names, and not something to test against.
     http.put(`${ORIGIN}/api/books/:bid/progress`, async ({ request, params }) => {
       const body = (await request.json()) as ProgressPutBody
       recorded.progressPuts.push(body)
       recorded.progressWrites.push({ bid: String(params.bid), body })
-      return HttpResponse.json(progressOf())
+      return HttpResponse.json(progress(String(params.bid), body))
     }),
     http.put(`${ORIGIN}/api/books/:bid/prefs`, async ({ request, params }) => {
       const body = (await request.json()) as PrefsPatch
@@ -246,8 +338,9 @@ function handlers(detail: BookDetail, recorded: Recorded, prefetch = 4) {
 /**
  * A pending progress write is flushed on unmount, which happens *after* the
  * test that caused it has finished and `resetHandlers` has run. These defaults
- * survive the reset so the late write lands somewhere instead of tripping
- * `onUnhandledRequest: 'error'`; the per-test handlers above override them.
+ * survive the reset so the late write lands somewhere instead of failing the
+ * file as an unhandled request (`failUnhandled`, `src/test/msw.ts`); the
+ * per-test handlers above override them.
  */
 const server = setupServer(
   http.put(`${ORIGIN}/api/books/:bid/progress`, () => HttpResponse.json(progressOf())),
@@ -1706,27 +1799,38 @@ describe('page transitions (acceptance 9, 10; ui-spec §6.3, §6.4)', () => {
     )
   })
 
+  /**
+   * Both halves are read on a fake clock **past** the 240 ms threshold. "Nothing
+   * for a fast page" asserted at the instant of the turn holds for any screen,
+   * since no timer has had time to fire; the defect it names is a timer that
+   * outlives its page (`useDelayedFlag` without its cleanup), which puts
+   * 페이지 로딩 up over a page that already decoded — after the threshold.
+   */
   it('shows nothing for a fast page and the 페이지 로딩 indicator for a slow one', async () => {
-    await setup()
+    await setupOnFakeClock()
     const indicator = (): Element | null => document.querySelector('[data-role="page-loading"]')
     decodeShownPages()
-    expect(indicator()).toBeNull()
+    await advance(LOADING_INDICATOR_DELAY_MS * 2)
+    expect(indicator(), 'the opening page, decoded, past the threshold').toBeNull()
 
+    // A fast page: decoded inside the threshold, and still quiet past it.
     fireEvent.keyDown(window, { key: 'ArrowRight' })
-    // Below the threshold a spinner reads as jank, not as progress.
+    await advance(LOADING_INDICATOR_DELAY_MS / 2)
     expect(indicator()).toBeNull()
-
-    await waitFor(
-      () => {
-        expect(indicator()).toHaveTextContent('페이지 로딩')
-      },
-      { timeout: LOADING_INDICATOR_DELAY_MS * 4 },
-    )
-
     decodeShownPages()
-    await waitFor(() => {
-      expect(indicator()).toBeNull()
-    })
+    await advance(LOADING_INDICATOR_DELAY_MS * 2)
+    expect(indicator(), 'a page that decoded inside the threshold, past it').toBeNull()
+
+    // A slow page: nothing one tick short of the threshold, the indicator at it.
+    fireEvent.keyDown(window, { key: 'ArrowRight' })
+    await advance(LOADING_INDICATOR_DELAY_MS - 1)
+    expect(indicator(), 'one tick short of the threshold').toBeNull()
+    await advance(1)
+    expect(indicator()).toHaveTextContent('페이지 로딩')
+
+    // Turning off is immediate: no clock between the decode and the check.
+    decodeShownPages()
+    expect(indicator(), 'the slow page, decoded').toBeNull()
   })
 
   it('scopes a failed page to its own frame, flush-left, with a retry', async () => {
@@ -1786,23 +1890,33 @@ describe('progress (acceptance 13; FR-VWR-009, FR-STT-001)', () => {
     expect(recorded.progressPuts[0]).toEqual({ page: 15 })
   })
 
+  /**
+   * On a fake clock, so the write can be placed **inside** the 1 s debounce. On a
+   * real one, `waitFor`'s own 1 s default raced the debounce: without the
+   * `visibilitychange` listener the debounce alone sent the same body, and the
+   * test passed or failed by scheduling.
+   */
   it('flushes the pending write when the tab is hidden', async () => {
-    const recorded = await setup()
+    const { recorded } = await setupOnFakeClock()
     fireEvent.keyDown(window, { key: 'ArrowRight' })
-    Object.defineProperty(document, 'visibilityState', {
-      configurable: true,
-      value: 'hidden',
-    })
-    fireEvent(document, new Event('visibilitychange'))
+    const turnedAt = Date.now()
+    expect(recorded.progressPuts, 'nothing is sent before the tab is hidden').toEqual([])
 
-    // Well inside the 1 s debounce: closing the tab must not lose the page.
-    await waitFor(() => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+    try {
+      fireEvent(document, new Event('visibilitychange'))
+      // `tickUntil`'s 400 ms budget is well inside the debounce: closing the tab
+      // must not lose the page, and only the flush can have sent it this early.
+      await tickUntil(() => recorded.progressPuts.length > 0)
+      expect(Date.now() - turnedAt).toBeLessThan(PROGRESS_DEBOUNCE_MS)
       expect(recorded.progressPuts).toEqual([{ page: 13 }])
-    })
-    Object.defineProperty(document, 'visibilityState', {
-      configurable: true,
-      value: 'visible',
-    })
+
+      // The flush consumed the pending write: the debounce, expiring, sends no second.
+      await advance(PROGRESS_DEBOUNCE_MS * 2)
+      expect(recorded.progressPuts).toEqual([{ page: 13 }])
+    } finally {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    }
   })
 
   /**
@@ -1838,8 +1952,8 @@ describe('progress (acceptance 13; FR-VWR-009, FR-STT-001)', () => {
         return HttpResponse.json({
           ...detailOf(),
           id: String(params.bid),
-          page_count: 190,
-          pages: PAGES.slice(0, 190),
+          page_count: NEXT_PAGE_COUNT,
+          pages: PAGES.slice(0, NEXT_PAGE_COUNT),
           next_book_id: null,
         })
       }),
@@ -1992,6 +2106,21 @@ describe('the changed-file notice has a lifetime (ruling E-45)', () => {
 
   it('outlives the progress write that overwrites the cache it used to read', async () => {
     const { recorded, client } = await setupOnFakeClock(staleBook)
+    // Since E-45 §2 the server answers a plain page write `stale: true` — a page
+    // write no longer re-baselines — so the overwrite this case is about takes a
+    // second reader: another tab on the same book whose notice ran its course
+    // and was acknowledged first. From then on the row is current, and *this*
+    // tab's automatic write is answered `stale: false` while its notice is up.
+    const elsewhere = progressServer(progressOf({ stale: true }), () => PAGE_COUNT)
+    elsewhere(BOOK_ID, { page: 42, stale_seen: true })
+    server.use(
+      http.put(`${ORIGIN}/api/books/:bid/progress`, async ({ request, params }) => {
+        const body = (await request.json()) as ProgressPutBody
+        recorded.progressPuts.push(body)
+        recorded.progressWrites.push({ bid: String(params.bid), body })
+        return HttpResponse.json(elsewhere(String(params.bid), body))
+      }),
+    )
     expect(staleNotice()).toBeInTheDocument()
     // A notice that removes itself and has no live region has a lifetime of
     // zero on a screen reader (E-45 §1). It is spoken through the viewer's one
@@ -2046,6 +2175,35 @@ describe('the changed-file notice has a lifetime (ruling E-45)', () => {
     // a notice the reader closed the tab on.
     expect(acknowledgements(recorded)).toEqual([])
     expect(recorded.progressPuts.every((put) => put.stale_seen === undefined)).toBe(true)
+
+    // **…and the next entry is where a leftover latch would be signed.** Nothing
+    // above can fail on its own: with the screen gone there is no writer, so a
+    // timer that outlived it latches in silence. It is spent on the way back in
+    // — the store still names this book, the commit that opens it runs `open()`
+    // and the acknowledgement effect together, and the effect acts on the render's
+    // `staleAckOwed`, not on the latch `open()` has just cleared. Measured with
+    // the unmount `close()` removed: `{ page: 12, stale_seen: true }` at the
+    // instant of re-entry, and this visit's notice taken down before it painted.
+    // Unmounting here leaves the module-scoped store and its timers alive, which
+    // is what a route change out of the viewer does.
+    const { recorded: again, client } = mount(staleBook)
+    await tickUntil(() => document.querySelector('img[alt*="page_"]') !== null)
+    // A write sent in that commit is still in flight when the artwork appears;
+    // asserting before it lands would agree with the defect.
+    await tickUntil(() => client.isMutating() === 0)
+    expect(
+      acknowledgements(again),
+      'signed on re-entry for a notice this visit has not shown',
+    ).toEqual([])
+    expect(staleNotice(), 'the next entry did not warn again').toBeInTheDocument()
+
+    // This visit's own notice still runs its whole life and is signed then —
+    // so the silence above is the rule, not a re-entry that writes nothing.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STALE_NOTICE_MS)
+    })
+    await tickUntil(() => acknowledgements(again).length > 0)
+    expect(acknowledgements(again)).toEqual([{ page: 12, stale_seen: true }])
   })
 
   it('does not come back when the book is fetched again inside the same entry', async () => {
@@ -2479,10 +2637,17 @@ describe('end of volume (acceptance 11; ui-spec §6.5)', () => {
     expect(await screen.findByText('군계(軍鷄) 02권.zip')).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: '다음 권 읽기' }))
+    // Volume 2's **own** count, which volume 1 does not share: waiting for 214
+    // here was already true before the button was pressed.
     await waitFor(() => {
-      expect(useViewerStore.getState().pageCount).toBe(PAGE_COUNT)
+      expect(useViewerStore.getState().bookId).toBe(NEXT_BOOK_ID)
     })
-    expect(counter()).toBe('1 / 214')
+    expect(useViewerStore.getState().pageCount).toBe(NEXT_PAGE_COUNT)
+    expect(counter()).toBe(`1 / ${String(NEXT_PAGE_COUNT)}`)
+    expect(screen.getByRole('slider', { name: '페이지' })).toHaveAttribute(
+      'max',
+      String(NEXT_PAGE_COUNT),
+    )
   })
 
   it('changes the volume without replaying the opening ceremony', async () => {
@@ -3042,6 +3207,12 @@ interface LibrarySetup {
  * `ShellDataProvider`'s library sync (`router.tsx`), as the parent of the routes:
  * the app mounts it there, from the first render, so it is already running
  * while the viewer is open and is not remounted on the way to the library.
+ *
+ * A stand-in, so this file stays green if the sync leaves `ShellDataProvider`.
+ * The mount point is guarded by `router.test.tsx` (the A-5 write-back describe
+ * goes red without it). The real provider here would need auth, roots and
+ * scan-poll handlers, and its three `limit: 1` series reads would land in
+ * `seriesQueries`.
  */
 function LibrarySettingsSync({ children }: { children: ReactNode }) {
   useLibrarySettingsSync()

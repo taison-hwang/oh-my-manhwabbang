@@ -29,7 +29,13 @@ import { resetBasePath } from '../../api/urls'
 import { matchRange } from '../../lib/chosung'
 import { seriesCardDomId, useUiStore } from '../../store/ui'
 import { LibraryPage } from './LibraryPage'
-import { LIST_CARD_CLASS, useLibrarySettingsSync } from './useLibrary'
+import {
+  cardHeight,
+  columnWidth,
+  GRID_METRICS,
+  LIST_CARD_CLASS,
+  useLibrarySettingsSync,
+} from './useLibrary'
 import { failUnhandled } from '../../test/msw'
 
 /**
@@ -199,10 +205,11 @@ interface Scenario {
 let scenario: Scenario
 let seriesRequests: URL[]
 let settingsUpdates: SettingsUpdate[]
-let settingsReads: number
 let coverRequests: string[]
 /** Bodies of `POST /api/roots` — amendment A-11. */
 let rootPosts: unknown[]
+/** `GET /api/roots` answers sent — what tells a re-read from a cache write. */
+let rootsReads: number
 let releaseSeries: () => void
 let seriesGate: Promise<void>
 let releaseSettings: () => void
@@ -228,7 +235,10 @@ function compareSeries(key: string, a: SeriesSummary, b: SeriesSummary): number 
 }
 
 const server = setupServer(
-  http.get(`${ORIGIN}/api/roots`, () => HttpResponse.json({ items: scenario.roots })),
+  http.get(`${ORIGIN}/api/roots`, () => {
+    rootsReads += 1
+    return HttpResponse.json({ items: scenario.roots })
+  }),
 
   /**
    * Amendment A-11. The write lands in the *file*, and roots are opened once at
@@ -244,7 +254,6 @@ const server = setupServer(
   }),
 
   http.get(`${ORIGIN}/api/settings`, async () => {
-    settingsReads += 1
     if (scenario.holdSettings) await settingsGate
     return HttpResponse.json(scenario.settings)
   }),
@@ -632,13 +641,19 @@ function renderLibrary(existing?: QueryClient): QueryClient {
  *
  * The loading band, not the skeleton: before the store holds the server's
  * 보기 방식 the band is up with no skeleton in it, which is still loading.
+ *
+ * The band alone does not prove the hydration: the 1 s grace drops it whether
+ * or not the settings ever reached the store. Nor does a count of settings
+ * reads — the request goes out at mount, long before its answer is applied.
+ * `libraryViewKnown` is set in the same `set` as the server's `library_view`,
+ * and every test resets it and clears `shelf.ui`, so here it is the hydration.
  */
 async function waitForLibrary(): Promise<void> {
   await waitFor(() => {
     expect(screen.queryByTestId('library-loading')).not.toBeInTheDocument()
   })
   await waitFor(() => {
-    expect(settingsReads).toBeGreaterThan(0)
+    expect(useUiStore.getState().libraryViewKnown).toBe(true)
   })
 }
 
@@ -673,10 +688,10 @@ beforeEach(() => {
   }
   seriesRequests = []
   settingsUpdates = []
-  settingsReads = 0
   scrollCalls = []
   coverRequests = []
   rootPosts = []
+  rootsReads = 0
   navigateTo = null
   seriesGate = new Promise<void>((resolve) => {
     releaseSeries = resolve
@@ -843,7 +858,12 @@ describe('grid mode (FR-LIB-001, FR-LIB-008)', () => {
 
     expect(seal).toHaveClass('-rotate-[9deg]', 'border-accent-text')
     expect(seal?.querySelector('[aria-hidden="true"]')?.textContent).toBe('完讀')
-    expect(seal?.querySelector('.sr-only')?.textContent).toBe('완독')
+    // `textContent` reads straight through `aria-hidden`, so the word being in
+    // the DOM is not the word being announced: nothing from the element up may
+    // hide it, or the seal has no name at all.
+    const announcement = seal?.querySelector('.sr-only')
+    expect(announcement?.textContent).toBe('완독')
+    expect(announcement?.closest('[aria-hidden="true"]')).toBeNull()
     // The finished cover carries no bar of any kind — the seal is the statement.
     expect(box?.querySelector('[role="progressbar"]')).toBeNull()
   })
@@ -877,9 +897,10 @@ describe('grid mode (FR-LIB-001, FR-LIB-008)', () => {
       // not an estimate that happens to be close. A 179.33px column is a
       // 269px 2:3 cover over a 60px text block = 329px, so row 1 starts at
       // 329 + 16 and the stack is 2×329 + 16 tall. Get the measured width or
-      // `CARD_TEXT_HEIGHT` wrong and the rendered gap stops being 16px.
-      const cardH = ((1_156 - 16 * 5) / 6) * 1.5 + 60
-      expect(cardH).toBe(329)
+      // `CARD_TEXT_HEIGHT` wrong and the rendered gap stops being 16px. The
+      // 329 is asked of the product's own arithmetic — the one `SeriesGrid`
+      // sizes its rows with — not of a copy of it written out here.
+      expect(cardHeight(columnWidth(1_156, 6, GRID_METRICS.desktop.gap))).toBe(329)
       expect(rows[1]?.style.transform).toBe('translateY(345px)')
       expect(rows[0]?.parentElement?.style.height).toBe('674px')
     } finally {
@@ -934,8 +955,7 @@ describe('grid mode (FR-LIB-001, FR-LIB-008)', () => {
       // re-measure on the breakpoint or on `columns` would not have caught it.
       expect(rowsNow()).toHaveLength(2)
       expect(rowsNow()[0]?.style.gridTemplateColumns).toBe('repeat(6, minmax(0, 1fr))')
-      const cardH = ((1_156 - 16 * 5) / 6) * 1.5 + 60
-      expect(cardH).toBe(329)
+      expect(cardHeight(columnWidth(1_156, 6, GRID_METRICS.desktop.gap))).toBe(329)
       expect(rowsNow()[1]?.style.transform).toBe('translateY(345px)')
       expect(rowsNow()[0]?.parentElement?.style.height).toBe('674px')
     } finally {
@@ -1332,10 +1352,11 @@ describe('grid mode (FR-LIB-001, FR-LIB-008)', () => {
       await waitFor(() => {
         expect(scroller.scrollTop).toBe(6_080)
       })
+      // Flush with row 20. The 200px the reader was into it (8680 − 8480,
+      // both measured above) is the residual, and it is bounded by the card
+      // height rather than by the pitch: it is `scrollTop − anchorRow.start`,
+      // nothing more.
       expect(rowOffset(rowAt(20))).toBe(6_080)
-      // The 200px is the residual, and it is bounded by the card height rather
-      // than by the pitch: it is `scrollTop − anchorRow.start`, nothing more.
-      expect(8_680 - 8_480).toBe(200)
     } finally {
       restoreScroll()
       restoreWidth()
@@ -2659,7 +2680,9 @@ describe('sorting (FR-LIB-004)', () => {
     })
   })
 
-  it('sends 최근 읽은 순 and 수정일 from the top bar select', async () => {
+  it('sends 최근 읽은 순 and 수정일 when the store sort is set to them', async () => {
+    // No top bar is mounted here, so this drives `setSort` directly; the select
+    // reporting the wire key is `shell.test.tsx`'s to guard.
     renderLibrary()
     await waitForLibrary()
 
@@ -3736,9 +3759,10 @@ describe('onboarding — no roots (ui-spec §4.6, C-5)', () => {
       ...settingsFixture,
       // The settle signal, and it has to be one: with `config_path: ''` the
       // screen looks the same before and after the payload lands, so waiting on
-      // the screen — or on `settingsReads`, which counts requests sent, not
-      // responses consumed — would let this pass against a `/api/settings` that
-      // never answered, i.e. assert the loading state and call it this one.
+      // the screen — or on a count of settings reads, which counts requests
+      // sent, not responses consumed — would let this pass against a
+      // `/api/settings` that never answered, i.e. assert the loading state and
+      // call it this one.
       // `useLibrarySettingsSync` hydrates the store from the payload, and the
       // `beforeEach` above puts `view` at `grid`.
       library_view: 'list',
@@ -3796,10 +3820,11 @@ describe('onboarding — no roots (ui-spec §4.6, C-5)', () => {
       server: { ...settingsFixture.server, root_editing_enabled: true },
     }
     const user = userEvent.setup()
-    renderLibrary()
+    const client = renderLibrary()
 
     await user.click(await screen.findByRole('button', { name: '루트 추가' }))
     await user.type(screen.getByLabelText('루트 경로'), '/srv/media/manga')
+    const readsBeforeAdd = rootsReads
     await user.click(screen.getByRole('button', { name: '추가' }))
 
     await waitFor(() => {
@@ -3807,9 +3832,15 @@ describe('onboarding — no roots (ui-spec §4.6, C-5)', () => {
     })
     // The screen leaves onboarding because `GET /api/roots` was re-read and now
     // reports a root — not because the client decided the POST had worked.
+    // Leaving onboarding alone cannot tell the two apart, so both halves are
+    // checked: one more read than before the add, and the list the screen holds
+    // is the server's `pending` row (R2), which the `201` body could not have
+    // been spliced into.
     await waitFor(() => {
       expect(screen.queryByText('읽을 폴더를 등록하세요')).not.toBeInTheDocument()
     })
+    expect(rootsReads).toBe(readsBeforeAdd + 1)
+    expect(client.getQueryData(queryKeys.roots)).toEqual({ items: [pendingRoot] })
   })
 
   it('keeps 설정 파일 위치 보기 and offers no 루트 추가 while the capability is off (C-5)', async () => {

@@ -578,14 +578,30 @@ describe('R→L reverses the contents, not the scroller', () => {
   it('draws the reversed pages and marks the right one current', () => {
     stubLayout()
     // 20 cells mount (see the harness note above), i.e. slots 0…19, which in
-    // R→L are the *last* 20 pages. Page 12 is nowhere near them, so `current`
-    // being unmarked here is the mapping working, not a missing cell.
-    const { container } = render(strip({ dir: 'rtl', current: PAGES }))
-    const labels = [...container.querySelectorAll('[data-role="thumb"]')].map((el) =>
-      el.getAttribute('data-page'),
-    )
+    // R→L are the *last* 20 pages. The current page is the last one, so the cell
+    // that must carry the marker is slot 0 — and marking by raw slot
+    // (`index + 1`) would put it on slot 213, which is not even mounted.
+    const view = render(strip({ dir: 'rtl', current: PAGES }))
+    const cells = [...view.container.querySelectorAll('[data-role="thumb"]')]
+    const labels = cells.map((el) => el.getAttribute('data-page'))
     expect(labels.length, 'the harness mounts a window of cells').toBeGreaterThan(0)
     expect(labels[0], 'the leftmost slot draws the last page in R→L').toBe(String(PAGES))
     expect(labels[1]).toBe(String(PAGES - 1))
+
+    const markedPages = (): (string | null)[] =>
+      [...view.container.querySelectorAll('[data-role="thumb"][aria-current="true"]')].map((el) =>
+        el.getAttribute('data-page'),
+      )
+    expect(markedPages(), 'exactly one cell is current: the one drawing that page').toEqual([
+      String(PAGES),
+    ])
+    expect(cells[0]).toHaveAttribute('data-current', 'true')
+    expect(cells[1], 'its neighbour is not current').not.toHaveAttribute('aria-current')
+    expect(cells[1]).toHaveAttribute('data-current', 'false')
+
+    // The converse: page 12 is not in this window at all, but slot 11 is, so a
+    // marker keyed on the slot would show up on page 203.
+    view.rerender(strip({ dir: 'rtl', current: 12 }))
+    expect(markedPages(), 'no mounted cell draws page 12').toEqual([])
   })
 })

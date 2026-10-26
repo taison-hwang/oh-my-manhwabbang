@@ -197,9 +197,13 @@ describe('루트 관리 (prd UI-004, ruling E-3)', () => {
 
   it('offers no way to add or remove a root, and says to edit the file instead', async () => {
     renderDialog()
-    await screen.findByText('만화')
+    // The settle signal is the config path, which arrives with `/api/settings`:
+    // waiting on the roots alone asserted the loading state, in which there are
+    // no controls whatever the server says (test audit, 10-23). '+ 루트 추가'
+    // never matched anything — the + is an aria-hidden icon — so only the real
+    // name is checked.
+    await screen.findByText(settings.server.config_path)
     expect(screen.queryByRole('button', { name: '제거' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '+ 루트 추가' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '루트 추가' })).not.toBeInTheDocument()
     expect(screen.getByText(/shelf\.yaml을 편집한 뒤 재시작하세요/)).toBeInTheDocument()
   })
@@ -548,7 +552,6 @@ describe('루트 추가/제거 (amendment A-11, ruling E-26)', () => {
     await screen.findByText('/etc/shelf/gate-off.yaml')
 
     expect(screen.queryByRole('button', { name: '루트 추가' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '+ 루트 추가' })).not.toBeInTheDocument()
     expect(screen.queryAllByRole('button', { name: '제거' })).toHaveLength(0)
 
     // What C-5 / E-3 describe is still all there, unchanged.

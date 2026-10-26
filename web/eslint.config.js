@@ -89,9 +89,10 @@ export default tseslint.config(
   },
 
   // ---- the single fetch boundary (impl-plan §5.4, D-44) ------------------
+  // D-44 names one module, client.ts — not the src/api/ directory around it.
   {
     files: ['src/**/*.{ts,tsx}'],
-    ignores: ['src/api/**'],
+    ignores: ['src/api/client.ts'],
     rules: {
       'no-restricted-globals': [
         'error',
@@ -100,6 +101,24 @@ export default tseslint.config(
           message:
             'src/api/client.ts is the only module that may call fetch (impl-plan §5.4). Use the typed hooks in src/api/queries.ts.',
         },
+      ],
+    },
+  },
+
+  // The same boundary through the global object: `no-restricted-globals` sees a
+  // bare `fetch` but not `globalThis.fetch`, which would alias it past the rule
+  // above. Tests stub fetch that way on purpose (client.test.ts), so they are out.
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/api/client.ts', 'src/**/*.test.{ts,tsx}', 'src/test/**'],
+    rules: {
+      'no-restricted-properties': [
+        'error',
+        ...['globalThis', 'window', 'self'].map((object) => ({
+          object,
+          property: 'fetch',
+          message: 'src/api/client.ts is the only module that may call fetch (impl-plan §5.4, D-44).',
+        })),
       ],
     },
   },

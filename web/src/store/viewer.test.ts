@@ -132,9 +132,14 @@ describe('opening chromeless (ruling E-27)', () => {
     open(10)
     // If `open` woke the chrome the way it used to, this would flip it *on* and
     // then off, and the assertion below would pass for the wrong reason. The
-    // point is that nothing is scheduled at all.
+    // point is that nothing is scheduled at all — and `chromeVisible` cannot say
+    // so: a hide armed over chrome that is already down fires into a no-op. So
+    // count the timers. The hint's lifetime is the one thing an entry schedules.
+    expect(vi.getTimerCount(), 'the hint’s timer, and no auto-hide beside it').toBe(1)
     vi.advanceTimersByTime(CHROME_AUTOHIDE_MS * 3)
     expect(useViewerStore.getState().chromeVisible).toBe(false)
+    expect(useViewerStore.getState().hintVisible).toBe(false)
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('a deliberate toggle answers the hint for good', () => {
@@ -188,6 +193,10 @@ describe('changing volume is a continuation, not an entry', () => {
 
     expect(useViewerStore.getState().bookId).toBe('bk-2')
     expect(useViewerStore.getState().page).toBe(1)
+    // What carries over is the reader's set-up, never the book: volume 2 is its
+    // own length. Carried, an 8-page volume reads `/ 10`, the slider runs past
+    // its end and the end card never comes.
+    expect(useViewerStore.getState().pageCount).toBe(8)
     expect(useViewerStore.getState().chromeVisible).toBe(true)
     expect(useViewerStore.getState().stripOpen).toBe(true)
     // The line exists to be read once. Replaying it every volume is noise.
@@ -198,8 +207,14 @@ describe('changing volume is a continuation, not an entry', () => {
 
   it('leaves a chromeless reader chromeless, and still does not arm a hide', () => {
     open(10, 10)
+    // A reader past the opening hint, so anything pending after the swap was
+    // armed by the swap. Counted, because a hide armed over chrome that is
+    // already down is invisible in `chromeVisible` (see "opening does not wake").
+    vi.advanceTimersByTime(CHROME_HINT_MS)
+    expect(vi.getTimerCount()).toBe(0)
     useViewerStore.getState().open('bk-2', { pageCount: 8, page: 1, fit: DEFAULT_FIT })
     expect(useViewerStore.getState().chromeVisible).toBe(false)
+    expect(vi.getTimerCount(), 'no auto-hide for chrome that is not up').toBe(0)
     vi.advanceTimersByTime(CHROME_AUTOHIDE_MS * 3)
     expect(useViewerStore.getState().chromeVisible).toBe(false)
   })

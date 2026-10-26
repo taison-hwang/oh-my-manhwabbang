@@ -21,6 +21,9 @@ const reset = (): void => {
 
 beforeEach(() => {
   localStorage.clear()
+  // `data-theme` lives on the shared `<html>`, outside the store: a case that
+  // reads it must not see the value an earlier case wrote.
+  document.documentElement.removeAttribute('data-theme')
   reset()
 })
 
@@ -152,6 +155,9 @@ describe('persistence', () => {
  */
 describe('theme (item bq)', () => {
   it('applies a switch at once and persists only the sticky slice', () => {
+    // Planted, not inherited: `<html>` starts on the other theme, so only
+    // `setTheme` itself applying `dark` can satisfy the assertion below.
+    document.documentElement.setAttribute('data-theme', 'light')
     useUiStore.getState().setTheme('dark')
     expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
     const parsed = JSON.parse(localStorage.getItem(UI_STORAGE_KEY) ?? '{}') as {

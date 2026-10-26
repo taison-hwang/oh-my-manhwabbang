@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import {
   CLEAR_READ_ACTION,
@@ -162,6 +162,45 @@ describe('progress', () => {
 })
 
 describe('formatDate', () => {
+  // The date is the viewer's, not UTC's (format.ts). Noon UTC is the same date in
+  // every zone the app is used in, so the two cases below cannot tell a local
+  // reading from a UTC one; these pin the zone and stand on the hours where the
+  // two disagree.
+  const tz = process.env.TZ
+  afterEach(() => {
+    if (tz === undefined) delete process.env.TZ
+    else process.env.TZ = tz
+  })
+
+  // Setting TZ at run time only moves Date in a process's main thread (vitest's
+  // default `forks` pool). Under a worker-thread pool it would not, and these
+  // cases would pass or fail for the wrong reason — so each one first proves the
+  // switch took.
+  function inZone(zone: string, offsetMinutes: number): void {
+    process.env.TZ = zone
+    expect(new Date(Date.UTC(2016, 10, 1)).getTimezoneOffset(), `TZ=${zone} did not take`).toBe(
+      offsetMinutes,
+    )
+  }
+
+  it('reads the date in the viewer zone: a KST morning is already the next day', () => {
+    inZone('Asia/Seoul', -540)
+    // 2016-11-01T20:00Z is 2016-11-02 05:00 KST; 2016-11-01T23:59Z is 08:59 KST.
+    expect(formatDate(Date.UTC(2016, 10, 1, 20, 0, 0) / 1000)).toBe('2016-11-02')
+    expect(formatDate(Date.UTC(2016, 10, 1, 23, 59, 0) / 1000)).toBe('2016-11-02')
+    // 2016-11-01T15:00Z is midnight KST — the first second of the 2nd.
+    expect(formatDate(Date.UTC(2016, 10, 1, 15, 0, 0) / 1000)).toBe('2016-11-02')
+    expect(formatDate(Date.UTC(2016, 10, 1, 14, 59, 59) / 1000)).toBe('2016-11-01')
+    // Across a year: 2016-12-31T16:00Z is 2017-01-01 01:00 KST.
+    expect(formatDate(Date.UTC(2016, 11, 31, 16, 0, 0) / 1000)).toBe('2017-01-01')
+  })
+
+  it('reads the date in the viewer zone west of UTC too', () => {
+    inZone('America/Los_Angeles', 420)
+    // 2016-11-02T03:00Z is 2016-11-01 20:00 in Los Angeles (PDT, UTC−7).
+    expect(formatDate(Date.UTC(2016, 10, 2, 3, 0, 0) / 1000)).toBe('2016-11-01')
+  })
+
   it('renders YYYY-MM-DD from a Unix seconds stamp', () => {
     // 2016-11-02T12:00:00Z, read in the local zone the app runs in.
     const unix = Date.UTC(2016, 10, 2, 12, 0, 0) / 1000

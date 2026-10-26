@@ -423,6 +423,36 @@ describe('series header (prd UI-002, ui-spec §5.1)', () => {
     // Nothing was written to the server: PUT /api/settings has no handler, and
     // `src/test/msw.ts` would have failed the test if one fired.
   })
+
+  it('seeds 읽기 방향 from the global default even when that is not the fallback', async () => {
+    // The fixture's `ltr` is also what the page falls back to with no settings
+    // at all, so the case above cannot tell the two apart. `rtl` can. The
+    // settings are held until the page is up, so they land after its first
+    // render — a page that froze the direction it first drew would stay on L→R.
+    // (What it shows while they are in flight is not asserted: drawing the
+    // fallback or waiting are both fine.)
+    let release = (): void => undefined
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    server.use(...baseHandlers(detailOf(), newRecorded(), 202))
+    server.use(
+      http.get(`${ORIGIN}/api/settings`, async () => {
+        await held
+        return HttpResponse.json({ ...settings, reading_direction: 'rtl' })
+      }),
+    )
+    renderPage()
+    await screen.findByRole('heading', { name: seriesDetail.name })
+
+    release()
+    const group = await screen.findByRole('radiogroup', { name: '읽기 방향' })
+    await waitFor(() => {
+      expect(within(group).getByRole('radio', { name: 'R→L' })).toBeChecked()
+    })
+    expect(within(group).getByRole('radio', { name: 'L→R' })).not.toBeChecked()
+    expect(useSeriesDirStore.getState().bySeries[SERIES_ID]).toBeUndefined()
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -642,6 +672,19 @@ describe('처음부터 읽기 / 이어 읽기', () => {
     await userEvent.click(screen.getByRole('button', { name: '처음부터 읽기' }))
     expect(screen.getByTestId('location')).toHaveTextContent(
       `/series/${SERIES_ID}/books/aaaaaaaaaaaaaaaa?page=1`,
+    )
+  })
+
+  it('passes over volumes that cannot be opened when the list starts with them', async () => {
+    // In the default order the first volume is openable, so "the first" and
+    // "the first openable" are the same book there. Lead with the two that are
+    // not (07권 error, 09권 encrypted).
+    const [v01, v01zip, v07, v09, v10] = DUPLICATE_BOOKS
+    if (!v01 || !v01zip || !v07 || !v09 || !v10) throw new Error('fixture shape changed')
+    await setup(detailOf({ books: [v07, v09, v01zip, v01, v10] }))
+    await userEvent.click(screen.getByRole('button', { name: '처음부터 읽기' }))
+    expect(screen.getByTestId('location')).toHaveTextContent(
+      `/series/${SERIES_ID}/books/bbbbbbbbbbbbbbbb?page=1`,
     )
   })
 

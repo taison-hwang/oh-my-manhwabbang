@@ -27,8 +27,11 @@ describe('DoneSeal (E-46)', () => {
   it('draws 完讀 but announces 완독', () => {
     render(<DoneSeal />)
 
-    // The catalogue word is what a screen reader gets…
-    expect(screen.getByText('완독')).toBeInTheDocument()
+    // The catalogue word is what a screen reader gets… `getByText` finds text
+    // a screen reader cannot, so the word is checked for being *exposed*: no
+    // `aria-hidden` on it or above it (test audit, 10-23).
+    const word = screen.getByText('완독')
+    expect(word.closest('[aria-hidden="true"]')).toBeNull()
     // …and the Han glyphs are hidden from it, so the mark is never announced as
     // two characters most Korean readers do not use.
     expect(screen.getByText('完讀')).toHaveAttribute('aria-hidden', 'true')

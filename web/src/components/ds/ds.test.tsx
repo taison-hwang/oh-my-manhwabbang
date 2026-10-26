@@ -541,9 +541,12 @@ describe('Wordmark', () => {
     // The rail is the case worth pinning: the name is *only* in the accessible
     // layer there, so a regression that drops it leaves a landmark with no
     // name and nothing on screen changes.
+    // `getByText` finds text a screen reader cannot, so "in the accessible
+    // layer" is checked as such: nothing on or above it is `aria-hidden`
+    // (test audit, 10-23).
     for (const variant of ['hero', 'compact', 'mark'] as const) {
       const { unmount } = render(<Wordmark variant={variant} />)
-      expect(screen.getByText(BRAND_NAME)).toBeInTheDocument()
+      expect(screen.getByText(BRAND_NAME).closest('[aria-hidden="true"]')).toBeNull()
       unmount()
     }
   })

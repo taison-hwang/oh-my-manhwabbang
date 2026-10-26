@@ -23,7 +23,15 @@ import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { Link, MemoryRouter, Route, RouterProvider, Routes, createMemoryRouter } from 'react-router-dom'
+import {
+  Link,
+  MemoryRouter,
+  Route,
+  RouterProvider,
+  Routes,
+  createMemoryRouter,
+  type RouteObject,
+} from 'react-router-dom'
 
 import { App } from './App'
 import {
@@ -41,7 +49,7 @@ import type { AuthStatus, SeriesListResponse, Settings, SettingsUpdate } from '.
 import { resetBasePath } from './api/urls'
 import { LibraryPage } from './features/library/LibraryPage'
 import { useShellData } from './lib/shellData'
-import { ShellDataProvider } from './router'
+import { ShellDataProvider, router } from './router'
 import { UI_STORAGE_KEY, defaultOrderFor, useUiStore } from './store/ui'
 import { failUnhandled } from './test/msw'
 
@@ -868,5 +876,38 @@ describe('library preferences changed off the library screen (A-5 write-back)', 
     await settle()
 
     expect(puts).toHaveLength(1)
+  })
+})
+
+/**
+ * The root route as the app mounts it — `router.tsx`'s `RootLayout`, provider +
+ * `App` + `Overlays` — which no unit test rendered (test audit, 10-23): every
+ * harness in this file assembles `<ShellDataProvider><App/></ShellDataProvider>`
+ * itself, so a `RootLayout` that lost its provider or its overlays failed
+ * nothing short of e2e. Built from the router's own route table.
+ */
+describe('the root route as the app mounts it (RootLayout)', () => {
+  it('mounts the shell over the provider and the overlays beside it', async () => {
+    server.use(http.get(`${ORIGIN}/api/continue`, () => HttpResponse.json({ items: [] })))
+    stubViewport(1440)
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    // The table the app is built from; the data router widens its type.
+    const memory = createMemoryRouter(router.routes as RouteObject[], { initialEntries: ['/'] })
+    render(
+      <QueryClientProvider client={client}>
+        <RouterProvider router={memory} />
+      </QueryClientProvider>,
+    )
+
+    // The provider: a root's row and a scope's count reach the sidebar only
+    // through it (`GET /api/roots`, and `GET /api/series?progress=reading`'s
+    // total of 4 above).
+    const nav = await screen.findByRole('complementary', { name: '라이브러리 탐색' })
+    expect(await within(nav).findByRole('button', { name: /^만화/ })).toBeInTheDocument()
+    expect(await within(nav).findByRole('button', { name: /읽는 중\s*4/ })).toBeInTheDocument()
+
+    // The overlays: Ctrl+K opens the palette, and only `RootLayout` mounts it.
+    await userEvent.keyboard('{Control>}k{/Control}')
+    expect(await screen.findByRole('listbox', { name: '검색 결과' })).toBeInTheDocument()
   })
 })

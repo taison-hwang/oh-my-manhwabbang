@@ -174,13 +174,15 @@ describe('FolderPicker', () => {
 
     await user.click(await screen.findByText(BASE))
     await user.click(await screen.findByText('만화'))
+    // The crumb is matched whole: `${BASE}/만화` contains BASE, so a 상위 that
+    // stayed put would pass a substring match.
     await waitFor(() => {
-      expect(screen.getByTestId('folder-picker-crumb')).toHaveTextContent(`${BASE}/만화`)
+      expect(screen.getByTestId('folder-picker-crumb').textContent).toBe(`${BASE}/만화`)
     })
 
     await user.click(screen.getByRole('button', { name: /상위/ }))
     await waitFor(() => {
-      expect(screen.getByTestId('folder-picker-crumb')).toHaveTextContent(BASE)
+      expect(screen.getByTestId('folder-picker-crumb').textContent).toBe(BASE)
     })
 
     await user.click(screen.getByRole('button', { name: '처음으로' }))

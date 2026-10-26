@@ -203,7 +203,11 @@ describe('theme hydration (item bq)', () => {
     })
     expect(useUiStore.getState().theme).toBe('light')
 
-    // A payload whose only news is a theme is not this hook's either.
+    // Nor on a refetch whose only change is the theme. Whether that payload is
+    // news to this hook at all (its reconcile key) cannot show here: hydrating
+    // again only re-asserts library values the store already holds. It shows
+    // when a library pick shares the commit — "keeps a library pick that lands in
+    // the same commit as a theme-only payload" below is the test for that.
     serverSettings = { ...serverSettings, theme: 'system' }
     await act(async () => {
       await client.invalidateQueries({ queryKey: queryKeys.settings })

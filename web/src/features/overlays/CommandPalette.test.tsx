@@ -7,7 +7,7 @@ import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
 import { useState } from 'react'
 import { MemoryRouter, Route, Routes, useLocation, useParams } from 'react-router-dom'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { continueResponse, ORIGIN, seriesSummary, SERIES_ID } from '../../api/fixtures'
 import type { ContinueItem, SeriesSummary } from '../../api/types'
@@ -107,7 +107,7 @@ function Harness() {
   )
 }
 
-function renderPalette(harness = false): void {
+function renderPalette(harness = false, onClose: () => void = () => undefined): void {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
@@ -121,7 +121,7 @@ function renderPalette(harness = false): void {
               harness ? (
                 <Harness />
               ) : (
-                <ControlledPalette />
+                <ControlledPalette onClose={onClose} />
               )
             }
           />
@@ -133,11 +133,9 @@ function renderPalette(harness = false): void {
 }
 
 /** Always-open variant, so a test does not have to open it first. */
-function ControlledPalette() {
+function ControlledPalette({ onClose }: { onClose: () => void }) {
   const [query, setQuery] = useState('')
-  return (
-    <CommandPalette open query={query} onQueryChange={setQuery} onClose={() => undefined} />
-  )
+  return <CommandPalette open query={query} onQueryChange={setQuery} onClose={onClose} />
 }
 
 // ---------------------------------------------------------------------------
@@ -281,6 +279,27 @@ describe('keyboard (ui-spec §8.4)', () => {
     await screen.findByText('[만화] 군계 1~25')
     await userEvent.click(screen.getByRole('option', { name: /\[만화\] 군계 1~25/ }))
     expect(await screen.findByTestId('landed')).toHaveTextContent(`${SERIES_ID}@/series/${SERIES_ID}`)
+  })
+
+  /**
+   * Picking a row closes the palette (audit MED). The harness above navigates
+   * away, which unmounts the palette whether or not it was closed — so the
+   * route proves nothing about `onClose`. A spy does.
+   */
+  it('closes the palette when a row is opened by click', async () => {
+    const onClose = vi.fn()
+    renderPalette(false, onClose)
+    await userEvent.click(await screen.findByRole('option', { name: /\[만화\] 군계 1~25/ }))
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(await screen.findByTestId('landed')).toHaveTextContent(`${SERIES_ID}@/series/${SERIES_ID}`)
+  })
+
+  it('closes the palette when a row is opened with ↵', async () => {
+    const onClose = vi.fn()
+    renderPalette(false, onClose)
+    await screen.findByText('[만화] 군계 1~25')
+    await userEvent.keyboard('{Enter}')
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 })
 

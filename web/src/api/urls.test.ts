@@ -11,7 +11,6 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { BOOK_CV, BOOK_ID, COVER_CV, SERIES_ID } from './fixtures'
 import {
-  apiUrl,
   assertPageNumber,
   bookPrefsUrl,
   bookProgressUrl,
@@ -271,8 +270,38 @@ describe('every endpoint of §7.13', () => {
     expect(rootUrl('lanovel')).toBe('/api/roots/lanovel')
   })
 
+  /**
+   * Every builder that puts an id into a path escapes it itself. The ids the
+   * other cases use are base32 and need no escaping, so only a hostile one
+   * shows whether a builder does it — handing `apiUrl` a pre-encoded path, as
+   * this case once did, tested the caller instead.
+   */
   it('escapes an id rather than injecting it into the path', () => {
-    expect(apiUrl(`/series/${encodeURIComponent('a/../b')}`)).toBe('/api/series/a%2F..%2Fb')
+    // A separator, a walk, a query, a fragment and a stray escape: each is a
+    // way out of the path segment, and an escaper that only handled `/` would
+    // let the rest through.
+    const id = 'a/../b?c#d%e'
+    const e = 'a%2F..%2Fb%3Fc%23d%25e'
+    const img = { w: 240, v: null } as const
+    expect([
+      seriesUrl(id),
+      seriesRescanUrl(id),
+      seriesCoverUrl(id, img),
+      bookUrl(id),
+      pageUrl(id, 1, { v: null }),
+      pageThumbUrl(id, 1, img),
+      bookProgressUrl(id),
+      bookPrefsUrl(id),
+    ]).toEqual([
+      `/api/series/${e}`,
+      `/api/series/${e}/rescan`,
+      `/api/series/${e}/cover?w=240`,
+      `/api/books/${e}`,
+      `/api/books/${e}/pages/1`,
+      `/api/books/${e}/thumbs/1?w=240`,
+      `/api/books/${e}/progress`,
+      `/api/books/${e}/prefs`,
+    ])
   })
 
   /**

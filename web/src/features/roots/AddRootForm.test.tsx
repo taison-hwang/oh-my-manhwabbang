@@ -126,4 +126,15 @@ describe('AddRootForm', () => {
     await user.type(screen.getByLabelText('루트 경로'), '/srv/elsewhere')
     expect(screen.getByRole('button', { name: '추가' })).toBeEnabled()
   })
+
+  it('hands 취소 to its caller', async () => {
+    // The form does not close itself — whoever opened it does (`Onboarding`,
+    // `RootsPanel`) — so a 취소 that reached nobody would leave the form up with
+    // no way out of it.
+    const user = userEvent.setup()
+    const { onCancel } = renderForm()
+
+    await user.click(screen.getByRole('button', { name: '취소' }))
+    expect(onCancel).toHaveBeenCalledOnce()
+  })
 })

@@ -388,13 +388,8 @@ describe('the responsive layer (ui-spec §7, NFR-CMP-002)', () => {
 })
 
 describe('theme (NFR-CMP-003)', () => {
-  it('writes the user setting onto <html> on mount', () => {
-    useUiStore.setState({ theme: 'dark' })
-    renderShell(LOADED_ROOTS)
-    expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
-  })
-
-  it('resolves "system" against the OS rather than writing it literally', () => {
+  /** An OS that prefers dark; every other query answers no. */
+  function stubOsPrefersDark(): void {
     Object.defineProperty(window, 'matchMedia', {
       writable: true,
       configurable: true,
@@ -405,6 +400,21 @@ describe('theme (NFR-CMP-003)', () => {
         removeEventListener: () => undefined,
       }),
     })
+  }
+
+  it('writes the user setting onto <html> on mount', () => {
+    // The setting is light against a dark OS, the opposite of the next case,
+    // so each answer is reachable only by its own path: an App that painted
+    // dark whatever the setting — or passed `system` and let the OS decide —
+    // reads dark here.
+    stubOsPrefersDark()
+    useUiStore.setState({ theme: 'light' })
+    renderShell(LOADED_ROOTS)
+    expect(document.documentElement.getAttribute('data-theme')).toBe('light')
+  })
+
+  it('resolves "system" against the OS rather than writing it literally', () => {
+    stubOsPrefersDark()
     useUiStore.setState({ theme: 'system' })
     renderShell(LOADED_ROOTS)
     expect(document.documentElement.getAttribute('data-theme')).toBe('dark')

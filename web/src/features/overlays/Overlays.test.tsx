@@ -2,6 +2,7 @@ import '@testing-library/jest-dom/vitest'
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
 import { MemoryRouter } from 'react-router-dom'
@@ -218,5 +219,16 @@ describe('Overlays', () => {
       useUiStore.getState().openOverlay('settings')
     })
     expect(await screen.findByText(configPath)).toBeInTheDocument()
+  })
+
+  /** Audit MED, through the store: picking a row must take the palette off the stack. */
+  it('takes the palette off the overlay stack when a row is picked', async () => {
+    renderOverlays()
+    act(() => {
+      useUiStore.getState().openOverlay('palette')
+    })
+    await userEvent.click(await screen.findByRole('option', { name: /군계/ }))
+    expect(useUiStore.getState().overlays).not.toContain('palette')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })

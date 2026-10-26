@@ -326,23 +326,52 @@ describe('prefsWriter (av)', () => {
     expect(call(1).body).toEqual({ display_mode: 'spread', fit_mode: 'original' })
   })
 
-  it('lets nothing a reset left behind send, retry or call back', async () => {
+  /**
+   * A request on the wire is not cancelled by `resetPrefsWriter`; the generation
+   * makes whatever it settles into a no-op. Every settlement is staged because
+   * each guard is reached by only one: a callback is `confirmed`'s, and the
+   * re-read is `failed`'s on a refusal — a transient failure's retry is stopped
+   * by `pump`'s own guard either way. The write on the wire is the `saveNow`
+   * itself, so its answer is the one that owes `onSaved` — a reject never calls
+   * back, so a reject-only test could not see `confirmed` firing a dead writer's callback.
+   */
+  it.each([
+    [
+      'fails',
+      (c: Call) => {
+        c.reject(unavailable())
+      },
+    ],
+    [
+      'is refused',
+      (c: Call) => {
+        c.reject(new ApiError({ status: 422, code: 'unprocessable', message: '' }))
+      },
+    ],
+    [
+      'succeeds',
+      (c: Call) => {
+        c.resolve(DEFAULTS)
+      },
+    ],
+  ])('lets nothing a reset left behind send, retry, re-read or call back — the write on the wire %s', async (_, settle) => {
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
     const { result } = mountWriter()
     const onSaved = vi.fn()
-    act(() => {
-      result.current.save({ fit_mode: 'width' })
-    })
-    await advance(PREFS_SAVE_DEBOUNCE_MS)
     act(() => {
       result.current.saveNow(RESET, onSaved)
     })
     expect(calls).toHaveLength(1)
+    act(() => {
+      result.current.save({ fit_mode: 'width' })
+    })
 
     resetPrefsWriter()
-    call(0).reject(unavailable())
+    settle(call(0))
     await advance(PREFS_RETRY_BASE_MS * 2 ** (PREFS_RETRY_LIMIT + 2))
-    expect(calls, 'no retry and no queued reset after the writer was reset').toHaveLength(1)
+    expect(calls, 'no retry and no queued edit after the writer was reset').toHaveLength(1)
     expect(onSaved).not.toHaveBeenCalled()
+    expect(invalidate, "a dead writer does not re-read the server into anyone's cache").not.toHaveBeenCalled()
   })
 
   it('keeps one queue per book across a remount, so a reopened viewer cannot race the old write', async () => {

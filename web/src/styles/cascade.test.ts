@@ -28,6 +28,14 @@ import tailwindConfig from '../../tailwind.config'
 const ROOT = resolve(process.cwd(), 'src')
 const BASE = readFileSync(resolve(ROOT, 'styles/base.css'), 'utf8')
 
+/**
+ * The compiled sheet with its comments taken out.
+ *
+ * The pipeline keeps base.css's comments, and the one above the ja rule names
+ * `[lang='ja']` in its prose — after every utility, where the rule itself sits.
+ * Searched with the comments in, a sheet that had lost the rule and kept its
+ * explanation would still "have" it, in the right place.
+ */
 async function compile(): Promise<string> {
   const result = await postcss([
     tailwindcss({
@@ -35,7 +43,7 @@ async function compile(): Promise<string> {
       content: [resolve(ROOT, '**/*.{ts,tsx}')],
     }),
   ]).process(BASE, { from: resolve(ROOT, 'styles/base.css') })
-  return result.css
+  return result.css.replace(/\/\*[\s\S]*?\*\//g, '')
 }
 
 describe('compiled cascade (E-55)', () => {

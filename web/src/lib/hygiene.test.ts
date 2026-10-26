@@ -191,22 +191,66 @@ describe('module conventions (impl-plan §5.2)', () => {
     expect(offenders).toEqual([])
   })
 
-  it('never calls fetch outside src/api (D-44)', () => {
-    const FETCH = /\bfetch\s*\(/
-    const outside = SOURCES.filter((p) => !/[/\\]api[/\\]/.test(p) && /\.tsx?$/.test(p))
+  it('never calls fetch outside src/api/client.ts (D-44)', () => {
+    // D-44 names one module, not the directory: queries.ts and urls.ts sit in
+    // src/api/ and must reach the network through client.ts like everyone else.
+    // A call, or a reach through the global object that would let a module
+    // alias it (`const f = globalThis.fetch`). A bare `fetch` reference is
+    // ESLint's (`no-restricted-globals`).
+    const FETCH = /\bfetch\s*\(|\b(?:globalThis|window|self)\s*\.\s*fetch\b/
+    for (const sample of ['await fetch(url)', 'const send = globalThis.fetch', 'window . fetch']) {
+      expect(FETCH.test(sample), sample).toBe(true)
+    }
+    expect(FETCH.test('queryClient.prefetchQuery(key)')).toBe(false)
+    const CLIENT = join('api', 'client.ts')
+    const others = SOURCES.filter((p) => rel(p) !== CLIENT && /\.tsx?$/.test(p))
     // The positive control: the pattern has to find the call the client does
-    // make, and the filter has to let the rest of the tree through.
-    expect(FETCH.test(readFileSync(join(ROOT, 'api', 'client.ts'), 'utf8'))).toBe(true)
-    expect(outside.length, 'the filter let almost nothing through').toBeGreaterThanOrEqual(80)
-    const offenders = outside.filter((p) => FETCH.test(readFileSync(p, 'utf8'))).map(rel)
+    // make, and the filter has to let the rest of the tree through — src/api/
+    // included.
+    expect(FETCH.test(readFileSync(join(ROOT, CLIENT), 'utf8'))).toBe(true)
+    expect(SOURCES.length - others.length, 'the filter must drop client.ts and nothing else').toBe(
+      SOURCES.filter((p) => !/\.tsx?$/.test(p)).length + 1,
+    )
+    expect(others.map(rel)).toEqual(expect.arrayContaining([join('api', 'queries.ts')]))
+    const offenders = others.filter((p) => FETCH.test(readFileSync(p, 'utf8'))).map(rel)
     expect(offenders).toEqual([])
   })
 
   it('vendors the font — no stylesheet reaches out to a CDN (NFR-OPS-001)', () => {
-    const offenders = SOURCES.filter((p) => /https?:\/\/fonts\./.test(readFileSync(p, 'utf8'))).map(
-      rel,
+    // Any absolute or protocol-relative URL a stylesheet loads — `@import` or
+    // `url(...)` — not just hosts that happen to start with `fonts.`. Comments
+    // are dropped first: a commented-out import loads nothing.
+    const REMOTE = /(?:@import\s*(?:url\(\s*)?|url\(\s*)['"]?(?:https?:)?\/\//i
+    const loads = (css: string): boolean => REMOTE.test(css.replace(/\/\*[\s\S]*?\*\//g, ' '))
+    // The positive control: the shapes a CDN font arrives in.
+    for (const sample of [
+      "@import url('https://cdn.jsdelivr.net/npm/pretendard/dist/web/static/pretendard.css');",
+      '@import "https://fonts.googleapis.com/css2?family=Noto+Sans+KR";',
+      'src: url(//fonts.gstatic.com/s/notosanskr/v1/a.woff2) format("woff2");',
+      '@import"https://cdn.example/x.css";',
+      '@import/**/"https://cdn.example/x.css";',
+      "SRC: URL( 'HTTPS://cdn.example/a.woff2' );",
+    ]) {
+      expect(loads(sample), sample).toBe(true)
+    }
+    for (const sample of [
+      "src: url('../assets/fonts/noto-sans-jp-400.woff2');",
+      "/* @import 'https://cdn.example/x.css'; */",
+      'background: url(data:image/svg+xml;utf8,<svg/>);',
+    ]) {
+      expect(loads(sample), sample).toBe(false)
+    }
+    const sheets = SOURCES.filter((p) => p.endsWith('.css'))
+    expect(sheets.map(rel)).toEqual(
+      expect.arrayContaining([join('styles', 'base.css'), join('styles', 'fonts.css')]),
     )
+    const offenders = sheets.filter((p) => loads(readFileSync(p, 'utf8'))).map(rel)
     expect(offenders).toEqual([])
+    // And no module reaches for a font CDN from script either.
+    const scripted = SOURCES.filter(
+      (p) => /\.tsx?$/.test(p) && /https?:\/\/fonts\./.test(readFileSync(p, 'utf8')),
+    ).map(rel)
+    expect(scripted).toEqual([])
   })
 
   /**

@@ -186,11 +186,16 @@ describe('TopBar (ui-spec §4.2)', () => {
   })
 
   it('hides the scan bar when nothing is scanning and shows the percentage when it is', () => {
-    const { unmount } = renderTopBar()
+    // The idle case carries the same non-zero percent as the scanning one, so
+    // only `scanning` can be what hides it: with the harness default of 0 the
+    // text '63%' could not appear whatever the bar did.
+    const idle = renderTopBar({ scanning: false, scanPercent: 63 })
     expect(screen.queryByText('63%')).toBeNull()
-    unmount()
-    renderTopBar({ scanning: true, scanPercent: 63 })
+    expect(idle.container.querySelector('.bg-fill-track')).toBeNull()
+    idle.unmount()
+    const busy = renderTopBar({ scanning: true, scanPercent: 63 })
     expect(screen.getByText('63%')).toBeInTheDocument()
+    expect(busy.container.querySelector('.bg-fill-track')).not.toBeNull()
   })
 
   it('offers a drawer trigger, because below 768px there is no sidebar', async () => {
@@ -240,7 +245,7 @@ describe('MobileDrawer (ui-spec §7, D-42)', () => {
 
   it('is a labelled modal that closes on Esc, the backdrop and the close button', async () => {
     const onClose = vi.fn()
-    const { container } = render(
+    render(
       <MobileDrawer open onClose={onClose}>
         <p>sidebar</p>
       </MobileDrawer>,
@@ -258,6 +263,5 @@ describe('MobileDrawer (ui-spec §7, D-42)', () => {
     expect(backdrop).not.toBeNull()
     if (backdrop !== null) await userEvent.click(backdrop)
     expect(onClose).toHaveBeenCalledTimes(3)
-    expect(container).toBeDefined()
   })
 })
