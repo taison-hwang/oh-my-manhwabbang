@@ -302,12 +302,22 @@ same goes for any foreground whose surface does not flip.
 
 | Token | Value |
 |---|---|
-| `--font-heading` | `'Archivo', 'Pretendard Variable', Pretendard, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', system-ui, sans-serif` |
-| `--font-heading-weight` | `800` |
+| `--font-heading` | ~~`'Archivo', 'Pretendard Variable', Pretendard, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', system-ui, sans-serif`~~ **the 명조 stack in `tokens.css`** |
+| `--font-heading-weight` | ~~`800`~~ **`700`** |
 | `--font-body` | `var(--font-heading)` |
 
-Archivo is vendored latin-only (C-14, decisions E-7) and has **no Hangul coverage**, so the Korean fallback
-stack is explicit and ordered rather than left to `system-ui` (§2.1).
+~~Archivo is vendored latin-only (C-14, decisions E-7) and has **no Hangul coverage**, so the Korean fallback
+stack is explicit and ordered rather than left to `system-ui` (§2.1).~~
+
+> **Superseded — E-46, E-53, E-55.** Headings and body are 명조: `--font-heading` leads with the vendored
+> 고운바탕 and reaches the vendored Noto Serif TC before any system face, at weight 700 (고운바탕 has no
+> 800, and 명조 breaks up under a synthetic one). Japanese names switch to Noto Sans JP through
+> `[lang='ja']`. Archivo is still vendored, latin-only at 400/700, but only as `--font-ui` — numerals and
+> uppercase micro-labels. The stacks are not copied here: they live in `tokens.css`, `tokens.test.ts` holds
+> their order, and README §2 says which face draws what. **Wherever this document still says "Archivo 800"**
+> (the element scale below, §2.3's component contracts, the screens in §3–§8), read it as the current
+> tokens: a heading, title or name takes `--font-heading` at `--font-heading-weight`; a numeral or
+> micro-label takes `--font-ui`. `base.css` replaced every 800 with `var(--font-heading-weight)` at E-46.
 
 #### Space and radius (11)
 
@@ -370,7 +380,7 @@ grid class is stated there.
 | Element | Size | Notes |
 |---|---|---|
 | `body` | 14px / 1.45 / 400 | 14px, not the DS's 15px: density beats comfort here (design.md #4) |
-| `h1` … `h5` | 42 / 32 / 25 / 20 / 16px | Archivo 800, `line-height: 1.12`, `letter-spacing: -0.015em` |
+| `h1` … `h5` | 42 / 32 / 25 / 20 / 16px | ~~Archivo 800~~ **`--font-heading` at `--font-heading-weight`** (§1.1 Type), `line-height: 1.12`, `letter-spacing: -0.015em` |
 | `h6` | 16px, `-0.01em`, mixed case | **E-32 restyled the section label and kept the tag.** It used to be 13px uppercase +0.08em. The prototype reaches the new look by swapping every `<h6>`/`<h4>` for a styled `<div>`, which E-32 §4 refuses: that deletes the document outline, kills screen-reader heading navigation, and breaks `e2e/06-settings.spec.ts`'s `getByRole('heading')`. The *style* moves; the *tag* stays. The section-label look is `h6`/`.h6`; the tag follows the outline (`<h2 class="h6">` on a screen, `<h3 class="h6">` in 설정 — a11y audit #5) |
 | `.card-meta` / muted copy | 11px | `--ink-meta` |
 
@@ -640,7 +650,8 @@ This **violates NFR-OPS-001/002** (single binary, no runtime external dependency
 Instead:
 
 1. `npm i @fontsource/archivo` (or drop the `.woff2` files into `src/assets/fonts/`).
-2. Import only the three weights the DS uses — **400, 600, 800** — latin + latin-ext subsets.
+2. Import only the three weights the DS uses — ~~**400, 600, 800** — latin + latin-ext subsets~~ **400 and
+   700, latin only** (E-46 moved the heading weight to 700; `scripts/mkfonts/subset.py` copies them).
 3. Declare `@font-face { font-display: swap; }` and let Vite fingerprint + inline them into `dist/`, which
    `go:embed` then swallows.
 
@@ -651,10 +662,18 @@ screenshots is being rendered by the system fallback. The stack in §1.2 makes t
 "Archivo", "Pretendard Variable", Pretendard, "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif
 ```
 
-Decide deliberately whether to vendor a Korean face. A subsetted Pretendard/Noto Sans KR is 1.5–4 MB and
+~~Decide deliberately whether to vendor a Korean face. A subsetted Pretendard/Noto Sans KR is 1.5–4 MB and
 would dominate the binary; the recommendation is **latin-only Archivo bundled + system Korean fallback**,
 which is exactly what the prototype does and what the screenshots show. If you later vendor Korean, subset
-to the Hangul syllable block actually used and load it `font-display: optional`.
+to the Hangul syllable block actually used and load it `font-display: optional`.~~
+
+> **Superseded in part — E-46, E-53, E-55.** The deletion above stands: no font is fetched at runtime, and
+> impl-plan §7.4 still greps `dist/` for a font-CDN URL (impl-plan C-14, revised in place). The
+> recommendation does not. Korean *is* set in a vendored face — 고운바탕, cut with all 11 172 syllables to
+> well under the 1.5–4 MB estimated here — and 한자 and 가나 in vendored Noto Serif TC and Noto Sans JP, all
+> `font-display: swap`, because 명조 is the design and a system substitute is a different product (E-46).
+> Faces, roles and sizes: README §2. What the screenshots in this document show is the prototype's system
+> fallback, not the shipped type.
 
 ### 2.2 Interaction states — themed, never browser defaults
 

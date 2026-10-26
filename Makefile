@@ -90,25 +90,55 @@ AVIF_ARTEFACTS   := $(foreach t,$(LINUX_TARGETS),dist/shelf-$(VERSION)-$(subst /
 # whose base term (everything that is neither pdfium nor AVIF) was ~7 MB low,
 # mostly modernc.org/sqlite, the pure-Go SQLite CON-001's CGO_ENABLED=0 forces.
 # prd NFR-OPS-001 itself asks only for a single file with the SPA embedded and
-# names no size at all. Measured with this recipe's own flags:
+# names no size at all. Measured on linux/amd64 with this recipe's own flags and
+# go1.26.9 — these are MEASURED_* below, and `release` re-measures them:
 #
-#     default (noavif, static)   25 833 656   SPA + SQLite + codecs + pdfium
-#     + AVIF  (`-avif` variant)  27 418 916   AVIF = 1 585 260  (FR-IDX-011, 필수)
-#     -tags nopdf                19 689 764   PDF  = 7 729 152  (FR-SRV-006, 필수)
-#     -tags "noavif nopdf"       15 286 456   the CGO-free base
+#     default (noavif, static)   33 444 002   SPA + SQLite + codecs + pdfium
+#     + AVIF  (`-avif` variant)  35 029 257   AVIF = 1 585 255  (FR-IDX-011, 필수)
+#     -tags "noavif nopdf"       22 864 034   PDF  = 10 579 968 (FR-SRV-006, 필수)
 #
-# (The two deltas are measured against different baselines: 7 729 152 is what PDF
-# costs an AVIF-enabled build. Against the DEFAULT, dropping PDF saves
-# 25 833 656 − 15 286 456 = 10 547 200.)
+# Both deltas are against the default. (E-19's table also had an AVIF-enabled
+# `-tags nopdf` row, which is where arch §1.2's smaller PDF figure comes from; no
+# shipped artefact is built that way, so it is no longer measured.)
 #
-# 33 554 432 is E-19's headroom over the measured build: pdfium WASM ≈8.34 MB,
-# AVIF WASM ≈1.58 MB, pure-Go SQLite (CON-001 forces modernc.org/sqlite), and the
-# embedded SPA are what occupy it. The gate still cannot be satisfied by anything
-# that matters and still trips on a dropped -s -w, an accidentally embedded asset
-# tree, or the 4 MB end of E-7's Korean webfont. Keep this in lockstep with
+# 33 554 432 is E-19's headroom over the build it measured, which was 7.4 MB
+# smaller than the one above — most of the difference is the vendored fonts that
+# E-46, E-53 and E-55 added after E-19 measured — so the margin left is under 1%.
+# pdfium WASM ≈8.34 MB, AVIF WASM ≈1.58 MB, pure-Go SQLite (CON-001 forces
+# modernc.org/sqlite) and the embedded SPA are what occupy the budget. The gate
+# still cannot be satisfied by anything that matters and still trips on a
+# dropped -s -w, an accidentally embedded asset tree, or the 4 MB end of E-7's
+# Korean webfont. Keep this in lockstep with
 # impl-plan §7.3 and README.md; internal/buildinfo/release_budget_test.go reads
 # all three and fails if any of them drift.
 SIZE_BUDGET := 33554432
+
+# The measured sizes the table above and README.md quote. The budget always had
+# a guard; these had none, and README went on quoting E-19's measurement after the
+# binary had passed 30 MB. So `release` re-measures all three — the two linux/amd64
+# artefacts it ships, plus a throwaway `nopdf` build — and fails when one has
+# moved by more than MEASURED_SLACK. release_budget_test.go holds the table and
+# README to these variables, so a re-measurement is one place to edit plus two it
+# will point at.
+#
+# The toolchain is part of the record because it moves every figure: the same
+# commit is 303 KB smaller under go1.25.0, and GOENV's GOTOOLCHAIN=auto builds with
+# any newer Go that happens to be installed. A different toolchain therefore FAILS
+# the check rather than skipping it — a host upgrade is exactly the drift nobody
+# saw. (`make build` and `test` are unaffected; only `release` measures.)
+# MEASURED_SLACK covers the -X strings (VERSION, COMMIT), whose length varies per
+# build; a 30-byte change was absorbed by section padding entirely. It must stay
+# under 50 000, so that a figure within the slack is never more than one 0.1 MB
+# step from the one README rounds; the test enforces that.
+# A non-default TAGS skips the check (these figures describe TAGS=noavif), and
+# `make release MEASURED_CHECK=0` waives it for one run. `:=`, not `?=`, so an
+# exported MEASURED_CHECK in someone's environment cannot waive it for every run.
+MEASURED_TOOLCHAIN := go1.26.9
+MEASURED_DEFAULT   := 33444002
+MEASURED_AVIF      := 35029257
+MEASURED_NOPDF     := 22864034
+MEASURED_SLACK     := 4096
+MEASURED_CHECK     := 1
 
 # The arch §1.1 dependency set, pinned exactly (impl-plan WP-00 acceptance 2),
 # as module:version pairs. `tidy` refuses to finish if any of them stops being
@@ -425,7 +455,8 @@ release: web
 		echo "  Every artefact above and dist/SHA256SUMS were still produced."; \
 		echo "  The default already carries -tags noavif (ruling E-21, static linkage);"; \
 		echo "  the one lever left is -tags nopdf, which costs FR-SRV-006 entirely"; \
-		echo "  (~10.5 MB off THIS baseline) and is 필수, so it is not a free win."; \
+		echo "  ($$(( $(MEASURED_DEFAULT) - $(MEASURED_NOPDF) )) bytes off the measured default) and is 필수,"; \
+		echo "  so it is not a free win."; \
 		echo "  The budget was"; \
 		echo "  set from a measurement (ruling E-19, decisions.md); if this build is"; \
 		echo "  legitimately larger, move it there, in impl-plan section 7.3 and in"; \
@@ -435,6 +466,46 @@ release: web
 	else \
 		echo ">> linux/amd64 is $$size bytes, within the $(SIZE_BUDGET) byte budget (NFR-OPS-001)"; \
 	fi
+# The MEASURED_* check: after the budget, so an over-budget build says that first,
+# and on its own recipe line for the same reason as the E-21 gates. The toolchain
+# is read off the artefact rather than `go env`, because what has to match the
+# record is what built the file that ships.
+	@if [ "$(MEASURED_CHECK)" = "0" ]; then \
+		echo ">> measured-size check waived for this run (MEASURED_CHECK=0)"; exit 0; \
+	fi; \
+	if [ "$(strip $(TAGS))" != "noavif" ]; then \
+		echo ">> measured-size check skipped: MEASURED_* describe TAGS=noavif, not \"$(TAGS)\""; exit 0; \
+	fi; \
+	probe=$$(mktemp -d) || exit 1; \
+	trap 'rm -rf "$$probe"' EXIT; trap 'exit 130' INT TERM; \
+	GOOS=linux GOARCH=amd64 $(BUILDENV) $(GO) build -trimpath -tags "$(TAGS) nopdf" \
+	  -ldflags "$(LDFLAGS)" -o "$$probe/nopdf" ./cmd/shelf || exit 1; \
+	def=dist/shelf-$(VERSION)-linux-amd64; bad=0; \
+	tc=$$($(GOENV) $(GO) version "$$def" | awk '{print $$NF}'); \
+	if [ "$$tc" != "$(MEASURED_TOOLCHAIN)" ]; then \
+		echo "  MEASURED_TOOLCHAIN is $(MEASURED_TOOLCHAIN), but $$def was built with $$tc"; bad=1; \
+	fi; \
+	for row in "MEASURED_DEFAULT $(MEASURED_DEFAULT) $$def" \
+	           "MEASURED_AVIF $(MEASURED_AVIF) $$def-avif" \
+	           "MEASURED_NOPDF $(MEASURED_NOPDF) $$probe/nopdf"; do \
+		set -- $$row; size=$$(wc -c < "$$3") || { bad=1; continue; }; \
+		drift=$$(( size - $$2 )); \
+		[ "$${drift#-}" -le $(MEASURED_SLACK) ] || { \
+			echo "  $$1 is $$2, but the build measures $$size ($$drift)"; bad=1; }; \
+	done; \
+	if [ "$$bad" -ne 0 ]; then \
+		echo ""; \
+		echo "The sizes the Makefile and README.md quote no longer describe this build."; \
+		echo "  Every artefact above and dist/SHA256SUMS were still produced."; \
+		echo "  If the change is intended, copy the measured figures (and toolchain) into"; \
+		echo "  MEASURED_* in the Makefile, then run the internal/buildinfo tests: they"; \
+		echo "  name every line of the Makefile and README.md still quoting the old ones."; \
+		echo "  If the toolchain change is not intended: GOENV sets GOTOOLCHAIN=auto, which"; \
+		echo "  takes the newest Go installed — build on $(MEASURED_TOOLCHAIN) instead."; \
+		echo "  'make release MEASURED_CHECK=0' waives this check for one run only."; \
+		exit 1; \
+	fi; \
+	echo ">> default, -avif and nopdf (linux/amd64, $$tc) are within $(MEASURED_SLACK) bytes of MEASURED_*"
 
 ## e2e — the curated real-collection subset of impl-plan §6.3.
 e2e:

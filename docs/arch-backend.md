@@ -101,7 +101,7 @@ steady-state RSS ........................ 61–310 MiB
 2. **Persistent wazero compilation cache** at `<cache_dir>/wazero/`, so the one-time 3.9 s cost is paid once per binary version, not per process (NFR-OPS-006).
 3. **Rendered pages are cached to disk** exactly like thumbnails (§5.6), so ~300 ms is paid once per (page, width). This is prd §10's own prescribed mitigation.
 
-A `nopdf` build tag removes pdfium entirely (**−8.34 MB** binary). The **API surface exists in both builds**: with `nopdf`, PDF books are indexed with `status:"unsupported"` and page requests return `501` with `code:"unsupported"` and a human message. No hand-waving, no silent 404s.
+A `nopdf` build tag removes pdfium entirely (**−8.34 MB** on the spike binary of §1.4; what it removes from the shipped build is the Makefile's `MEASURED_DEFAULT − MEASURED_NOPDF`, which README's Build section quotes). The **API surface exists in both builds**: with `nopdf`, PDF books are indexed with `status:"unsupported"` and page requests return `501` with `code:"unsupported"` and a human message. No hand-waving, no silent 404s.
 
 ### 1.4 Binary size budget (`CGO_ENABLED=0 -trimpath -ldflags="-s -w"`, with `go:embed`)
 
@@ -112,7 +112,7 @@ A `nopdf` build tag removes pdfium entirely (**−8.34 MB** binary). The **API s
 | `-tags "noavif nopdf"` | 7.79 MB |
 | (reference) hello-world | 1.43 MB |
 
-pdfium costs 8.34 MB; AVIF costs 1.58 MB. Ship the full build (NFR-OPS-001: a single file; 18 MB is fine for a NAS).
+pdfium costs 8.34 MB; AVIF costs 1.58 MB. Ship the full build (NFR-OPS-001: a single file; ~~18 MB is fine for a NAS~~ — see the note below: the shipped binary was never that size).
 
 > **Superseded by measurement (ruling E-19, 2026-07-29).** The table above is the
 > **spike** binary — a `main` that linked the dependencies, not the product. The
@@ -134,6 +134,12 @@ pdfium costs 8.34 MB; AVIF costs 1.58 MB. Ship the full build (NFR-OPS-001: a si
 > `internal/buildinfo/release_budget_test.go` keeps the three in step; this
 > paragraph deliberately does not restate it, because an unguarded fourth copy is
 > how the number drifts. prd NFR-OPS-001 itself states no size.
+>
+> **The table in this note is dated too (2026-07-29, go1.25.0).** The product has grown by about 7 MB
+> since — mostly the vendored fonts of E-46, E-53 and E-55 — and the default build is no longer the
+> AVIF one (E-21). The current sizes are the Makefile's `MEASURED_*`, quoted in README's Build section
+> and re-measured by `make release`, which fails when they drift. They are not copied here for the
+> reason the paragraph above gives for the budget.
 
 ---
 
@@ -3051,15 +3057,17 @@ clean:
 
 ### Build tags and linkage (ruling E-21)
 
-`nopdf` (−8.34 MB, PDF endpoints return `501 unsupported`) · `noavif` (−1.58 MB, `.avif` thumbnails return `422 thumb_unavailable` with `detail.reason: "avif_disabled"`).
+`nopdf` (PDF endpoints return `501 unsupported`) · `noavif` (`.avif` thumbnails return `422 thumb_unavailable` with `detail.reason: "avif_disabled"`).
 
-**`noavif` is on by default, and the reason is linkage, not size.** `CGO_ENABLED=0` does not by itself produce a static binary: `internal/thumbs` blank-imports `github.com/gen2brain/avif`, which depends on `github.com/ebitengine/purego`, and purego emits dynamic import directives independently of cgo. Measured on linux/amd64:
+**`noavif` is on by default, and the reason is linkage, not size.** `CGO_ENABLED=0` does not by itself produce a static binary: `internal/thumbs` blank-imports `github.com/gen2brain/avif`, which depends on `github.com/ebitengine/purego`, and purego emits dynamic import directives independently of cgo. Measured on linux/amd64 at the time of the ruling:
 
-| Build | Linkage | Size |
+| Build | Linkage | Size at E-21 (2026-07-29, go1.25.0) |
 |---|---|---|
 | default (`-tags noavif`) | **static** — no `PT_INTERP`, no `DT_NEEDED` | 25 833 656 B |
 | `-avif` variant (no tags) | dynamic — `libc.so.6`, `libdl.so.2`, `libpthread.so.0` | 27 418 916 B |
 | `-tags "noavif nopdf"` | static | 15 286 456 B |
+
+> **The size column is the record of E-21, not the current build.** The linkage column still holds; the sizes do not — the binary has grown by about 7 MB since, most of it the vendored fonts of E-46, E-53 and E-55 (6.5 MB together) and moves again with the Go toolchain. The current figures are the Makefile's `MEASURED_*`, quoted in README's Build section; `make release` re-measures them and fails when they drift (HANDOFF §5.7.18 `ca`). They are deliberately not copied here: an unguarded copy is how this table went stale. The two tag deltas this section used to open with (−8.34 MB, −1.58 MB) were the spike estimates of the pdfium and AVIF WASM in §1.3–§1.4, not what the tags remove from today's build.
 
 CON-001 names the *purpose* — "정적 단일 바이너리와 손쉬운 크로스 컴파일" — and NFR-OPS-003 makes NAS (Synology/QNAP/Alpine: musl, or an older glibc) the primary target, where the dynamic artefact does not start. FR-IDX-011 lists `avif` as 필수, so this is a real requirement conflict, resolved on evidence: zero `.avif` files appear in **every sample taken** — two independent passes, `docs/data-survey.md`'s 500-ZIP scan (≈4.5 % of the 11,157 archives) and §1.1's ~56k-entry extension census — and degradation is graceful (the original bytes still stream from `/pages/{n}`; only the server-side thumbnail is refused). `make release` therefore emits **both** variants for all seven targets, both in `SHA256SUMS`, described in `dist/ARTIFACTS.txt`.
 
@@ -3068,7 +3076,7 @@ Because the default build cannot decode AVIF, `avif_enabled` on `/api/health` (�
 This is asserted, not assumed: `internal/buildinfo/staticlink_test.go` reads the produced artefact's ELF headers (`debug/elf`, never `ldd`) and fails on a `PT_INTERP`/`.interp` or any `DT_NEEDED` entry. Where it runs matters, and is easy to overstate:
 
 * In `make build-go` and `make release` it is **mandatory**. Both pass `SHELF_STATIC_ARTEFACTS` (and `release` also `SHELF_AVIF_ARTEFACTS`) naming exactly what they just linked, where a missing or dynamic file is fatal. `release` derives that list as `$(filter linux/%,$(RELEASE_TARGETS))`, so all three linux arches are covered — the `DT_NEEDED` sets differ between them. The `-avif` list gets the **inverse** assertion (`TestAVIFVariantCarriesTheDecoder`): each of those artefacts must contain the `github.com/gen2brain/avif` symbols and, being ELF, must be dynamic. Without it, `AVIF_TAGS := $(TAGS)` would emit seven binaries that `SHA256SUMS` lists and `ARTIFACTS.txt` describes as carrying a decoder they do not carry, with every other gate green.
-* In `make test` it **skips** unless `dist/` happens to be populated: `dist/` is gitignored and linking a 26 MB binary (which first needs `pnpm build`) is not a unit test. What never skips there is `TestDefaultBuildIsConfiguredStatic`, which asserts the *configuration* — that `make print-TAGS` still expands to something containing `noavif`, that both recipes still invoke the gate, and that the gate is not filtered down with a `-run` pattern (a non-matching one makes `go test` exit 0 with "[no tests to run]").
+* In `make test` it **skips** unless `dist/` happens to be populated: `dist/` is gitignored and linking the release binary (which first needs `pnpm build`) is not a unit test. What never skips there is `TestDefaultBuildIsConfiguredStatic`, which asserts the *configuration* — that `make print-TAGS` still expands to something containing `noavif`, that both recipes still invoke the gate, and that the gate is not filtered down with a `-run` pattern (a non-matching one makes `go test` exit 0 with "[no tests to run]").
 
 The defect it guards survived four review passes because every earlier check looked at build flags. `make test` runs the whole suite **twice** — untagged, then `-tags "$(TAGS)"` — because nothing else executes the tests in the configuration that ships; `make lint` runs `go vet -tags "$(TAGS)"` for the same reason, but vet does not run tests.
 

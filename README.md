@@ -50,10 +50,10 @@ Requires **Go 1.25+** (or any Go with `GOTOOLCHAIN=auto`, which fetches it),
 make build          # pnpm build, then the static binary into dist/shelf
 ```
 
-Two files can come out. `make build` produces `dist/shelf`, **25.8 MB** on
-linux/amd64 (25 833 656 B) with the SPA, SQLite, pdfium and every image codec
-but AVIF compiled in — and, on linux, **statically linked**: no libc, no dynamic
-loader, so it starts on a musl or old-glibc NAS. That is the whole point of
+Two files can come out. `make build` produces `dist/shelf`, **33.4 MB** on
+linux/amd64 (33 444 002 B, go1.26.9) with the SPA, SQLite, pdfium and every
+image codec but AVIF compiled in — and, on linux, **statically linked**: no libc,
+no dynamic loader, so it starts on a musl or old-glibc NAS. That is the whole point of
 `CGO_ENABLED=0` (CON-001) and it is not something the flag gives you for free:
 the AVIF decoder reaches `libc.so.6` through `ebitengine/purego` whatever cgo is
 set to, which is why the default build carries `-tags noavif` (ruling **E-21**).
@@ -63,22 +63,37 @@ independent passes, 500 ZIPs and ~56k entries (`docs/data-survey.md`,
 still streams its original bytes and every target browser decodes it, only the
 server-side thumbnail degrades to `422 thumb_unavailable`.
 
-`make release` also emits an `-avif` variant per platform — **27.4 MB**
-(27 418 916 B), AVIF thumbnails working, **dynamically linked on linux**. Take
+`make release` also emits an `-avif` variant per platform — **35.0 MB**
+(35 029 257 B), AVIF thumbnails working, **dynamically linked on linux**. Take
 it only on a glibc host. Both variants are in `dist/SHA256SUMS`, and
 `dist/ARTIFACTS.txt` says which is which.
 
-Adding `nopdf` drops PDF support entirely and takes the default down to 15.3 MB
-(15 286 456 B) — **~10.5 MB** below the 25.8 MB above, and the floor a
+Adding `nopdf` drops PDF support entirely and takes the default down to 22.9 MB
+(22 864 034 B) — **10.6 MB** (10 579 968 B) below the default, and the floor a
 `CGO_ENABLED=0` build with pure-Go SQLite can reach. Spell it
 `make build TAGS="noavif nopdf"`: tags are space-separated here and the Makefile
 rejects a comma, because the `-avif` release variant is derived from `TAGS` by
-splitting on whitespace. (The ~7.7 MB figure quoted elsewhere for PDF is measured
-against the *AVIF-enabled* build, not against this one.)
+splitting on whitespace. (The smaller PDF figure in `docs/arch-backend.md` is
+ruling E-19's, measured against the *AVIF-enabled* build of that day.)
 
 `make release` reports every artefact's size and fails when the default
 linux/amd64 build exceeds `SIZE_BUDGET`, which is ≤ **32 MiB = 33 554 432 bytes**
 (ruling **E-19**). Pass `SIZE_BUDGET=0` to waive the gate for one run.
+
+**The budget is nearly spent.** The default build above leaves **110 430 B**
+(0.1 MB) of it, and the vendored fonts alone are about a fifth of the binary
+(see [§2](#2-names-render-in-vendored-faces--with-three-exceptions)). Any new dependency, embedded asset or font coverage
+will push `make release` over; decide what to drop, or re-rule the budget,
+before adding one.
+
+It also re-measures the three sizes above — default, `-avif` and `nopdf`, all
+linux/amd64 — and fails when one has moved more than `MEASURED_SLACK` bytes from
+the Makefile's `MEASURED_*`, or when the Go toolchain that built them is not the
+one they were measured with: the same commit is 303 KB smaller under go1.25.0,
+and `GOTOOLCHAIN=auto` uses whatever newer Go is installed. So while any Go
+1.25+ builds and tests the project, `make release` passes on the one toolchain
+named above until someone re-measures. Pass `MEASURED_CHECK=0` to waive it for
+one run.
 
 ### The GOPROXY prefix — read this before running any `go` command by hand
 

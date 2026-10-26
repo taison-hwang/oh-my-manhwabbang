@@ -18,7 +18,11 @@
  *
  * 고운바탕 subsets much smaller than that estimate. Both weights, carrying all
  * **11 172** modern Hangul syllables plus latin, CJK punctuation and the
- * fullwidth forms, come to **888 KB** — against a ~26 MB binary. So the Korean
+ * fullwidth forms, come to well under a megabyte — a small part of the binary.
+ * (README §2 lists each face's size; the binary's own is the Makefile's
+ * MEASURED_*, quoted in README's Build section. Neither is copied here, because
+ * a copy nobody re-measures is how this line came to say 888 KB and ~26 MB
+ * after both had moved.) So the Korean
  * is now the vendored face rather than a hope, which matters more for this skin
  * than it did for the last one: 명조 is the design, and a system sans-serif
  * substitute is not a slightly different 서고, it is a different product.
