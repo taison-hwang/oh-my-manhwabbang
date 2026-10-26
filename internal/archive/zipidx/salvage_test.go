@@ -227,47 +227,74 @@ func TestSalvage_signatureInsideData_isNotAnEntry(t *testing.T) {
 // of signature-like bytes must cost exactly the reads the same payload costs
 // without them. A candidate handed back to the walk costs a fresh window to
 // parse it and another to resume the scan.
+//
+// The second row is the cost a window's edge invites. A header that runs past a
+// full window is retried from a window that starts at it, and a candidate can
+// claim a name length the scan believes ahead of the longest extra field a
+// header holds. When its name is one parseLocalHeader rejects, that retry is a
+// read bought for nothing — and the name is already inside the window, where it
+// can be judged for free.
 func TestSalvage_signaturesInsideData_costNoExtraReads(t *testing.T) {
 	t.Parallel()
 	jpg := testutil.TinyJPEG(t, 16, 16)
-	build := func(sig string) []byte {
-		// 64 candidates in the shape random bytes take — the signature, then a
-		// name length no archiver writes — all more than one 256 KiB window
-		// before the end of the archive, where every window is a full one.
-		var payload []byte
-		for range 64 {
-			payload = append(payload, sig...)
-			payload = append(payload, bytes.Repeat([]byte{0xff}, 26)...)
-			payload = append(payload, bytes.Repeat([]byte{0x5a}, 4<<10)...)
-		}
-		payload = append(payload, bytes.Repeat([]byte{0x5a}, 320<<10)...)
-		data := zipWithoutTail(t, []testutil.Entry{
-			{Name: "001.bin", Data: payload, Method: testutil.MethodStore},
-			{Name: "002.jpg", Data: jpg, Method: testutil.MethodStore},
-			{Name: "003.jpg", Data: jpg, Method: testutil.MethodStore},
-		})
-		at := localHeaderNamed(t, data, "002.jpg")
-		clear(data[at : at+30+len("002.jpg")])
-		return data
-	}
-	reads := func(data []byte) int64 {
-		t.Helper()
-		c := newCounter(data)
-		ix, err := zipidx.ReadCentralDirectory(t.Context(), c, int64(len(data)))
-		if !errors.Is(err, zipidx.ErrSalvagedFromLocalHeaders) || ix == nil {
-			t.Fatalf("err = %v, want zipidx.ErrSalvagedFromLocalHeaders", err)
-		}
-		if got, want := names(ix), []string{"001.bin", "003.jpg"}; !slices.Equal(got, want) {
-			t.Fatalf("recovered %q, want %q — the scan must cross 001's payload to reach 003", got, want)
-		}
-		return c.calls.Load()
-	}
 
-	clean := reads(build("QK\x03\x04"))
-	planted := reads(build("PK\x03\x04"))
-	if planted != clean {
-		t.Errorf("%d reads with 64 signatures in the damaged payload, %d without — "+
-			"a candidate cost a round trip through the walk", planted, clean)
+	// longExtra is everything after the signature of a header parseLocalHeader
+	// would take but for its name: a one-byte NUL, then 65 535 bytes of extra.
+	longExtra := forgedLocalHeader([]byte{0x00}, 64)[4:]
+	longExtra[24], longExtra[25] = 0xff, 0xff // extra field length
+
+	for _, tc := range []struct {
+		name string
+		rest []byte // what follows each planted signature
+	}{
+		// The shape random bytes take: a name length no archiver writes.
+		{"name longer than any archiver writes", bytes.Repeat([]byte{0xff}, 26)},
+		{"control-byte name ahead of a long extra field", longExtra},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			build := func(sig string) []byte {
+				// A candidate every 4 KiB through four windows' worth of payload,
+				// so every window the scan reads there holds some in the 64 KiB
+				// before its edge, where a long extra field runs past it. All of
+				// them lie more than one 256 KiB window before the end of the
+				// archive, where every window is a full one.
+				var payload []byte
+				for range 256 {
+					payload = append(payload, sig...)
+					payload = append(payload, tc.rest...)
+					payload = append(payload, bytes.Repeat([]byte{0x5a}, 4<<10)...)
+				}
+				payload = append(payload, bytes.Repeat([]byte{0x5a}, 320<<10)...)
+				data := zipWithoutTail(t, []testutil.Entry{
+					{Name: "001.bin", Data: payload, Method: testutil.MethodStore},
+					{Name: "002.jpg", Data: jpg, Method: testutil.MethodStore},
+					{Name: "003.jpg", Data: jpg, Method: testutil.MethodStore},
+				})
+				at := localHeaderNamed(t, data, "002.jpg")
+				clear(data[at : at+30+len("002.jpg")])
+				return data
+			}
+			reads := func(data []byte) int64 {
+				t.Helper()
+				c := newCounter(data)
+				ix, err := zipidx.ReadCentralDirectory(t.Context(), c, int64(len(data)))
+				if !errors.Is(err, zipidx.ErrSalvagedFromLocalHeaders) || ix == nil {
+					t.Fatalf("err = %v, want zipidx.ErrSalvagedFromLocalHeaders", err)
+				}
+				if got, want := names(ix), []string{"001.bin", "003.jpg"}; !slices.Equal(got, want) {
+					t.Fatalf("recovered %q, want %q — the scan must cross 001's payload to reach 003", got, want)
+				}
+				return c.calls.Load()
+			}
+
+			clean := reads(build("QK\x03\x04"))
+			planted := reads(build("PK\x03\x04"))
+			if planted != clean {
+				t.Errorf("%d reads with 256 signatures in the damaged payload, %d without — "+
+					"a candidate that is not a header cost a read", planted, clean)
+			}
+		})
 	}
 }
 
@@ -533,4 +560,193 @@ func TestSalvage_truncatedInsideASignature_doesNotPanic(t *testing.T) {
 			t.Errorf("%q: got %d entries out of noise", data[len(data)-4:], len(ix.Entries))
 		}
 	}
+}
+
+// The resynchronising scan stops short of each window's edge by the longest
+// name a header may claim, so that a header straddling the edge is retried
+// whole from the next window. But a header is its name *and* its extra field,
+// and the extra field is not bounded by the name. A real header whose name and
+// extra together outgrow that margin, landing on the edge, was rejected there
+// as cut short and then never looked at again — the next window starts past
+// it — so its page silently left the book.
+//
+// The rows walk such a header across the end of the scan's first window —
+// whole inside it, cut by it, and starting where only the next window tests —
+// and every row must recover the entry and serve its bytes. The window's
+// geometry is read off the scan's own reads rather than copied from
+// salvage.go, so the rows stay on the edge if the window size or its margin
+// ever changes.
+func TestSalvage_longHeaderOnAScanWindowEdge_isRecovered(t *testing.T) {
+	t.Parallel()
+	page := testutil.TinyJPEG(t, 16, 16)
+	first := localEntry([]byte("001.jpg"), nil, page)
+	name, rawName, extra := longNamedHeader(t)
+	payload := testutil.TinyJPEG(t, 48, 32)
+	header := int64(30 + len(rawName) + len(extra))
+
+	// Where the scan's first two windows fall. The chain breaks on a zeroed
+	// stretch after 001, the scan restarts inside 001's payload — the last one
+	// it trusted — and the second window begins one past the last offset the
+	// first one tests.
+	calibration := slices.Concat(first, make([]byte, 1<<20))
+	cal := newCounter(calibration)
+	if _, err := zipidx.ReadCentralDirectory(t.Context(), cal, int64(len(calibration))); !errors.Is(err, zipidx.ErrSalvagedFromLocalHeaders) {
+		t.Fatalf("calibration: err = %v, want zipidx.ErrSalvagedFromLocalHeaders", err)
+	}
+	var windows []span
+	for i, s := range cal.spans {
+		if s.off > 0 && s.off < int64(len(first)) {
+			windows = cal.spans[i:]
+			break
+		}
+	}
+	if len(windows) < 2 {
+		t.Fatalf("calibration: reads %v, want the scan to start inside 001's payload and read on", cal.spans)
+	}
+	edge, lastTested := windows[0].end, windows[1].off-1
+	if lastTested+header <= edge {
+		t.Fatalf("fixture: a %d-byte header at the last offset the first window tests "+
+			"fits inside it, so no row straddles the edge", header)
+	}
+
+	for _, tc := range []struct {
+		name string
+		at   int64
+	}{
+		{"whole, a byte clear of the edge", edge - header - 1},
+		{"whole, ending on the edge", edge - header},
+		{"cut by the edge by one byte", edge - header + 1},
+		{"cut, at the last offset the window tests", lastTested},
+		{"at the first offset only the next window tests", lastTested + 1},
+		{"starting on the edge", edge},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			data := slices.Concat(first, make([]byte, tc.at-int64(len(first))),
+				localEntry(rawName, extra, payload), localEntry([]byte("003.jpg"), nil, page))
+
+			ix := salvageIndex(t, data)
+			if got, want := names(ix), []string{"001.jpg", name, "003.jpg"}; !slices.Equal(got, want) {
+				t.Fatalf("recovered %q, want %q — the %d-byte header at %d, %d bytes before the "+
+					"window's edge, was dropped", got, want, header, tc.at, edge-tc.at)
+			}
+			e := ix.Entries[1]
+			if e.LocalHdrOff != tc.at {
+				t.Errorf("local header at %d, want %d", e.LocalHdrOff, tc.at)
+			}
+			rc, err := zipidx.OpenEntry(t.Context(), bytes.NewReader(data), e.Ref())
+			if err != nil {
+				t.Fatalf("opening the recovered entry: %v", err)
+			}
+			got, err := io.ReadAll(rc)
+			_ = rc.Close()
+			if err != nil {
+				t.Fatalf("reading the recovered entry: %v", err)
+			}
+			if !bytes.Equal(got, payload) {
+				t.Errorf("served %d bytes, want the original %d", len(got), len(payload))
+			}
+			if sum := crc32.ChecksumIEEE(got); sum != e.CRC32 {
+				t.Errorf("crc32 %#08x, local header says %#08x", sum, e.CRC32)
+			}
+		})
+	}
+}
+
+// Restarting the scan at a header the window cut is only progress while the
+// archive goes on past the window. A download that stopped inside a header
+// leaves one that no window can ever hold whole, and restarting at it there
+// would spin on the same offset for good. The walk must end on its own, with
+// the entries before the cut.
+func TestSalvage_cutInsideALongHeader_ends(t *testing.T) {
+	t.Parallel()
+	page := testutil.TinyJPEG(t, 16, 16)
+	first := localEntry([]byte("001.jpg"), nil, page)
+	_, rawName, extra := longNamedHeader(t)
+	whole := slices.Concat(first, localEntry(rawName, extra, page))
+	data := whole[:len(first)+30+len(rawName)+len(extra)/2]
+
+	ctx := &pollBudget{Context: t.Context(), left: 1000}
+	ix, err := zipidx.ReadCentralDirectory(ctx, bytes.NewReader(data), int64(len(data)))
+	if ctx.left <= 0 {
+		t.Fatalf("the walk was still going after 1000 cancellation checks on a %d-byte "+
+			"archive — it stopped only because the context said so", len(data))
+	}
+	if !errors.Is(err, zipidx.ErrSalvagedFromLocalHeaders) || ix == nil {
+		t.Fatalf("err = %v, want zipidx.ErrSalvagedFromLocalHeaders", err)
+	}
+	if got, want := names(ix), []string{"001.jpg"}; !slices.Equal(got, want) {
+		t.Errorf("recovered %q, want %q — only the entry before the cut is whole", got, want)
+	}
+}
+
+// longNamedHeader is a header whose name and extra field together run past the
+// 512 bytes the scan believes of a name, though the name alone stays well
+// inside them. Nothing about it is exotic: a long CP949 path with an extended
+// timestamp and the Info-ZIP Unicode Path field (0x7075) repeating the name in
+// UTF-8.
+func longNamedHeader(t *testing.T) (name string, rawName, extra []byte) {
+	t.Helper()
+	name = "[완결] 오래도록 연재된 장편 만화의 아주 긴 제목 - 부제가 붙은 특별 합본판 제01권/" +
+		"제001화 모든 이야기가 시작되던 날, 아무도 몰랐던 비밀과 첫 만남의 기억, " +
+		"그리고 끝내 지켜진 약속에 관한 이야기 (작가 후기 수록)/002.jpg"
+	rawName = testutil.CP949(t, name)
+	var timestamp, unicodePath bytes.Buffer
+	timestamp.WriteByte(0x03) // modification and access times follow
+	put32(&timestamp, 1451606400)
+	put32(&timestamp, 1451606400)
+	unicodePath.WriteByte(1) // version
+	put32(&unicodePath, crc32.ChecksumIEEE(rawName))
+	unicodePath.WriteString(name)
+	extra = slices.Concat(extraField(0x5455, timestamp.Bytes()), extraField(0x7075, unicodePath.Bytes()))
+	return name, rawName, extra
+}
+
+// localEntry is one stored entry as an archiver lays it down: local header,
+// raw name, extra field, payload, with the CRC and sizes true to the payload.
+// testutil.BuildZIP writes extra fields to the central directory only, which is
+// exactly the part a salvaged archive does not have.
+func localEntry(rawName, extra, payload []byte) []byte {
+	var b bytes.Buffer
+	put32(&b, 0x04034b50)
+	put16(&b, 20)     // version needed to extract
+	put16(&b, 0)      // flags: no UTF-8 bit, so the raw name is CP949
+	put16(&b, 0)      // method: stored
+	put16(&b, 0)      // modification time
+	put16(&b, 0x4821) // modification date: 2016-01-01
+	put32(&b, crc32.ChecksumIEEE(payload))
+	put32(&b, uint32(len(payload)))
+	put32(&b, uint32(len(payload)))
+	put16(&b, uint16(len(rawName)))
+	put16(&b, uint16(len(extra)))
+	b.Write(rawName)
+	b.Write(extra)
+	b.Write(payload)
+	return b.Bytes()
+}
+
+// extraField is one tagged block of a ZIP extra field.
+func extraField(tag uint16, body []byte) []byte {
+	var b bytes.Buffer
+	put16(&b, tag)
+	put16(&b, uint16(len(body)))
+	b.Write(body)
+	return b.Bytes()
+}
+
+// pollBudget is a context that reports itself cancelled once it has answered a
+// fixed number of Err polls. The walk polls on every step, so a walk that stops
+// advancing spends the budget and returns instead of hanging the test binary —
+// and a spent budget is the failure, read without any clock.
+type pollBudget struct {
+	context.Context
+	left int
+}
+
+func (c *pollBudget) Err() error {
+	if c.left <= 0 {
+		return context.Canceled
+	}
+	c.left--
+	return c.Context.Err()
 }

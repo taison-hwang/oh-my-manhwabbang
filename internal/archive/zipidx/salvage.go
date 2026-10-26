@@ -325,30 +325,62 @@ func (s *salvageReader) findLocalHeader(ctx context.Context, abs int64) (int64, 
 		if err != nil {
 			return 0, false
 		}
-		// The last index worth testing. Away from EOF the scan stops a whole
-		// header short of the window's edge, so one straddling the boundary is
-		// retried from the next window instead of being rejected for being cut;
-		// the next window starts at limit+1, so nothing is skipped. At EOF
-		// there is no next window, and a position with fewer than 30 bytes
-		// behind it cannot hold a header at all.
+		// The last index worth testing. Away from EOF the scan stops a header
+		// and its longest believable name short of the window's edge, so one
+		// straddling the boundary is retried from the next window instead of
+		// being rejected for being cut; the next window starts at limit+1, so
+		// nothing is skipped. At EOF there is no next window, and a position
+		// with fewer than 30 bytes behind it cannot hold a header at all.
+		full := int64(len(buf)) == salvageChunk
 		limit := len(buf) - localHeaderLen
-		if int64(len(buf)) == salvageChunk {
+		if full {
 			limit = len(buf) - (localHeaderLen + maxSalvageNameLen)
 		}
 		if limit < 0 {
 			return 0, false
 		}
+		next := limit + 1
 		for i := 0; i <= limit; i++ {
 			if buf[i] != 'P' || buf[i+1] != 'K' || buf[i+2] != 0x03 || buf[i+3] != 0x04 {
 				continue
+			}
+			// That margin covers the name but not the extra field, which no
+			// limit on names bounds. A header that runs past a full window is
+			// cut by the window, not wrong, and rejecting it here loses it for
+			// good: the next window starts past it. So the next window starts
+			// at it instead, where the whole header fits — a full window holds
+			// the longest, so this never fires at i == 0 and the scan advances.
+			// The name, inside the margin, is judged first: a candidate it rules
+			// out is rejected below like any other, without buying that read.
+			if full && headerOverruns(buf[i:]) {
+				next = i
+				break
 			}
 			if _, _, _, v := parseLocalHeader(buf[i:], abs+int64(i), s.size); v != localBad {
 				return abs + int64(i), true
 			}
 		}
-		abs += int64(limit) + 1
+		abs += int64(next)
 	}
 	return 0, false
+}
+
+// headerOverruns reports whether the candidate local header at the front of b,
+// which holds at least the fixed 30 bytes, claims a name length and a name
+// [parseLocalHeader] would believe yet extends past the end of b.
+//
+// The name is checked here, before the caller pays a fresh window to see the
+// rest, because it is already in b: the scan tests only offsets that leave the
+// longest believable name behind the fixed header, so it is the extra field
+// that runs over. Should a cut name ever arrive, judging the part present is
+// still sound — a control byte in it is a control byte in the whole name.
+func headerOverruns(b []byte) bool {
+	nameLen := int(binary.LittleEndian.Uint16(b[26:]))
+	extraLen := int(binary.LittleEndian.Uint16(b[28:]))
+	if nameLen == 0 || nameLen > maxSalvageNameLen || localHeaderLen+nameLen+extraLen <= len(b) {
+		return false
+	}
+	return plausibleEntryName(b[localHeaderLen:min(len(b), localHeaderLen+nameLen)])
 }
 
 // errCorrupt reports whether err is the kind of structural damage worth trying
