@@ -898,6 +898,7 @@ moved"* 두 케이스와, 히트테스트가 실제로 필요한 브라우저 ti
 같은 규칙이 §2에도 적용된다: 터치 조항을 지우는 세션은 **탭 한 번 뒤 2 600 ms에 크롬이 사라지는지를
 mobile-400에서 실측**해서 보일 것. 유닛의 `pointerType: 'touch'` 케이스만 지우면 아무것도 빨개지지
 않는다.
+브라우저 tier 가드(2026-10-23 추가): `e2e/09-viewer-chrome.spec.ts`의 *"E-30 · a finger resting on a bar does not hold the chrome (touch)"* — mobile-400에서 바 위에 손가락을 댄 채(CDP touchStart) ~2 600 ms에 크롬이 숨는지 본다. `pointerType` 검사를 지운 뮤턴트에서 빨개진다(짧은 탭으로는 잡히지 않았다, E-62 §4).
 
 ### 7. 고치지 않고 남긴 잔여 하나 — 기존 결함, 실측, 판정하지 않음
 

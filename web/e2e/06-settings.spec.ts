@@ -8,6 +8,8 @@
  * FR-IDX-010 produced for the collection's broken archives.
  */
 
+import type { Locator, Page } from '@playwright/test'
+
 import {
   booksOf,
   expect,
@@ -136,6 +138,15 @@ test('6.10 · cache, theme, read-only roots and the scan log', async ({ page }, 
 
   await themeSeg.locator('label[data-value="light"]').click()
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+  // The viewer below is a fresh load, and a fresh load takes its theme from the
+  // server (ShellDataProvider hydrates it on every route). The PUT behind this
+  // click is debounced (settingsWriter, 400 ms), so navigating before it lands
+  // would hand the viewer the *previous* theme from GET /api/settings.
+  await expect
+    .poll(async () => ((await (await page.request.get('/api/settings')).json()) as { theme: string }).theme, {
+      message: 'NFR-CMP-003: the light theme is saved before the next page reads it',
+    })
+    .toBe('light')
 
   await page.getByRole('dialog', { name: '설정' }).getByRole('button', { name: '닫기' }).click()
   await expect(page.getByRole('dialog', { name: '설정' })).toHaveCount(0)
@@ -154,3 +165,174 @@ test('6.10 · cache, theme, read-only roots and the scan log', async ({ page }, 
 
   await page.keyboard.press('Escape')
 })
+
+// ---------------------------------------------------------------------------
+// HANDOFF §5.7.11 `ay` — the 읽기 기본값 panel's three `Seg`s, by keyboard
+// ---------------------------------------------------------------------------
+
+/** One key press of a walk across a `Seg`, and the option it has to land on. */
+interface SegStep {
+  readonly key: 'ArrowRight' | 'ArrowLeft'
+  readonly value: string
+  readonly why: string
+}
+
+/**
+ * → from the first option to the last, → once more for the wrap back to the
+ * first, then ← for the wrap the other way, round to the last.
+ *
+ * A copy of 09-viewer-chrome.spec.ts's `segWalk`, which carries the reasoning;
+ * both belong in shelf.ts, which had another owner the day these were written.
+ */
+function segWalk(values: readonly string[]): SegStep[] {
+  const first = values[0]
+  const last = values[values.length - 1]
+  if (first === undefined || last === undefined || values.length < 2) {
+    throw new Error('segWalk: a segmented control has at least two options')
+  }
+  return [
+    ...values.slice(1).map((value) => ({
+      key: 'ArrowRight' as const,
+      value,
+      why: `ArrowRight reaches ${value}`,
+    })),
+    { key: 'ArrowRight', value: first, why: `ArrowRight wraps from ${last} back to ${first}` },
+    { key: 'ArrowLeft', value: last, why: `ArrowLeft wraps from ${first} back round to ${last}` },
+  ]
+}
+
+/** A copy of 09-viewer-chrome.spec.ts's `walkSeg`; see the note on `segWalk`. */
+async function walkSeg(
+  page: Page,
+  group: Locator,
+  values: readonly string[],
+  rule: string,
+  landed: (value: string, why: string) => Promise<void>,
+): Promise<void> {
+  const first = values[0] ?? ''
+  await group.locator(`label[data-value="${first}"]`).click()
+  await expect(
+    group.locator(`label[data-value="${first}"]`),
+    `${rule}: the walk starts on ${first}, which setup put there`,
+  ).toHaveAttribute('data-checked', 'true')
+  await expect(
+    group.locator(`input[value="${first}"]`),
+    `${rule}: a click on the label focuses the radio, or every key below goes to the document`,
+  ).toBeFocused()
+
+  for (const step of segWalk(values)) {
+    await page.keyboard.press(step.key)
+    const why = `${rule}: ${step.why}`
+    await expect(group.locator(`label[data-value="${step.value}"]`), why).toHaveAttribute(
+      'data-checked',
+      'true',
+    )
+    await expect(group.locator(`input[value="${step.value}"]`), why).toBeFocused()
+    await landed(step.value, why)
+  }
+}
+
+interface ReadDefaultsFact {
+  reading_direction: string
+  display_mode: string
+  theme: string
+}
+
+async function readDefaults(page: Page): Promise<ReadDefaultsFact> {
+  const response = await page.request.get('/api/settings')
+  expect(response.ok(), 'GET /api/settings').toBe(true)
+  const body = (await response.json()) as ReadDefaultsFact
+  return {
+    reading_direction: body.reading_direction,
+    display_mode: body.display_mode,
+    theme: body.theme,
+  }
+}
+
+/**
+ * The panel's three groups, in `ReadDefaultsPanel.tsx` option order — copies of
+ * `DIR_OPTIONS` / `MODE_OPTIONS` / `THEME_OPTIONS` on the same terms as `SERIES`
+ * in shelf.ts, because order is the key mapping and a reorder is meant to redden
+ * this. The first of each is what the test's setup `PUT` puts the panel on.
+ */
+const READ_DEFAULT_SEGS = [
+  { group: '읽기 방향', rule: 'UI-004 · 읽기 방향', field: 'reading_direction', values: ['ltr', 'rtl'] },
+  {
+    group: '표시 모드',
+    rule: 'UI-004 · 표시 모드',
+    field: 'display_mode',
+    values: ['single', 'spread', 'vertical'],
+  },
+  { group: '테마', rule: 'NFR-CMP-003 · 테마', field: 'theme', values: ['light', 'dark', 'system'] },
+] as const satisfies readonly {
+  group: string
+  rule: string
+  field: keyof ReadDefaultsFact
+  values: readonly string[]
+}[]
+
+/**
+ * `ay` · 읽기 방향, 표시 모드 and 테마 in the 설정 dialog, by keyboard.
+ *
+ * `Seg` has no keydown handler (`components/ds/Seg.tsx`); the ←/→ walk is the
+ * browser's radio-group behaviour and jsdom does not implement it, so before
+ * this test the only `Seg` whose keyboard claim anything checked was the
+ * viewer's 맞춤 (09-viewer-chrome, E-44).
+ *
+ * These three have a trap the viewer's do not. `ReadDefaultsPanel` drops every
+ * change while a save is in flight (`disabled = … || save.isPending`), and its
+ * two read-default groups are not optimistic — the radio is controlled by the
+ * settings query, so a key pressed mid-save is checked by the browser and then
+ * put back by React. That is why each stop waits for the server before the next
+ * key: `data-checked` on these two only moves once the `PUT` has answered, and
+ * the poll below reads the row back. A walk that pressed all its keys at once
+ * would be testing the guard, not the keyboard.
+ *
+ * Effects: the global default each group writes (`PUT /api/settings`, arch
+ * §7.6), and for 테마 also the one the dialog exists to change on the spot —
+ * `<html data-theme>` (NFR-CMP-003), which 6.10 above checks for clicks.
+ * 시스템 resolves through `prefers-color-scheme`, so its expected value is read
+ * from the page rather than assumed from Playwright's default.
+ *
+ * shelf.ts rule 2: `beforeEach` resets the theme but nothing resets the read
+ * defaults, so all three are put back to what they were in `finally`.
+ */
+for (const seg of READ_DEFAULT_SEGS) {
+  test(`ay · 설정 ${seg.group} — 화살표로 전부 닿고, 양 끝에서 양쪽으로 감긴다`, async ({ page }) => {
+    const original = await readDefaults(page)
+    try {
+      // Setup, over the API, for the reason `resetLibraryState` gives: the UI
+      // half of the test still has to do every switch itself.
+      const first = seg.values[0]
+      const put = await page.request.put('/api/settings', { data: { [seg.field]: first } })
+      expect(put.ok(), 'PUT /api/settings').toBe(true)
+
+      await gotoLibrary(page)
+      await openSettings(page)
+      const group = page.getByRole('dialog', { name: '설정' }).locator(`[aria-label="${seg.group}"]`)
+
+      await walkSeg(page, group, seg.values, seg.rule, async (value, why) => {
+        await expect
+          .poll(async () => (await readDefaults(page))[seg.field], {
+            message: `${why} — and it is the saved default`,
+          })
+          .toBe(value)
+        if (seg.field === 'theme') {
+          const resolved =
+            value === 'system'
+              ? await page.evaluate(() =>
+                  window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+                )
+              : value
+          await expect(
+            page.locator('html'),
+            `${why} — and <html data-theme> follows it on the spot`,
+          ).toHaveAttribute('data-theme', resolved)
+        }
+      })
+    } finally {
+      const restore = await page.request.put('/api/settings', { data: original })
+      expect(restore.ok(), 'shelf.ts rule 2: PUT /api/settings back to what it was').toBe(true)
+    }
+  })
+}

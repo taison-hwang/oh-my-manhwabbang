@@ -36,13 +36,16 @@
  * the app shell between them; the viewer with its chrome awake carries the
  * viewer's own dark scope, which is a separate palette (E-27) and the one the
  * ⌘K chip and the two `TopBar` marks live in. States behind a hover or a focus
- * ring are **not** swept — `al` (`.btn-ghost:hover` at 3.90 in dark) is an open
- * item precisely because hover states need their own pass, and quietly folding
- * it into this sweep would close it by accident rather than by measurement.
+ * ring are **not** swept — `al` was opened for `.btn-ghost:hover` at 3.90 in
+ * dark precisely because hover states need their own pass, and quietly folding
+ * it into this sweep would close it by accident rather than by measurement. The
+ * hover half is closed by measurement since E-46 (5.22 on the dark surface); the
+ * `:active` press at 4.42 is still open and being fixed on `--ghost-press`.
  */
 
 import {
   booksOf,
+  clearProgress,
   expect,
   gotoLibrary,
   openSeries,
@@ -54,15 +57,20 @@ import {
   viewer,
   wakeChrome,
 } from './shelf'
+import type { Locator } from '@playwright/test'
+import { AA_LARGE } from '../src/styles/contrast'
 import {
   clearProbes,
   combinationsOn,
+  contentBoxOf,
   type Declined,
   describe as describeMeasurement,
   measure,
+  measureClipUngrained,
   measureLocator,
   measureLocatorUngrained,
   type Measurement,
+  type Rect,
 } from './contrast'
 
 /**
@@ -183,56 +191,127 @@ function expectAA({ measurements, declined }: Sweep, where: string, declineLimit
 }
 
 /**
- * Blind spots ⓑ and ⓒ — **and the account of why this file does not close
- * them.** Read this before adding a threshold to make it pass.
+ * WCAG 2.1 §1.4.11's floor for marks that are not text — the ✕ and the search
+ * icon. Numerically the large-text floor, and named here rather than written as
+ * a third bare `3`: the shared module has no separate name for it, and a reader
+ * should be able to tell which ruling a `3` is spending. (The forced-colors
+ * test's `3` below is a different claim — visibility in a palette the OS owns.)
+ */
+const NON_TEXT_FLOOR = AA_LARGE
+
+/**
+ * Blind spots ⓑ and ⓒ — and why they are read one mark at a time.
  *
- * The design was a colour census of a control's box: the ground is the modal
- * colour, anything else populated enough to be a mark rather than an
- * antialiased edge is ink, and ink that fails AA against its own ground is a
- * defect no stylesheet could have shown. It was aimed at the two shapes
- * §5.7.10 records as real: the search field's UA-painted `::-webkit-search-
- * cancel-button` at 1.14, and the marks `TopBar` lays over the same field.
- *
- * It does not work on this skin, and the reason is measured rather than
- * suspected. A census needs a flat ground, and every control here has two
- * things making it not flat:
+ * The first design was a colour census of the control's whole box: the ground
+ * is the modal colour, anything else populated enough to be a mark is ink. It
+ * was aimed at the two shapes §5.7.10 records as real: the search field's
+ * UA-painted `::-webkit-search-cancel-button` at 1.14, and the marks `TopBar`
+ * lays over the same field. It does not work on this skin, and the reason was
+ * measured rather than suspected — a census needs a flat ground, and every
+ * control here has two things making it not flat:
  *
  *  1. **The paper grain.** It moves each pixel by up to
  *     `--paper-intensity × 0.115 × |ground − tone|`, about **23 of 255** on the
- *     cream — wider than the gap between the cream and a near-white mark. The
- *     first run returned **92** "marks" on one field, all grain at 1.00–1.02.
- *     `measureLocatorUngrained` removes that one.
- *  2. **The neumorphic inset.** `--shadow-control-inset` survives E-46 (the
- *     prototype redefines the three outsets and leaves the inset alone), so
+ *     cream. The first run returned **92** "marks" on one field, all grain at
+ *     1.00–1.02. `withoutGrain` removes that one.
+ *  2. **The neumorphic inset.** `--shadow-control-inset` survives E-46, so
  *     `.input` is a *gradient* from ochre to near-white across its own box.
  *     With the grain off the same field still returned **40** colours at
- *     1.01–1.09, every one of them a step of that gradient. E-42 had already
- *     written this down from the other direction: "no pixel of it is actually
- *     `--control-well` — the top-left is ochre, the bottom-right near-white".
+ *     1.01–1.09, every one a step of that gradient.
  *
- * The lightest colour in the box is therefore the highlight lobe, not the ✕,
- * and no population or distance threshold separates them: they occupy the same
- * range. A check tuned until it passed would be one that had stopped looking.
+ * Over the whole box the lightest colour is the highlight lobe, not the ✕, and
+ * no population or distance threshold separates them. That run asserted
+ * nothing and printed what it found, with the next shape written down (§5.7.17
+ * `br`): **clip the shot to the mark's own rectangle.** This is that shape.
+ * Each clip is a mark wide, so it carries little of the gradient: the lobes
+ * reach about 10px in from the box edge (3px offset + 7px blur), the icon and
+ * the chip sit inside that band, and the ✕'s clip — the content box's full
+ * height — takes four lobe rows at each end against a flat middle of sixteen.
+ * The modal colour of each clip is therefore the flat ground the mark is drawn
+ * on, the lobe steps rank at 1.01–1.09, and `Measurement.mark` is the mark. Its
+ * account of why
+ * the census ranks by contrast inside a clip, rather than looking for the worst
+ * cluster, is on `Mark` in `contrast.ts`.
  *
- * So this asserts only what is unambiguous — that the measurement reached the
- * control at all — and prints the marks it found. **ⓑ and ⓒ stay open**, with
- * a smaller and better-specified shape than before: clip the shot to the ✕'s
- * own rectangle, where 16px of field carries little enough gradient for the
- * census to mean something. That is the next session's item, not a gap this
- * file is hiding.
+ * The positive control is in the number itself: a mark that is not drawn
+ * leaves only gradient and speckle in its rectangle, which ranks at 1.00–1.09
+ * and fails every floor here. A clip that missed cannot pass.
  */
-function reportMarksOn(m: Measurement, where: string): void {
-  // The positive control: a census that found nothing has not proved the
-  // control is clean, it has proved the shot missed.
-  expect(m.clusters.length, `${where}: the census found no marks at all`).toBeGreaterThan(0)
+function expectMark(m: Measurement, floor: number, where: string): void {
+  const mark = m.mark
+  expect(mark, `${where}: the measurement was not a clip`).not.toBeNull()
+  if (mark === null) return
   expect(m.measuredGround, `${where}: no ground was measured`).toMatch(/^rgb\(/)
-  const worst = m.clusters[0]
-  if (worst !== undefined) {
-    console.log(
-      `[contrast] ${where}: ${String(m.clusters.length)} marks, worst ${worst.rgb} ` +
-        `at ${r2(worst.ratio)} on ${m.measuredGround} — see the note above reportMarksOn`,
-    )
-  }
+  expect(
+    mark.ratio,
+    `${where}: the strongest ${String(mark.pixels)} pixels reach ${mark.rgb} at ${r2(mark.ratio)} ` +
+      `on ${m.measuredGround}, floor ${String(floor)} (${String(m.width)}×${String(m.height)} device px; ` +
+      `a ratio near 1 means nothing was drawn in the clip)`,
+  ).toBeGreaterThanOrEqual(floor)
+}
+
+/**
+ * The ✕'s rectangle, derived — it is a UA shadow part and no locator reaches it.
+ *
+ * **Nothing in this app sizes or places it,** and that is checked rather than
+ * assumed: no rule in any stylesheet names `search-cancel` (base.css's `.input`
+ * note says why it must not — `appearance: none` would delete the control). So
+ * the geometry is Chromium's: the cancel button is the last flex item of the
+ * inner editor, which spans the field's **content box**, so its right edge is
+ * the content box's right edge and it is centred in the content box's height.
+ * Its size is the UA's too, scaled from the font and clamped well under the
+ * content box's height — measured in the `step-06-3` shot at about **10px** on
+ * the 14px field, against a content box of **24px** (`.input`: `min-height:
+ * 36px; padding: 6px 10px`, base.css). So the clip is a square as tall as the
+ * content box, against its right edge: it holds the ✕ at any size the UA can
+ * choose, without this file guessing the number.
+ *
+ * The right edge is `TopBar`'s `pr-[52px]` — the room the field leaves for the
+ * ⌘K chip. The chip is a later sibling and paints over that room, so the clip
+ * is also cut at the chip's left edge: its outline is `--control-border`,
+ * **2.34** on the field by design, and inside this clip it would be read as the
+ * ✕. Measured in the same shot the chip starts 1px right of the content box, so
+ * the cut does nothing today; it is there so that a wider hint (a fallback
+ * font, a longer `Ctrl K`) shows up as a smaller clip rather than as the
+ * outline failing the ✕'s floor.
+ *
+ * The typed value cannot reach it: the field is at least 220px wide
+ * (`min-w-[220px]`), the clip starts at most 76px from its right edge, and the
+ * value is two glyphs from `pl-[34px]`.
+ */
+async function cancelButtonRect(field: Locator, chip: Locator): Promise<Rect> {
+  const authored = await field.evaluate(() => {
+    const found: string[] = []
+    const walk = (rules: CSSRuleList): void => {
+      for (const rule of rules) {
+        if (rule instanceof CSSStyleRule && rule.selectorText.includes('search-cancel')) {
+          found.push(rule.selectorText)
+        }
+        if ('cssRules' in rule && rule.cssRules instanceof CSSRuleList) walk(rule.cssRules)
+      }
+    }
+    for (const sheet of document.styleSheets) walk(sheet.cssRules)
+    return found
+  })
+  expect(
+    authored,
+    'a stylesheet now styles the ✕, so its rectangle is no longer the UA geometry this clip is derived from',
+  ).toEqual([])
+
+  const content = await contentBoxOf(field)
+  const chipBox = await chip.boundingBox()
+  expect(chipBox, 'the ⌘K chip has a box').not.toBeNull()
+  const side = content.height
+  const contentRight = content.x + content.width
+  const right = chipBox === null ? contentRight : Math.min(contentRight, Math.floor(chipBox.x))
+  const left = contentRight - side
+  // A sliver is not a clip of the ✕: the hint has grown over its slot, and the
+  // overlap is the finding — say that instead of photographing an empty rect.
+  expect(
+    right - left,
+    `the ⌘K chip (left ${String(chipBox?.x)}) leaves the ✕ too little of the field's content box (right ${String(contentRight)})`,
+  ).toBeGreaterThanOrEqual(side / 2)
+  return { x: left, y: content.y, width: right - left, height: content.height }
 }
 
 // ---------------------------------------------------------------------------
@@ -313,30 +392,32 @@ test('v · the scanner reads a known pair, and sees a shadow move it', async ({ 
 
 for (const theme of ['light', 'dark'] as const) {
   test(`v+ar · every ink on the shell clears AA on its measured ground (${theme})`, async ({ page }) => {
-    // Through the settings dialog, not `PUT /api/settings`.
-    //
-    // The API accepts and persists `theme`, and the first draft of this spec
-    // set it that way and then waited for `data-theme` to follow. It never
-    // does: `useLibrary.ts`'s hydration payload carries `view`, `order`,
-    // `scope` and `sort` and **not** `theme`, so the server's stored value is
-    // written and never read back. That is an open question about the product
-    // rather than about this file (nothing here should fix it), but a spec
-    // that drove the theme through a path the product does not honour would
-    // have measured the light palette twice and called the second pass "dark".
+    // Through the settings dialog, not `PUT /api/settings`: the control is
+    // part of what is under test. The first draft of this spec PUT the theme
+    // and waited for `data-theme`, which then never followed — the library's
+    // hydration carried `view`/`order`/`scope`/`sort` and not `theme`. It does
+    // now (ShellDataProvider reads the server's theme on every route), which is
+    // why the reload below has to wait for the debounced PUT behind this click
+    // (settingsWriter, 400 ms) to land: reloading first would hydrate the
+    // previous theme, and the sweep would measure the wrong palette twice.
     await gotoLibrary(page)
     await openSettings(page)
     const themeSeg = page.locator('[role="dialog"]').locator('[aria-label="테마"]')
     await themeSeg.locator(`label[data-value="${theme}"]`).click()
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+    await expect
+      .poll(async () => ((await (await page.request.get('/api/settings')).json()) as { theme: string }).theme, {
+        message: `the ${theme} theme is saved before the reload reads it`,
+      })
+      .toBe(theme)
 
     // Reload rather than press Escape, and the reason is a 400px one. Below 768
     // the sidebar is an off-canvas drawer and `openSettings` has to open it to
     // reach the button; Escape closes the *dialog* and leaves the drawer up, so
     // the next click — `openSeries` — spent the whole 120s test budget being
     // intercepted by `.drawer-panel`. A navigation puts the shell back to its
-    // resting state at every width, and the theme survives it because the store
-    // persists to localStorage (which is also the only place it lives — see the
-    // note above).
+    // resting state at every width, and the theme survives it because it is
+    // the server's now (the poll above) as well as the store's localStorage copy.
     await gotoLibrary(page)
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
 
@@ -426,43 +507,99 @@ for (const theme of ['light', 'dark'] as const) {
  * and no gate would move — the shape §6.5 calls a fix that outlives its
  * evidence. This test is the evidence, re-taken every round.
  */
-test('ar · the marks on the search field clear AA on the field they are drawn on', async ({ page }) => {
-  await gotoLibrary(page)
+// Both themes, and the dark one is not a formality: the ✕ measured 1.14 and the
+// icon 1.50 there and only there (HANDOFF §0, the `color-scheme: light` on
+// `.input` in base.css is the fix). A light-only pass would stay green with that
+// one declaration deleted — the review that found this said so.
+for (const theme of ['light', 'dark'] as const) {
+  test(`ar · the marks on the search field clear AA on the field they are drawn on (${theme})`, async ({
+    page,
+  }) => {
+    // Through the dialog and then a navigation, for the reasons the sweep above
+    // gives: the theme lives in the store, and the drawer at 400px.
+    await gotoLibrary(page)
+    await openSettings(page)
+    await page
+      .locator('[role="dialog"]')
+      .locator('[aria-label="테마"]')
+      .locator(`label[data-value="${theme}"]`)
+      .click()
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+    await gotoLibrary(page)
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
 
-  const field = page.locator('input[type="search"]')
-  await expect(field).toBeVisible()
-  // The ✕ only exists once the field has a value, so an empty-field sweep would
-  // report this control as clean while the defect sat one keystroke away.
-  await field.fill('군계')
-  await expect(field).toHaveValue('군계')
+    const field = page.locator('input[type="search"]')
+    await expect(field).toBeVisible()
+    // The ✕ only exists once the field has a value, so an empty-field sweep would
+    // report this control as clean while the defect sat one keystroke away.
+    await field.fill('군계')
+    await expect(field).toHaveValue('군계')
 
-  // The whole field box: the fill is the ground, and everything drawn on it —
-  // the search icon, the typed text, the ⌘K chip, the UA's ✕ — is a cluster.
-  // That is the only vantage point from which ⓑ and ⓒ are visible at all.
-  const m = await measureLocatorUngrained(page, field, 'search field')
-  reportMarksOn(m, 'search field with a value')
+    // The whole field box, for the two field-level claims below. Its census is
+    // not asserted mark by mark — see `expectMark` for why the whole box cannot
+    // do that — but a census that found nothing at all has proved the shot
+    // missed, not that the control is clean.
+    const m = await measureLocatorUngrained(page, field, 'search field')
+    expect(m.clusters.length, 'search field with a value: the census found no marks at all').toBeGreaterThan(0)
+    expect(m.measuredGround, 'search field with a value: no ground was measured').toMatch(/^rgb\(/)
 
-  // What *can* be asserted here without a census: the field's own declared
-  // pair, on the ground the reader actually gets. This is the check that
-  // catches a shadow or a dead exemption moving the field out from under its
-  // placeholder, and it is the half of ⓐ that does not need a flat ground.
-  expect(
-    m.measuredRatio,
-    `the field's own ink on its rendered ground — ${describeMeasurement(m)}`,
-  ).toBeGreaterThanOrEqual(m.floor)
+    // What *can* be asserted here without a census: the field's own declared
+    // pair, on the ground the reader actually gets. This is the check that
+    // catches a shadow or a dead exemption moving the field out from under its
+    // placeholder, and it is the half of ⓐ that does not need a flat ground.
+    expect(
+      m.measuredRatio,
+      `the field's own ink on its rendered ground — ${describeMeasurement(m)}`,
+    ).toBeGreaterThanOrEqual(m.floor)
 
-  // The field is an absolute cream in both themes (E-42), so its rendered
-  // ground must not be the page's. If the fill ever stops being absolute, the
-  // ✕ measurement above starts describing a surface the reader does not see —
-  // a check still green while it watches the wrong thing.
-  const pageGround = await page.evaluate(() => getComputedStyle(document.body).backgroundColor)
-  expect(
-    m.measuredGround,
-    'the field renders as its own absolute surface, not the page ground',
-  ).not.toBe(pageGround)
+    // The field is an absolute cream in both themes (E-42), so its rendered
+    // ground must not be the page's. If the fill ever stops being absolute, the
+    // ✕ measurement below starts describing a surface the reader does not see —
+    // a check still green while it watches the wrong thing.
+    const pageGround = await page.evaluate(() => getComputedStyle(document.body).backgroundColor)
+    expect(
+      m.measuredGround,
+      'the field renders as its own absolute surface, not the page ground',
+    ).not.toBe(pageGround)
 
-  await field.fill('')
-})
+    // The two `TopBar` marks are the field's siblings (TopBar.tsx): the icon
+    // span before it, the chip after it. Named by position and then checked by
+    // content, so a reordering fails here instead of measuring the wrong span.
+    const icon = field.locator('xpath=preceding-sibling::span[1]')
+    const chip = field.locator('xpath=following-sibling::span[1]')
+    await expect(icon.locator('svg')).toHaveCount(1)
+    await expect(chip).toHaveText(/⌘K|Ctrl K/)
+
+    // ⓑ — the ✕. Chromium's UA sheet draws it at `opacity: 0` unless the field
+    // is focused or hovered, and not at all while the value is empty. `fill`
+    // left the focus here and nothing since moves it, but the clip is derived,
+    // not located, so a lost focus would read as "nothing drawn" rather than as
+    // a missing element. Said out loud instead.
+    await expect(field).toBeFocused()
+    const cancel = await measureClipUngrained(page, field, await cancelButtonRect(field, chip), 'search ✕')
+
+    // ⓒ — the icon inside the svg's own box; the chip inside its border and
+    // padding, so its 2.34 outline stays out (`contentBoxOf`).
+    const glass = await measureClipUngrained(page, icon, await contentBoxOf(icon.locator('svg')), 'search icon')
+    const hint = await measureClipUngrained(page, chip, await contentBoxOf(chip), '⌘K hint')
+
+    // Printed before the assertions, for the reason the sweep's counts are: the
+    // red run is the one that needs the numbers.
+    const line = (x: Measurement): string =>
+      `${x.label} ${x.mark === null ? '-' : `${x.mark.rgb} ${r2(x.mark.ratio)} (${String(x.mark.pixels)} px)`} on ${x.measuredGround}`
+    console.log(`[contrast] marks on the search field — ${[cancel, glass, hint].map(line).join('; ')}`)
+
+    // The ✕ and the icon are not text: §1.4.11's 3:1. The chip *is* text — the
+    // sweep above already measures it as text at 4.5 (`v+ar`, "chip 6.01–6.11,
+    // floor 4.5") — so it keeps the floor its type size earns, here as there.
+    expectMark(cancel, NON_TEXT_FLOOR, 'ⓑ the search field\'s ✕')
+    expectMark(glass, NON_TEXT_FLOOR, 'ⓒ the search icon on the field')
+    expectMark(hint, hint.floor, 'ⓒ the ⌘K hint on the field')
+
+    await field.fill('')
+    await page.request.put('/api/settings', { data: { theme: 'system' } })
+  })
+}
 
 /**
  * Blind spot ⓓ: the grain exemption, checked on the render instead of the rule.
@@ -498,8 +635,20 @@ test('ar · the viewer override chip is still lifted out of the paper wash', asy
   ).toBeGreaterThanOrEqual(m.floor)
 
   await setViewerSeg(page, '맞춤', 'height')
-  // shelf.ts rule 2: this spec invented a progress row by opening a book.
-  await page.request.delete(`/api/books/${first.id}/progress`)
+  // shelf.ts rule 2: this spec invented a progress row by opening a book, and
+  // getting rid of it takes leaving the book first. While the viewer is up it
+  // can still write: the 맞춤 change above re-renders it, the page write is
+  // debounced by a second, and `clearProgress`'s first poll then sees null and
+  // returns before that write lands. This is the last spec of a viewport
+  // project, so the row it put back was the next project's 이어보기 card — 4
+  // cards one round and 3 the next, and thirteen laptop-1024 shots the pixel
+  // baseline had to stop watching. Off the page, the unmount/pagehide flush
+  // has happened and nothing is left to write; the second clear, after the
+  // debounce, takes whatever that flush put back.
+  await page.goto('about:blank')
+  await clearProgress(page, first.id)
+  await page.waitForTimeout(1_500)
+  await clearProgress(page, first.id)
 })
 
 // ---------------------------------------------------------------------------

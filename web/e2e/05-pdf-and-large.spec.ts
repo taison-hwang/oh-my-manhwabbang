@@ -38,6 +38,7 @@ import {
   viewer,
   wakeChrome,
   waitForPage,
+  standBackFromChrome,
 } from './shelf'
 
 /** §6.3 step 6.9's target page, clamped for the synthetic twin. */
@@ -248,7 +249,13 @@ test('6.8 · a PDF volume renders image/jpeg in the same viewer, and R→L flips
     .evaluate((img) => (img as HTMLImageElement).naturalWidth)
   expect(natural).toBeGreaterThan(0)
 
+  // Item `bs`: the chrome auto-hides on a timer, so whether this frame showed the
+  // bars depended on how fast the steps above ran — five archived rounds split
+  // between the two states. Summoned and held (the pointer resting on the top
+  // bar keeps the auto-hide off), then released for whatever follows.
+  await wakeChrome(page)
   await shot(page, info, 'step-06-8a-viewer-pdf')
+  await standBackFromChrome(page)
 
   // ---- the rendered half of §6.3 step 6.6's "R→L puts page n on the right".
   // 미생's pages are portrait, so FR-VWR-004's auto-single does not fire and the

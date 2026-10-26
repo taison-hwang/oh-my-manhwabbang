@@ -9,7 +9,7 @@
 #
 #   1. build dist/shelf (the real binary, with the SPA embedded)
 #   2. write test/shelf.e2e.yaml: a root pointed AT THE REAL COLLECTION,
-#      narrowed to fifteen series by scan.include_globs. Nothing is copied — that
+#      narrowed to sixteen series by scan.include_globs. Nothing is copied — that
 #      is the whole point of A-3 (D-48). data_dir and cache_dir go to a scratch
 #      directory under /tmp.
 #   3. record a marker so FR-CFG-005 can be proved afterwards
@@ -465,18 +465,35 @@ wait_for_idle() {
 # adopted; `SHELF_E2E_UI_ROOT_DIR` is a directory the browser tier may create
 # its own throwaway roots under (one per viewport project). Both are only
 # meaningful in the synthetic round, and 08-roots.spec.ts runs there only.
+# Item `bb`: under Node 24.16–24.19 Playwright 1.50's bundled zip reader stalls
+# every failed test for 120 s (playwright.config.ts warns too). SHELF_E2E_NODE_DIR,
+# when set, is a directory holding a good `node`, put first on PATH for this step
+# only. Without it a bad version is said once and the run goes on.
+PW_PATH="$PATH"
+if [ -n "${SHELF_E2E_NODE_DIR:-}" ]; then
+  [ -x "$SHELF_E2E_NODE_DIR/node" ] || die "SHELF_E2E_NODE_DIR=$SHELF_E2E_NODE_DIR has no executable node"
+  PW_PATH="$SHELF_E2E_NODE_DIR:$PATH"
+fi
+pw_node=$(PATH="$PW_PATH" node --version 2>/dev/null || echo unknown)
+case "$pw_node" in
+  v24.1[6-9].*)
+    printf '  warn  Playwright will run on Node %s: a failed test costs 120 s more and leaves an\n' "$pw_node"
+    printf '        unreadable trace (item bb). Set SHELF_E2E_NODE_DIR to a Node >= 24.20 bin directory.\n'
+    ;;
+esac
+
 run_playwright() {
   local rc=0 self_pgid
   pw_pid=""
   pw_pgid=""
   if have setsid; then
-    ( cd web && exec setsid env PLAYWRIGHT_BASE_URL="$BASE" SHELF_E2E_MODE="$mode" \
+    ( cd web && exec setsid env PATH="$PW_PATH" PLAYWRIGHT_BASE_URL="$BASE" SHELF_E2E_MODE="$mode" \
         SHELF_E2E_A11_ROOT="$A11_LABEL" SHELF_E2E_UI_ROOT_DIR="$A11_UI_ROOT" \
         PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 pnpm e2e ) &
   else
     # No setsid: bash's job control puts a background job in its own group.
     set -m
-    ( cd web && exec env PLAYWRIGHT_BASE_URL="$BASE" SHELF_E2E_MODE="$mode" \
+    ( cd web && exec env PATH="$PW_PATH" PLAYWRIGHT_BASE_URL="$BASE" SHELF_E2E_MODE="$mode" \
         SHELF_E2E_A11_ROOT="$A11_LABEL" SHELF_E2E_UI_ROOT_DIR="$A11_UI_ROOT" \
         PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 pnpm e2e ) &
     set +m
@@ -694,7 +711,7 @@ step "10 · AC-005 / AC-006 — delete the index and the cache, restart"
 # The library as it stands, name for name, so the rebuild below can be compared
 # against it rather than merely printed. `limit` is capped at 200 by arch §7.5
 # (internal/httpapi/series.go, `seriesLimitMax`); 200 outruns both modes' subset
-# (fifteen real, eighteen synthetic — D-49 as extended by D-71 adds an encrypted
+# (sixteen real, nineteen synthetic — D-49 as extended by D-71 adds an encrypted
 # ZIP, a ZIP64 archive and a solid RAR), and `sort=name` makes them comparable.
 #
 # `?limit=500` stood here, and 500 is not a number this endpoint accepts: every
@@ -775,7 +792,7 @@ if wait_for_idle 180; then
   # unconditional: `$total` was never held against anything, so a rescan that
   # silently dropped a series announced the smaller number and passed. This is
   # the only place that can catch it — step 7's curl tier ran against the index
-  # this step has just deleted, and only some of the fifteen curated names are
+  # this step has just deleted, and only some of the sixteen curated names are
   # referenced anywhere in web/e2e/.
   after_names=$(series_names)
   before_n=$(name_count "$before_names")
@@ -915,7 +932,7 @@ step "11b · A-11 — DELETE /api/roots/{name}"
 # that reads the library *set* — the curl tier, step 10's AC-005 comparison and
 # every browser spec — has finished by this point, so the root can be filled
 # now: one archive, whose name is in `scan.include_globs` (it is one of the
-# curated fifteen — `contractcheck` proves that rather than trusting this
+# curated sixteen — `contractcheck` proves that rather than trusting this
 # comment), copied out of the fixture tree so that a per-root rescan gives this
 # root exactly one series to lose.
 if [ "$synthetic" -eq 1 ]; then
@@ -932,6 +949,33 @@ if [ "$synthetic" -eq 1 ]; then
   fi
 else
   echo "  skip  synthetic round only (see step 8b)"
+fi
+
+# ---------------------------------------------------------------------------
+step "11c · the pixel baseline — did step 11 draw what it drew last time"
+# ---------------------------------------------------------------------------
+# Step 11 proves every shot() fired; nothing proved what they drew. That is item
+# `x`, and scripts/pixelbaseline was written for it in 97e9782 — and then never
+# called from anywhere, with no manifest ever committed for it to compare
+# against, so docs/ui-shots/README.md has described a step 11c that did not
+# exist since the commit that wrote both. A gate that is not wired is HANDOFF §6.5's subject with
+# nothing in between: the tool read as coverage and covered nothing.
+#
+# Synthetic only, and said so: the real round's shots are of a collection no
+# other machine has, so no committed digest can describe them (the tool's own
+# header). A missing manifest is a FAIL rather than a skip — an absent baseline
+# is the hole this step exists to close, and a skip would reopen it quietly.
+if [ "$do_playwright" -eq 0 ]; then
+  echo "  skip  --no-playwright, so step 11 drew nothing to compare"
+elif [ "$synthetic" -eq 1 ]; then
+  if env "${GOENV[@]}" go run ./scripts/pixelbaseline -shots docs/e2e-shots -round synthetic; then
+    ok "pixel baseline — every watched shot matches docs/pixel-baseline/synthetic byte for byte"
+  else
+    bad "pixel baseline — see above; an intended change is re-baselined with
+        go run ./scripts/pixelbaseline -update   (after reviewing the renders)"
+  fi
+else
+  echo "  skip  real round — no committed baseline can describe this collection's renders"
 fi
 
 # ---------------------------------------------------------------------------

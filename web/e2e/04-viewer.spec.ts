@@ -33,10 +33,12 @@
 
 import {
   booksOf,
+  clearProgress,
   currentPage,
   expect,
   gotoLibrary,
   openSeries,
+  openViewerDirect,
   pageCount,
   resetBookPrefs,
   resetLibraryState,
@@ -49,6 +51,7 @@ import {
   viewer,
   wakeChrome,
   waitForPage,
+  standBackFromChrome,
 } from './shelf'
 
 /** `→` five times, per §6.3 step 6.6. */
@@ -224,7 +227,13 @@ test.describe('6.6/6.7 · one volume, read then resumed', () => {
     await waitForPage(page)
     const total = await pageCount(page)
     expect(await currentPage(page)).toBe(1)
+    // Item `bs`: the chrome auto-hides on a timer, so whether this frame showed the
+    // bars depended on how fast the steps above ran — five archived rounds split
+    // between the two states. Summoned and held (the pointer resting on the top
+    // bar keeps the auto-hide off), then released for whatever follows.
+    await wakeChrome(page)
     await shot(page, info, 'step-06-6a-viewer-open')
+    await standBackFromChrome(page)
 
     // ---- `→` five times (ui-spec §8.2) ------------------------------------
     for (let i = 0; i < TURNS; i++) await page.keyboard.press('ArrowRight')
@@ -644,4 +653,200 @@ test('6.6b · 양면 on a portrait raster book: R→L puts page n right, DOM asc
       },
     )
     .toBeNull()
+})
+
+/**
+ * E-61: while the viewer is up, the shell is mounted and not displayed.
+ *
+ * The viewer is fixed, inset 0 and opaque, so the shell behind it was never
+ * seen — but displayed, it was still there for everything that does not look.
+ * Tab walked into its sidebar and top bar (26 of 40 presses at 1440). And the
+ * top bar, given its 라이브러리 button on every `/series/...` path, the
+ * viewer's included, stood a row taller than the library's at 1024 and 400,
+ * so coming back out of a volume moved it and the body under it by 48–56 px
+ * (CLS 0.110 / 0.062): the Layout Instability API does not discount a move
+ * under an opaque layer. Taking that button away in the viewer only moved the
+ * shift to the way back to the series screen, so both ways back are asserted.
+ *
+ * Each of these opens a volume, and opening writes progress; what was there
+ * before is put back afterwards (shelf.ts rule 2).
+ */
+test.describe('6.6 (E-61) · the shell behind the viewer', () => {
+  interface Progress {
+    book: { id: string }
+    progress: { last_page: number }
+  }
+
+  async function progressOf(page: import('@playwright/test').Page, bid: string): Promise<number | null> {
+    const body = (await (await page.request.get('/api/continue')).json()) as { items: Progress[] }
+    return body.items.find((entry) => entry.book.id === bid)?.progress.last_page ?? null
+  }
+
+  /**
+   * The page's progress writes for `bid` that have not answered yet. The viewer
+   * debounces them and flushes one on unmount, so a row deleted while one is
+   * pending comes straight back — after the restore, where nothing sees it.
+   */
+  function progressWrites(page: import('@playwright/test').Page, bid: string): () => number {
+    const pending = new Set<import('@playwright/test').Request>()
+    const ours = (request: import('@playwright/test').Request): boolean =>
+      request.method() === 'PUT' && request.url().includes(`/api/books/${bid}/progress`)
+    page.on('request', (request) => {
+      if (ours(request)) pending.add(request)
+    })
+    const done = (request: import('@playwright/test').Request): void => {
+      pending.delete(request)
+    }
+    page.on('requestfinished', done)
+    page.on('requestfailed', done)
+    return () => pending.size
+  }
+
+  /** Out of the viewer (in-app, so its unmount flush runs), drained, then put back. */
+  async function restoreProgress(
+    page: import('@playwright/test').Page,
+    bid: string,
+    before: number | null,
+    inFlight: () => number,
+  ): Promise<void> {
+    if ((await viewer(page).count()) > 0) {
+      await page.evaluate(() => {
+        history.pushState(null, '', '/')
+        window.dispatchEvent(new PopStateEvent('popstate'))
+      })
+      await expect(viewer(page)).toHaveCount(0)
+    }
+    await page.waitForTimeout(300)
+    await expect.poll(inFlight, { message: 'the viewer’s progress writes must have answered' }).toBe(0)
+    await clearProgress(page, bid)
+    if (before !== null) await page.request.put(`/api/books/${bid}/progress`, { data: { page: before } })
+  }
+
+  /** Into the viewer without a reload, so what comes back is the mounted app. */
+  async function enterViewer(page: import('@playwright/test').Page, sid: string, bid: string): Promise<void> {
+    const saved = page.waitForResponse(
+      (response) =>
+        response.url().includes(`/api/books/${bid}/progress`) && response.request().method() === 'PUT',
+    )
+    await page.evaluate(
+      ({ s, b }) => {
+        history.pushState(null, '', `/series/${s}/books/${b}?page=2`)
+        window.dispatchEvent(new PopStateEvent('popstate'))
+      },
+      { s: sid, b: bid },
+    )
+    await expect(viewer(page)).toBeVisible()
+    await waitForPage(page)
+    await saved
+  }
+
+  /**
+   * `history.back()`, and the layout shift counted from it by an observer of
+   * its own — the page's running CLS also holds whatever the viewer did while
+   * its pages decoded. `arrived` is what the screen gone back to shows.
+   */
+  async function backCls(
+    page: import('@playwright/test').Page,
+    arrived: import('@playwright/test').Locator,
+  ): Promise<number> {
+    await page.evaluate(() => {
+      const w = window as unknown as { __shelfBackCls: number }
+      w.__shelfBackCls = 0
+      const t0 = performance.now()
+      new PerformanceObserver((list) => {
+        for (const entry of list.getEntries() as (PerformanceEntry & { value: number; hadRecentInput: boolean })[]) {
+          if (!entry.hadRecentInput && entry.startTime >= t0) w.__shelfBackCls += entry.value
+        }
+      }).observe({ type: 'layout-shift' })
+      history.back()
+    })
+    await expect(viewer(page)).toHaveCount(0)
+    await expect(arrived).toBeVisible()
+    // Past CONTINUE_GRACE_MS, and entries arrive after the frame that caused them.
+    await page.waitForTimeout(1_200)
+    return page.evaluate(
+      () =>
+        new Promise<number>((resolve) => {
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              resolve((window as unknown as { __shelfBackCls: number }).__shelfBackCls)
+            })
+          })
+        }),
+    )
+  }
+
+  test('Tab never takes focus into the shell behind the viewer, and the viewer is the main landmark', async ({ page }) => {
+    const { sid, bid } = await firstVolume(page)
+    const before = await progressOf(page, bid)
+    const inFlight = progressWrites(page, bid)
+    try {
+      await openViewerDirect(page, sid, bid, 2)
+      await waitForPage(page)
+      // The shell's <main> went with it, so the viewer carries the landmark.
+      await expect(page.getByRole('main'), 'E-61: one main landmark while the viewer is up').toHaveCount(1)
+      await expect(page.getByRole('main').locator('[data-role="viewer"]'), 'and it holds the viewer').toHaveCount(1)
+      // E-61 §2-1: the shell is kept, not replaced — mounted, and not displayed.
+      const shell = page.locator('.shell')
+      await expect(shell, 'E-61: the shell stays mounted behind the viewer').toHaveCount(1)
+      await expect(shell, 'and is not displayed').toHaveCSS('display', 'none')
+
+      const landed: string[] = []
+      for (let i = 0; i < 40; i += 1) {
+        await page.keyboard.press('Tab')
+        landed.push(
+          await page.evaluate(() => {
+            const el = document.activeElement
+            if (el === null || el === document.body) return 'body'
+            if (el.closest('.shell') !== null) return `shell:${el.getAttribute('aria-label') ?? el.tagName}`
+            if (el.closest('[data-role="viewer"]') !== null) return 'viewer'
+            return `other:${el.tagName}`
+          }),
+        )
+      }
+      expect(
+        landed.filter((where) => where.startsWith('shell:')),
+        `E-61: no Tab press lands in the shell behind the viewer (landed: ${JSON.stringify(landed)})`,
+      ).toEqual([])
+    } finally {
+      await restoreProgress(page, bid, before, inFlight)
+    }
+  })
+
+  test('coming back out of a volume to the library moves nothing', async ({ page }) => {
+    const { sid, bid } = await firstVolume(page)
+    const before = await progressOf(page, bid)
+    const inFlight = progressWrites(page, bid)
+    try {
+      // The 이어보기 band is there before and after, so the way back has no
+      // band to bring in — that is 01-library 6.1 (return) — and a shift left
+      // over is the shell's.
+      if (before === null) await page.request.put(`/api/books/${bid}/progress`, { data: { page: 1 } })
+      await gotoLibrary(page)
+      const band = page.locator('section[aria-label="이어보기"]')
+      await expect(band).toBeVisible()
+
+      await enterViewer(page, sid, bid)
+      const cls = await backCls(page, band)
+      expect(cls, 'E-61: the library comes back where it was (§6.3 step 6.1 budget)').toBeLessThanOrEqual(0.01)
+    } finally {
+      await restoreProgress(page, bid, before, inFlight)
+    }
+  })
+
+  test('coming back out of a volume to the series screen moves nothing', async ({ page }) => {
+    const { sid, bid } = await firstVolume(page)
+    const before = await progressOf(page, bid)
+    const inFlight = progressWrites(page, bid)
+    try {
+      await gotoLibrary(page)
+      await openSeries(page, SERIES.gungye)
+
+      await enterViewer(page, sid, bid)
+      const cls = await backCls(page, page.getByRole('heading', { level: 1, name: SERIES.gungye }))
+      expect(cls, 'E-61: the series screen comes back where it was (§6.3 step 6.1 budget)').toBeLessThanOrEqual(0.01)
+    } finally {
+      await restoreProgress(page, bid, before, inFlight)
+    }
+  })
 })

@@ -48,7 +48,7 @@ test('6.4 · Ctrl+K → ㅁㅅ → ↵ opens the 미생 series', async ({ page }
   await field.press('Enter')
 
   await expect(page).toHaveURL(new RegExp(`/series/${sid}$`))
-  await expect(page.getByRole('heading', { level: 2, name: SERIES.misaeng })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1, name: SERIES.misaeng })).toBeVisible()
   await expect(page.getByLabel('시리즈로 이동…')).toHaveCount(0)
 
   await shot(page, info, 'step-06-4c-palette-opened-series')

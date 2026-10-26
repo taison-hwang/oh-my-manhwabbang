@@ -31,13 +31,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
-# The fifteen curated series of impl-plan §6.3, plus the three shapes the real
+# The sixteen curated series of impl-plan §6.3, plus the three shapes the real
 # collection has no sample of, which only the synthetic tree carries (D-49, as
 # extended by D-71).
 #
@@ -63,6 +64,7 @@ CURATED = [
     "울프가이",
     "사모님은 학생회장.zip",
     "펌프킨 시저스 1~13권",
+    "바다의 무녀 (완결, 미번) (文月晃, 海の御先)",
 ]
 SYNTHETIC_EXTRA = ["암호화 테스트.zip", "ZIP64 테스트.zip", "솔리드 테스트.rar"]
 
@@ -70,11 +72,12 @@ CLOVER, WOUNDS, SUICIDE, WHEEL = CURATED[0], CURATED[1], CURATED[2], CURATED[3]
 FMA, GUNGYE, DNANGEL, MISAENG = CURATED[4], CURATED[5], CURATED[6], CURATED[7]
 BATTLE_ROYALE, ANGEL_HEART, DOVE = CURATED[8], CURATED[9], CURATED[10]
 RAHXEPHON, WOLF_GUY, MADAM, PUMPKIN = CURATED[11], CURATED[12], CURATED[13], CURATED[14]
+UMI = CURATED[15]
 SOLID_RAR = SYNTHETIC_EXTRA[2]
 
 
 def curated_copies() -> str:
-    """Where the fifteen names live, for a failure that has to name a file.
+    """Where the sixteen names live, for a failure that has to name a file.
 
     The line numbers were true when written and are the second thing to distrust
     (the first being the count in the sentence above them). `make lint` runs
@@ -86,10 +89,10 @@ def curated_copies() -> str:
         "          " + line
         for line in (
             "the names live in six unlinked copies:",
-            "  scripts/e2e-config.sh:29-43  CURATED — becomes scan.include_globs. THE SOURCE OF TRUTH.",
-            "  scripts/e2e-assert.py:51-65  CURATED — this file, unpacked positionally at :69-72",
-            "  web/e2e/shelf.ts:84-98       SERIES — the browser tier",
-            "  scripts/mkfixture/main.go    26 path literals, which build the synthetic twin (D-49)",
+            "  scripts/e2e-config.sh:29-49  CURATED — becomes scan.include_globs. THE SOURCE OF TRUTH.",
+            "  scripts/e2e-assert.py:51-66  CURATED — this file, unpacked positionally at :70-74",
+            "  web/e2e/shelf.ts:86-101      SERIES — the browser tier",
+            "  scripts/mkfixture/main.go    its path literals, which build the synthetic twin (D-49)",
             "  scripts/e2e.sh:922           A11_FILL — one archive by path, step 11b",
             "  docs/impl-plan.md §6.3       the curated-set table — the declared source of truth",
         )
@@ -103,7 +106,7 @@ def curated_detail(expected: list[str], indexed: list[str]) -> str:
     a round, and it names neither the file to edit nor the series — so the two
     shapes that mean something specific are called out by name here: an empty
     library is a glob that matched nothing (one edit to CURATED does that to all
-    fifteen at once, and a collection-wide rename did), and one missing beside
+    sixteen at once, and a collection-wide rename did), and one missing beside
     one surplus is a single series renamed on disk.
     """
     missing = [n for n in expected if n not in set(indexed)]
@@ -733,9 +736,24 @@ def phase_roots_pre(r: Runner, new_root: str, label: str, state_path: str) -> in
              "belong to two roots",
              rejection(status, body), (400, "bad_request", "path", "overlaps", media["name"]))
 
-    r.check("neither refusal wrote anything: the file is exactly what the 201 left",
+    # The third rule, and the one HANDOFF item `c` recorded as unreachable here:
+    # `browse` refuses $STATE with `overlaps` because the media root is under it
+    # (see phase_roots_pre's picker block), but data_dir itself sits beside the
+    # media root rather than over it, so a POST of data_dir passes the overlap
+    # loop and meets `contains_storage` — the mirror of the startup rule that
+    # keeps SHELF off a media volume (FR-CFG-005). /api/settings does not publish
+    # data_dir, so it is read from the file the server says it loaded.
+    data_dir = re.search(r'^\s*data_dir:\s*"?([^"\n]+?)"?\s*$', after.decode(), re.M)
+    if r.check("the loaded configuration names a data_dir to offer as a root",
+               data_dir is not None and os.path.isdir(data_dir.group(1)),
+               f"no usable storage.data_dir in {cfg_path}"):
+        status, body, _ = r.request("POST", "/api/roots", {"path": data_dir.group(1)})
+        r.eq("§7.4 · a directory holding SHELF's own data_dir is 400 contains_storage",
+             rejection(status, body), (400, "bad_request", "path", "contains_storage", None))
+
+    r.check("no refusal wrote anything: the file is exactly what the 201 left",
             read_bytes(cfg_path) == after,
-            f"{cfg_path} changed while two requests were being refused")
+            f"{cfg_path} changed while three requests were being refused")
 
     # The pre-restart scan timestamps travel with the handover so `roots-post`
     # can prove the row it sees is the fresh process's own work and not this
@@ -1156,13 +1174,43 @@ def main() -> int:
          sorted({b["status"] for b in wg["books"]}), ["ok"])
     # The RAR entry names are Shift_JIS, which is decided per archive and never
     # per entry (kenc.ArchiveFallback). A wrong verdict shows up as a page name,
-    # so assert on one rather than on the encoding label.
+    # so assert on one as well as on the encoding label below.
     wg_rar = next(b for b in wg["books"] if b["kind"] == "rar")
     wg_book = r.json(f"/api/books/{wg_rar['id']}")
     wg_names = [p["name"] for p in wg_book["pages"]]
     r.check("its Shift_JIS page names decoded",
             wg_names and not any("�" in n for n in wg_names),
             f"page names: {wg_names[:3]}")
+    if not real:
+        # A Shift_JIS name read as CP949 carries no U+FFFD — it comes out as
+        # Hangul (묉01뒱 쁔궻뽨뤞/0001빬.jpg) — so the check above cannot see the
+        # wrong verdict. The fixture's names are known (scripts/mkfixture
+        # shiftJISPages): no Hangul, and page 1 is the one CP949 cannot read.
+        r.check("and they read as Japanese, not as CP949",
+                wg_names
+                and not any("가" <= c <= "힣" for n in wg_names for c in n)
+                and any("犬神明" in n for n in wg_names),
+                f"page names: {wg_names[:3]}")
+    # Item `be`, ruling E-56: the label reaches the wire. The series value is
+    # the most suspect of its books' labels, in the order unknown >
+    # utf-8-invalid > cp932 > cp949 > utf-8; before E-56 it was a hard-coded
+    # null in every series. Only the fixture can pin the value: every one of
+    # its 울프가이 volumes has flagless Shift_JIS names. The real 울프가이 RARs
+    # carry a UTF-16 companion name (internal/archive/rar4/name.go, shape 1),
+    # which reads as utf-8, and the real series' labels were never measured —
+    # so the real round asserts only that a verdict arrived, and prints it.
+    labels = {"utf-8", "utf-8-invalid", "cp949", "cp932", "unknown"}
+    if real:
+        r.check("울프가이 reports a name-encoding verdict (E-56)",
+                wg.get("encoding") in labels, f"encoding {wg.get('encoding')!r}")
+        print(f"  note  울프가이 encoding: {wg.get('encoding')!r}")
+    else:
+        r.eq("울프가이 reports its names as cp932 (E-56)", wg.get("encoding"), "cp932")
+        # The control: the fixture writes Clover's four ZIPs with CP949 names
+        # and bit 11 clear (AC-002), so a label that came out cp932 everywhere
+        # would fail here.
+        cl = r.json("/api/series/" + by_name[CLOVER]["id"])
+        r.eq("Clover reports its names as cp949 (E-56)", cl.get("encoding"), "cp949")
     status, body, headers = r.get(f"/api/books/{wg_rar['id']}/pages/1?v={wg_rar['cv']}")
     r.eq("and page 1 of the RAR volume streams", status, 200)
     r.check("as an image",
@@ -1265,6 +1313,32 @@ def main() -> int:
                 sum(1 for n in gg_names if "01권" in n) >= 2, f"volumes: {gg_names[:8]}")
     r.check("군계 uses its named cover file (arch §4.10 step 1)",
             by_name[GUNGYE]["has_cover"] is True)
+
+    # ---- E-55: the one curated name that is Japanese -----------------------
+    # The font split E-55 made is per *name*: web/src/lib/textLang.ts tags an
+    # element `lang="ja"` when its text carries kana, and nothing else can tell a
+    # Japanese title's kanji from a Korean title's 한자. Until this series joined,
+    # no curated name carried kana, so neither round ever drew one — item `bz`.
+    # This tier cannot see a font; what it can pin is that the kana reaches the
+    # API intact, in the series name and in the 권 names, because a name that
+    # lost its kana on the way would be drawn as Korean with every test green.
+    umi = r.json("/api/series/" + by_name[UMI]["id"])
+    umi_names = [b["name"] for b in umi["books"]]
+    r.eq("바다의 무녀 is a readable series", umi["status"], "ok")
+    r.check("its series name carries kana as the API serves it (E-55)",
+            "海の御先" in umi["name"], f"name: {umi['name']!r}")
+    r.check("every 권 name carries kana too, so each volume is tagged ja",
+            bool(umi_names) and all("海の御先" in n for n in umi_names),
+            f"volumes: {umi_names}")
+    # 完 inside a ja-tagged name is the shape §0.0.5 found the seal subset
+    # drawing in its own KR cut; the browser tier asserts the face, this one
+    # that the volume exists to be drawn.
+    r.check("the last 권 carries (完) inside its Japanese name",
+            any("(完)" in n for n in umi_names), f"volumes: {umi_names}")
+    r.eq("every 바다의 무녀 volume opens",
+         sorted({b["status"] for b in umi["books"]}), ["ok"])
+    if real:
+        r.eq("바다의 무녀 has fifteen volumes", umi["book_count"], 15)
 
     # ---- AC-004: a PDF series reads through the same flow ----------------
     ms = r.json("/api/series/" + by_name[MISAENG]["id"])

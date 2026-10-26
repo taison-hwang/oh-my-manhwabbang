@@ -308,7 +308,8 @@ test('A-12 · 루트 추가 → 즉시 적용 → 제거, against a real server'
   // rendered. `duplicate` is the one a user reaches without help: the media
   // root's path is on the screen above, and re-adding it names the root it
   // collides with. (`overlaps` and `contains_storage` are asserted on the wire
-  // by `scripts/e2e-assert.py --phase roots-pre`.)
+  // by `scripts/e2e-assert.py --phase roots-pre` — the second only since item
+  // `c`: until then this sentence claimed an assertion that did not exist.)
   //
   // The refusal is a 400, and Chromium logs every non-2xx response as a console
   // error, so it is declared: NFR-CMP-001's guard still fails this test for any

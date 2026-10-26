@@ -31,6 +31,8 @@ import {
   test,
   viewer,
   waitForPage,
+  wakeChrome,
+  standBackFromChrome,
 } from './shelf'
 
 /** ui-spec §7's rail width (E-10). */
@@ -67,80 +69,95 @@ test('6.11 · the sidebar tier, the drawer, and no horizontal scroll anywhere', 
   const books = await booksOf(page, sid)
   const bid = books.find((book) => book.status === 'ok')?.id ?? ''
   await resetBookPrefs(page, bid)
+  // Item `bm`: the viewer below opens `books[0]` and turns its pages, and
+  // closing it flushes a progress row the server keeps. Left behind, that row
+  // is a 이어보기 entry every later test inherits — 6.12's rail is drawn from
+  // exactly these rows — so it is removed here, the way 6.12 removes its own.
+  const opened = books[0]?.id ?? ''
 
-  await gotoLibrary(page)
-  await setView(page, 'grid')
+  try {
+    await gotoLibrary(page)
+    await setView(page, 'grid')
 
-  const sidebar = page.locator('aside[aria-label="라이브러리 탐색"]')
-  const hamburger = page.getByRole('button', { name: '라이브러리 탐색 열기' })
+    const sidebar = page.locator('nav[aria-label="라이브러리 탐색"]')
+    const hamburger = page.getByRole('button', { name: '라이브러리 탐색 열기' })
 
-  if (width < 768) {
-    // D-42: not merely hidden — not rendered, or the drawer would leave a second
-    // copy of every nav row in the accessibility tree.
-    await expect(sidebar).toHaveCount(0)
-    await expect(hamburger).toBeVisible()
-    await hamburger.click()
-    const drawer = page.getByRole('dialog', { name: '라이브러리 탐색' })
-    await expect(drawer).toBeVisible()
-    await expect(drawer.getByRole('button', { name: '읽는 중' })).toBeVisible()
-    await shot(page, info, 'step-06-11a-library-drawer')
+    if (width < 768) {
+      // D-42: not merely hidden — not rendered, or the drawer would leave a second
+      // copy of every nav row in the accessibility tree.
+      await expect(sidebar).toHaveCount(0)
+      await expect(hamburger).toBeVisible()
+      await hamburger.click()
+      const drawer = page.getByRole('dialog', { name: '라이브러리 탐색' })
+      await expect(drawer).toBeVisible()
+      await expect(drawer.getByRole('button', { name: '읽는 중' })).toBeVisible()
+      await shot(page, info, 'step-06-11a-library-drawer')
+      await page.keyboard.press('Escape')
+      await expect(drawer).toHaveCount(0)
+    } else if (width < 1024) {
+      // E-10: the icon rail is correct and the reference screenshot is not.
+      const box = await sidebar.boundingBox()
+      expect(Math.round(box?.width ?? 0)).toBe(RAIL_WIDTH_PX)
+      await expect(hamburger).toBeVisible()
+    } else {
+      const box = await sidebar.boundingBox()
+      expect(Math.round(box?.width ?? 0)).toBe(SIDEBAR_WIDTH_PX)
+      await expect(sidebar.getByRole('button', { name: '읽는 중' })).toBeVisible()
+    }
+
+    await noHorizontalScroll(page)
+    await shot(page, info, 'step-06-11b-library')
+
+    await setView(page, 'list')
+    await noHorizontalScroll(page)
+    await shot(page, info, 'step-06-11c-library-list')
+    await setView(page, 'grid')
+
+    await openSeries(page, SERIES.clover)
+    await noHorizontalScroll(page)
+    await shot(page, info, 'step-06-11d-series-detail')
+
+    // ---- the viewer, and the tap zones of FR-VWR-011 ------------------------
+    await page.locator(`[data-testid="volume-grid"] [title="${books[0]?.name ?? ''}"]`).click()
+    await expect(viewer(page)).toBeVisible()
+    await waitForPage(page)
+    await noHorizontalScroll(page)
+    // Item `bs`: the chrome auto-hides on a timer, so whether this frame showed the
+    // bars depended on how fast the steps above ran — five archived rounds split
+    // between the two states. Summoned and held (the pointer resting on the top
+    // bar keeps the auto-hide off), then released for whatever follows.
+    await wakeChrome(page)
+    await shot(page, info, 'step-06-11e-viewer')
+    await standBackFromChrome(page)
+
+    const zones = page.locator('[data-role="stage-zones"]')
+    const box = await zones.boundingBox()
+    expect(box).not.toBeNull()
+    const y = (box?.y ?? 0) + (box?.height ?? 0) / 2
+    const left = (box?.x ?? 0) + (box?.width ?? 0) * 0.15
+    const right = (box?.x ?? 0) + (box?.width ?? 0) * 0.85
+
+    const before = await currentPage(page)
+    if (width < 768) {
+      // Only the mobile project runs with `hasTouch`, which is the configuration
+      // ui-spec §8.3's tap zones exist for.
+      await page.touchscreen.tap(right, y)
+      await expect.poll(async () => currentPage(page)).toBe(before + 1)
+      await page.touchscreen.tap(left, y)
+      await expect.poll(async () => currentPage(page)).toBe(before)
+    } else {
+      // The same rule, driven by the mouse: `useTouchZones` binds both.
+      await page.mouse.click(right, y)
+      await expect.poll(async () => currentPage(page)).toBe(before + 1)
+      await page.mouse.click(left, y)
+      await expect.poll(async () => currentPage(page)).toBe(before)
+    }
+
     await page.keyboard.press('Escape')
-    await expect(drawer).toHaveCount(0)
-  } else if (width < 1024) {
-    // E-10: the icon rail is correct and the reference screenshot is not.
-    const box = await sidebar.boundingBox()
-    expect(Math.round(box?.width ?? 0)).toBe(RAIL_WIDTH_PX)
-    await expect(hamburger).toBeVisible()
-  } else {
-    const box = await sidebar.boundingBox()
-    expect(Math.round(box?.width ?? 0)).toBe(SIDEBAR_WIDTH_PX)
-    await expect(sidebar.getByRole('button', { name: '읽는 중' })).toBeVisible()
+    await expect(viewer(page)).toHaveCount(0)
+  } finally {
+    for (const id of new Set([opened, bid])) if (id !== '') await clearProgress(page, id)
   }
-
-  await noHorizontalScroll(page)
-  await shot(page, info, 'step-06-11b-library')
-
-  await setView(page, 'list')
-  await noHorizontalScroll(page)
-  await shot(page, info, 'step-06-11c-library-list')
-  await setView(page, 'grid')
-
-  await openSeries(page, SERIES.clover)
-  await noHorizontalScroll(page)
-  await shot(page, info, 'step-06-11d-series-detail')
-
-  // ---- the viewer, and the tap zones of FR-VWR-011 ------------------------
-  await page.locator(`[data-testid="volume-grid"] [title="${books[0]?.name ?? ''}"]`).click()
-  await expect(viewer(page)).toBeVisible()
-  await waitForPage(page)
-  await noHorizontalScroll(page)
-  await shot(page, info, 'step-06-11e-viewer')
-
-  const zones = page.locator('[data-role="stage-zones"]')
-  const box = await zones.boundingBox()
-  expect(box).not.toBeNull()
-  const y = (box?.y ?? 0) + (box?.height ?? 0) / 2
-  const left = (box?.x ?? 0) + (box?.width ?? 0) * 0.15
-  const right = (box?.x ?? 0) + (box?.width ?? 0) * 0.85
-
-  const before = await currentPage(page)
-  if (width < 768) {
-    // Only the mobile project runs with `hasTouch`, which is the configuration
-    // ui-spec §8.3's tap zones exist for.
-    await page.touchscreen.tap(right, y)
-    await expect.poll(async () => currentPage(page)).toBe(before + 1)
-    await page.touchscreen.tap(left, y)
-    await expect.poll(async () => currentPage(page)).toBe(before)
-  } else {
-    // The same rule, driven by the mouse: `useTouchZones` binds both.
-    await page.mouse.click(right, y)
-    await expect.poll(async () => currentPage(page)).toBe(before + 1)
-    await page.mouse.click(left, y)
-    await expect.poll(async () => currentPage(page)).toBe(before)
-  }
-
-  await page.keyboard.press('Escape')
-  await expect(viewer(page)).toHaveCount(0)
 })
 
 /**
@@ -240,6 +257,17 @@ test('6.12 · the 이어보기 shelf obeys the §7 tier it is in', async ({ page
           { timeout: 15_000, message: `the progress row for ${bookId} must reach the server` },
         )
         .not.toBeNull()
+      // Item `bs`: the shelf is ordered `updated_at DESC, book_id`, and
+      // `updated_at` is whole Unix seconds (internal/userdata/progress.go). Three
+      // rows written inside one second sort by book id, three spread across a
+      // boundary sort by time — so the card order on the step-06-12 shot changed
+      // from round to round with nothing but the test's own speed. Letting the
+      // second turn over before the next row is written gives every row its own
+      // timestamp and the shelf one order: the last one opened, first.
+      const landed = Math.floor(Date.now() / 1000)
+      await expect
+        .poll(() => Math.floor(Date.now() / 1000), { timeout: 5_000 })
+        .toBeGreaterThan(landed)
     }
     // Wait for the *server*, not for the client that wrote it: `useProgressSync`
     // debounces its write by a second (04-viewer 6.6b), and the shelf renders

@@ -103,6 +103,37 @@ export interface Cluster {
   ratio: number
 }
 
+/** A rectangle in CSS pixels, viewport-relative — what `page.screenshot({ clip })` takes. */
+export interface Rect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/**
+ * The strongest ink a clip carries: the contrast that at least a mark's worth
+ * of pixels reaches against the clip's ground.
+ *
+ * Why not the worst cluster, and why not "identical colour × 24": in a clip cut
+ * to one mark's own rectangle, the worst cluster is by construction an
+ * antialiased edge or a step of the inset gradient, so asserting on it would
+ * fail every mark ever drawn. And the census's identical-colour rule cannot see
+ * a raster mark at all — the UA's ✕ is a scaled, shaded bitmap, and in the
+ * `step-06-3` shot its most common exact colour has **4** pixels. So the
+ * pixels are ranked by contrast instead and the same mark floor (24, or 0.2 %)
+ * is spent on that ranking: *this many pixels are at least this visible.* A
+ * gradient step or a grain speckle cannot pass it — they sit at 1.00–1.09 —
+ * and a mark that is not drawn leaves exactly those behind.
+ */
+export interface Mark {
+  /** The colour at which the ranked population reached the mark floor. */
+  rgb: string
+  ratio: number
+  /** How many pixels reach `ratio` or better. */
+  pixels: number
+}
+
 export interface Measurement {
   label: string
   /** `color`, as computed — inline styles and runtime classNames included (ⓔ). */
@@ -117,6 +148,8 @@ export interface Measurement {
   measuredRatio: number
   /** Every populated non-ground colour, worst contrast first. ⓑ and ⓒ live here. */
   clusters: Cluster[]
+  /** The clip's strongest mark; `null` unless the shot was a clip. See `Mark`. */
+  mark: Mark | null
   fontSizePx: number
   fontWeight: number
   /** The AA floor this element's type size earns. */
@@ -509,16 +542,28 @@ async function withoutGrain<T>(page: Page, run: () => Promise<T>): Promise<T> {
   }
 }
 
-/** The bitmap half: the modal ground and every populated mark in a box. */
+/** A locator is photographed as itself; a `Rect` is a clip of the page. */
+const isRect = (target: Locator | Rect): target is Rect => !('screenshot' in target)
+
+/**
+ * The bitmap half: the modal ground and every populated mark in a box.
+ *
+ * Given a `Rect` it also returns the whole palette, which is what `Mark` is
+ * ranked from. Only then: a clip is one mark's rectangle and a few hundred
+ * colours, while a sweep box is up to 48 000 grained pixels whose palette has
+ * no reader.
+ */
 async function readBox(
   page: Page,
-  locator: Locator,
+  target: Locator | Rect,
 ): Promise<{
   width: number
   height: number
   total: number
   ground: string
   clusters: { rgb: string; count: number; share: number }[]
+  floorCount: number
+  palette: { rgb: string; count: number }[] | null
 }> {
   // `animations: 'disabled'` is not tidiness — it is what makes this terminate.
   // Playwright holds an element screenshot until the box has been still for two
@@ -531,10 +576,16 @@ async function readBox(
   // The timeout is short and deliberate. This helper runs tens of times per
   // screen, and a hang here reads as "the suite is slow" rather than as a
   // defect — which is how a check ends up deleted for being flaky.
-  const png = (
-    await locator.screenshot({ animations: 'disabled', timeout: 5_000 })
-  ).toString('base64')
-  return page.evaluate(async (b64: string) => {
+  //
+  // A clip goes through `page.screenshot`, which takes viewport coordinates —
+  // the same frame `getBoundingClientRect` and `boundingBox()` report in — and
+  // hides the caret by default, so a focused field's caret cannot enter it.
+  const clip = isRect(target)
+  const shot = clip
+    ? await page.screenshot({ clip: target, animations: 'disabled', timeout: 5_000 })
+    : await target.screenshot({ animations: 'disabled', timeout: 5_000 })
+  const png = shot.toString('base64')
+  return page.evaluate(async ({ b64, wantPalette }: { b64: string; wantPalette: boolean }) => {
     // `atob` + a typed array, **not** `fetch('data:image/png;base64,…')`.
     // The product's CSP is `default-src 'self'` with no `connect-src` of its
     // own (arch §8.4), so fetching a data: URI from inside the page is refused
@@ -578,17 +629,54 @@ async function readBox(
       if (k === groundKey || n < floorCount) continue
       clusters.push({ rgb: spell(k), count: n, share: n / total })
     }
-    return { width: bmp.width, height: bmp.height, total, ground: spell(groundKey), clusters }
-  }, png)
+    const palette = wantPalette
+      ? [...counts].filter(([k]) => k !== groundKey).map(([k, n]) => ({ rgb: spell(k), count: n }))
+      : null
+    return {
+      width: bmp.width,
+      height: bmp.height,
+      total,
+      ground: spell(groundKey),
+      clusters,
+      floorCount,
+      palette,
+    }
+  }, { b64: png, wantPalette: clip })
 }
 
-/** Both layers, for one element. */
+/**
+ * `Mark`, ranked from a clip's palette: the most contrasting colours first,
+ * accumulated until a mark's worth of pixels is reached. The arithmetic is the
+ * shared `contrast` — the ranking is the only thing this adds to the census.
+ */
+function strongestMark(
+  palette: { rgb: string; count: number }[],
+  ground: Rgba,
+  floorCount: number,
+): Mark {
+  const ranked = palette
+    .map((c) => ({ ...c, ratio: contrast(parseColour(c.rgb), ground) }))
+    .sort((a, b) => b.ratio - a.ratio)
+  let pixels = 0
+  for (const c of ranked) {
+    pixels += c.count
+    if (pixels >= floorCount) return { rgb: c.rgb, ratio: c.ratio, pixels }
+  }
+  // Fewer non-ground pixels in the whole clip than one mark needs: nothing is
+  // drawn there, and the ratio says so rather than naming the best speckle.
+  return { rgb: '(none)', ratio: 1, pixels }
+}
+
+/**
+ * Both layers, for one element — photographed as itself, or through a `Rect`
+ * clip when the ink to read is a part of it that has no element of its own.
+ */
 export async function measure(
   page: Page,
   combo: Combination,
-  locator: Locator,
+  target: Locator | Rect,
 ): Promise<Measurement> {
-  const box = await readBox(page, locator)
+  const box = await readBox(page, target)
   const ground: Rgba = parseColour(box.ground)
   const ink: Rgba = parseColour(combo.declaredInk)
   const clusters: Cluster[] = box.clusters
@@ -608,6 +696,7 @@ export async function measure(
     measuredGround: box.ground,
     measuredRatio: contrast(ink, ground),
     clusters,
+    mark: box.palette === null ? null : strongestMark(box.palette, ground, box.floorCount),
     fontSizePx: combo.fontSizePx,
     fontWeight: combo.fontWeight,
     floor: floorFor(combo.fontSizePx, combo.fontWeight),
@@ -630,11 +719,16 @@ export async function measure(
  * `TopBar` puts on the field, and the ⌘K chip whose ground a shadow moves — so
  * reaching them has to be deliberate. Which controls carry unnamed ink is a
  * judgement, and this entry point is where that judgement is spent.
+ *
+ * `clip`, when given, is what gets photographed; the locator still supplies
+ * the declared half. That is how ink with no element of its own — the UA's ✕ —
+ * is read against the control that owns it.
  */
 export async function measureLocator(
   page: Page,
   locator: Locator,
   label: string,
+  clip?: Rect,
 ): Promise<Measurement> {
   const facts = await locator.evaluate((el: Element) => {
     const style = getComputedStyle(el)
@@ -675,7 +769,7 @@ export async function measureLocator(
       pointerEvents: '',
       probe: '',
     },
-    locator,
+    clip ?? locator,
   )
 }
 
@@ -689,6 +783,47 @@ export async function measureLocatorUngrained(
   label: string,
 ): Promise<Measurement> {
   return withoutGrain(page, () => measureLocator(page, locator, label))
+}
+
+/**
+ * One mark, read inside its own rectangle with the grain suppressed — the
+ * closing shape §5.7.17 `br` wrote down for ⓑ and ⓒ.
+ *
+ * The whole-field census could not separate the ✕ from the inset's highlight
+ * lobe (see `withoutGrain` and the note in `11-contrast.spec.ts`); a clip a
+ * mark wide holds that mark, its ground and almost none of the gradient, and
+ * `Measurement.mark` is the number to assert on.
+ */
+export async function measureClipUngrained(
+  page: Page,
+  owner: Locator,
+  clip: Rect,
+  label: string,
+): Promise<Measurement> {
+  return withoutGrain(page, () => measureLocator(page, owner, label, clip))
+}
+
+/**
+ * An element's content box — inside its border and padding — rounded inward to
+ * whole CSS pixels, viewport-relative.
+ *
+ * Inward because the edge is the thing being kept out. The ⌘K chip's border is
+ * `--control-border`, **2.34** on the field by design, and the chip is centred
+ * with `translate(-50%)`, so its border can land on a fractional pixel and
+ * bleed one antialiased row past its nominal edge. A clip that took that row
+ * would be reporting the outline as the hint's ink.
+ */
+export async function contentBoxOf(locator: Locator): Promise<Rect> {
+  return locator.evaluate((el: Element) => {
+    const s = getComputedStyle(el)
+    const px = (v: string): number => Number.parseFloat(v) || 0
+    const r = el.getBoundingClientRect()
+    const left = Math.ceil(r.left + px(s.borderLeftWidth) + px(s.paddingLeft))
+    const right = Math.floor(r.right - px(s.borderRightWidth) - px(s.paddingRight))
+    const top = Math.ceil(r.top + px(s.borderTopWidth) + px(s.paddingTop))
+    const bottom = Math.floor(r.bottom - px(s.borderBottomWidth) - px(s.paddingBottom))
+    return { x: left, y: top, width: right - left, height: bottom - top }
+  })
 }
 
 /** A one-line account of a measurement, for an assertion message. */

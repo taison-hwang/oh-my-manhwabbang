@@ -19,6 +19,8 @@
  * that button only.
  */
 
+import type { Page, Request } from '@playwright/test'
+
 import {
   booksOf,
   expect,
@@ -30,6 +32,7 @@ import {
   seriesId,
   seriesTile,
   seriesTiles,
+  setSort,
   setView,
   shot,
   test,
@@ -187,6 +190,95 @@ test('6.5 (D-70) · a container of sub-archives is a series of volumes', async (
   await shot(page, info, 'step-06-5d-series-detail-nested-volumes')
 })
 
+test('6.5 (E-55) · a Japanese name is set in the Japanese face, and a Korean one is not', async ({
+  page,
+}, info) => {
+  // E-55 splits Han by *name*: textLang tags `lang="ja"` on kana, and the
+  // unlayered `[lang='ja']` rule at the end of base.css hands the element to
+  // `--font-ja`. Its first cut put that rule in `@layer components`, where it
+  // lost to the `font-heading` utility on every element carrying both, with
+  // every test green. `styles/cascade.test.ts` now pins the rule's position in
+  // the compiled sheet; this pins what a reader gets — the computed
+  // `font-family`, against a probe styled with the token itself, which
+  // serialises both sides the same way and keeps the stack out of this file.
+  //
+  // Which element is asserted is the whole point. The title (an h1) and the 권 captions
+  // take their family from the heading rules in `@layer base` and by inheritance, so
+  // `[lang='ja']` wins there from inside any layer and they could not see the
+  // regression. The header's FallbackCover title is the surface on this page
+  // that puts `font-heading` and `lang` on one element (FallbackCover.tsx), and
+  // it is always rendered — beneath the cover image, never swapped for it.
+  const fontJa = () =>
+    page.evaluate(() => {
+      const probe = document.createElement('span')
+      probe.style.fontFamily = 'var(--font-ja)'
+      document.body.append(probe)
+      const family = getComputedStyle(probe).fontFamily
+      probe.remove()
+      return family
+    })
+  const familyOf = (el: Element) => getComputedStyle(el).fontFamily
+  const heading = (name: string) => page.getByRole('heading', { level: 1, name })
+  const coverTitle = (name: string) =>
+    page.locator('header:has(h1) .font-heading').filter({ hasText: name })
+
+  const facts = await seriesFacts(page)
+  const umi = facts.get(SERIES.umi)
+  expect(umi, '§6.3 row 16').toBeDefined()
+
+  // The control first. Without it a rule that tagged *every* name would pass.
+  await gotoLibrary(page)
+  await openSeries(page, SERIES.clover)
+  const ja = await fontJa()
+  for (const [what, el] of [
+    ['the series title', heading(SERIES.clover)],
+    ['the cover title', coverTitle(SERIES.clover)],
+  ] as const) {
+    await expect(el, `a name with no kana carries no lang — ${what}`).not.toHaveAttribute('lang', /./)
+    expect(await el.evaluate(familyOf), `a Korean name keeps its own stack — ${what}`).not.toBe(ja)
+  }
+
+  await gotoLibrary(page)
+  await openSeries(page, SERIES.umi)
+  const title = heading(SERIES.umi)
+  await expect(title, 'kana in the series name tags it ja (textLang)').toHaveAttribute('lang', 'ja')
+  expect(await title.evaluate(familyOf), 'the series title resolves to --font-ja').toBe(ja)
+  const cover = coverTitle(SERIES.umi)
+  await expect(cover, 'the cover title is tagged too').toHaveAttribute('lang', 'ja')
+  expect(
+    await cover.evaluate(familyOf),
+    '[lang=ja] beats the font-heading utility on the same element (base.css, unlayered)',
+  ).toBe(ja)
+
+  // Every 권 name carries the kana too, so every tile caption is tagged and
+  // set the same way — 15 (完) included, the volume whose 完 the seal subset
+  // drew in its own cut before `Shelf Seal` was split out (§0.0.5).
+  const grid = page.locator('[data-testid="volume-grid"]')
+  const captions = grid.locator('[lang="ja"]')
+  await expect(captions, 'one tagged caption per volume').toHaveCount(umi?.book_count ?? 0)
+  const families = await captions.evaluateAll((els) =>
+    els.map((el) => getComputedStyle(el).fontFamily),
+  )
+  expect(new Set(families), 'every caption resolves to --font-ja').toEqual(new Set([ja]))
+  await expect(grid.locator('[lang="ja"]', { hasText: '(完)' })).toHaveCount(1)
+
+  // The stack naming the face is half of it; the other half is that the
+  // vendored files were asked for and arrived. の is outside 고운바탕's range,
+  // so drawing it has to load Noto Sans JP — the captions at 400, the cover
+  // title at 700 — and one weight arriving must not stand in for the other.
+  const loaded = await page.evaluate(async () => {
+    await document.fonts.ready
+    return [...document.fonts]
+      .filter((f) => f.family.replace(/["']/g, '') === 'Noto Sans JP' && f.status === 'loaded')
+      .map((f) => f.weight)
+  })
+  expect(new Set(loaded), 'both Noto Sans JP weights were loaded to draw the kana').toEqual(
+    new Set(['400', '700']),
+  )
+
+  await shot(page, info, 'step-06-5e-series-detail-japanese-name')
+})
+
 test('6.5 (guard) · the 읽음 표시 toggle is a hit target only while it is visible', async ({
   page,
 }) => {
@@ -335,7 +427,7 @@ test('6.5 (regression) · 라이브러리 comes back to the series, not to the t
   expect(name, 'the last mounted tile names the series it opens').not.toBe('')
 
   await tile.click()
-  await expect(page.getByRole('heading', { level: 2, name })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1, name })).toBeVisible()
 
   await page.getByRole('button', { name: '라이브러리', exact: true }).click()
   await expect(scroller).toBeVisible()
@@ -364,4 +456,131 @@ test('6.5 (regression) · 라이브러리 comes back to the series, not to the t
       'the shelf had somewhere to be scrolled to, so it must not be back at the top',
     ).toBeGreaterThan(0)
   }
+})
+
+/**
+ * Item ⑥: the top bar is on every screen, so what it changes on the series
+ * screen is the reader's preference as much as what it changes on the library.
+ *
+ * Before ⑥ the A-5 write-back (`useLibrarySettingsSync`) was mounted by the
+ * library page alone. A 정렬 or 보기 change made on a series screen was never
+ * PUT, and coming back to the library re-hydrated the server's old value over
+ * it two frames later; a root clicked in the sidebar there was undone the same
+ * way. Each test changes one thing on the series screen, then asserts the PUT
+ * (the four library fields travel together, so it is matched by inclusion),
+ * the library it comes back to — a second later, past the re-hydration that
+ * undid it — and the server. `afterEach` puts the defaults back: the PUTs are
+ * real, and the next spec on this server would start from them.
+ */
+test.describe('6.5 (⑥) · what the top bar changes on the series screen stays changed', () => {
+  test.afterEach(async ({ page }) => {
+    await resetLibraryState(page)
+  })
+
+  /** Every `PUT /api/settings` body the page sends from here on. */
+  function settingsPuts(page: Page): Record<string, unknown>[] {
+    const bodies: Record<string, unknown>[] = []
+    page.on('request', (request: Request) => {
+      if (request.method() === 'PUT' && new URL(request.url()).pathname === '/api/settings') {
+        bodies.push((request.postDataJSON() ?? {}) as Record<string, unknown>)
+      }
+    })
+    return bodies
+  }
+
+  async function expectPut(
+    page: Page,
+    bodies: Record<string, unknown>[],
+    fields: Record<string, string>,
+  ): Promise<void> {
+    await expect
+      .poll(() => bodies.some((body) => Object.entries(fields).every(([k, v]) => body[k] === v)), {
+        message: `⑥: the change must be PUT to /api/settings (${JSON.stringify(fields)}); sent: ${JSON.stringify(bodies)}`,
+        timeout: 5_000,
+      })
+      .toBe(true)
+    // The PUT is debounced (400 ms); read the server only once it has answered.
+    await expect
+      .poll(async () => {
+        const saved = (await (await page.request.get('/api/settings')).json()) as Record<string, unknown>
+        return Object.fromEntries(Object.keys(fields).map((k) => [k, saved[k]]))
+      })
+      .toEqual(fields)
+  }
+
+  async function backToLibrary(page: Page): Promise<void> {
+    await page.getByRole('button', { name: '라이브러리', exact: true }).click()
+    await expect(page.locator('[data-testid="library-scroller"]')).toBeVisible()
+    // Past the re-hydration that used to undo the change two frames in.
+    await page.waitForTimeout(1_000)
+  }
+
+  test('정렬 — 수정일 picked on a series screen is the library order too', async ({ page }) => {
+    await gotoLibrary(page)
+    await openSeries(page, SERIES.gungye)
+    const bodies = settingsPuts(page)
+
+    await setSort(page, 'mtime')
+    // ui-spec §4.5: the select picks the key and the key brings its own order.
+    await expectPut(page, bodies, { library_sort: 'mtime', library_order: 'desc' })
+
+    await backToLibrary(page)
+    await expect(page.locator('select[name="sort"]'), '⑥: the library keeps the order picked').toHaveValue('mtime')
+  })
+
+  test('보기 — 리스트 picked on a series screen is the library view too', async ({ page }) => {
+    await gotoLibrary(page)
+    await setView(page, 'grid')
+    await openSeries(page, SERIES.gungye)
+    const bodies = settingsPuts(page)
+
+    await setView(page, 'list')
+    await expectPut(page, bodies, { library_view: 'list' })
+
+    await backToLibrary(page)
+    await expect(
+      page.locator('[data-testid="library-list-header"]'),
+      '⑥: the library keeps the view picked',
+    ).toBeVisible()
+  })
+
+  test('루트 — a root clicked in the sidebar on a series screen scopes the library', async ({ page }) => {
+    const roots = (await (await page.request.get('/api/roots')).json()) as {
+      items: { name: string; label: string; enabled: boolean; pending?: boolean }[]
+    }
+    const root = roots.items.find((r) => r.enabled && r.pending !== true)
+    expect(root, 'GET /api/roots must list a selectable root').toBeDefined()
+    const name = root?.name ?? ''
+    const label = root?.label === '' || root?.label === undefined ? name : root.label
+    // The full row's name is the label and then its count; the rail's is the label.
+    const rowName = new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\s|$)`)
+
+    await gotoLibrary(page)
+    await openSeries(page, SERIES.gungye)
+    const bodies = settingsPuts(page)
+
+    // Below 768 the sidebar is the drawer's (ui-spec §7); the 768 rail names
+    // its rows in the accessible layer, so one locator serves both others.
+    const width = page.viewportSize()?.width ?? 0
+    let nav = page.locator('nav[aria-label="라이브러리 탐색"]')
+    if (width < 768) {
+      await page.getByRole('button', { name: '라이브러리 탐색 열기' }).click()
+      nav = page.getByRole('dialog', { name: '라이브러리 탐색' })
+    }
+    await nav.getByRole('button', { name: rowName }).click()
+
+    await expect(page.locator('[data-testid="library-scroller"]')).toBeVisible()
+    await expectPut(page, bodies, { library_scope: name })
+    await page.waitForTimeout(1_000)
+
+    let row = page.locator('nav[aria-label="라이브러리 탐색"]').getByRole('button', { name: rowName })
+    if (width < 768) {
+      await page.getByRole('button', { name: '라이브러리 탐색 열기' }).click()
+      row = page.getByRole('dialog', { name: '라이브러리 탐색' }).getByRole('button', { name: rowName })
+    }
+    await expect(row, '⑥: the root clicked on the series screen is the library\'s scope').toHaveAttribute(
+      'aria-current',
+      'page',
+    )
+  })
 })

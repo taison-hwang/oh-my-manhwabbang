@@ -1,5 +1,25 @@
 import { defineConfig, devices } from '@playwright/test'
 
+// Item `bb`. Under Node 24.16 the zip reader Playwright 1.50 bundles (yauzl /
+// fd-slicer) stalls without an error on any trace entry over 64 KiB — a failure
+// screenshot, a woff2 — so every failed test spent the whole 120 s tracing slot
+// in 'stop tracing' and left a trace.zip with no end-of-central-directory.
+// Measured: 24.16 stalls between 65 000 and 70 000 B; 24.20 merges the same
+// trace in 196 ms. 24.17–24.19 were not measured, so they are warned about too.
+// A warning and not a refusal: results are still right, only a failure costs
+// 120 s more and its trace is unreadable. scripts/e2e.sh puts
+// SHELF_E2E_NODE_DIR first on PATH for step 11.
+{
+  const [major = 0, minor = 0] = process.versions.node.split('.').map(Number)
+  if (major === 24 && minor >= 16 && minor < 20) {
+    console.warn(
+      `item bb: Node ${process.versions.node} stalls Playwright 1.50's trace merge — every failed ` +
+        'test will wait out the 120 s tracing slot and leave a half-written trace.zip. ' +
+        'Use Node >= 24.20 (scripts/e2e.sh takes SHELF_E2E_NODE_DIR).',
+    )
+  }
+}
+
 // The E2E server that scripts/e2e.sh starts (impl-plan §5.5: 8791, verified
 // free). Override with PLAYWRIGHT_BASE_URL to point at `pnpm dev` or a
 // long-running instance.
@@ -44,6 +64,17 @@ export default defineConfig({
 
   use: {
     baseURL,
+    // Item `bb`. Without this an action whose target never becomes actionable —
+    // a click on a control a defect has hidden or covered — waits out the whole
+    // 120 s test timeout above before failing, and a mutation round pays that per
+    // test. 30 s rather than the assertion's 10 s: the real round's first
+    // thumbnail pass over a cold cache is legitimately slow to make things
+    // clickable, and an action timeout that fires on a good run is worse than
+    // none. The other 120 s a failed test used to pay — after a plain `expect`
+    // failure too, with the test reported at 8 s — was not an action and not the
+    // `consoleGuard` teardown: it was the trace merge stalling under Node 24.16,
+    // outside the test's own duration (the guard at the top of this file).
+    actionTimeout: 30_000,
     // The system Chrome at /usr/bin/google-chrome. Combined with
     // PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 this keeps the ~500 MB browser
     // download out of the build (impl-plan §6.3 step 6).

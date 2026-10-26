@@ -360,10 +360,15 @@ test('E-45 · the stale-progress notice lives its 3.4 s, and its acknowledgement
   // happens *inside* the notice's life, so this can only under-count.
   const seenAt = Date.now()
   await expect(notice, 'E-45 fixes this sentence verbatim').toHaveText(STALE_NOTICE)
+  // Through the viewer's one live region (ba), which is always mounted so the
+  // message is announced on arrival; the visible box is aria-hidden.
+  const status = page.locator('[data-role="viewer-status"]')
+  await expect(status).toHaveAttribute('role', 'status')
   await expect(
-    notice,
+    status,
     'E-45 §1: a notice that removes itself and has no live region has a lifetime of zero on a screen reader',
-  ).toHaveAttribute('role', 'status')
+  ).toContainText(STALE_NOTICE)
+  await expect(notice, 'the visible box is not itself a live region (ba)').toHaveAttribute('aria-hidden', 'true')
 
   // ---- …survives the write that used to unmount it -------------------------
   // The defect, exactly: `useProgressSync` writes the reader's page a second

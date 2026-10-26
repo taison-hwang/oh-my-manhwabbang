@@ -47,6 +47,22 @@
 // clock-bearing rectangles for the 34, pin image decode for the 11. Neither is
 // guessed at here.
 //
+// That work is done (item bs), and three more synthetic rounds (2026-10-20,
+// after it) measured what is left:
+//
+//	118 shots  byte-identical in every round
+//	  7 shots  the settings dialog (step 6.10a/b): the scan log's rows arrive
+//	           in a different order each round and the cache panel reports
+//	           real sizes, max channel delta 222-241
+//	  0 shots  decode variance — shot() now waits for fonts and image decode
+//	           and disables animations (web/e2e/shelf.ts)
+//
+// Only two clocks are masked, as fixed-size covers: the sidebar's relative
+// scan time and the scan log's HH:MM:SS column. The rest of the 34 were
+// fixed at their source — test ordering, a progress row one spec left behind
+// for the next viewport project, and the fixture's directory mtimes, which
+// were the build time and so a different 수정일 every day.
+//
 // # Synthetic only, and why that is not a shortcut
 //
 // Two rounds write to the same directory: `make e2e-synthetic` (the hermetic
@@ -91,8 +107,9 @@ const thumbWidth = 320
 const thumbQuality = 85
 
 // contentDelta separates the two reasons a shot fails to reproduce. Below it,
-// the same content rendered slightly differently (observed max 18); at or above
-// it, different content (observed min 150). The gap between 18 and 150 is wide
+// the same content rendered slightly differently (observed max 18 in the first
+// three rounds, 27 in a later classify before shot() waited for decode); at or
+// above it, different content (observed min 150, then 122). The gap is wide
 // enough that this threshold is a label rather than a judgement — but it is
 // still a threshold, so -classify prints the deltas it saw.
 const contentDelta = 40

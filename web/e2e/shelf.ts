@@ -3,7 +3,7 @@
  *
  * The specs in this directory are step 6 of that section — the twelve browser
  * assertions — run by `scripts/e2e.sh` step 11 against the **already running**
- * server it started in step 4, i.e. the real collection narrowed to fifteen
+ * server it started in step 4, i.e. the real collection narrowed to sixteen
  * series by `scan.include_globs` (amendment A-3). Nothing here starts or
  * configures a server; `PLAYWRIGHT_BASE_URL` points at the one that is up.
  *
@@ -16,9 +16,9 @@
  *     its expectation from the API first.
  *
  *     What the rule does **not** say, and what a wrong sentence here cost: the
- *     synthetic tree does not carry the same fifteen *names*. D-49, as extended
+ *     synthetic tree does not carry the same sixteen *names*. D-49, as extended
  *     by D-71, adds an encrypted ZIP, a ZIP64 archive and a solid RAR the real
- *     collection has no sample of, so the synthetic library holds **eighteen**
+ *     collection has no sample of, so the synthetic library holds **nineteen**
  *     series — and this docblock claimed the two libraries were the same size
  *     until 2026-07-29, which is why `toBe(CURATED_SERIES_COUNT)` stood in
  *     01-library.spec.ts for three sessions and `make e2e-synthetic` had never
@@ -53,12 +53,13 @@ export const SHOTS_DIR = path.resolve(HERE, '..', '..', 'docs', 'e2e-shots')
  * until E-14 added `비둘기.zip`, and then four more in the RAR session — three
  * that D-71 made reachable (`라제폰`, `울프가이`, `사모님은 학생회장`) and one
  * that D-72 gave a name to instead of `비어 있음` (`펌프킨 시저스`, which E-51
- * then gave a reader and 104 pages). Fifteen now.
+ * then gave a reader and 104 pages). Fifteen until item `bz` added
+ * `바다의 무녀`, the one curated name in Japanese (E-55). Sixteen now.
  *
  * These are a *copy*, not the source. The same strings are written out three
- * more times — `scripts/e2e-config.sh:29-43` (`CURATED`, which becomes
- * `scan.include_globs`, and is the source of truth), `scripts/e2e-assert.py:51-65`
- * (`CURATED`, the curl tier's expectation) and 26 path literals in
+ * more times — `scripts/e2e-config.sh:29-49` (`CURATED`, which becomes
+ * `scan.include_globs`, and is the source of truth), `scripts/e2e-assert.py:51-66`
+ * (`CURATED`, the curl tier's expectation) and the path literals in
  * `scripts/mkfixture/main.go`, which builds the synthetic twin under the same
  * names (D-49). A **fifth** copy hides in `scripts/e2e.sh:922` (`A11_FILL`, one
  * archive by path), and a sixth in `docs/impl-plan.md` §6.3's table, which is
@@ -97,6 +98,7 @@ export const SERIES = {
   wolfGuy: '울프가이',
   madam: '사모님은 학생회장.zip',
   pumpkin: '펌프킨 시저스 1~13권',
+  umi: '바다의 무녀 (완결, 미번) (文月晃, 海の御先)',
 } as const
 
 /**
@@ -172,7 +174,7 @@ export const EXPECTED_SERIES: readonly string[] = SYNTHETIC
   : Object.values(SERIES)
 
 /**
- * Where the fifteen names live. Printed by `expectCuratedLibrary` when they
+ * Where the sixteen names live. Printed by `expectCuratedLibrary` when they
  * disagree, because the failure it reports is almost never in this file: it is
  * one of these copies having moved without the others.
  *
@@ -182,10 +184,10 @@ export const EXPECTED_SERIES: readonly string[] = SYNTHETIC
  * names the file and the series in seconds.
  */
 const CURATED_COPIES = [
-  'scripts/e2e-config.sh:29-43  CURATED — becomes scan.include_globs. THE SOURCE OF TRUTH.',
-  'scripts/e2e-assert.py:51-65  CURATED — the curl tier, unpacked positionally at :69-72',
-  'web/e2e/shelf.ts:84-98       SERIES — this file, the browser tier',
-  'scripts/mkfixture/main.go    26 path literals, which build the synthetic twin (D-49)',
+  'scripts/e2e-config.sh:29-49  CURATED — becomes scan.include_globs. THE SOURCE OF TRUTH.',
+  'scripts/e2e-assert.py:51-66  CURATED — the curl tier, unpacked positionally at :70-74',
+  'web/e2e/shelf.ts:86-101      SERIES — this file, the browser tier',
+  'scripts/mkfixture/main.go    its path literals, which build the synthetic twin (D-49)',
   'scripts/e2e.sh:922           A11_FILL — one archive by path, step 11b',
   'docs/impl-plan.md §6.3       the curated-set table — the declared source of truth',
 ].join('\n  ')
@@ -201,7 +203,7 @@ const CURATED_COPIES = [
  * referenced anywhere else in this directory.
  *
  * The message is the point of the helper as much as the assertion is. Playwright
- * would print two sorted fifteen-element arrays and leave the reader to diff
+ * would print two sorted sixteen-element arrays and leave the reader to diff
  * Korean strings by eye; what a reader needs instead is which names are missing,
  * which are surplus, and which file to edit — and the two shapes that mean
  * something specific: nothing indexed at all is a glob that matched nothing, and
@@ -362,7 +364,92 @@ export { expect } from '@playwright/test'
  */
 export async function shot(page: Page, info: TestInfo, name: string): Promise<void> {
   await mkdir(SHOTS_DIR, { recursive: true })
-  await page.screenshot({ path: path.join(SHOTS_DIR, `${name}-${info.project.name}.png`) })
+  // Item `bs`: these PNGs are compared byte for byte by scripts/pixelbaseline
+  // (e2e.sh step 11c), so a frame has to be the same frame every round. Five
+  // archived synthetic rounds were diffed to find out what moved, and the
+  // answer decides each line below — nothing here is a guess or a tolerance.
+  //
+  // Settle first. A cover still decoding, a face still swapping in, or a hover
+  // reveal halfway through its transition all drew differently from one round
+  // to the next (the 썸네일 column of 5b, the 읽음 표시 button on 11d/5d).
+  // `allSettled`: an image that cannot decode (a broken cover is a state this
+  // suite photographs on purpose) must not stop the frame from being taken; the
+  // race keeps a stalled request from spending the whole test timeout in here.
+  await page.evaluate(async () => {
+    await document.fonts.ready
+    const decoded = Promise.allSettled(
+      [...document.images].filter((img) => img.src !== '').map((img) => img.decode()),
+    )
+    await Promise.race([decoded, new Promise((resolve) => setTimeout(resolve, 10_000))])
+  })
+
+  // Masked only where the product is telling the truth about a clock, each one
+  // seen moving in the archived rounds. A mask is not a tolerance: it hides one
+  // rectangle whose content is *defined* to change, and every pixel around it
+  // stays under the exact comparison. Do not add one for a frame that merely
+  // differs — find out why it differs first.
+  //
+  // The covers are laid down here rather than passing the elements to `mask`,
+  // because Playwright paints a mask over the element's own box: a label that
+  // is one glyph wider at 10분 than at 9분 would move the mask's edge, which is
+  // the very difference the mask exists to remove. So each cover is a rectangle
+  // whose size does not depend on the text it hides.
+  await page.evaluate(() => {
+    const cover = (left: number, top: number, width: number, height: number): void => {
+      const el = document.createElement('div')
+      el.setAttribute('data-shot-mask', '')
+      Object.assign(el.style, {
+        position: 'fixed',
+        left: `${String(left)}px`,
+        top: `${String(top)}px`,
+        width: `${String(width)}px`,
+        height: `${String(height)}px`,
+        pointerEvents: 'none',
+      })
+      document.body.append(el)
+    }
+    // The sidebar's `스캔 대기 — N분 전 완료` (lib/format.ts): a relative time
+    // that crossed a minute boundary between rounds on nine shots. Covered from
+    // the label's start to the end of the button, which the sidebar column
+    // stretches to its own fixed width. The dot before it is the scanning
+    // state and stays visible.
+    for (const label of document.querySelectorAll('.scan-indicator > span:not([aria-hidden])')) {
+      const box = label.getBoundingClientRect()
+      const host = label.parentElement?.getBoundingClientRect()
+      if (host !== undefined && box.width > 0 && box.height > 0) {
+        cover(box.left, box.top, host.right - box.left, box.height)
+      }
+    }
+    // 설정 → 스캔 로그: every row opens with the wall-clock HH:MM:SS of the
+    // scan, in tabular figures, so the column is one width whatever the time.
+    // Only the column — the rows also arrive in a different order each round
+    // (concurrent inserts, `ORDER BY id DESC`), but that is scheduling, not a
+    // clock, and stays visible: a frame it changes is left for the baseline's
+    // exclusion list to report, not hidden here. Clipped to the scrolling body,
+    // or a row scrolled out of view would be painted over whatever is below.
+    for (const body of document.querySelectorAll('[data-testid="scan-log-body"]')) {
+      const clip = body.getBoundingClientRect()
+      for (const time of body.querySelectorAll(':scope > div > span:first-child')) {
+        const box = time.getBoundingClientRect()
+        const top = Math.max(box.top, clip.top)
+        const bottom = Math.min(box.bottom, clip.bottom)
+        if (box.width > 0 && bottom > top) cover(box.left, top, box.width, bottom - top)
+      }
+    }
+  })
+  try {
+    await page.screenshot({
+      path: path.join(SHOTS_DIR, `${name}-${info.project.name}.png`),
+      // Finishes CSS transitions and animations instead of photographing them.
+      animations: 'disabled',
+      caret: 'hide',
+      mask: [page.locator('[data-shot-mask]')],
+    })
+  } finally {
+    await page.evaluate(() => {
+      for (const el of document.querySelectorAll('[data-shot-mask]')) el.remove()
+    })
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -594,8 +681,8 @@ export function seriesTile(page: Page, name: string): Locator {
  * (`--grid-min: 224px` at 768–1023, two columns at both 768 and 400), so a
  * library this size is mounted all at once at 1440 and 1024 and never is at 768
  * or 400. The measurement behind that sentence was taken on 2026-07-29, when the
- * curated set was ten: 8 of 10 mounted at both narrow tiers. The set is fifteen
- * now (eighteen synthetic) and nobody has re-measured, which makes the gap wider
+ * curated set was ten: 8 of 10 mounted at both narrow tiers. The set is sixteen
+ * now (nineteen synthetic) and nobody has re-measured, which makes the gap wider
  * rather than narrower — the conclusion survives, the two numbers are of their
  * date. A caller that wants the whole library therefore has to page through it,
  * and one that asserts a count against the live locator instead is asserting its
@@ -629,9 +716,9 @@ export async function walkLibrary(
   // 2026-07-29 by driving this exact loop against the synthetic fixture as it
   // stood — twelve series — at all four projects' viewports: 그리드 takes 2 stops
   // at desktop-1440, 3 at laptop-1024 and 5 at both tablet-768 and mobile-400,
-  // and 리스트 never exceeds 2. The fixture is eighteen series now — E-14, D-71
-  // and D-72 added five curated names between them and D-71 a third synthetic
-  // extra — so those stop counts are a FLOOR of that date rather than today's
+  // and 리스트 never exceeds 2. The fixture is nineteen series now — E-14, D-71
+  // and D-72 added five curated names between them, D-71 a third synthetic
+  // extra and item `bz` a sixteenth curated name — so those stop counts are a FLOOR of that date rather than today's
   // reading; 50 is still slack around any of them. What stood here — "the
   // narrowest tier needs five stops for the curated ten" — had the wrong library
   // size and no measurement behind either number, which is the defect class of
@@ -719,7 +806,7 @@ async function revealSeriesTile(page: Page, name: string): Promise<Locator> {
 export async function openSeries(page: Page, name: string): Promise<void> {
   const tile = await revealSeriesTile(page, name)
   await tile.click()
-  await expect(page.getByRole('heading', { level: 2, name })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1, name })).toBeVisible()
 }
 
 /**
@@ -737,7 +824,7 @@ export async function openSettings(page: Page): Promise<void> {
     await expect(page.getByRole('dialog', { name: '라이브러리 탐색' })).toBeVisible()
     await page.getByRole('dialog', { name: '라이브러리 탐색' }).getByLabel('설정').click()
   } else {
-    await page.locator('aside[aria-label="라이브러리 탐색"]').getByLabel('설정').click()
+    await page.locator('nav[aria-label="라이브러리 탐색"]').getByLabel('설정').click()
   }
   await expect(page.getByRole('dialog', { name: '설정' })).toBeVisible()
 }

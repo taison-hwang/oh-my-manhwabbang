@@ -41,7 +41,7 @@
  * that line is on screen.
  */
 
-import type { Page } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 
 import {
   booksOf,
@@ -551,10 +551,15 @@ test('E-27 · the opening hint, the `H` key, and the two screen-edge strips', as
     'E-27: a viewer that opens with nothing on it owes the reader one line saying where the controls went',
   ).toBeVisible()
   await expect(hint, 'E-28 fixes this sentence verbatim').toHaveText(CHROME_HINT)
+  // Announced through the viewer's one live region (ba), not by the box: the
+  // box is decoration now and must not be a second region reading it twice.
+  const status = page.locator('[data-role="viewer-status"]')
+  await expect(status).toHaveAttribute('role', 'status')
   await expect(
-    hint,
+    status,
     'and it is announced: a line that only exists for 3.4 s is no use to a reader who cannot see it',
-  ).toHaveAttribute('role', 'status')
+  ).toContainText(CHROME_HINT)
+  await expect(hint, 'the visible box is not itself a live region (ba)').toHaveAttribute('aria-hidden', 'true')
 
   const seenAt = Date.now()
   await expect(
@@ -771,6 +776,26 @@ test('E-28 · at the end of a volume the chrome stays above the next-volume scri
   await stripButton.click()
   await expect(page.locator('[data-role="thumbnail-strip"]')).toHaveCount(0)
 
+  // Item `bs`: opening on the last page completes the volume, but the write is
+  // debounced (`useProgressSync`), so the card's FR-VWR-012 action read 읽음
+  // 표시 or 읽음 해제 depending on whether the shot beat the flush — the five
+  // archived rounds split both ways. Wait for the row the server keeps, then
+  // for the card to say so, and the frame has one answer.
+  await expect
+    .poll(
+      async () => {
+        const body = (await (await page.request.get(`/api/books/${bid}`)).json()) as {
+          progress: { completed: boolean } | null
+        }
+        return body.progress?.completed ?? false
+      },
+      { timeout: 15_000, message: 'FR-VWR-012: reaching the last page records the volume as read' },
+    )
+    .toBe(true)
+  await expect(
+    page.locator('[data-role="next-volume-card"]').getByRole('button', { name: '읽음 해제' }),
+  ).toBeVisible()
+
   await shot(page, info, 'e28-viewer-volume-end-chrome')
 
   // …and the way out the defect took away.
@@ -897,4 +922,508 @@ test('E-44 · 맞춤 네 옵션은 화살표로 전부 닿고, 어느 폭에서�
 
   await resetBookPrefs(page, bid)
   await clearProgress(page, bid)
+})
+
+// ---------------------------------------------------------------------------
+// HANDOFF §5.7.11 `ay` — every other `Seg` this spec can reach, by keyboard
+// ---------------------------------------------------------------------------
+
+/** One key press of a walk across a `Seg`, and the option it has to land on. */
+interface SegStep {
+  readonly key: 'ArrowRight' | 'ArrowLeft'
+  readonly value: string
+  readonly why: string
+}
+
+/**
+ * The E-44 walk above, for any option list — plus the half it does not take.
+ *
+ * → from the first option to the last, → once more for the wrap back to the
+ * first, and then ←, which has to wrap the *other* way, round to the last. The
+ * reverse wrap is the one a two-option group (읽기 방향) can be tested on at all:
+ * a two-step walk has no middle, so its whole keyboard story is the two wraps.
+ *
+ * A copy of this lives in 06-settings.spec.ts. It belongs in shelf.ts, and was
+ * not put there only because shelf.ts had another owner the day it was written;
+ * a spec file cannot import another spec file without registering its tests
+ * twice.
+ */
+function segWalk(values: readonly string[]): SegStep[] {
+  const first = values[0]
+  const last = values[values.length - 1]
+  if (first === undefined || last === undefined || values.length < 2) {
+    throw new Error('segWalk: a segmented control has at least two options')
+  }
+  return [
+    ...values.slice(1).map((value) => ({
+      key: 'ArrowRight' as const,
+      value,
+      why: `ArrowRight reaches ${value}`,
+    })),
+    { key: 'ArrowRight', value: first, why: `ArrowRight wraps from ${last} back to ${first}` },
+    { key: 'ArrowLeft', value: last, why: `ArrowLeft wraps from ${first} back round to ${last}` },
+  ]
+}
+
+/**
+ * Walks one `Seg` by keyboard from its first option, checking each stop twice.
+ *
+ * Where it can, the caller has already put the control on its first option over
+ * the API, as setup, and the click here changes nothing; where it cannot (the
+ * series seed below) the click is what does it. Either way it is there for the
+ * premise the E-44 test asserts and this one re-asserts: a click on the label
+ * focuses the radio it wraps, and without that every `press` would go to the
+ * document and the walk would "pass" by never moving.
+ *
+ * Each stop is then `data-checked` **and** whatever `landed` says the choice is
+ * for. The first alone is not the claim: a radio that the browser checked and
+ * nothing listened to would satisfy it, and that is exactly the failure a `Seg`
+ * with no keydown handler of its own could have.
+ */
+async function walkSeg(
+  page: Page,
+  group: Locator,
+  values: readonly string[],
+  rule: string,
+  landed: (value: string, why: string) => Promise<void>,
+): Promise<void> {
+  const first = values[0] ?? ''
+  await group.locator(`label[data-value="${first}"]`).click()
+  await expect(
+    group.locator(`label[data-value="${first}"]`),
+    `${rule}: the walk starts on ${first}`,
+  ).toHaveAttribute('data-checked', 'true')
+  await expect(
+    group.locator(`input[value="${first}"]`),
+    `${rule}: a click on the label focuses the radio, which is what makes the group one tab stop`,
+  ).toBeFocused()
+
+  for (const step of segWalk(values)) {
+    await page.keyboard.press(step.key)
+    const why = `${rule}: ${step.why}`
+    await expect(group.locator(`label[data-value="${step.value}"]`), why).toHaveAttribute(
+      'data-checked',
+      'true',
+    )
+    // Focus travels with the selection in a native radio group. Asserted so a
+    // walk that checked the right radio by some other route — a handler that
+    // moved the value but left focus behind — cannot pass as the browser's.
+    await expect(group.locator(`input[value="${step.value}"]`), why).toBeFocused()
+    await landed(step.value, why)
+  }
+}
+
+interface BookPrefsFact {
+  reading_direction: string
+  display_mode: string
+  fit_mode: string
+}
+
+/** `GET /api/books/{bid}/prefs` — the per-book row a viewer `Seg` writes (arch §7.6). */
+async function bookPrefs(page: Page, bid: string): Promise<BookPrefsFact> {
+  const response = await page.request.get(`/api/books/${bid}/prefs`)
+  expect(response.ok(), `GET /api/books/${bid}/prefs`).toBe(true)
+  return (await response.json()) as BookPrefsFact
+}
+
+/**
+ * The viewer's other two groups, in their `ViewerTopBar.tsx` option order.
+ *
+ * Order is the key mapping, as E-44 §1 says of 맞춤, so these arrays are copies
+ * of `MODE_OPTIONS` / `DIR_OPTIONS` on the same terms as `SERIES` in shelf.ts —
+ * and a reorder there is meant to redden this, not be absorbed by it.
+ * `resetBookPrefs` puts the book on `single` / `ltr`, the first of each.
+ */
+const VIEWER_SEGS = [
+  {
+    group: '표시 모드',
+    rule: 'FR-VWR-003',
+    values: ['single', 'spread', 'vertical'],
+    stageAttr: 'data-mode',
+    field: 'display_mode',
+  },
+  {
+    group: '읽기 방향',
+    rule: 'FR-VWR-002',
+    values: ['ltr', 'rtl'],
+    stageAttr: 'data-dir',
+    field: 'reading_direction',
+  },
+] as const satisfies readonly {
+  group: string
+  rule: string
+  values: readonly string[]
+  stageAttr: string
+  field: keyof BookPrefsFact
+}[]
+
+/**
+ * `ay` · the viewer's 표시 모드 and 읽기 방향, by keyboard.
+ *
+ * Same reason as the E-44 test, for the two groups it did not cover: `Seg` has
+ * no keydown handler (`components/ds/Seg.tsx`), the ←/→ walk is the browser's
+ * radio-group behaviour, and jsdom does not implement it — so until this test the
+ * only `Seg` whose keyboard claim anything checked was 맞춤.
+ *
+ * In the viewer the two keys mean something else as well: ←/→ turn the page
+ * (`useViewerKeys`). The walk works only because that hook drops keys whose
+ * target is an `<input>` (`isTypingTarget`), and the focus assertion in
+ * `walkSeg` is what proves the key went to the radio and not to the page.
+ *
+ * The effect is asserted on both sides of the wire: the stage re-lays itself
+ * out (`data-mode` / `data-dir` on `[data-role="stage"]`), and the choice is
+ * saved **for this volume** (FR-VWR-002 권 단위), which is the per-book prefs row.
+ * Arrowing persists every option it passes — `ViewerPage.tsx` says so of 맞춤 and
+ * leaves it alone — so every stop is a row this test reads back.
+ */
+for (const seg of VIEWER_SEGS) {
+  test(`ay · 뷰어 ${seg.group} — 화살표로 전부 닿고, 양 끝에서 양쪽으로 감긴다`, async ({ page }) => {
+    const sid = await seriesId(page, SERIES.scars)
+    const books = await booksOf(page, sid)
+    const book = books.find((candidate) => candidate.status === 'ok')
+    expect(book, '§6.3 row 2: 상처를 쫓는자 is a folder of volume folders').toBeDefined()
+    const bid = book?.id ?? ''
+    await resetBookPrefs(page, bid)
+
+    try {
+      await openViewerDirect(page, sid, bid, 1)
+      await waitForPage(page)
+      // The chrome opens away (E-27); waking it parks the pointer on the bar,
+      // which holds the auto-hide off for the whole walk.
+      await wakeChrome(page)
+
+      const group = viewerTopBar(page).locator(`[aria-label="${seg.group}"]`)
+      const stage = page.locator('[data-role="stage"]')
+      await walkSeg(page, group, seg.values, seg.rule, async (value, why) => {
+        await expect(stage, `${why} — and the stage takes it`).toHaveAttribute(seg.stageAttr, value)
+        await expect
+          .poll(async () => (await bookPrefs(page, bid))[seg.field], {
+            message: `${why} — and it is saved for this volume (FR-VWR-002 권 단위)`,
+          })
+          .toBe(value)
+      })
+    } finally {
+      await resetBookPrefs(page, bid)
+      await clearProgress(page, bid)
+    }
+  })
+}
+
+/** `store/seriesDir.ts`'s `SERIES_DIR_STORAGE_KEY` — the key C-9 names. A copy. */
+const SERIES_DIR_STORAGE_KEY = 'shelf.seriesDir'
+
+/**
+ * `ay` · the series screen's 읽기 방향 seed, by keyboard.
+ *
+ * Not a viewer control, and here rather than in 03-series-detail only because
+ * that spec had another owner when this was written. It is the viewer's in
+ * purpose: C-9 / D-35 make it a client-only seed for the direction books opened
+ * from that screen start at, and E-33 §2 is the ruling that the seed reach the
+ * viewer.
+ *
+ * Its effect is therefore `localStorage`, not the server: the zustand `persist`
+ * envelope under `shelf.seriesDir`, keyed by series id. The last assertion is
+ * the other half of C-9 — the seed **never writes the server** — read as the
+ * global default being exactly what it was before the walk.
+ *
+ * shelf.ts rule 2 holds without a `finally`: the only state written is in this
+ * test's own browser context, which Playwright discards with it.
+ */
+test('ay · 시리즈 화면의 읽기 방향 씨앗도 화살표로 감기고, 서버에는 쓰지 않는다', async ({ page }) => {
+  const sid = await seriesId(page, SERIES.scars)
+  const before = (await (await page.request.get('/api/settings')).json()) as {
+    reading_direction: string
+  }
+
+  await page.goto(`/series/${sid}`)
+  await expect(page.getByRole('heading', { level: 1, name: SERIES.scars })).toBeVisible()
+
+  const group = page.locator('header').locator('[aria-label="읽기 방향"]')
+  const seed = (): Promise<string | null> =>
+    page.evaluate(
+      ([key, id]) => {
+        const raw = window.localStorage.getItem(key)
+        if (raw === null) return null
+        const parsed = JSON.parse(raw) as { state?: { bySeries?: Record<string, string> } }
+        return parsed.state?.bySeries?.[id] ?? null
+      },
+      [SERIES_DIR_STORAGE_KEY, sid] as const,
+    )
+
+  // No setup can put this one on L→R ahead of time — its starting value is the
+  // global default until something is stored — so the walker's click does it
+  // here when it has to. Either way the walk below starts on `ltr`.
+  await walkSeg(page, group, ['ltr', 'rtl'], 'C-9 · 읽기 방향 seed', async (value, why) => {
+    await expect.poll(seed, { message: `${why} — and the seed is stored for this series` }).toBe(value)
+  })
+
+  const after = (await (await page.request.get('/api/settings')).json()) as {
+    reading_direction: string
+  }
+  expect(
+    after.reading_direction,
+    'C-9: the series-screen seed is client-only — arrowing it must not move the global default',
+  ).toBe(before.reading_direction)
+})
+
+/**
+ * E-62 — a chrome that is away is out of reach, and a keyboard reader inside
+ * it holds it up.
+ *
+ * Before E-62 the bars faded on opacity and nothing else: hidden, they were
+ * still in the Tab order and the accessibility tree, so a keyboard reader
+ * tabbed into controls nobody could see, and one who had tabbed in while they
+ * were up lost them 2 600 ms later with focus left on an invisible button.
+ * Now a hidden bar is `inert`; focus put in a bar *by the keyboard* holds the
+ * auto-hide off (the mouse and touch keep E-30's 2.6 s); and a chrome that
+ * hides around the focus hands it to the viewer root. `H` answers from a radio
+ * or the slider too, since neither takes letters.
+ */
+test('E-62 · a hidden chrome is out of reach, and the keyboard holds it up', async ({ page }) => {
+  const { sid, bid, total } = await wheelBook(page)
+  expect(total, 'a book with pages is the premise of every viewer assertion').toBeGreaterThan(1)
+  await resetBookPrefs(page, bid)
+  try {
+    await openViewerDirect(page, sid, bid, 1)
+    await waitForPage(page)
+    await standBackFromChrome(page)
+    await expect(viewer(page)).toHaveAttribute('data-chrome', 'hidden')
+
+    /** Where focus is: inside one of the bars, on the viewer root, or elsewhere. */
+    const focusAt = () =>
+      page.evaluate(() => {
+        const el = document.activeElement
+        if (el === null || el === document.body) return 'body'
+        if (el.closest('[data-role="viewer-top-bar"], [data-role="viewer-bottom-bar"]') !== null) {
+          return `bar:${el.tagName}${el instanceof HTMLInputElement ? `/${el.type}` : ''}`
+        }
+        if (el.getAttribute('data-role') === 'viewer') return 'root'
+        return `other:${el.tagName}`
+      })
+    /** Tab until focus is in a bar on a control `want` accepts; the stops it took. */
+    const tabIntoBar = async (want: (where: string) => boolean): Promise<string[]> => {
+      const stops: string[] = []
+      for (let i = 0; i < 30; i += 1) {
+        await page.keyboard.press('Tab')
+        const where = await focusAt()
+        stops.push(where)
+        if (want(where)) return stops
+      }
+      return stops
+    }
+
+    // ---- (1) hidden: inert, so neither Tab nor the accessibility tree reach it
+    await expect(viewerTopBar(page), 'E-62 §2.1: a hidden top bar is inert').toHaveAttribute('inert', '')
+    await expect(viewerBottomBar(page), 'and so is the bottom bar').toHaveAttribute('inert', '')
+    const hiddenStops: string[] = []
+    for (let i = 0; i < 10; i += 1) {
+      await page.keyboard.press('Tab')
+      hiddenStops.push(await focusAt())
+    }
+    expect(
+      hiddenStops.filter((where) => where.startsWith('bar:')),
+      `E-62: no Tab press lands in a hidden bar (stops: ${JSON.stringify(hiddenStops)})`,
+    ).toEqual([])
+    // Chrome's own tree, not Playwright's role engine, which does not apply `inert`.
+    const cdp = await page.context().newCDPSession(page)
+    const exposed = async (name: string): Promise<boolean> => {
+      const { nodes } = (await cdp.send('Accessibility.getFullAXTree')) as {
+        nodes: { ignored: boolean; name?: { value?: unknown } }[]
+      }
+      return nodes.some((node) => !node.ignored && node.name?.value === name)
+    }
+    expect(await exposed('뒤로'), 'and 뒤로 is not in the accessibility tree while the chrome is away').toBe(false)
+
+    // ---- (2) `H`, then Tab into the bar: the chrome holds past its deadline
+    await page.keyboard.press('h')
+    await expect(viewer(page)).toHaveAttribute('data-chrome', 'visible')
+    await expect(viewerTopBar(page), 'a visible bar is not inert').not.toHaveAttribute('inert', '')
+    expect(await exposed('뒤로'), 'and its 뒤로 is back in the accessibility tree').toBe(true)
+    const inStops = await tabIntoBar((where) => where.startsWith('bar:'))
+    expect(inStops.at(-1), `Tab must reach a control in the bar (stops: ${JSON.stringify(inStops)})`).toMatch(/^bar:/)
+    await watchChrome(page)
+    await page.waitForTimeout(CHROME_AUTOHIDE_MS + HOLD_SLACK_MS)
+    expect(
+      await chromeFlips(page),
+      'E-62 §2.2: focus put in the bar by the keyboard holds the auto-hide off',
+    ).toEqual([])
+    await expect(viewer(page)).toHaveAttribute('data-chrome', 'visible')
+
+    // Focus leaves the bar: the next deadline puts the chrome away.
+    await page.locator('[data-role="viewer"]').focus()
+    await expect(viewer(page), 'and once focus has left the bar, the chrome goes on its deadline').toHaveAttribute(
+      'data-chrome',
+      'hidden',
+      { timeout: CHROME_AUTOHIDE_MS + HOLD_SLACK_MS },
+    )
+
+    // ---- a page turn is reading, not the keyboard working the bar: no hold
+    await page.keyboard.press('h')
+    await expect(viewer(page)).toHaveAttribute('data-chrome', 'visible')
+    const buttonStops = await tabIntoBar((where) => where === 'bar:BUTTON')
+    expect(buttonStops.at(-1), `Tab must reach a button in the bar (stops: ${JSON.stringify(buttonStops)})`).toBe(
+      'bar:BUTTON',
+    )
+    const before = await currentPage(page)
+    await page.keyboard.press('ArrowRight')
+    await expect.poll(() => currentPage(page), { message: '→ on a bar button turns the page' }).not.toBe(before)
+    await expect(viewer(page), 'E-62 §2.4: a page-turn key does not hold the chrome up').toHaveAttribute(
+      'data-chrome',
+      'hidden',
+      { timeout: CHROME_AUTOHIDE_MS + HOLD_SLACK_MS },
+    )
+    expect(await focusAt(), 'and the focus it hid around goes to the viewer root').toBe('root')
+
+    // ---- (3)+(5) `H` from a focused radio or the slider hides it, focus to the root
+    for (const control of ['bar:INPUT/radio', 'bar:INPUT/range']) {
+      await page.keyboard.press('h')
+      await expect(viewer(page)).toHaveAttribute('data-chrome', 'visible')
+      const stops = await tabIntoBar((where) => where === control)
+      expect(stops.at(-1), `Tab must reach ${control} (stops: ${JSON.stringify(stops)})`).toBe(control)
+      await page.keyboard.press('h')
+      await expect(viewer(page), `E-62 §2.2: \`H\` answers from ${control}`).toHaveAttribute('data-chrome', 'hidden')
+      expect(await focusAt(), 'E-62 §2.3: the chrome hid around the focus, which goes to the viewer root').toBe('root')
+    }
+
+    // ---- (4) a mouse click on a bar control: no hold, E-30's 2.6 s
+    const single = viewerTopBar(page).locator('[aria-label="표시 모드"] label[data-value="single"]')
+    await wakeChrome(page)
+    await single.click()
+    await standBackFromChrome(page)
+    await expect(viewer(page), 'E-30: a pointer in the bar holds nothing once it has left').toHaveAttribute(
+      'data-chrome',
+      'hidden',
+      { timeout: CHROME_AUTOHIDE_MS + HOLD_SLACK_MS },
+    )
+    expect(await focusAt(), 'and the focus the click left in the bar goes to the viewer root').toBe('root')
+  } finally {
+    await clearProgress(page, bid)
+    await resetBookPrefs(page, bid)
+  }
+})
+
+/**
+ * E-62 on a touch screen — the seam E-30's shipped defect came through.
+ *
+ * A tap is not a click. After it Chrome dispatches compatibility mouse events
+ * (`mouseover`, `mouseenter`, `mousemove`) that do not say they came from a
+ * finger, and the pointer hover-hold tells the finger apart only by
+ * `pointerType`: before E-30 one tap in a bar at 400 pinned the chrome open for
+ * good, with every unit test green, because jsdom cannot produce that order.
+ * E-62 sits on the same seam: a tap focuses the control it lands on, so the
+ * last input has to read `pointer` for the keyboard-focus hold to stay off. A
+ * key is pressed first, so a build that stopped recording the tap would still
+ * be holding the keyboard's answer. Only the touch project (`hasTouch`) can
+ * tap.
+ */
+test('E-62 · a tap on a bar control holds nothing, and its focus goes to the viewer (touch)', async ({
+  page,
+}) => {
+  test.skip(test.info().project.use.hasTouch !== true, 'a tap needs the touch project (mobile-400)')
+  const { sid, bid } = await wheelBook(page)
+  await resetBookPrefs(page, bid)
+  try {
+    await openViewerDirect(page, sid, bid, 1)
+    await waitForPage(page)
+    const inBar = () =>
+      page.evaluate(
+        () =>
+          document.activeElement?.closest('[data-role="viewer-top-bar"], [data-role="viewer-bottom-bar"]') !== null &&
+          document.activeElement !== null,
+      )
+    const onRoot = () =>
+      page.evaluate(() => document.activeElement?.getAttribute('data-role') === 'viewer')
+    const centre = async (): Promise<{ x: number; y: number }> => {
+      const box = await page.locator('[data-role="stage-zones"]').boundingBox()
+      expect(box, 'the stage must be laid out to be tapped').not.toBeNull()
+      return { x: (box?.x ?? 0) + (box?.width ?? 0) / 2, y: (box?.y ?? 0) + (box?.height ?? 0) / 2 }
+    }
+    const tapAt = async (target: Locator): Promise<void> => {
+      const box = await target.boundingBox()
+      expect(box, 'the control must be laid out to be tapped').not.toBeNull()
+      await page.touchscreen.tap((box?.x ?? 0) + (box?.width ?? 0) / 2, (box?.y ?? 0) + (box?.height ?? 0) / 2)
+    }
+
+    // The keyboard's answer first, so it is what a tap that went unrecorded leaves.
+    await page.keyboard.press('h')
+    await expect(viewer(page)).toHaveAttribute('data-chrome', 'visible')
+    await page.keyboard.press('h')
+    await expect(viewer(page)).toHaveAttribute('data-chrome', 'hidden')
+
+    const controls: [string, Locator][] = [
+      ['the 표시 모드 seg', viewerTopBar(page).locator('[aria-label="표시 모드"] label[data-value="single"]')],
+      ['the page slider', viewerBottomBar(page).locator('input[type="range"]')],
+    ]
+    for (const [what, control] of controls) {
+      const { x, y } = await centre()
+      await page.touchscreen.tap(x, y)
+      await expect(viewer(page), 'a centre tap brings the chrome').toHaveAttribute('data-chrome', 'visible')
+      await tapAt(control)
+      const focused = await inBar()
+      await expect(viewer(page), `E-30/E-62: a tap on ${what} holds nothing — the chrome goes on its deadline`).toHaveAttribute(
+        'data-chrome',
+        'hidden',
+        { timeout: CHROME_AUTOHIDE_MS + HOLD_SLACK_MS },
+      )
+      await expect(viewerTopBar(page), 'and the bars are inert again').toHaveAttribute('inert', '')
+      if (focused) expect(await onRoot(), `the focus the tap left on ${what} goes to the viewer root`).toBe(true)
+    }
+  } finally {
+    await clearProgress(page, bid)
+    await resetBookPrefs(page, bid)
+  }
+})
+
+/**
+ * E-30 §2 at the browser tier: a finger resting on a bar holds nothing.
+ *
+ * The `pointerType === 'touch'` check in the hover-hold makes no difference to
+ * a short tap — Chrome sends `pointerout:touch` straight after `pointerup`, so
+ * the hold is let go either way (measured, Chrome 150). It does make one while
+ * the finger stays down: `touchStart` dispatches `pointerover:touch` and then
+ * nothing until the finger lifts, so without the check the chrome is held for
+ * as long as the finger rests. The press is made on a part of the bottom bar
+ * that is not a control, so no button or long-press behaviour gets in the way.
+ */
+test('E-30 · a finger resting on a bar does not hold the chrome (touch)', async ({ page }) => {
+  test.skip(test.info().project.use.hasTouch !== true, 'a press needs the touch project (mobile-400)')
+  const { sid, bid } = await wheelBook(page)
+  await resetBookPrefs(page, bid)
+  const cdp = await page.context().newCDPSession(page)
+  let down = false
+  try {
+    await openViewerDirect(page, sid, bid, 1)
+    await waitForPage(page)
+    await page.keyboard.press('h')
+    await expect(viewer(page)).toHaveAttribute('data-chrome', 'visible')
+
+    // A point on the bottom bar with no control under it.
+    const spot = await viewerBottomBar(page).evaluate((bar) => {
+      const box = bar.getBoundingClientRect()
+      for (let y = box.top + 3; y < box.bottom - 2; y += 4) {
+        for (let x = box.left + 3; x < box.right - 2; x += 6) {
+          const el = document.elementFromPoint(x, y)
+          // Only a control *inside* the bar counts: the viewer root above it
+          // carries a tabindex of its own.
+          const hit = el?.closest('button, input, label, a, [role="slider"], [tabindex]') ?? null
+          if (el !== null && bar.contains(el) && (hit === null || !bar.contains(hit))) {
+            return { x, y }
+          }
+        }
+      }
+      return null
+    })
+    expect(spot, 'the bottom bar must have a stretch with no control under it').not.toBeNull()
+
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: spot?.x ?? 0, y: spot?.y ?? 0 }] })
+    down = true
+    await expect(
+      viewer(page),
+      'E-30 §2: a touch never holds — the chrome goes on its deadline with the finger still down',
+    ).toHaveAttribute('data-chrome', 'hidden', { timeout: CHROME_AUTOHIDE_MS + HOLD_SLACK_MS })
+  } finally {
+    if (down) await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await clearProgress(page, bid)
+    await resetBookPrefs(page, bid)
+  }
 })

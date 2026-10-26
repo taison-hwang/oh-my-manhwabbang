@@ -983,19 +983,19 @@ Copying is also rejected: 5 GB of duplication, and it destroys the 2012–2018 m
 (amendment A-3).** Nothing is copied, the media volume is read-only in practice (I-9 proves it), and the
 test exercises genuine CP949 bytes and genuine truncated archives.
 
-#### The curated set — 15 series, zero bytes copied
+#### The curated set — 16 series, zero bytes copied
 
 Root: `/mnt/big-data/pds/taison-data/02. books/01. mangga`
 
 The **exact-name column is the contract**, and this table is no longer the only place it is written down: the
-same fifteen strings are `CURATED` in `scripts/e2e-config.sh` (which becomes `scan.include_globs`), `CURATED`
+same sixteen strings are `CURATED` in `scripts/e2e-config.sh` (which becomes `scan.include_globs`), `CURATED`
 in `scripts/e2e-assert.py`, `SERIES` in `web/e2e/shelf.ts`, path literals in `scripts/mkfixture/main.go` and
 `A11_FILL` in `scripts/e2e.sh`. `contractcheck`'s `checkCuratedSeries` compares all six every `make lint`, and
 it exists because this table had drifted from the other five and nothing said so — it still carried the
 `[만화] ` prefix the collection lost in 2026-08, and it was four rows short.
 
 Rows 1–10 total ~5.1 GB. The five that E-14, D-71 and D-72 added were never measured on disk, so their rows
-give the shape and no size rather than a number nobody took.
+give the shape and no size rather than a number nobody took. Row 16 was measured when it joined (`du -sb`).
 
 | # | `include_globs` entry (exact) | Shape | Covers |
 |---|---|---|---|
@@ -1014,6 +1014,7 @@ give the shape and no size rather than a number nobody took.
 | 13 | `울프가이` | ZIP **and** RAR volumes side by side one level down, in `[일어원문] Wolf Guy1-12권(완)/`; Shift_JIS entry names (v01 alone carries 207); size not measured | **D-71** — one 권 list built by two readers, which have to agree on page order, naming and 권 numbering; `kenc.ArchiveFallback` convicting a whole archive rather than an entry, which no per-entry test can do |
 | 14 | `사모님은 학생회장.zip` | one ZIP holding 7 ZIP volumes, 8 RAR volumes and one `.7z`; size not measured | `kind:"nestedrar"` beside `nestedzip` (**D-71** — the 8 volumes D-07 and D-70 both had to drop); **D-72**'s "no volumes" clause, since naming the `.7z` closed this container as `unsupported` before the scanner ever looked for its volumes |
 | 15 | `펌프킨 시저스 1~13권` | folder of ZIP volumes, one of which — `펌프킨 시저스 04.zip` — holds 39.5 MB in a single `.hv3` | **E-51** — the `.hv3` is a `nestedhv3` volume of **104 pages**, verified against the CRC-32 the container itself records for every one. Three rulings have been about this file: `비어 있음` under D-07 (false), `unsupported` naming HV3 under **D-72** (true while the format was believed encrypted), and readable under E-51. D-72's rule is still exercised by `사모님은 학생회장.zip`'s `.7z`. |
+| 16 | `바다의 무녀 (완결, 미번) (文月晃, 海の御先)` | folder of 15 ZIPs, `[文月晃] 海の御先 01.zip` … `[文月晃] 海の御先 15 (完).zip`, 2 989 images; entry names are Shift_JIS in 6 volumes and CP949 in 1, and 5 keep their pages in a wrapper directory (09 adds a `(+color)` sub-folder beneath it, still one 권 — `source.Chapters` splits only on two sibling chapter directories); 1.09 GB | **E-55** — the only curated name `textLang` tags `lang="ja"`: kana in the series name **and** in every 권 name, so `[lang='ja']`, `--font-ja` and the Noto Sans JP faces are drawn by both rounds (item `bz`; until this row neither round drew one). `15 (完)` puts 完 inside a Japanese name, the shape §0.0.5 of HANDOFF caught the seal subset drawing in its own cut. The synthetic twin builds 01, 02 and 15 (完) |
 
 #### The config (`scripts/e2e-config.sh` emits this)
 

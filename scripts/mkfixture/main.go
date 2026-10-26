@@ -34,6 +34,7 @@ import (
 	"image"
 	"image/color"
 	"image/jpeg"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -195,7 +196,8 @@ func build(root string) error {
 	// level down, so the two readers have to agree on page order, on naming and
 	// on 권 numbering within a single 권 list. The RAR names are Shift_JIS,
 	// which no per-entry test can identify — kenc.ArchiveFallback has to convict
-	// the archive as a whole (the real v01 has 207 such entries).
+	// the archive as a whole. (The real v01's 207 Japanese names reach the
+	// reader another way, as a UTF-16 companion; see shiftJISPages.)
 	const wolf = "울프가이/[일어원문] Wolf Guy1-12권(완)/"
 	b.rarFile(wolf+"Wolf_Guy_-_Wolfen_Crest_v01_JP.rar", shiftJISPages(3))
 	b.zipFile(wolf+"Wolf_Guy_-_Wolfen_Crest_v02_JP.zip", shiftJISPages(3))
@@ -228,11 +230,41 @@ func build(root string) error {
 		b.zipFile(fmt.Sprintf("펌프킨 시저스 1~13권/펌프킨 시저스 %02d.zip", i), cp949Pages(3))
 	}
 
+	// 13 — the one curated name in Japanese (E-55, item `bz`). textLang tags an
+	// element `lang="ja"` only when its text carries kana, and until this series
+	// no name in either tree did, so the synthetic round walked past
+	// `[lang='ja']`, `--font-ja` and the Noto Sans JP faces without once
+	// drawing them. The kana is in the series name *and* in every 권 name, and
+	// 15 (完) puts 完 inside a Japanese name, which is the shape §0.0.5 caught
+	// the seal subset drawing in its own cut. Three of the real fifteen, with the
+	// tree's ordinary CP949 pages: what this series is for is its own names, and
+	// Shift_JIS entry names are 울프가이's job above.
+	const umi = "바다의 무녀 (완결, 미번) (文月晃, 海の御先)/"
+	b.zipFile(umi+"[文月晃] 海の御先 01.zip", cp949Pages(3))
+	b.zipFile(umi+"[文月晃] 海の御先 02.zip", cp949Pages(3))
+	b.zipFile(umi+"[文月晃] 海の御先 15 (完).zip", cp949Pages(3))
+
 	// D-49's two extras, which the real collection has no sample of.
 	b.encryptedZip("암호화 테스트.zip", cp949Pages(3))
 	b.zip64("ZIP64 테스트.zip")
 
-	return b.err
+	if b.err != nil {
+		return b.err
+	}
+	return fixDirMtimes(root)
+}
+
+// fixDirMtimes gives every directory under root the files' fixedMtime. It runs
+// last because adding an entry to a directory moves that directory's mtime, and
+// a series directory's mtime is the series' 수정일 — left alone it printed the
+// day of the build in the list view, and the pixel baseline lost four shots to it.
+func fixDirMtimes(root string) error {
+	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || !d.IsDir() || p == root {
+			return err
+		}
+		return os.Chtimes(p, fixedMtime, fixedMtime)
+	})
 }
 
 // mixedVolumes builds `사모님은 학생회장.zip`'s contents: volumes of both
@@ -461,12 +493,24 @@ func cp949LandscapePages(n int) []entry { return cp949PagesOf(n, landscapeJPEG) 
 // shiftJISPages is cp949Pages for a Japanese archive: the entry names are
 // Shift_JIS, which no per-entry test can identify (Shift_JIS reads Korean bytes
 // happily), so kenc.ArchiveFallback has to convict the whole archive. The
-// collection's four 울프가이 RARs are this shape.
+// collection has no sample of this: its 울프가이 RARs carry a UTF-16
+// companion name (internal/archive/rar4/name.go, shape 1), so this is
+// coverage the real round cannot give, not a copy of it.
+//
+// The readers only ask ArchiveFallback once some name has failed as CP949, and
+// 第01巻 狼の紋章/0001頁.jpg does not fail: it reads, wrongly and without one
+// substitution, as 묉01뒱 쁔궻뽨뤞/0001빬.jpg. So page 1 is named after 犬神明,
+// whose 神 (90 5F) CP949 cannot read — and the other pages stay names CP949
+// misreads, which the archive-level verdict then has to replace
+// (TestShiftJISPages_areConvictedAsCP932).
 func shiftJISPages(n int) []entry {
 	enc := japanese.ShiftJIS.NewEncoder()
 	out := make([]entry, 0, n)
 	for i := 1; i <= n; i++ {
 		name := fmt.Sprintf("第01巻 狼の紋章/%04d頁.jpg", i)
+		if i == 1 {
+			name = "第01巻 狼の紋章/0001 犬神明.jpg"
+		}
 		raw, err := enc.Bytes([]byte(name))
 		if err != nil {
 			raw = []byte(name)

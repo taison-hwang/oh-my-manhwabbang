@@ -18,7 +18,7 @@ set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# The fifteen series of impl-plan §6.3, exact names, IN THAT ORDER. Each covers
+# The sixteen series of impl-plan §6.3, exact names, IN THAT ORDER. Each covers
 # something no other entry does; see the table in that section for the mapping.
 #
 # This array is the source of truth: five other copies follow it, and since they
@@ -44,6 +44,9 @@ CURATED=(
   "울프가이"                                 # ZIP and RAR volumes in one series
   "사모님은 학생회장.zip"                    # container mixing ZIP, RAR and .7z
   "펌프킨 시저스 1~13권"                     # one volume is an .hv3 — D-72, then E-51
+  "바다의 무녀 (완결, 미번) (文月晃, 海の御先)" # kana in the series AND volume names — the
+                                             #   only curated name textLang tags `ja` (E-55),
+                                             #   and 15 (完) is §0.0.5's seal-subset shape
 )
 
 # The synthetic tree carries the same names plus three shapes the real
@@ -112,7 +115,7 @@ fi
 # off every name — so exactly ONE curated entry still opens a class it does not
 # mean to, `배틀로얄 1~15 [완결].zip`, and it is the one this function is still
 # load-bearing for. It stays generic regardless: the escaping is a property of
-# the pattern language, not of what today's fifteen names happen to contain, and a
+# the pattern language, not of what today's sixteen names happen to contain, and a
 # pattern that compiles but matches nothing indexes an empty library.
 escape_glob() {
   printf '%s' "$1" | sed -e 's/\[/[[]/g' -e 's/\*/[*]/g' -e 's/?/[?]/g'
