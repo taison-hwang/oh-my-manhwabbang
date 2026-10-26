@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"image/jpeg"
 	"io"
+	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -39,6 +41,21 @@ func minimalPDF(t testing.TB, pages int, w, h int) []byte {
 // page tree.
 func paddedPDF(t testing.TB, pages, w, h, pad int) []byte {
 	t.Helper()
+	sizes := make([]pageSize, pages)
+	for i := range sizes {
+		sizes[i] = pageSize{w, h}
+	}
+	return buildPDF(t, sizes, pad)
+}
+
+// pageSize is one page's MediaBox, in points.
+type pageSize struct{ w, h int }
+
+// buildPDF writes one page per entry of sizes, each with its own MediaBox, so
+// a fixture can give every page a geometry that names it.
+func buildPDF(t testing.TB, sizes []pageSize, pad int) []byte {
+	t.Helper()
+	pages := len(sizes)
 	var buf bytes.Buffer
 	offsets := make(map[int]int)
 
@@ -57,6 +74,7 @@ func paddedPDF(t testing.TB, pages, w, h, pad int) []byte {
 
 	for i := 0; i < pages; i++ {
 		pageObj, contentObj := 3+2*i, 4+2*i
+		w, h := sizes[i].w, sizes[i].h
 		obj(pageObj, fmt.Sprintf(
 			"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %d %d] /Contents %d 0 R /Resources << >> >>",
 			w, h, contentObj))
@@ -215,6 +233,52 @@ func TestRenderJPEG_distinctPagesRenderDistinctBytes(t *testing.T) {
 			t.Errorf("page %d rendered byte-identically to page %d", n, prev)
 		}
 		seen[string(jpg)] = n
+	}
+}
+
+// Distinct bytes do not say WHICH page was drawn: a render that served the
+// pages back to front would still give four different JPEGs, and minimalPDF
+// gives every page the same MediaBox, so PageSize could not tell them apart
+// either. Here each page has an aspect ratio of its own, and the rendered
+// height at a fixed width, like the reported MediaBox, names the page that was
+// actually read. Page n must be the n-th page of the document: FR-SRV-006
+// serves it as /pages/{n}, and FR-VWR-004 decides spreads from its PageSize.
+func TestDoc_pageNumberAddressesThatPage(t *testing.T) {
+	if testing.Short() {
+		t.Skip("pdfium's first wasm compile costs seconds")
+	}
+	sizes := []pageSize{{100, 100}, {100, 150}, {100, 200}, {100, 250}}
+	data := buildPDF(t, sizes, 0)
+	r := newRenderer(t)
+	doc, err := r.Open(t.Context(), bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = doc.Close() }()
+
+	const width = 200
+	for i, sz := range sizes {
+		n := i + 1
+		w, h, err := doc.PageSize(t.Context(), n)
+		if err != nil {
+			t.Fatalf("PageSize(%d): %v", n, err)
+		}
+		if int(w) != sz.w || int(h) != sz.h {
+			t.Errorf("PageSize(%d) = %vx%v, want page %d's MediaBox %dx%d", n, w, h, n, sz.w, sz.h)
+		}
+
+		jpg, err := doc.RenderJPEG(t.Context(), n, width, 80)
+		if err != nil {
+			t.Fatalf("RenderJPEG page %d: %v", n, err)
+		}
+		cfg, err := jpeg.DecodeConfig(bytes.NewReader(jpg))
+		if err != nil {
+			t.Fatalf("page %d is not a decodable JPEG: %v", n, err)
+		}
+		if wantH := width * sz.h / sz.w; cfg.Width != width || cfg.Height != wantH {
+			t.Errorf("RenderJPEG(%d) is %dx%d, want %dx%d (page %d's aspect ratio)",
+				n, cfg.Width, cfg.Height, width, wantH, n)
+		}
 	}
 }
 
@@ -395,9 +459,21 @@ func TestNew_isLazy_andCloseIsSafeBeforeAnyUse(t *testing.T) {
 // The wazero compilation cache is what turns a 3.885 s cold init into 135 ms
 // (D-20). Sharing a cache directory between two renderers must produce a
 // populated cache and a faster second start.
+//
+// The speed-up is only logged — a timing assertion would be flaky on a loaded
+// machine. What is asserted is the structure that produces it: the first start
+// writes the compiled module into the directory, and the second start reads it
+// back instead of compiling and writing it again. wazero writes an entry only
+// on a miss (to a temp file renamed into place), so an unchanged directory
+// listing — names, sizes and mtimes — is the second start's cache hit.
 func TestCompilationCache_isReusedAcrossRenderers(t *testing.T) {
 	if testing.Short() {
 		t.Skip("pdfium's first wasm compile costs seconds")
+	}
+	if !wazeroPicksCompiler() {
+		t.Skipf("wazero runs pdfium on its interpreter on %s/%s, and the interpreter "+
+			"ignores the compilation cache, so an empty directory proves nothing here",
+			runtime.GOOS, runtime.GOARCH)
 	}
 	cacheDir := t.TempDir()
 	data := minimalPDF(t, 1, 100, 100)
@@ -416,11 +492,91 @@ func TestCompilationCache_isReusedAcrossRenderers(t *testing.T) {
 	}
 
 	cold := timeFirstRender()
+	afterCold := cacheEntries(t, cacheDir)
+	if len(afterCold) == 0 {
+		t.Fatalf("the first renderer left %s without a single cached module; "+
+			"the compilation cache is not wired into the runtime (D-20)", cacheDir)
+	}
+
+	// Push every entry an hour into the past and compare against what the
+	// filesystem actually stored. A rewrite then lands on a fresh mtime even
+	// where timestamps are coarse enough that a same-size rewrite within the
+	// same tick would otherwise read back unchanged.
+	past := time.Now().Add(-time.Hour)
+	for rel := range afterCold {
+		if err := os.Chtimes(filepath.Join(cacheDir, rel), past, past); err != nil {
+			t.Fatalf("backdating %s: %v", rel, err)
+		}
+	}
+	afterCold = cacheEntries(t, cacheDir)
+
 	warm := timeFirstRender()
-	t.Logf("first init %v, second init %v (cache dir %s)", cold, warm, cacheDir)
+	afterWarm := cacheEntries(t, cacheDir)
+	t.Logf("first init %v, second init %v (cache dir %s, %d entries)", cold, warm, cacheDir, len(afterCold))
+	if !maps.Equal(afterCold, afterWarm) {
+		t.Errorf("the second renderer changed the cache %v -> %v; it compiled the module again instead of reusing it",
+			afterCold, afterWarm)
+	}
 	if warm > cold {
 		t.Logf("warning: the warm start (%v) was not faster than the cold one (%v)", warm, cold)
 	}
+}
+
+// wazeroPicksCompiler reports whether wazero's automatic engine choice lands
+// on its compiler here. Only the compiler stores modules in the file cache:
+// interpreter.NewEngine takes the cache and discards it, so on linux/arm — a
+// release target — a correctly wired cache still leaves the directory empty.
+// wazero has no public predicate (platform.CompilerSupported is internal), so
+// this mirrors the GOOS/GOARCH switch of compilerPlatformSupports in v1.12.0
+// for the default CoreFeaturesV2 that pool.go runs with. Its runtime checks
+// (SSE4.1 on amd64, an executable mmap) are not mirrored: a host that fails
+// them falls back to the interpreter and should fail this test loudly rather
+// than skip it quietly.
+func wazeroPicksCompiler() bool {
+	switch runtime.GOOS {
+	case "linux", "darwin", "freebsd", "netbsd", "windows":
+		return runtime.GOARCH == "arm64" || runtime.GOARCH == "amd64"
+	case "dragonfly", "solaris", "illumos":
+		return runtime.GOARCH == "amd64"
+	default:
+		return false
+	}
+}
+
+// cacheEntry is what a rewrite of one cache file would change.
+type cacheEntry struct {
+	size    int64
+	modNano int64
+}
+
+// cacheEntries lists the regular files under dir. Directories are left out:
+// wazero creates its versioned subdirectory whether or not a runtime ever uses
+// the cache, so only a file is evidence that a module was stored.
+func cacheEntries(t *testing.T, dir string) map[string]cacheEntry {
+	t.Helper()
+	out := make(map[string]cacheEntry)
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		out[rel] = cacheEntry{size: info.Size(), modNano: info.ModTime().UnixNano()}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("listing the compilation cache %s: %v", dir, err)
+	}
+	return out
 }
 
 // A broken cache directory must cost speed, never correctness.

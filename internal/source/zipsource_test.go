@@ -1,6 +1,7 @@
 package source_test
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -318,7 +319,7 @@ func TestZipSource_openPage_doesNotScaleWithArchiveSize(t *testing.T) {
 	}
 	data := testutil.BuildZIP(t, testutil.ZIPSpec{Entries: entries})
 
-	f := newFixture(t, map[string]any{"series": map[string]any{"vol.zip": data}})
+	f, rec := newRecordingFixture(t, map[string]any{"series": map[string]any{"vol.zip": data}})
 	src := f.open(t, source.KindZIP, "series/vol.zip")
 	list, err := src.List(t.Context())
 	if err != nil {
@@ -327,10 +328,22 @@ func TestZipSource_openPage_doesNotScaleWithArchiveSize(t *testing.T) {
 	if len(list.Pages) != pages {
 		t.Fatalf("pages = %d, want %d", len(list.Pages), pages)
 	}
+	files := rec.opened()
+	if len(files) != 1 {
+		t.Fatalf("the pool opened the archive %d times, want 1", len(files))
+	}
+	desc := files[0]
 
-	// AC-008: jumping to the last page is the same work as the first.
+	// AC-008: jumping to the last page is the same work as the first. The work
+	// is counted on the descriptor, not inferred from the result: arch §5.1's
+	// verified measurement is that a page costs one 30-byte local-header read
+	// plus its own comp_size, every read inside the entry's own byte range, so
+	// nothing about it depends on how many pages the archive holds or where
+	// its central directory sits.
 	for _, idx := range []int{0, pages / 2, pages - 1} {
-		st, err := src.Open(t.Context(), list.Pages[idx], source.OpenOptions{})
+		p := list.Pages[idx]
+		_ = desc.takeReads() // the listing's central-directory reads are not this page's
+		st, err := src.Open(t.Context(), p, source.OpenOptions{})
 		if err != nil {
 			t.Fatalf("Open page %d: %v", idx+1, err)
 		}
@@ -341,6 +354,25 @@ func TestZipSource_openPage_doesNotScaleWithArchiveSize(t *testing.T) {
 		}
 		if len(got) != len(payload) {
 			t.Errorf("page %d: %d bytes, want %d", idx+1, len(got), len(payload))
+		}
+
+		// The entry's extent, from its own local header in the archive bytes.
+		hdr := data[p.LocalHdrOff : p.LocalHdrOff+30]
+		nameLen := int64(binary.LittleEndian.Uint16(hdr[26:]))
+		extraLen := int64(binary.LittleEndian.Uint16(hdr[28:]))
+		start, end := p.LocalHdrOff, p.LocalHdrOff+30+nameLen+extraLen+p.CompSize
+
+		var total int64
+		for _, r := range desc.takeReads() {
+			total += r.n
+			if r.off < start || r.off+r.n > end {
+				t.Errorf("page %d: ReadAt(off=%d, len=%d) is outside the entry's own bytes [%d, %d) of a %d-byte archive (FR-SRV-002)",
+					idx+1, r.off, r.n, start, end, len(data))
+			}
+		}
+		if want := 30 + p.CompSize; total != want {
+			t.Errorf("page %d: %d bytes read off the archive, want %d — the 30-byte local header plus comp_size (arch §5.1, NFR-PRF-006)",
+				idx+1, total, want)
 		}
 	}
 	t.Logf("archive %d bytes / %d pages; pool stats %+v", len(data), pages, f.pool.Stats())

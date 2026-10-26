@@ -327,6 +327,28 @@ func TestPlan_zeroLengthVolumeOwnsNoPage(t *testing.T) {
 	}
 }
 
+// The completed branch walks the volumes on its own loop, so it needs the same
+// refusal. A finished container stamps every volume finished, but a zero-length
+// one is a file nobody can open (arch §4.11): writing `completed = 1` with
+// `0 of 0` on it would claim a reader finished a book that has no pages.
+func TestPlan_completedContainer_skipsTheZeroLengthVolume(t *testing.T) {
+	rows := planOneOrphan(t, orphan(testPath, 30, 30, true), at(testRoot, testPath, vols(10, 0, 20)))
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows %+v, want 2 (the two volumes that own pages)", len(rows), rows)
+	}
+	for _, r := range rows {
+		if r.BookID == "b" {
+			t.Errorf("the zero-length volume got a row: %+v", r)
+		}
+		if !r.Completed || r.LastPage != r.PageCount || r.PageCount <= 0 {
+			t.Errorf("row %+v, want a finished volume at its own last page", r)
+		}
+	}
+	if n := pagesRead(rows); n != 30 {
+		t.Errorf("rolls up to %d pages read, want all 30", n)
+	}
+}
+
 // The times on the destination rows are the times the reader made, not the
 // times the repair ran. 이어보기 sorts by updated_at, so a repair that stamped
 // `now` would jump fifty series to the front of the shelf.
@@ -459,6 +481,37 @@ func TestPlanRelocations_carriesTheReadersPlace(t *testing.T) {
 	}
 	if got.StartedAt != 1000 || got.UpdatedAt != 2000 {
 		t.Errorf("times (%d, %d), want the reader's own", got.StartedAt, got.UpdatedAt)
+	}
+}
+
+// A move must not change whether the book is finished. The 완독 scope counts
+// `completed = 1` rows against the series' book count, so a finished book that
+// arrives unfinished takes its series off the 완독 shelf, and E-47 would roll it
+// up at its last page instead of its whole length. Both values are carried, so
+// neither a constant false nor a constant true passes.
+func TestPlanRelocations_carriesCompletion(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		page      int
+		completed bool
+	}{
+		{"finished on the last page", 94, true},
+		{"part way through", 12, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			p := progressOn("old", c.page, 94)
+			p.Completed = c.completed
+			moves, skipped := PlanRelocations(
+				[]index.Relocation{reloc("old", "new", 94)}, map[string]userdata.Progress{"old": p})
+			if len(skipped) != 0 || len(moves) != 1 || len(moves[0].Rows) != 1 {
+				t.Fatalf("got moves %+v skipped %+v, want one move of one row", moves, skipped)
+			}
+			got := moves[0].Rows[0]
+			if got.Completed != c.completed || got.LastPage != c.page {
+				t.Errorf("row at page %d completed=%v, want page %d completed=%v",
+					got.LastPage, got.Completed, c.page, c.completed)
+			}
+		})
 	}
 }
 

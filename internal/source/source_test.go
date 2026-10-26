@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"shelf/internal/archive"
@@ -44,6 +45,23 @@ func newFixture(t *testing.T, layout map[string]any) *fixture {
 
 func newFixtureAt(t *testing.T, root string) *fixture {
 	t.Helper()
+	return newFixtureWith(t, root, nil)
+}
+
+// newRecordingFixture is newFixture with every descriptor the pool opens
+// passing through a recordingOpener.
+func newRecordingFixture(t *testing.T, layout map[string]any) (*fixture, *recordingOpener) {
+	t.Helper()
+	rec := &recordingOpener{}
+	f := newFixtureWith(t, testutil.BuildTree(t, layout), func(next openpool.OpenFunc) openpool.OpenFunc {
+		rec.next = next
+		return rec.open
+	})
+	return f, rec
+}
+
+func newFixtureWith(t *testing.T, root string, wrap func(openpool.OpenFunc) openpool.OpenFunc) *fixture {
+	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	roots, err := source.NewRootSet(t.Context(), map[string]string{rootName: root}, log)
@@ -54,7 +72,11 @@ func newFixtureAt(t *testing.T, root string) *fixture {
 
 	// The pool opens through os.Root too, so archive containers get
 	// path-traversal layer 3 as well as dir pages (arch §8.1).
-	pool := openpool.New(openpool.Options{Max: 8, Open: roots.PoolOpener(), Logger: log})
+	open := roots.PoolOpener()
+	if wrap != nil {
+		open = wrap(open)
+	}
+	pool := openpool.New(openpool.Options{Max: 8, Open: open, Logger: log})
 	t.Cleanup(func() { _ = pool.Close() })
 
 	f := source.NewFactory(source.Options{
@@ -63,6 +85,76 @@ func newFixtureAt(t *testing.T, root string) *fixture {
 		Logger: log,
 	})
 	return &fixture{root: root, roots: roots, pool: pool, factory: f}
+}
+
+// recordingOpener sits between the pool and the real opener and keeps every
+// descriptor it hands out, so a test can ask the file's side of the story —
+// which bytes were read, and whether close(2) was ever reached — instead of
+// the pool's own bookkeeping about it.
+type recordingOpener struct {
+	next openpool.OpenFunc
+
+	mu    sync.Mutex
+	files []*recordedFile
+}
+
+func (r *recordingOpener) open(path string) (openpool.File, error) {
+	f, err := r.next(path)
+	if err != nil {
+		return nil, err
+	}
+	rf := &recordedFile{File: f}
+	r.mu.Lock()
+	r.files = append(r.files, rf)
+	r.mu.Unlock()
+	return rf, nil
+}
+
+// opened returns every descriptor handed out so far, oldest first.
+func (r *recordingOpener) opened() []*recordedFile {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.files)
+}
+
+// readSpan is one ReadAt: the offset and the length asked for.
+type readSpan struct{ off, n int64 }
+
+type recordedFile struct {
+	openpool.File
+
+	mu     sync.Mutex
+	reads  []readSpan
+	closed bool
+}
+
+func (f *recordedFile) ReadAt(p []byte, off int64) (int, error) {
+	f.mu.Lock()
+	f.reads = append(f.reads, readSpan{off: off, n: int64(len(p))})
+	f.mu.Unlock()
+	return f.File.ReadAt(p, off)
+}
+
+func (f *recordedFile) Close() error {
+	f.mu.Lock()
+	f.closed = true
+	f.mu.Unlock()
+	return f.File.Close()
+}
+
+func (f *recordedFile) isClosed() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.closed
+}
+
+// takeReads returns the reads recorded since the last call and forgets them.
+func (f *recordedFile) takeReads() []readSpan {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r := f.reads
+	f.reads = nil
+	return r
 }
 
 func (f *fixture) open(t *testing.T, kind source.Kind, rel string) source.BookSource {
@@ -574,9 +666,16 @@ func TestSources_seekability(t *testing.T) {
 
 // Closing a page stream must give the pooled handle back, or the pool leaks a
 // descriptor per page served.
+//
+// Stats().Open cannot show that on its own: every one of these reads is a hit
+// on the same published descriptor, so it reads 1 whether the streams returned
+// their borrow or not. What a borrow that is never returned costs is that the
+// descriptor can no longer be closed — not by eviction, which skips a borrowed
+// handle, and not by Invalidate, which defers to the last release. So the test
+// unpublishes the handle and asks the file itself whether close(2) came.
 func TestZipSource_streamClose_releasesThePoolHandle(t *testing.T) {
 	t.Parallel()
-	f := newFixture(t, map[string]any{
+	f, rec := newRecordingFixture(t, map[string]any{
 		"series": map[string]any{
 			"vol1.zip": testutil.BuildZIP(t, testutil.ZIPSpec{Entries: []testutil.Entry{
 				{Name: "1.jpg", Data: testutil.TinyJPEG(t, 8, 8)},
@@ -614,6 +713,33 @@ func TestZipSource_streamClose_releasesThePoolHandle(t *testing.T) {
 	_ = st.Close()
 	if got := f.pool.Stats().Open; got != 1 {
 		t.Errorf("pool holds %d descriptors after a double close, want 1", got)
+	}
+
+	files := rec.opened()
+	if len(files) != 1 {
+		t.Fatalf("the pool opened the archive %d times, want 1; the rest of this test would prove nothing", len(files))
+	}
+	desc := files[0]
+
+	// One live borrower, then unpublish. If 51 streams had returned 51 borrows
+	// (and the double close returned no extra one), this reader is the only
+	// thing keeping the descriptor open: Invalidate must leave it alone, and
+	// the reader's own release must be what closes it.
+	held, err := f.pool.Acquire(t.Context(), filepath.Join(f.root, "series", "vol1.zip"), 0, 0)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	f.pool.Invalidate(filepath.Join(f.root, "series", "vol1.zip"))
+	if desc.isClosed() {
+		t.Fatal("Invalidate closed the descriptor under a live borrower: a closed stream gave back more than its own borrow")
+	}
+	held.Release()
+	if !desc.isClosed() {
+		t.Fatal("the descriptor is still open after its last borrower released it: " +
+			"a closed page stream kept its pool borrow, so this handle can never be evicted or closed")
+	}
+	if got := f.pool.Stats().Open; got != 0 {
+		t.Errorf("pool holds %d descriptors after the only handle was invalidated and released, want 0", got)
 	}
 }
 

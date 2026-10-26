@@ -10,9 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"shelf/internal/archive/zipidx"
-	"shelf/internal/kenc"
+	"shelf/internal/testutil"
 )
 
 // The differential oracle (decision E-2, impl-plan WP-04 acceptance 3).
@@ -93,15 +94,22 @@ func compareWithOracle(t *testing.T, name string, r io.ReaderAt, size int64) {
 		got := ix.Entries[i]
 
 		// archive/zip hands back the raw name bytes as a Go string without
-		// decoding them; kenc is what turns those into a display name. Compare
-		// on the pre-decode bytes so the comparison is about the *reader*, not
-		// about the encoding rule (which internal/kenc tests own).
-		wantName, _ := kenc.DecodeEntryName([]byte(want.Name), !want.NonUTF8)
-		if got.Name != wantName {
-			t.Errorf("%s entry %d: name = %q, archive/zip + kenc says %q", name, i, got.Name, wantName)
-		}
+		// decoding them, so the reader is compared on those bytes and on the
+		// flags that say how to read them. The display name is a decision about
+		// the whole archive (resolveArchiveNames), owned by internal/kenc's
+		// tests and by this package's encoding tests. Recomputing it here one
+		// entry at a time would repeat the code under test, and would disagree
+		// with it on every Shift_JIS archive. So the display name is pinned
+		// only where the archive has no say: a name that is valid UTF-8,
+		// flagged or not.
 		if string(got.RawName) != want.Name {
 			t.Errorf("%s entry %d: raw name = %q, archive/zip says %q", name, i, got.RawName, want.Name)
+		}
+		if got.Flags != want.Flags {
+			t.Errorf("%s entry %q: flags = %#04x, archive/zip says %#04x", name, want.Name, got.Flags, want.Flags)
+		}
+		if nameNeedsNoDecision(want) && got.Name != want.Name {
+			t.Errorf("%s entry %d: name = %q, want the raw name %q unchanged", name, i, got.Name, want.Name)
 		}
 		if got.Method != want.Method {
 			t.Errorf("%s entry %q: method = %d, archive/zip says %d", name, want.Name, got.Method, want.Method)
@@ -136,6 +144,38 @@ func compareWithOracle(t *testing.T, name string, r io.ReaderAt, size int64) {
 	if oracle.Comment != ix.Comment {
 		t.Errorf("%s: comment length = %d, archive/zip says %d", name, len(ix.Comment), len(oracle.Comment))
 	}
+}
+
+// nameNeedsNoDecision reports whether f's name is settled before any decision
+// about the whole archive is made. A name that is valid UTF-8 is read as UTF-8
+// whether or not bit 11 says so (arch §4.4 step 2), and the archive-level pass
+// neither counts it as evidence nor decodes it again (§4.4.1) — so it comes
+// back as its raw bytes whatever the other names are in. ASCII is the commonest
+// case of it.
+func nameNeedsNoDecision(f *zip.File) bool {
+	return utf8.ValidString(f.Name)
+}
+
+// The four Shift_JIS archives in the collection reach compareWithOracle in the
+// integration run like every other archive, and theirs are the names decided
+// for the whole archive rather than one at a time. The oracle has to hold on
+// them too, without reaching into the decision it does not own.
+//
+// The decision has an edge the oracle does pin: the names it must not reach.
+// "あとがき.jpg" is UTF-8 without the flag, and its bytes are ones Shift_JIS
+// also reads cleanly, as "縺ゅ→縺後″.jpg" — so an archive decided as Shift_JIS
+// that decoded it again would serve that instead.
+func TestDifferential_shiftJISArchive_matchesArchiveZip(t *testing.T) {
+	t.Parallel()
+	page := testutil.TinyJPEG(t, 8, 8)
+	data := testutil.BuildZIP(t, testutil.ZIPSpec{Entries: []testutil.Entry{
+		{RawName: sjisAmbiguous, Data: page, Method: testutil.MethodDeflate},
+		{RawName: sjisKana, Data: page, Method: testutil.MethodDeflate},
+		{Name: "표지.jpg", Data: page, Method: testutil.MethodStore, Flags: testutil.FlagUTF8},
+		{Name: "あとがき.jpg", Data: page, Method: testutil.MethodStore},
+		{Name: "001.jpg", Data: page, Method: testutil.MethodStore},
+	}})
+	compareWithOracle(t, "shift_jis", bytes.NewReader(data), int64(len(data)))
 }
 
 // The bytes we stream must be the bytes archive/zip streams, for every entry

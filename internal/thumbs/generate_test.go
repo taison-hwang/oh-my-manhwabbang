@@ -410,6 +410,28 @@ func TestGenerate_avifWithDecodingDisabled_saysSo(t *testing.T) {
 	}
 }
 
+// The shipped case, which the test above cannot see. Ruling E-21 makes
+// `-tags noavif` the default build while `thumbnails.avif_enabled` defaults to
+// true, so in the binary users run the config says yes and only the build tag
+// says no. The reason must still be avif_disabled (arch §11, "Build tags and
+// linkage") — falling through to image.Decode, which has no AVIF
+// decoder registered in this build, would report a decode_failed for a picture
+// that is not broken.
+func TestGenerate_avifInABuildWithoutTheDecoder_saysDisabledWhateverTheConfig(t *testing.T) {
+	if avifEnabled {
+		t.Skip("this build carries the AVIF decoder; the slow-path test covers it")
+	}
+	t.Parallel()
+	h := newHarness(t, func(o *Options) { o.AVIFEnabled = true })
+
+	req := h.writeLoose("cover.avif", testutil.TinyAVIF(t))
+	_, err := h.svc.Generate(t.Context(), req)
+	var ue *UndecodableError
+	if !errors.As(err, &ue) || ue.Reason != ReasonAVIFDisabled {
+		t.Fatalf("err = %v, want reason %q", err, ReasonAVIFDisabled)
+	}
+}
+
 // D-25: AVIF holds a ONE-permit semaphore whatever `thumbnails.workers` says,
 // because one decode is ~1.1 s and ~170 MiB of wasm heap. Testing the gate
 // directly rather than through two real decodes keeps the assertion exact and

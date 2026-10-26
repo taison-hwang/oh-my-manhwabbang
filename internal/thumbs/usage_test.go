@@ -117,6 +117,50 @@ func TestUsage_isMemoisedForSixtySeconds(t *testing.T) {
 	}
 }
 
+// The 60 s memo must not outlive a purge. The settings dialog reads usage right
+// after `DELETE /api/cache` returns, well inside the window; serving the walk
+// from before the purge would show the user the bytes they just freed, and the
+// button would look as if it did nothing. The memo is warm here on purpose —
+// a purge test that never read usage beforehand cannot see a stale one.
+func TestUsage_afterAPurge_isNotServedFromTheMemo(t *testing.T) {
+	t.Parallel()
+	clk := &fakeClock{}
+	h := newHarness(t, func(o *Options) { o.Now = clk.Now })
+
+	if _, err := h.svc.Generate(t.Context(), h.pageReq(1, 120)); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	render := testutil.TinyJPEG(t, 300, 400)
+	if _, err := h.svc.StorePDFPage(h.zipBook, 1, 1200, h.zipCV, render); err != nil {
+		t.Fatalf("StorePDFPage: %v", err)
+	}
+	before, err := h.svc.Usage(t.Context())
+	if err != nil {
+		t.Fatalf("Usage: %v", err)
+	}
+	if usageOf(t, before, KindThumbs).Files != 1 || usageOf(t, before, KindPDF).Files != 1 {
+		t.Fatalf("walk before the purge = %+v, want one thumbnail and one pdf render", before.Entries)
+	}
+
+	if _, err := h.svc.Purge(t.Context(), "thumbs"); err != nil {
+		t.Fatalf("Purge: %v", err)
+	}
+	// The clock has not moved: without the purge, this read would be a memo hit.
+	after, err := h.svc.Usage(t.Context())
+	if err != nil {
+		t.Fatalf("Usage after purge: %v", err)
+	}
+	if got := usageOf(t, after, KindThumbs); got.Files != 0 || got.Bytes != 0 {
+		t.Fatalf("thumbs row after purging thumbs = %+v, want zeros", got)
+	}
+	if got := usageOf(t, after, KindPDF); got.Files != 1 || got.Bytes != int64(len(render)) {
+		t.Fatalf("pdf row after purging thumbs = %+v, want the 1 file of %d bytes it still holds", got, len(render))
+	}
+	if after.TotalFiles != 1 {
+		t.Fatalf("total files after purging thumbs = %d, want 1", after.TotalFiles)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // FR-THM-008 — purge
 // ---------------------------------------------------------------------------

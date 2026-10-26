@@ -15,6 +15,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"shelf/internal/index"
 	"shelf/internal/userdata"
 )
 
@@ -217,6 +218,20 @@ func TestOpen_corruptFile_isCleanError(t *testing.T) {
 		Path: filepath.Join(dir, "user.db"), Logger: quietLogger()})
 	if err == nil {
 		t.Fatal("Open on a corrupt file returned no error")
+	}
+
+	// user.db is the file that must never be lost (arch §3.6, NFR-DAT-004), and
+	// a refusal is "refuse to start rather than corrupt data" (arch §6.3). So the
+	// damaged file is left exactly as it was found: never recreated empty, never
+	// deleted, never rewritten — whatever is still recoverable in it is the
+	// operator's to recover.
+	got, rerr := os.ReadFile(filepath.Join(dir, "user.db"))
+	if rerr != nil {
+		t.Fatalf("the corrupt user.db is gone after a refused open: %v", rerr)
+	}
+	if string(got) != string(garbage) {
+		t.Errorf("the corrupt user.db was modified by a refused open: %d bytes, want the original %d",
+			len(got), len(garbage))
 	}
 }
 
@@ -839,6 +854,8 @@ func TestImport_mergeKeepsTheNewerRow_replaceOverwrites(t *testing.T) {
 		}
 	})
 
+	// Neither row is "the newer" on a tie; arch §7.11 AMENDMENT A-17 (E-64)
+	// gives it to the local row under merge.
 	t.Run("equal timestamps keep the local row", func(t *testing.T) {
 		db, _, _ := newDB(t)
 		local, err := db.PutProgress(ctx, update("b1", "s1", 5, 20))
@@ -851,6 +868,10 @@ func TestImport_mergeKeepsTheNewerRow_replaceOverwrites(t *testing.T) {
 		}
 		if res.Skipped != 1 {
 			t.Errorf("result = %+v, want the tie to go to the local row", res)
+		}
+		got, _ := db.GetProgress(ctx, "b1")
+		if got.LastPage != 5 {
+			t.Errorf("last page = %d, want the local 5", got.LastPage)
 		}
 	})
 
@@ -872,6 +893,331 @@ func TestImport_mergeKeepsTheNewerRow_replaceOverwrites(t *testing.T) {
 			t.Errorf("last page = %d, want 11", got.LastPage)
 		}
 	})
+
+	// arch §7.11: merging is what an import does; overwriting is what
+	// `?strategy=replace` asks for. A caller that names no strategy gets the
+	// merge, so an older document cannot clobber newer local progress.
+	t.Run("no strategy is a merge", func(t *testing.T) {
+		db, _, _ := newDB(t)
+		local, err := db.PutProgress(ctx, update("b1", "s1", 5, 20))
+		if err != nil {
+			t.Fatalf("PutProgress: %v", err)
+		}
+		res, err := db.Import(ctx, makeDoc("b1", 11, local.UpdatedAt-3600), "")
+		if err != nil {
+			t.Fatalf("Import: %v", err)
+		}
+		if res.Imported != 0 || res.Skipped != 1 || res.Conflicts != 1 {
+			t.Errorf("result = %+v, want imported 0, skipped 1, conflicts 1", res)
+		}
+		got, _ := db.GetProgress(ctx, "b1")
+		if got.LastPage != 5 {
+			t.Errorf("last page = %d, want the newer local 5", got.LastPage)
+		}
+	})
+}
+
+// started_at is when the reader first opened the book, not when they last
+// touched it (arch §7.6 A-14: it does not describe any one write). Merging two
+// devices' histories therefore keeps the EARLIER of the two first-opens, even
+// when the incoming row wins on updated_at and replaces everything else.
+// arch §7.11 AMENDMENT A-17 (E-64): an item written over an existing row —
+// under merge because it is newer, or under replace — stores min(local,
+// incoming), so neither strategy moves started_at later.
+func TestImport_keepsTheEarlierStartedAt(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+
+	doc := func(startedAt, updatedAt int64) userdata.Export {
+		return userdata.Export{
+			Format: "shelf-progress/1", IDVersion: "shelf-id/1",
+			Items: []userdata.ExportItem{{
+				BookID: "b1", SeriesID: "s1", RootName: "manga", BookPath: "series/b1.zip",
+				LastPage: 11, PageCount: 20, StartedAt: startedAt, UpdatedAt: updatedAt,
+			}},
+		}
+	}
+
+	importNewer := func(t *testing.T, strategy userdata.ImportStrategy,
+		startedAt func(local userdata.Progress) int64) (local, got userdata.Progress) {
+		t.Helper()
+		db, _, _ := newDB(t)
+		local, err := db.PutProgress(ctx, update("b1", "s1", 5, 20))
+		if err != nil {
+			t.Fatalf("PutProgress: %v", err)
+		}
+		res, err := db.Import(ctx, doc(startedAt(local), local.UpdatedAt+3600), strategy)
+		if err != nil {
+			t.Fatalf("Import: %v", err)
+		}
+		if res.Imported != 1 {
+			t.Fatalf("result = %+v, want the newer incoming row imported", res)
+		}
+		got, err = db.GetProgress(ctx, "b1")
+		if err != nil {
+			t.Fatalf("GetProgress: %v", err)
+		}
+		if got.LastPage != 11 {
+			t.Fatalf("last page = %d, want the incoming 11", got.LastPage)
+		}
+		return local, got
+	}
+
+	for _, strategy := range []userdata.ImportStrategy{userdata.StrategyMerge, userdata.StrategyReplace} {
+		t.Run(string(strategy), func(t *testing.T) {
+			t.Run("local started first", func(t *testing.T) {
+				local, got := importNewer(t, strategy, func(l userdata.Progress) int64 { return l.StartedAt + 600 })
+				if got.StartedAt != local.StartedAt {
+					t.Errorf("started_at = %d, want the earlier local %d", got.StartedAt, local.StartedAt)
+				}
+			})
+
+			t.Run("incoming started first", func(t *testing.T) {
+				var want int64
+				_, got := importNewer(t, strategy, func(l userdata.Progress) int64 {
+					want = l.StartedAt - 86400
+					return want
+				})
+				if got.StartedAt != want {
+					t.Errorf("started_at = %d, want the earlier incoming %d", got.StartedAt, want)
+				}
+			})
+		})
+	}
+
+	// The min belongs to an item that is written. A-17: when merge keeps the
+	// local row, the item is not written and the local started_at stays, even
+	// if the incoming one is earlier.
+	t.Run("merge skip keeps the local started_at", func(t *testing.T) {
+		clk := &testClock{at: time.Unix(100, 0).UTC()}
+		db := openIn(t, t.TempDir(), clk)
+		if _, err := db.PutProgress(ctx, update("b1", "s1", 5, 20)); err != nil {
+			t.Fatalf("PutProgress: %v", err)
+		}
+		clk.Advance(200 * time.Second)
+		local, err := db.PutProgress(ctx, update("b1", "s1", 6, 20))
+		if err != nil {
+			t.Fatalf("PutProgress: %v", err)
+		}
+		if local.StartedAt != 100 || local.UpdatedAt != 300 {
+			t.Fatalf("local row = started %d, updated %d, want 100, 300", local.StartedAt, local.UpdatedAt)
+		}
+
+		res, err := db.Import(ctx, doc(50, 200), userdata.StrategyMerge)
+		if err != nil {
+			t.Fatalf("Import: %v", err)
+		}
+		if res.Imported != 0 || res.Skipped != 1 || res.Conflicts != 1 {
+			t.Errorf("result = %+v, want imported 0, skipped 1, conflicts 1", res)
+		}
+		got, err := db.GetProgress(ctx, "b1")
+		if err != nil {
+			t.Fatalf("GetProgress: %v", err)
+		}
+		if got.StartedAt != 100 {
+			t.Errorf("started_at = %d, want the local 100: a skipped row writes nothing", got.StartedAt)
+		}
+	})
+}
+
+// An incoming started_at of 0 is read as its updated_at (arch §7.11 AMENDMENT
+// A-17 (E-64)) — not as 0, which would win every min, and not as "no value",
+// which would leave the local one. Only an existing row that is LATER
+// than the incoming updated_at tells "read as updated_at" from "ignored", and
+// only replace writes an older row over it.
+func TestImport_readsAZeroStartedAtAsItsUpdatedAt(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+
+	doc := func(updatedAt int64) userdata.Export {
+		return userdata.Export{
+			Format: "shelf-progress/1", IDVersion: "shelf-id/1",
+			Items: []userdata.ExportItem{{
+				BookID: "b1", SeriesID: "s1", RootName: "manga", BookPath: "series/b1.zip",
+				LastPage: 11, PageCount: 20, StartedAt: 0, UpdatedAt: updatedAt,
+			}},
+		}
+	}
+
+	for _, strategy := range []userdata.ImportStrategy{userdata.StrategyMerge, userdata.StrategyReplace} {
+		t.Run(string(strategy)+" into an empty database", func(t *testing.T) {
+			db, _, _ := newDB(t)
+			if _, err := db.Import(ctx, doc(5000), strategy); err != nil {
+				t.Fatalf("Import: %v", err)
+			}
+			got, err := db.GetProgress(ctx, "b1")
+			if err != nil {
+				t.Fatalf("GetProgress: %v", err)
+			}
+			if got.StartedAt != 5000 {
+				t.Errorf("started_at = %d, want the row's updated_at 5000", got.StartedAt)
+			}
+		})
+	}
+
+	t.Run("replace over a later local row", func(t *testing.T) {
+		db, _, _ := newDB(t)
+		local, err := db.PutProgress(ctx, update("b1", "s1", 5, 20))
+		if err != nil {
+			t.Fatalf("PutProgress: %v", err)
+		}
+		want := local.StartedAt - 3600
+		res, err := db.Import(ctx, doc(want), userdata.StrategyReplace)
+		if err != nil {
+			t.Fatalf("Import: %v", err)
+		}
+		if res.Imported != 1 {
+			t.Fatalf("result = %+v, want replace to write the older row", res)
+		}
+		got, err := db.GetProgress(ctx, "b1")
+		if err != nil {
+			t.Fatalf("GetProgress: %v", err)
+		}
+		if got.StartedAt != want {
+			t.Errorf("started_at = %d, want min(local %d, incoming updated_at %d) = %d",
+				got.StartedAt, local.StartedAt, want, want)
+		}
+	})
+}
+
+// Prefs are half of the document too (arch §7.11), and the export carries no
+// timestamp for them: an incoming override can never be "the row with the newer
+// updated_at", so merge keeps a local override, while replace overwrites it
+// unconditionally (arch §7.11 AMENDMENT A-17 (E-64)). Only a database that
+// ALREADY holds an override can tell the two apart — on an empty one, keep-local
+// and overwrite write the same row. A-17 also fixes what a written row is
+// stamped with (the import time, the clock having moved since the local write)
+// and that prefs stay out of imported/skipped/conflicts, which count items only.
+func TestImport_prefsAgainstAnExistingOverride(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	str := func(s string) *string { return &s }
+
+	doc := userdata.Export{
+		Format: "shelf-progress/1", IDVersion: "shelf-id/1",
+		Prefs: []userdata.ExportPref{
+			{BookID: "b1", ReadingDir: str("ltr"), DisplayMode: str("single"), FitMode: str("width")},
+			{BookID: "b2", FitMode: str("original")},
+		},
+	}
+	deref := func(p *string) string {
+		if p == nil {
+			return "<nil>"
+		}
+		return *p
+	}
+
+	cases := []struct {
+		strategy       userdata.ImportStrategy
+		dir, mode, fit string
+		keepsLocal     bool
+		why            string
+	}{
+		{userdata.StrategyMerge, "rtl", "vertical", "height", true, "merge keeps the local override"},
+		{userdata.StrategyReplace, "ltr", "single", "width", false, "replace overwrites it"},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.strategy), func(t *testing.T) {
+			db, clk, _ := newDB(t)
+			local, err := db.PutPrefs(ctx, "b1", userdata.PrefsPatch{
+				ReadingDir:  userdata.SetPatch("rtl"),
+				DisplayMode: userdata.SetPatch("vertical"),
+				FitMode:     userdata.SetPatch("height"),
+			})
+			if err != nil {
+				t.Fatalf("PutPrefs: %v", err)
+			}
+			clk.Advance(time.Hour)
+			importedAt := clk.Now().Unix()
+			res, err := db.Import(ctx, doc, tc.strategy)
+			if err != nil {
+				t.Fatalf("Import: %v", err)
+			}
+			if res != (userdata.ImportResult{}) {
+				t.Errorf("result = %+v, want all zero: the document has no items", res)
+			}
+
+			p, err := db.GetPrefs(ctx, "b1")
+			if err != nil {
+				t.Fatalf("GetPrefs(b1): %v", err)
+			}
+			if deref(p.ReadingDir) != tc.dir || deref(p.DisplayMode) != tc.mode || deref(p.FitMode) != tc.fit {
+				t.Errorf("b1 prefs = %s/%s/%s, want %s/%s/%s: %s",
+					deref(p.ReadingDir), deref(p.DisplayMode), deref(p.FitMode),
+					tc.dir, tc.mode, tc.fit, tc.why)
+			}
+			wantStamp := importedAt
+			if tc.keepsLocal {
+				wantStamp = local.UpdatedAt
+			}
+			if p.UpdatedAt != wantStamp {
+				t.Errorf("b1 updated_at = %d, want %d (local write %d, import %d): %s",
+					p.UpdatedAt, wantStamp, local.UpdatedAt, importedAt, tc.why)
+			}
+
+			// A book with no local override takes the incoming one either way.
+			p2, err := db.GetPrefs(ctx, "b2")
+			if err != nil {
+				t.Fatalf("GetPrefs(b2): %v", err)
+			}
+			if deref(p2.FitMode) != "original" {
+				t.Errorf("b2 fit_mode = %s, want the incoming original", deref(p2.FitMode))
+			}
+			if p2.UpdatedAt != importedAt {
+				t.Errorf("b2 updated_at = %d, want the import time %d", p2.UpdatedAt, importedAt)
+			}
+		})
+	}
+}
+
+// A prefs row whose three fields are all null is ignored under either strategy
+// (arch §7.11 AMENDMENT A-17 (E-64)): it does not clear a local override, and it
+// does not leave an empty row behind for a book that has none. Replace is the
+// strategy that would otherwise write it over the override; merge would only
+// insert it where there is no row.
+func TestImport_allNullPrefsRowIsIgnored(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+
+	doc := userdata.Export{
+		Format: "shelf-progress/1", IDVersion: "shelf-id/1",
+		Prefs: []userdata.ExportPref{
+			{BookID: "b1"}, // has a local override
+			{BookID: "b2"}, // has none
+		},
+	}
+	for _, strategy := range []userdata.ImportStrategy{userdata.StrategyMerge, userdata.StrategyReplace} {
+		t.Run(string(strategy), func(t *testing.T) {
+			db, clk, _ := newDB(t)
+			local, err := db.PutPrefs(ctx, "b1", userdata.PrefsPatch{FitMode: userdata.SetPatch("height")})
+			if err != nil {
+				t.Fatalf("PutPrefs: %v", err)
+			}
+			clk.Advance(time.Hour)
+			if _, err := db.Import(ctx, doc, strategy); err != nil {
+				t.Fatalf("Import: %v", err)
+			}
+
+			stored, err := db.ListPrefs(ctx)
+			if err != nil {
+				t.Fatalf("ListPrefs: %v", err)
+			}
+			var ids []string
+			for _, p := range stored {
+				ids = append(ids, p.BookID)
+			}
+			if !equalStrings(ids, []string{"b1"}) {
+				t.Fatalf("stored prefs rows = %v, want only b1's local override", ids)
+			}
+			p := stored[0]
+			if p.FitMode == nil || *p.FitMode != "height" || p.ReadingDir != nil || p.DisplayMode != nil {
+				t.Error("b1 overrides changed, want fit_mode height alone")
+			}
+			if p.UpdatedAt != local.UpdatedAt {
+				t.Errorf("b1 updated_at = %d, want the local write's %d", p.UpdatedAt, local.UpdatedAt)
+			}
+		})
+	}
 }
 
 func TestImport_refusesForeignEnvelopes(t *testing.T) {
@@ -959,9 +1305,10 @@ func TestImport_rejectsPrefValuesOutsideTheFrozenEnums(t *testing.T) {
 }
 
 // Page numbers are 1-based everywhere in the API (arch §7.1). The import path
-// clamps them exactly as PutProgress does, so a hand-edited export cannot store
-// a page the PUT path would have clamped away; a negative page_count is a
-// malformed document and is refused, again as on the write path.
+// clamps them exactly as PutProgress does — to [1, page_count], the upper bound
+// only when page_count > 0 (arch §7.11 AMENDMENT A-17 (E-64)) — so a hand-edited
+// export cannot store a page the PUT path would have clamped away; a negative
+// page_count is a malformed document and is refused, again as on the write path.
 func TestImport_clampsPageNumbersLikeTheWritePath(t *testing.T) {
 	t.Parallel()
 	db, _, _ := newDB(t)
@@ -1100,15 +1447,25 @@ func TestUserData_survivesDeletionOfTheIndexFiles(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	// Stand in for a scan's output, then delete it the way FR-IDX-005 does.
-	for _, name := range []string{"index.db", "index.db-wal", "index.db-shm"} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte("derived"), 0o600); err != nil {
-			t.Fatalf("creating %s: %v", name, err)
+	// Stand in for a scan's output, then delete it with the very call
+	// `--rebuild-index` makes (app.New -> index.Destroy, FR-IDX-005). A list of
+	// names spelled out here would only prove that THIS list spares user.db;
+	// the allowlist that matters is the one the rebuild actually walks.
+	indexPath := filepath.Join(dir, "index.db")
+	for _, f := range index.DBFiles(indexPath) {
+		if err := os.WriteFile(f, []byte("derived"), 0o600); err != nil {
+			t.Fatalf("creating %s: %v", filepath.Base(f), err)
 		}
 	}
-	for _, name := range []string{"index.db", "index.db-wal", "index.db-shm"} {
-		if err := os.Remove(filepath.Join(dir, name)); err != nil {
-			t.Fatalf("removing %s: %v", name, err)
+	if err := index.Destroy(indexPath); err != nil {
+		t.Fatalf("index.Destroy: %v", err)
+	}
+	// Without this, a Destroy that deletes nothing would pass too: user.db
+	// surviving is only half of the rebuild, the derived files going is the
+	// other (arch-backend §3.4, §3.6).
+	for _, f := range index.DBFiles(indexPath) {
+		if _, err := os.Stat(f); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s still there after index.Destroy (stat err %v)", filepath.Base(f), err)
 		}
 	}
 

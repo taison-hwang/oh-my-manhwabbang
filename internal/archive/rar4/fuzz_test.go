@@ -2,6 +2,7 @@ package rar4
 
 import (
 	"bytes"
+	"encoding/binary"
 	"io"
 	"testing"
 	"unicode/utf8"
@@ -27,6 +28,12 @@ func FuzzReadIndex(f *testing.F) {
 		file(entryOpt{rawName: []byte("dir"), dir: true}).bytes())
 	f.Add(newBuilder(f).mainHeader(0).
 		file(entryOpt{rawName: []byte("big"), data: []byte("x"), highUnp: 1}).bytes())
+	// An interrupted download that stopped 3 bytes into its last payload:
+	// short by less than the block's own header, which is exactly the margin
+	// an extent check that forgets the header lets through.
+	cut := newBuilder(f).mainHeader(0).
+		file(entryOpt{rawName: []byte("001.jpg"), data: []byte("page one")}).bytes()
+	f.Add(cut[:len(cut)-3])
 	f.Add(signature[:])
 	f.Add([]byte("Rar!\x1a\x07\x01\x00"))
 	f.Add([]byte("not a rar at all"))
@@ -61,9 +68,18 @@ func FuzzReadIndex(f *testing.F) {
 			if e.CompSize < 0 || e.Size < 0 {
 				t.Fatalf("entry %d: negative size (packed %d, unpacked %d)", i, e.CompSize, e.Size)
 			}
-			if e.LocalHdrOff+e.CompSize > size {
-				t.Fatalf("entry %d: extent %d+%d runs past a %d-byte container",
-					i, e.LocalHdrOff, e.CompSize, size)
+			// LocalHdrOff is the block header, not the payload: what the
+			// serving path reads spans HEAD_SIZE and then CompSize bytes. The
+			// 7-byte common header is HEAD_CRC(2) HEAD_TYPE(1) HEAD_FLAGS(2)
+			// HEAD_SIZE(2), read here from the bytes rather than from the
+			// parser's constants so the two cannot agree on a wrong value.
+			if e.LocalHdrOff > size-7 {
+				t.Fatalf("entry %d: block header at %d does not fit a %d-byte container", i, e.LocalHdrOff, size)
+			}
+			headSize := int64(binary.LittleEndian.Uint16(data[e.LocalHdrOff+5:]))
+			if e.LocalHdrOff+headSize+e.CompSize > size {
+				t.Fatalf("entry %d: header %d+%d and payload %d run past a %d-byte container",
+					i, e.LocalHdrOff, headSize, e.CompSize, size)
 			}
 			// kenc promises a name that is always valid UTF-8 so it can go
 			// straight into pages.name and into JSON. A lossy repair may leave

@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 
 	"shelf/internal/archive"
 	"shelf/internal/archive/zipidx"
+	"shelf/internal/kenc"
 	"shelf/internal/testutil"
 )
 
@@ -175,24 +177,161 @@ func TestSalvage_zeroFilledTail_recoversWhatPrecedesIt(t *testing.T) {
 // Four bytes matching the local signature occur inside compressed data, and a
 // scan that trusts them lists an entry whose geometry is noise. Serving that
 // entry hands the reader garbage, so it must never reach the index.
+//
+// A candidate only meets the scan once the chain has broken — an intact chain
+// steps over every payload whole and never looks inside one. So each fixture
+// punches a hole where 002's header was, which sends the resynchronising scan
+// back through 001's payload, and plants there a header that is well formed in
+// every field but one. Each row is therefore rejected by exactly one of
+// parseLocalHeader's checks, and 003, past the candidate, proves the scan went
+// all the way through.
 func TestSalvage_signatureInsideData_isNotAnEntry(t *testing.T) {
 	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		rawName []byte
+	}{
+		// The tell in random bytes nearly every time: a name length no
+		// archiver writes. Every byte of it is printable, so the length is
+		// the only thing wrong.
+		{"name longer than any archiver writes", []byte(strings.Repeat("n", 596) + ".jpg")},
+		// A control byte is part of no UTF-8, CP949 or Shift_JIS name.
+		{"control bytes in the name", []byte("p\x00\x07ge.jpg")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			jpg := testutil.TinyJPEG(t, 16, 16)
+			payload := bytes.Join([][]byte{
+				jpg, forgedLocalHeader(tc.rawName, 64), bytes.Repeat([]byte{0x5a}, 64), jpg,
+			}, nil)
+			data := zipWithoutTail(t, []testutil.Entry{
+				{Name: "001.jpg", Data: payload, Method: testutil.MethodStore},
+				{Name: "002.jpg", Data: jpg, Method: testutil.MethodStore},
+				{Name: "003.jpg", Data: jpg, Method: testutil.MethodStore},
+			})
+			at := localHeaderNamed(t, data, "002.jpg")
+			clear(data[at : at+30+len("002.jpg")])
+
+			got := names(salvageIndex(t, data))
+			if want := []string{"001.jpg", "003.jpg"}; !slices.Equal(got, want) {
+				t.Errorf("recovered %q, want %q — the candidate inside 001's payload "+
+					"is not a header, and 003 lies past it", got, want)
+			}
+		})
+	}
+}
+
+// findLocalHeader validates each candidate itself rather than handing it back
+// to the walk, because in compressed data the round trip would dominate. That
+// is a read-accounting claim, so it is checked as one: a damaged payload full
+// of signature-like bytes must cost exactly the reads the same payload costs
+// without them. A candidate handed back to the walk costs a fresh window to
+// parse it and another to resume the scan.
+func TestSalvage_signaturesInsideData_costNoExtraReads(t *testing.T) {
+	t.Parallel()
 	jpg := testutil.TinyJPEG(t, 16, 16)
-	// A stored entry whose payload literally contains the signature, twice.
-	payload := bytes.Join([][]byte{
-		jpg, []byte("PK\x03\x04"), bytes.Repeat([]byte{0xde, 0xad}, 64),
-		[]byte("PK\x03\x04"), jpg,
-	}, nil)
+	build := func(sig string) []byte {
+		// 64 candidates in the shape random bytes take — the signature, then a
+		// name length no archiver writes — all more than one 256 KiB window
+		// before the end of the archive, where every window is a full one.
+		var payload []byte
+		for range 64 {
+			payload = append(payload, sig...)
+			payload = append(payload, bytes.Repeat([]byte{0xff}, 26)...)
+			payload = append(payload, bytes.Repeat([]byte{0x5a}, 4<<10)...)
+		}
+		payload = append(payload, bytes.Repeat([]byte{0x5a}, 320<<10)...)
+		data := zipWithoutTail(t, []testutil.Entry{
+			{Name: "001.bin", Data: payload, Method: testutil.MethodStore},
+			{Name: "002.jpg", Data: jpg, Method: testutil.MethodStore},
+			{Name: "003.jpg", Data: jpg, Method: testutil.MethodStore},
+		})
+		at := localHeaderNamed(t, data, "002.jpg")
+		clear(data[at : at+30+len("002.jpg")])
+		return data
+	}
+	reads := func(data []byte) int64 {
+		t.Helper()
+		c := newCounter(data)
+		ix, err := zipidx.ReadCentralDirectory(t.Context(), c, int64(len(data)))
+		if !errors.Is(err, zipidx.ErrSalvagedFromLocalHeaders) || ix == nil {
+			t.Fatalf("err = %v, want zipidx.ErrSalvagedFromLocalHeaders", err)
+		}
+		if got, want := names(ix), []string{"001.bin", "003.jpg"}; !slices.Equal(got, want) {
+			t.Fatalf("recovered %q, want %q — the scan must cross 001's payload to reach 003", got, want)
+		}
+		return c.calls.Load()
+	}
+
+	clean := reads(build("QK\x03\x04"))
+	planted := reads(build("PK\x03\x04"))
+	if planted != clean {
+		t.Errorf("%d reads with 64 signatures in the damaged payload, %d without — "+
+			"a candidate cost a round trip through the walk", planted, clean)
+	}
+}
+
+// A salvaged book must not get worse names than a healthy one (salvage.go):
+// the names a local-header walk decodes one at a time are settled against the
+// whole set, exactly as a directory read settles them. Shift_JIS is the shape
+// where that decides the answer — `天上天下 20.zip` reads as CP949 one name at
+// a time, and wrongly.
+func TestSalvage_shiftJISNames_areDecidedForTheWholeArchive(t *testing.T) {
+	t.Parallel()
+	page := testutil.TinyJPEG(t, 8, 8)
 	data := zipWithoutTail(t, []testutil.Entry{
-		{Name: "001.jpg", Data: payload, Method: testutil.MethodStore},
-		{Name: "002.jpg", Data: jpg, Method: testutil.MethodStore},
+		{RawName: sjisAmbiguous, Data: page, Method: testutil.MethodDeflate},
+		{RawName: sjisKana, Data: page, Method: testutil.MethodDeflate},
+		// A flagged UTF-8 name is outside the archive-level decision.
+		{Name: "표지.jpg", Data: page, Method: testutil.MethodStore, Flags: testutil.FlagUTF8},
 	})
 
-	got := names(salvageIndex(t, data))
-	if len(got) != 2 {
-		t.Errorf("recovered %v, want exactly the two real entries — the "+
-			"signatures inside 001's payload are not headers", got)
+	ix := salvageIndex(t, data)
+	want := []struct{ name, enc string }{
+		{"tenjou tenge v20/天天-20-001.jpg", kenc.EncCP932},
+		{"tenjou tenge v20/天天-20-008 のコピー2.jpg", kenc.EncCP932},
+		{"표지.jpg", kenc.EncUTF8},
 	}
+	if len(ix.Entries) != len(want) {
+		t.Fatalf("recovered %q, want %d entries", names(ix), len(want))
+	}
+	for i, e := range ix.Entries {
+		if e.Name != want[i].name || e.NameEncoding != want[i].enc {
+			t.Errorf("entry %d = (%q, %q), want (%q, %q)", i, e.Name, e.NameEncoding, want[i].name, want[i].enc)
+		}
+	}
+}
+
+// forgedLocalHeader is a local file header no archiver wrote — four signature
+// bytes inside some payload, at their most convincing. Every field but the name
+// is plausible: stored, no flags, a payload of compSize bytes that fits.
+func forgedLocalHeader(rawName []byte, compSize uint32) []byte {
+	var b bytes.Buffer
+	put32(&b, 0x04034b50)
+	put16(&b, 20)     // version needed to extract
+	put16(&b, 0)      // flags
+	put16(&b, 0)      // method: stored
+	put16(&b, 0)      // modification time
+	put16(&b, 0x4821) // modification date: 2016-01-01
+	put32(&b, 0xdeadbeef)
+	put32(&b, compSize)
+	put32(&b, compSize)
+	put16(&b, uint16(len(rawName)))
+	put16(&b, 0) // extra length
+	b.Write(rawName)
+	return b.Bytes()
+}
+
+// localHeaderNamed returns the offset of the local header carrying name.
+// Counting signatures would not do: these fixtures plant extra ones.
+func localHeaderNamed(t *testing.T, data []byte, name string) int {
+	t.Helper()
+	i := bytes.Index(data, []byte(name))
+	at := i - 30
+	if i < 0 || at < 0 || !bytes.HasPrefix(data[at:], []byte("PK\x03\x04")) {
+		t.Fatalf("fixture: no local header named %q", name)
+	}
+	return at
 }
 
 // The last entry of a cut-short archive has only some of its bytes. `zip -FF`

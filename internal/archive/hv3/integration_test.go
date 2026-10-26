@@ -168,7 +168,9 @@ func TestIntegration_realCollection_matchesRecordedCRC(t *testing.T) {
 
 	found := findRealHV3s(t, root)
 	if len(found) == 0 {
-		t.Skip("no HV3 containers under SHELF_TEST_ROOT")
+		// A failure, not a skip, as zipidx and rar4 fail on a root without
+		// their format: a skip reads exactly like a pass (findRealHV3s).
+		t.Fatalf("no HV3 containers under %s", root)
 	}
 
 	var containers, entries, mislabelled int
@@ -252,7 +254,9 @@ func TestIntegration_realCollection_isStoredAndSeekable(t *testing.T) {
 
 	found := findRealHV3s(t, root)
 	if len(found) == 0 {
-		t.Skip("no HV3 containers under SHELF_TEST_ROOT")
+		// A failure, not a skip, as zipidx and rar4 fail on a root without
+		// their format: a skip reads exactly like a pass (findRealHV3s).
+		t.Fatalf("no HV3 containers under %s", root)
 	}
 
 	var checked int

@@ -18,51 +18,64 @@ import (
 // So this is the guard, and it is driven by the registry rather than by a list
 // of kinds: a kind added to the Factory without a case here fails the test
 // instead of slipping past it.
+//
+// Present is not enough, though. The label is what SeriesDetail.encoding shows
+// an operator (E-56), so each case also says which label arch §4.4's rule gives
+// its names, and the listing has to report that one: a CP949 book reported as
+// "utf-8" is a label that is there and is false.
 
-// labelCase opens one book of a kind whose listing must succeed.
-type labelCase func(t *testing.T) source.BookSource
+// labelCase opens one book of a kind whose listing must succeed, and names the
+// label its entry names must get.
+type labelCase struct {
+	open func(t *testing.T) source.BookSource
+	// want is arch §4.4 applied to the case's own name bytes: flagless names
+	// that are not valid UTF-8 but decode cleanly as CP949 are "cp949"; names
+	// that are UTF-8 — flagged, plain ASCII, a filesystem's, or Unicode by the
+	// format's construction (HV3's UTF-16LE) — are "utf-8".
+	want string
+}
 
 // labelCases holds a case per registered kind. The PDF case lives in a file of
 // its own (encoding_pdf_test.go) because only a build with pdfium can list a
 // PDF successfully; labelSkips says why a build without it has none.
 var labelCases = map[source.Kind]labelCase{
-	source.KindZIP: func(t *testing.T) source.BookSource {
+	source.KindZIP: {want: kenc.EncCP949, open: func(t *testing.T) source.BookSource {
 		f := newFixture(t, map[string]any{"01권.zip": testutil.BuildZIP(t, testutil.ZIPSpec{Entries: []testutil.Entry{
 			{RawName: testutil.CP949(t, "군계 001.jpg"), Data: testutil.TinyJPEG(t, 8, 8)},
 		}})})
 		return f.open(t, source.KindZIP, "01권.zip")
-	},
-	source.KindRAR: func(t *testing.T) source.BookSource {
+	}},
+	source.KindRAR: {want: kenc.EncCP949, open: func(t *testing.T) source.BookSource {
 		f := newFixture(t, map[string]any{"01권.rar": rarBook(t,
 			testutil.RAR4Entry{Name: testutil.CP949(t, `한글권\001.jpg`), Data: testutil.TinyJPEG(t, 8, 8)},
 		)})
 		return f.open(t, source.KindRAR, "01권.rar")
-	},
-	source.KindHV3: func(t *testing.T) source.BookSource {
+	}},
+	source.KindHV3: {want: kenc.EncUTF8, open: func(t *testing.T) source.BookSource {
 		f := newFixture(t, map[string]any{"책.hv3": hv3Book(t, testutil.HV3EncrMask,
 			testutil.HV3Entry{Name: "001.jpg", Data: testutil.TinyJPEG(t, 8, 8)},
 		)})
 		return f.open(t, source.KindHV3, "책.hv3")
-	},
-	source.KindDir: func(t *testing.T) source.BookSource {
+	}},
+	source.KindDir: {want: kenc.EncUTF8, open: func(t *testing.T) source.BookSource {
 		f := newFixture(t, map[string]any{"01권": map[string]any{"001.jpg": testutil.TinyJPEG(t, 8, 8)}})
 		return f.open(t, source.KindDir, "01권")
-	},
-	source.KindNestedZIP: func(t *testing.T) source.BookSource {
+	}},
+	source.KindNestedZIP: {want: kenc.EncUTF8, open: func(t *testing.T) source.BookSource {
 		inner := testutil.BuildZIP(t, testutil.ZIPSpec{Entries: []testutil.Entry{
 			{Name: "001.jpg", Data: testutil.TinyJPEG(t, 8, 8), Flags: testutil.FlagUTF8},
 		}})
 		return openNested(t, source.KindNestedZIP, "02권.zip", inner)
-	},
-	source.KindNestedRAR: func(t *testing.T) source.BookSource {
+	}},
+	source.KindNestedRAR: {want: kenc.EncCP949, open: func(t *testing.T) source.BookSource {
 		inner := rarBook(t, testutil.RAR4Entry{Name: testutil.CP949(t, `2권\001.jpg`), Data: testutil.TinyJPEG(t, 8, 8)})
 		return openNested(t, source.KindNestedRAR, "02권.rar", inner)
-	},
-	source.KindNestedHV3: func(t *testing.T) source.BookSource {
+	}},
+	source.KindNestedHV3: {want: kenc.EncUTF8, open: func(t *testing.T) source.BookSource {
 		inner := hv3Book(t, testutil.HV3EncrMask, testutil.HV3Entry{Name: "0001.jpg", Data: testutil.TinyJPEG(t, 8, 8)})
 		return openNested(t, source.KindNestedHV3, "04.hv3", inner)
-	},
-	source.KindNestedDir: func(t *testing.T) source.BookSource {
+	}},
+	source.KindNestedDir: {want: kenc.EncCP949, open: func(t *testing.T) source.BookSource {
 		container := testutil.BuildZIP(t, testutil.ZIPSpec{Entries: []testutil.Entry{
 			{RawName: testutil.CP949(t, "여친만 01/001.jpg"), Data: testutil.TinyJPEG(t, 8, 8)},
 			{RawName: testutil.CP949(t, "여친만 02/001.jpg"), Data: testutil.TinyJPEG(t, 8, 8)},
@@ -72,7 +85,7 @@ var labelCases = map[source.Kind]labelCase{
 			ID: "bk", Kind: source.KindNestedDir, RootName: rootName,
 			RelPath: "컨테이너.zip", InnerPath: "여친만 01",
 		})
-	},
+	}},
 }
 
 // labelSkips names the registered kinds this build cannot list successfully,
@@ -106,7 +119,7 @@ func TestEverySourceKind_labelsASuccessfulListing(t *testing.T) {
 	f := newFixture(t, map[string]any{"book": map[string]any{"001.jpg": testutil.TinyJPEG(t, 8, 8)}})
 
 	for _, kind := range f.factory.Kinds() {
-		build, ok := labelCases[kind]
+		tc, ok := labelCases[kind]
 		if !ok {
 			if why, skip := labelSkips[kind]; skip {
 				t.Logf("kind %s: no successful listing in this build (%s)", kind, why)
@@ -118,7 +131,7 @@ func TestEverySourceKind_labelsASuccessfulListing(t *testing.T) {
 		}
 		t.Run(string(kind), func(t *testing.T) {
 			t.Parallel()
-			src := build(t)
+			src := tc.open(t)
 			l, err := src.List(t.Context())
 			if err != nil {
 				t.Fatalf("List: %v — the case must be a listing that succeeds", err)
@@ -132,6 +145,9 @@ func TestEverySourceKind_labelsASuccessfulListing(t *testing.T) {
 			}
 			if kenc.MostSuspect(l.NameEncoding) != l.NameEncoding {
 				t.Errorf("NameEncoding = %q, which is not one of kenc's labels", l.NameEncoding)
+			}
+			if l.NameEncoding != tc.want {
+				t.Errorf("NameEncoding = %q, want %q for this case's entry names (arch §4.4)", l.NameEncoding, tc.want)
 			}
 		})
 	}

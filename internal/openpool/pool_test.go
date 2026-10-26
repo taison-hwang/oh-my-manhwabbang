@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -183,6 +184,13 @@ func TestAcquire_evictsLeastRecentlyUsed(t *testing.T) {
 	if st := p.Stats(); st.Evictions == 0 {
 		t.Error("Stats().Evictions = 0, want at least 1")
 	}
+	// Stats.Open is "file descriptors currently held", the number GET
+	// /api/health?verbose=1 reports (arch §5.2). Each eviction closed one, so
+	// it must agree with the files that are actually still open: c and the
+	// re-opened b, against Max=2 — b's re-open evicted a, by then the LRU tail.
+	if got, want := p.Stats().Open, ffs.openDescriptors(); got != want || got != 2 {
+		t.Errorf("Stats().Open = %d after two evictions, want %d — the descriptors actually open (Max=2)", got, want)
+	}
 }
 
 // The invariant the whole design turns on: a descriptor is never closed while
@@ -337,6 +345,13 @@ func TestAcquire_staleFile_isServedAndFlagged(t *testing.T) {
 	}
 }
 
+// A refcount driven negative lets a handle somebody else is holding be closed
+// under them. Which closing path notices depends on how negative it went:
+// eviction picks only refs == 0, so a count of -1 plus one borrower is evicted
+// and -2 plus one is not; Invalidate closes at refs <= 0, so any surplus
+// release shows there. The test releases twice — `defer ref.Release()` next to
+// an early `ref.Release()`, the shape the doc comment promises is harmless —
+// and then drives both paths against the next borrower.
 func TestRelease_isIdempotent(t *testing.T) {
 	t.Parallel()
 	ffs := newFakeFS()
@@ -349,14 +364,16 @@ func TestRelease_isIdempotent(t *testing.T) {
 	}
 	ref.Release()
 	ref.Release()
-	ref.Release()
 
-	// A refcount driven negative would let the next eviction close a handle
-	// somebody else is holding.
 	other, err := p.Acquire(t.Context(), "a.zip", 0, 0)
 	if err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}
+	if n := len(ffs.all("a.zip")); n != 1 {
+		t.Fatalf("a.zip opened %d times, want 1: the second borrower must share the first descriptor or this proves nothing", n)
+	}
+
+	// Eviction: Max=1, so every other archive pushes a.zip toward the tail.
 	for i := 0; i < 5; i++ {
 		ref, err := p.Acquire(t.Context(), fmt.Sprintf("x-%d.zip", i), 0, 0)
 		if err != nil {
@@ -365,9 +382,87 @@ func TestRelease_isIdempotent(t *testing.T) {
 		ref.Release()
 	}
 	if _, err := other.ReadAt(make([]byte, 4), 0); err != nil {
-		t.Fatalf("the held handle was closed after a double Release: %v", err)
+		t.Fatalf("eviction closed the held handle after a double Release: %v", err)
+	}
+
+	// Invalidate: unpublished, but one borrower left, so the close must wait.
+	p.Invalidate("a.zip")
+	if _, err := other.ReadAt(make([]byte, 4), 0); err != nil {
+		t.Fatalf("Invalidate closed the held handle after a double Release: %v", err)
 	}
 	other.Release()
+	if !ffs.all("a.zip")[0].closed.Load() {
+		t.Error("the invalidated descriptor should close on its last real release")
+	}
+}
+
+// Two readers racing on a cold path both miss and both open the file; the one
+// that publishes second must adopt the winner's handle — with its own borrow
+// counted on it — and close the descriptor it opened (Acquire's comment).
+//
+// The opener holds each caller until both have arrived, so both are past the
+// miss and neither can publish before the other has opened: the lost-race
+// branch runs every time rather than when the scheduler happens to allow it.
+func TestAcquire_lostRace_borrowsTheWinnersHandle(t *testing.T) {
+	t.Parallel()
+	ffs := newFakeFS()
+	var arrived sync.WaitGroup
+	arrived.Add(2)
+	bothIn := make(chan struct{})
+	go func() { arrived.Wait(); close(bothIn) }()
+	open := func(name string) (openpool.File, error) {
+		arrived.Done()
+		select {
+		case <-bothIn:
+		case <-time.After(30 * time.Second):
+			return nil, errors.New("only one Acquire reached the opener; the race this test needs never happened")
+		}
+		return ffs.open(name)
+	}
+	p := openpool.New(openpool.Options{Max: 4, Open: open})
+	t.Cleanup(func() { _ = p.Close() })
+
+	refs := make([]*openpool.Ref, 2)
+	errs := make([]error, 2)
+	var wg sync.WaitGroup
+	for i := range refs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			refs[i], errs[i] = p.Acquire(t.Context(), "a.zip", 0, 0)
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("Acquire %d: %v", i, err)
+		}
+	}
+
+	files := ffs.all("a.zip")
+	if len(files) != 2 {
+		t.Fatalf("a.zip opened %d times, want 2 — both racers open, the loser drops its own", len(files))
+	}
+	if files[0].closed.Load() == files[1].closed.Load() {
+		t.Fatalf("closed = %v/%v, want exactly one of the two descriptors closed (the loser's)",
+			files[0].closed.Load(), files[1].closed.Load())
+	}
+	if st := p.Stats(); st.Open != 1 || st.Size != 1 || st.Misses != 2 {
+		t.Errorf("stats open/size/misses = %d/%d/%d, want 1/1/2", st.Open, st.Size, st.Misses)
+	}
+
+	// Both refs are borrows of the one published handle. Return one, then
+	// unpublish: the other is still reading, so the descriptor must stay open
+	// until it too is released.
+	refs[0].Release()
+	p.Invalidate("a.zip")
+	if _, err := refs[1].ReadAt(make([]byte, 4), 0); err != nil {
+		t.Fatalf("the winner's handle was closed under the loser's borrow: %v", err)
+	}
+	refs[1].Release()
+	if n := ffs.openDescriptors(); n != 0 {
+		t.Errorf("%d descriptors still open after both borrowers released an invalidated handle, want 0", n)
+	}
 }
 
 func TestClose_thenAcquire_isErrClosed(t *testing.T) {
@@ -527,11 +622,18 @@ func TestPool_concurrentPageReads_realArchive(t *testing.T) {
 // The pool's File interface deliberately has no Seek. That is not a style
 // choice: a shared cursor is exactly what CON-004 forbids, and the type system
 // is a better guarantee than a code-review convention.
+//
+// The question is about the interface type, so the test asks the interface
+// type. Asserting a value held in an openpool.File would ask the dynamic type
+// of whatever fake was put in it, which is a fact about the fake.
 func TestFileInterface_hasNoSeeker(t *testing.T) {
 	t.Parallel()
-	var f openpool.File = &fakeFile{name: "x"}
-	if _, ok := f.(io.Seeker); ok {
+	fileType := reflect.TypeFor[openpool.File]()
+	if fileType.Implements(reflect.TypeFor[io.Seeker]()) {
 		t.Fatal("openpool.File exposes io.Seeker; concurrent readers could share a cursor (CON-004)")
+	}
+	if _, ok := fileType.MethodByName("Seek"); ok {
+		t.Fatal("openpool.File has a Seek method; concurrent readers could share a cursor (CON-004)")
 	}
 	ref, err := openpool.New(openpool.Options{Open: newFakeFS().open}).Acquire(t.Context(), "a.zip", 0, 0)
 	if err != nil {

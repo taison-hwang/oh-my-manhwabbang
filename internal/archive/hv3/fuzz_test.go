@@ -20,6 +20,12 @@ import (
 // hand back an entry whose recorded extent lies outside the container — a page
 // row like that would send the serving path reading at an offset that means
 // nothing.
+// fileBlockLen is the FILE block in front of each payload: the tag, eight
+// bytes that are zero, and the payload length as a 32-bit value (hv3.go). It is
+// spelled out here rather than borrowed from the parser so the two cannot agree
+// on a wrong value.
+const fileBlockLen = 16
+
 func FuzzReadIndex(f *testing.F) {
 	big := uint64(1 << 50)
 	huge := uint32(1 << 30)
@@ -42,6 +48,11 @@ func FuzzReadIndex(f *testing.F) {
 	f.Add(testutil.BuildHV3(f, testutil.HV3Spec{
 		Entries: testutil.HV3Pages(1), Title: "LIST", Encr: testutil.HV3EncrMask,
 	}))
+	// An interrupted download that stopped 8 bytes into the last payload:
+	// short by less than its FILE block, which is exactly the margin an extent
+	// check that forgets the block lets through.
+	cut := testutil.BuildHV3(f, testutil.HV3Spec{Entries: testutil.HV3Pages(2), Encr: testutil.HV3EncrMask})
+	f.Add(cut[:len(cut)-8])
 	// The shapes the collection actually holds under this extension.
 	f.Add([]byte("HV30"))
 	f.Add([]byte("Rar!\x1a\x07\x00\x00\x00\x00\x00"))
@@ -72,9 +83,11 @@ func FuzzReadIndex(f *testing.F) {
 			if e.CompSize < 0 || e.Size < 0 {
 				t.Fatalf("entry %d: negative size (stored %d, real %d)", i, e.CompSize, e.Size)
 			}
-			if e.LocalHdrOff+e.Size > size {
-				t.Fatalf("entry %d: extent %d+%d runs past a %d-byte container",
-					i, e.LocalHdrOff, e.Size, size)
+			// LocalHdrOff is the FILE block, not the payload: what the serving
+			// path reads is the block and then Size bytes.
+			if e.LocalHdrOff+fileBlockLen+e.Size > size {
+				t.Fatalf("entry %d: FILE block %d+%d and payload %d run past a %d-byte container",
+					i, e.LocalHdrOff, fileBlockLen, e.Size, size)
 			}
 			// The name goes straight into pages.name and into JSON, so it has
 			// to be valid UTF-8 however the UTF-16 decoded. A lossy repair may

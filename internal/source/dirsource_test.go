@@ -237,6 +237,12 @@ func TestDirSource_symlinkedPagesAreNotListed(t *testing.T) {
 }
 
 // Serving many pages from a directory book must not leak descriptors either.
+//
+// Running out of them is not how this is observed: 400 opens are nowhere near
+// any real RLIMIT_NOFILE, and an *os.File nobody closed is closed anyway by its
+// finalizer, eventually. The body of a dir page is the *os.File itself, so the
+// deterministic sign that Close reached close(2) is the file saying so — a read
+// after Close fails with os.ErrClosed, and only a closed file answers that.
 func TestDirSource_streamClose_releasesTheFile(t *testing.T) {
 	t.Parallel()
 	layout := map[string]any{}
@@ -261,10 +267,11 @@ func TestDirSource_streamClose_releasesTheFile(t *testing.T) {
 			if err := st.Close(); err != nil {
 				t.Fatalf("close %q: %v", p.EntryPath, err)
 			}
+			if _, err := st.Read(make([]byte, 1)); !errors.Is(err, os.ErrClosed) {
+				t.Fatalf("read of %q after Close = %v, want os.ErrClosed: the page's file was never closed", p.EntryPath, err)
+			}
 		}
 	}
-	// 400 opens with no close would exhaust a low ulimit; that this test
-	// completes at all is most of the assertion.
 	if len(list.Pages) != 20 {
 		t.Fatalf("pages = %d, want 20", len(list.Pages))
 	}
