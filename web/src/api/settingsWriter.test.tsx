@@ -181,6 +181,9 @@ function watchTheme(): { flips: string[]; stop: () => void } {
 const unavailable = (): ApiError => new ApiError({ status: 503, code: 'unavailable', message: '' })
 const refused = (): ApiError => new ApiError({ status: 400, code: 'bad_request', message: '' })
 const unauthorized = (): ApiError => new ApiError({ status: 401, code: 'unauthorized', message: '' })
+/** A 400 naming what it refused in `detail.field`, as the server's validation and its decoder do. */
+const refusedFor = (field: unknown): ApiError =>
+  new ApiError({ status: 400, code: 'bad_request', message: '', detail: { field } })
 
 // ---------------------------------------------------------------------------
 
@@ -407,6 +410,158 @@ describe('failures', () => {
     await advance(LONG_AFTER)
     expect(puts, 'no retry and no queued write after the reset').toHaveLength(1)
     expect(cachedTheme()).toBe('light')
+  })
+})
+
+describe('a 400 that names the field it refused', () => {
+  // The server checks the whole body before it writes any of it and names the
+  // first field it refuses (`detail.field`): the rest of the body was neither
+  // refused nor applied. The realistic sender is a tab from another version — a
+  // field or a value the running server does not know.
+
+  it('quarantines only the field a 400 names, and sends the rest of the body again at once', async () => {
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+    const writer = mountWriter()
+    save(writer, { theme: 'dark', library_sort: 'added' })
+    await advance(SETTINGS_SAVE_DEBOUNCE_MS)
+
+    put(0).fail(refusedFor('library_sort'))
+    await advance(0)
+    expect(puts.map((p) => p.body), 'no edit, no debounce: the rest goes now').toEqual([
+      { theme: 'dark', library_sort: 'added' },
+      { theme: 'dark' },
+    ])
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.settings })
+
+    put(1).arrive()
+    await advance(LONG_AFTER)
+    expect(puts, 'the named field is not sent again').toHaveLength(2)
+    expect(server).toMatchObject({ theme: 'dark', library_sort: 'name' })
+    expect(cached(), "the screen shows the server's sort").toEqual(server)
+    expect(settingsWriterState(client)).toEqual({ pending: 0, inFlight: false, listening: false })
+  })
+
+  it('needs one round trip per refused field, and stops: fit_mode, then library_sort, then the theme alone', async () => {
+    const writer = mountWriter()
+    save(writer, { theme: 'dark', fit_mode: 'original', library_sort: 'added' })
+    await advance(SETTINGS_SAVE_DEBOUNCE_MS)
+
+    // The server's order: fit_mode is checked before library_sort.
+    for (let round = 0; round < 10; round += 1) {
+      for (const p of puts.filter((q) => !q.answered())) {
+        if (p.body.fit_mode !== undefined) p.fail(refusedFor('fit_mode'))
+        else if (p.body.library_sort !== undefined) p.fail(refusedFor('library_sort'))
+        else p.arrive()
+      }
+      await advance(SETTINGS_SAVE_DEBOUNCE_MS)
+    }
+
+    expect(puts.map((p) => p.body), 'three PUTs, each one field lighter').toEqual([
+      { theme: 'dark', fit_mode: 'original', library_sort: 'added' },
+      { theme: 'dark', library_sort: 'added' },
+      { theme: 'dark' },
+    ])
+    expect(server).toMatchObject({ theme: 'dark', fit_mode: 'height', library_sort: 'name' })
+    expect(cached()).toEqual(server)
+    expect(settingsWriterState(client)).toEqual({ pending: 0, inFlight: false, listening: false })
+  })
+
+  it('stops when the server refuses every field it is sent: one PUT per field, then nothing', async () => {
+    // Each 400 that names a carried field takes that field out of the buffer, so
+    // a body of n fields is refused at most n times.
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+    const writer = mountWriter()
+    save(writer, { fit_mode: 'original', library_sort: 'added', library_scope: 'gone' })
+    await advance(SETTINGS_SAVE_DEBOUNCE_MS)
+
+    for (let round = 0; round < 10; round += 1) {
+      for (const p of puts.filter((q) => !q.answered())) p.fail(refusedFor(Object.keys(p.body)[0]))
+      await advance(LONG_AFTER)
+    }
+
+    expect(puts.map((p) => Object.keys(p.body).length)).toEqual([3, 2, 1])
+    expect(invalidate, 'every refusal re-reads').toHaveBeenCalledTimes(3)
+    expect(settingsWriterState(client)).toEqual({ pending: 0, inFlight: false, listening: false })
+  })
+
+  it('does not spend the retry budget on the re-send, even after a 5xx retry', async () => {
+    const writer = mountWriter()
+    save(writer, { theme: 'dark', library_sort: 'added' })
+    await advance(SETTINGS_SAVE_DEBOUNCE_MS)
+    put(0).fail(unavailable())
+    await advance(SETTINGS_RETRY_BASE_MS)
+    expect(put(1).body).toEqual({ theme: 'dark', library_sort: 'added' })
+
+    put(1).fail(refusedFor('library_sort'))
+    await advance(0)
+    expect(put(2).body, 'at once, not after the next backoff').toEqual({ theme: 'dark' })
+
+    // A 400 is an answer, not a transient failure: the re-send has every retry,
+    // from the first delay.
+    for (let attempt = 0; attempt < RETRIES; attempt += 1) {
+      put(2 + attempt).fail(unavailable())
+      const delay = SETTINGS_RETRY_BASE_MS * 2 ** attempt
+      await advance(delay - 1)
+      expect(puts, `retry ${String(attempt + 1)} waits its ${String(delay)} ms`).toHaveLength(3 + attempt)
+      await advance(1)
+      expect(put(3 + attempt).body).toEqual({ theme: 'dark' })
+    }
+    put(5).arrive()
+    await advance(LONG_AFTER)
+    expect(puts).toHaveLength(6)
+    expect(server).toMatchObject({ theme: 'dark', library_sort: 'name' })
+    expect(cached()).toEqual(server)
+    expect(settingsWriterState(client)).toEqual({ pending: 0, inFlight: false, listening: false })
+  })
+
+  it('keeps a newer edit of the field a 400 named, and sends it with the rest', async () => {
+    const writer = mountWriter()
+    save(writer, { theme: 'dark', library_sort: 'added' })
+    await advance(SETTINGS_SAVE_DEBOUNCE_MS)
+    save(writer, { library_sort: 'mtime' })
+
+    put(0).fail(refusedFor('library_sort'))
+    await advance(0)
+    expect(put(1).body, 'only the refused revision is dropped').toEqual({
+      theme: 'dark',
+      library_sort: 'mtime',
+    })
+
+    put(1).arrive()
+    await advance(LONG_AFTER)
+    expect(puts).toHaveLength(2)
+    expect(server).toMatchObject({ theme: 'dark', library_sort: 'mtime' })
+    expect(cached()).toEqual(server)
+  })
+
+  it.each([
+    ['a 400 without a detail', refused()],
+    ['a 400 naming a field the body did not carry', refusedFor('library_view')],
+    ['a 400 naming something that is not a setting', refusedFor('volume')],
+    ['a 400 whose field is not a string', refusedFor(7)],
+    [
+      'a 403 naming a field the body carried',
+      new ApiError({ status: 403, code: 'forbidden', message: '', detail: { field: 'library_sort' } }),
+    ],
+    [
+      'a 409 naming a field the body carried',
+      new ApiError({ status: 409, code: 'conflict', message: '', detail: { field: 'library_sort' } }),
+    ],
+  ])('quarantines the whole body on %s, and sends none of it again', async (_, error) => {
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+    const writer = mountWriter()
+    save(writer, { theme: 'dark', library_sort: 'added' })
+    await advance(SETTINGS_SAVE_DEBOUNCE_MS)
+
+    put(0).fail(error)
+    await advance(LONG_AFTER)
+    expect(puts, 'nothing is sent again').toHaveLength(1)
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.settings })
+    expect(settingsWriterState(client).pending).toBe(0)
+
+    save(writer, { prefetch: 9 })
+    await advance(SETTINGS_SAVE_DEBOUNCE_MS)
+    expect(put(1).body, 'nothing of the refused body rides along').toEqual({ prefetch: 9 })
   })
 })
 
@@ -647,6 +802,53 @@ describe('leaving the page', () => {
   )
 
   it.each([
+    ['the queued request answers first, the pagehide write is refused last', [0, 1]],
+    ['the pagehide write is refused first, the queued request answers last', [1, 0]],
+  ] as const)(
+    'drops only the scope a 400 named in a raced pagehide write, and sends the rest of it with the edit made since: %s',
+    async (_, order) => {
+      // As above, but the 400 names `library_scope`, and the pagehide write also
+      // carried a theme. The scope is quarantined before the raced fields go
+      // again; the theme, never applied, goes with the edit made after the page
+      // came back — once, and without `gone`.
+      const writer = mountWriter()
+      save(writer, { library_scope: 'reading' })
+      await advance(SETTINGS_SAVE_DEBOUNCE_MS)
+      save(writer, { library_scope: 'gone', theme: 'dark' })
+      pageHide()
+      expect(puts.map((p) => p.body)).toEqual([
+        { library_scope: 'reading' },
+        { library_scope: 'gone', theme: 'dark' },
+      ])
+
+      save(writer, { prefetch: 9 })
+      await advance(SETTINGS_SAVE_DEBOUNCE_MS)
+      expect(puts, 'nothing goes while either is on the wire').toHaveLength(2)
+
+      for (const n of order) {
+        if (n === 0) put(0).arrive()
+        else put(1).fail(refusedFor('library_scope'))
+        await advance(0)
+      }
+      for (let round = 0; round < 10; round += 1) {
+        for (const p of puts.filter((q) => !q.answered())) {
+          if (p.body.library_scope === 'gone') p.fail(refusedFor('library_scope'))
+          else p.arrive()
+        }
+        await advance(SETTINGS_SAVE_DEBOUNCE_MS)
+      }
+
+      expect(
+        puts.slice(2).map((p) => p.body),
+        'gone is not sent again; the theme and the later edit go together, once',
+      ).toEqual([{ theme: 'dark', prefetch: 9 }])
+      expect(server).toMatchObject({ library_scope: 'reading', theme: 'dark', prefetch: 9 })
+      expect(cached(), 'and the screen agrees with the server').toEqual(server)
+      expect(settingsWriterState(client)).toEqual({ pending: 0, inFlight: false, listening: false })
+    },
+  )
+
+  it.each([
     ['the queued request is refused first, the pagehide write last', [0, 1]],
     ['the pagehide write is refused first, the queued request last', [1, 0]],
   ] as const)(
@@ -679,6 +881,51 @@ describe('leaving the page', () => {
       await advance(LONG_AFTER)
       expect(puts, 'and nothing after it').toHaveLength(3)
       expect(server.theme).toBe('system')
+      expect(cached(), 'and the screen agrees with the server').toEqual(server)
+      expect(settingsWriterState(client)).toEqual({ pending: 0, inFlight: false, listening: false })
+    },
+  )
+
+  it.each([
+    ['the 400 lands first and the 401 last: the rest waits for the next write', [0, 1], 1],
+    ['the 401 lands first and the 400 last: the rest goes again at once', [1, 0], 2],
+  ] as const)(
+    'holds the rest a 400 named a field of when the last answer on the wire is a 401: %s',
+    async (_, order, beforeTheNextWrite) => {
+      // The pagehide write carries the queued body again, beside it. The queued
+      // one is refused for `library_sort`, which asks for the rest at once; the
+      // pagehide one comes back 401. Whichever answer is last decides, as for a
+      // raced re-send: a 401 waits for the next write (a login fixes it).
+      const writer = mountWriter()
+      save(writer, { theme: 'dark', library_sort: 'added' })
+      await advance(SETTINGS_SAVE_DEBOUNCE_MS)
+      pageHide()
+      expect(puts.map((p) => p.body)).toEqual([
+        { theme: 'dark', library_sort: 'added' },
+        { theme: 'dark', library_sort: 'added' },
+      ])
+
+      for (const n of order) {
+        if (n === 0) put(0).fail(refusedFor('library_sort'))
+        else put(1).fail(unauthorized())
+        await advance(0)
+      }
+      await advance(LONG_AFTER)
+      expect(puts.slice(2).map((p) => p.body), 'before the next write').toEqual(
+        beforeTheNextWrite === 1 ? [] : [{ theme: 'dark' }],
+      )
+      if (beforeTheNextWrite === 2) put(2).arrive()
+      else {
+        save(writer, { prefetch: 9 })
+        await advance(SETTINGS_SAVE_DEBOUNCE_MS)
+        expect(puts.slice(2).map((p) => p.body), 'the next write carries it, once').toEqual([
+          { theme: 'dark', prefetch: 9 },
+        ])
+        put(2).arrive()
+      }
+      await advance(LONG_AFTER)
+      expect(puts, 'and nothing after it').toHaveLength(3)
+      expect(server).toMatchObject({ theme: 'dark', library_sort: 'name' })
       expect(cached(), 'and the screen agrees with the server').toEqual(server)
       expect(settingsWriterState(client)).toEqual({ pending: 0, inFlight: false, listening: false })
     },
@@ -897,4 +1144,46 @@ describe('a GET meeting choices the server has not confirmed', () => {
     await advance(0)
     expect(withUnsavedSettings(client, { ...server }, mark).library_scope).toBe('all')
   })
+
+  it.each([
+    ['the re-read answers before the re-sent write', 'get first'],
+    ['the re-sent write answers before the re-read', 'put first'],
+  ] as const)(
+    'shows the server value of the field a 400 named, and no re-read undoes the rest of the body: %s',
+    async (_, order) => {
+      // The re-read goes at once, beside the re-sent rest; both GETs that can
+      // overlap it — the re-read, and one sent before the refusal — read the
+      // server as it was before the re-sent write was applied.
+      const writer = mountWithQuery()
+      await answerGet(0, { ...server })
+      save(writer, { theme: 'dark', library_sort: 'added' })
+      await advance(SETTINGS_SAVE_DEBOUNCE_MS)
+      const beforeTheRefusal = settingsReadMark()
+      const beforeTheResend = { ...server }
+
+      put(0).fail(refusedFor('library_sort'))
+      await advance(0)
+      expect(gets, 'the refusal re-reads the server at once').toHaveLength(2)
+      expect(put(1).body).toEqual({ theme: 'dark' })
+
+      if (order === 'put first') {
+        put(1).arrive()
+        await advance(0)
+      }
+      expect(withUnsavedSettings(client, beforeTheResend, beforeTheRefusal), 'a GET sent before the refusal').toMatchObject({
+        theme: 'dark',
+        library_sort: 'name',
+      })
+      await answerGet(1, beforeTheResend)
+      expect(cached()?.library_sort, "the refused sort is gone: the server's").toBe('name')
+      expect(cachedTheme(), 'an older payload does not undo the re-sent theme').toBe('dark')
+
+      if (order === 'get first') {
+        put(1).arrive()
+        await advance(0)
+      }
+      expect(server).toMatchObject({ theme: 'dark', library_sort: 'name' })
+      expect(cached()).toEqual(server)
+    },
+  )
 })

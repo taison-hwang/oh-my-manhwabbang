@@ -25,8 +25,13 @@ import type { Settings, SettingsUpdate, UserSettings } from './types'
  *    an older echo can never undo a newer choice, not even for one frame;
  *  - transport, 5xx, 408 and 429 failures retry with backoff; after the last the
  *    fields wait for the next write. A 401 waits too (a login fixes it). Any other
- *    4xx would refuse the same body again, so the fields it refused are dropped
- *    unless changed since. Every final failure re-reads the settings.
+ *    4xx would refuse the same body again, so what it refused is dropped unless
+ *    changed since: the one field a 400 names (`detail.field`) if the body carried
+ *    it, else every field the body carried. The server checks the whole body
+ *    before it writes any of it and names only the first field it refuses, so the
+ *    rest of a body a 400 named a field of was not applied: it goes again at once,
+ *    and a body with several such fields costs a round trip each. Every final
+ *    failure re-reads the settings.
  *
  * Known limit, held: a `PUT` that never settles holds the queue behind it.
  *
@@ -265,16 +270,31 @@ function isRecoverable(error: unknown): boolean {
   return error.status >= 500 || error.status === 408 || error.status === 429
 }
 
+/**
+ * The field a 400 names in `detail.field` — a value the server's validation
+ * refused, a type its decoder refused, or a field it does not know — if `sub`
+ * carried it; else `null`, and the whole body is held to blame.
+ */
+function namedField(sub: Submission, error: unknown): Field | null {
+  if (!isApiError(error) || error.status !== 400) return null
+  const named = error.detailString('field')
+  for (const field of sub.revs.keys()) if (field === named) return field
+  return null
+}
+
 function failed(w: Writer, sub: Submission, error: unknown): void {
   if (!live(w)) return
   answered(w, sub)
   const unauthorized = isApiError(error) && error.status === 401
+  const named = namedField(sub, error)
   if (!isRecoverable(error) && !unauthorized) {
-    // Quarantine: the same body would be refused again. Drop what it carried,
-    // unless changed since, so it cannot poison the next write — and forget the
-    // value, so the re-read below shows the server's. First: a raced re-send
-    // would move the field past the revision it was refused at.
+    // Quarantine: the same body would be refused again. Drop what was refused —
+    // the field a 400 named, else all the body carried — unless changed since,
+    // so it cannot poison the next write, and forget the value, so the re-read
+    // below shows the server's. First: a raced re-send would move the field past
+    // the revision it was refused at.
     for (const [field, rev] of sub.revs) {
+      if (named !== null && field !== named) continue
       if (w.pending.get(field)?.rev !== rev) continue
       w.pending.delete(field)
       w.known.delete(field)
@@ -282,6 +302,9 @@ function failed(w: Writer, sub: Submission, error: unknown): void {
   }
   // After a 401 the raced fields wait with the rest: no login, no new edit, no write.
   settleRace(w, !unauthorized)
+  // So does a re-send asked for while this was on the wire — the rest of a body
+  // a 400 named a field of, a hide's flush: it would come back 401 the same way.
+  if (unauthorized) w.urgent = false
   if (isRecoverable(error) && w.failures < SETTINGS_RETRY_LIMIT) {
     if (w.retry !== null) clearTimeout(w.retry)
     const delay = SETTINGS_RETRY_BASE_MS * 2 ** w.failures
@@ -294,7 +317,17 @@ function failed(w: Writer, sub: Submission, error: unknown): void {
     return
   }
   w.failures = 0
+  // The re-read goes now, also beside the re-sent rest below: the named field's
+  // cache value must return to the server's even if the rest is refused again or
+  // its answer is not taken (an edit since), and no GET can undo the rest — a
+  // field is kept over the payload while unsent, and once answered, after a GET
+  // sent before that answer (`withUnsavedSettings`).
   void w.client.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY })
+  // The rest of a body a 400 named one field of was neither refused nor applied,
+  // and nothing else would send it: it goes now, with the whole retry budget.
+  // Each such 400 takes a field out of the buffer unless edited since, so with
+  // no new edit it ends, one round trip per refused field.
+  if (named !== null && w.pending.size > 0) w.urgent = true
   pump(w)
 }
 
