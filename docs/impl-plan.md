@@ -280,7 +280,7 @@ NFR-SEC-001/002/003, CON-001…004. All in scope. Gates in §7.
 | **`shelf migrate-root`** | arch §3.4 corollary, phase 3. The YAML comment must warn that renaming a root orphans its progress. |
 | **Built-in TLS** | arch OQ-8. Reverse proxy + `base_path` only. |
 | **Root add/remove from UI** | C-5. |
-| **External metadata, multi-user, collection editing, OPDS, upscaling** | prd §7.2. |
+| **External metadata, multi-user, collection editing, OPDS, upscaling** | ~~prd §7.2.~~ prd §9 stage 3 (ruling E-67, moved there from §7.2). A roadmap move only: still out of this build and D-02 stands — none is trivially free, and each must first rule on the requirements it collides with. |
 
 ---
 
