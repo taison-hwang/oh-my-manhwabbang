@@ -695,7 +695,7 @@ export interface ScanLogResponse {
 }
 
 // ---------------------------------------------------------------------------
-// §7.11 Progress export/import (FR-STT-004 — backend only, no UI in this build)
+// §7.11 Progress export/import (FR-STT-004 — the settings dialog's 읽기 기록, E-68)
 // ---------------------------------------------------------------------------
 
 export interface ProgressExportItem {

@@ -2071,6 +2071,57 @@ Header: `.dialog-title` `flex:1` `설정` + `.btn.btn-secondary` `font-size:12px
    timestamp (`tabular; color:var(--ink-dim)`), level (`width:48px; flex:0 0 48px; letter-spacing:.06em`,
    **INFO → `--ink-dim`, WARN → `--accent-text`, ERROR → `--color-accent`**),
    message (`min-width:0; ellipsis; nowrap; color:var(--ink)`).
+4. **읽기 기록 (new — ruling E-68)** — FR-STT-004's screen over arch §7.11 (A-17), the dialog's last section.
+   `display:flex; flex-direction:column; gap:8px`: `<h3 class="h6">` `읽기 기록`, a note `11px; color:var(--ink-dim)` →
+   `읽은 쪽, 완독 표시, 책별 보기 설정을 파일로 저장하거나 그 파일에서 되살립니다.`, then a row
+   `display:flex; flex-wrap:wrap; gap:8px` of `.btn.btn-secondary` `내보내기` and `.btn.btn-secondary` `가져오기`.
+   Both call `api/client.ts` (`exportProgress`, `importProgress` — D-44); nothing here builds a URL.
+   - **내보내기** — disabled while its request is in flight. The response is saved as
+     `shelf-progress-YYYYMMDD.json`, the date being `exported_at` in local time — **even if the dialog was closed
+     while the request was out**: the user asked for the file, and closing the dialog is not cancelling that. Then
+     the status line `11px; color:var(--ink-muted)` → `책 {items.length}권의 기록을 내보냈습니다.` (`formatVolumeCount`).
+   - **가져오기** opens the browser's file picker (`accept=".json,application/json"`). **Picking sends nothing.**
+     The browser reads the file first and refuses two shapes itself, each as the alert line below:
+     - larger than **32 MiB** (33 554 432 B, arch §8's import body cap), refused before it is read →
+       `파일이 너무 큽니다. 내보내기로 만든 진행률 파일인지 확인하세요.`
+     - not JSON, not an object, or `items` not an array → `진행률 파일로 읽을 수 없습니다. 내보내기로 만든 파일인지 확인하세요.`
+     Everything else (`format`, `id_version`, enum values, unknown fields) is the server's to refuse.
+     Picking the same file again must work, so the input is cleared after every pick. **Only the latest pick
+     counts:** a new pick closes any confirm step already on screen at once, before its own file is read (so the
+     previous file can no longer be sent, whatever becomes of the new one), and a read that finishes after a newer
+     pick, or after 취소, is dropped — it must not replace the newer file's confirm step, reset its option, or bring
+     a cancelled step back.
+   - **Confirm step** — a file that passes **replaces the button row** (as 캐시 `전체 삭제` replaces its button), so
+     exactly one `가져오기` button exists at a time. `display:flex; flex-direction:column; align-items:flex-start; gap:8px`:
+     the file name `13px; ellipsis; nowrap; max-width:100%`, `책 {items.length}권의 기록` `11px; color:var(--ink-muted)`,
+     a `.seg` (`aria-label` `가져오기 방식`) `병합` / `덮어쓰기`, **병합 selected** on every new pick, a line
+     `11px; color:var(--ink-dim)` describing the selected option —
+     병합 → `같은 책은 더 최근 기록을 남깁니다. 이 서버의 책별 보기 설정은 그대로 둡니다.`
+     덮어쓰기 → `같은 책은 파일의 기록과 보기 설정으로 바꿉니다. 파일에 없는 책은 그대로 둡니다.` —
+     and a row of `.btn.btn-primary` `가져오기` (sends `?strategy=` only for 덮어쓰기; merge is the server's default) and
+     `.btn.btn-ghost` `취소`. Both are disabled while the request is in flight; either outcome closes the step and
+     brings the button row back.
+   - **Result** — the status line `11px; color:var(--ink-muted)`, built from `ProgressImportResult` (whose
+     counters describe `items` only, A-17):
+     `책 {imported}권의 기록을 가져왔습니다.` + when `conflicts − skipped > 0` `그중 {conflicts − skipped}권은 이 서버에 있던 기록을 바꿨습니다.`
+     + when `skipped > 0` `이 서버의 기록이 더 최근인 {skipped}권은 그대로 두었습니다.` When `imported + skipped` is 0 the
+     line is `파일에 책 기록이 없습니다.` alone. A success invalidates the `books`, `series` and `continue` queries —
+     also when the dialog was closed before the answer came — and a screen that has them open refetches.
+   - **Failure** — the alert line `11px; color:var(--accent-text)`. The envelope `message` is never shown (it is
+     English); the status picks the sentence. Every refusal the server answered carries `기록은 바뀌지 않았습니다.` (where, the table says) —
+     the import is one transaction — and a request that got no answer does not, since it may have landed.
+     | | 내보내기 | 가져오기 |
+     |---|---|---|
+     | `400` with `detail.id_version` | — | `다른 버전의 SHELF에서 만든 파일이라 가져올 수 없습니다. 기록은 바뀌지 않았습니다.` |
+     | other `400` | — | `진행률 파일로 읽을 수 없습니다. 내보내기로 만든 파일인지 확인하세요. 기록은 바뀌지 않았습니다.` |
+     | `503` | `서버가 지금 읽기 기록을 읽을 수 없습니다. 서버 상태를 확인한 뒤 다시 시도하세요.` | `서버가 지금 읽기 기록을 쓸 수 없습니다. 기록은 바뀌지 않았습니다. 서버 상태를 확인한 뒤 다시 시도하세요.` |
+     | any other status | `내보내지 못했습니다. 잠시 후 다시 시도하세요.` | `가져오지 못했습니다. 기록은 바뀌지 않았습니다. 잠시 후 다시 시도하세요.` |
+     | no answer | `서버에 연결하지 못했습니다. 잠시 후 다시 시도하세요.` | same |
+   - **One message line.** The status and alert lines share one slot under the row; a new action (a 내보내기 click,
+     a pick, 취소) replaces or clears whatever is there. The slot's two live regions — `role="status"` and
+     `role="alert"` — are **mounted with the section and stay mounted**, empty until used; only their text changes.
+     A region inserted together with its message is often never announced (the viewer's one live region, `ba`,
+     is built the same way for the same reason).
 
 > **Amended by E-38 (BINDING — 사용자 서명 2026-08-06; `docs/decisions.md` carries the text) — the dialog
 > gains a scan progress block and a scan-failure alert, both inside 루트 관리.** The user's report was
@@ -2153,7 +2204,7 @@ interface Volume {
 | 17 | `GridSkeleton` (스켈레톤) | `{ count?: number }` | shimmer, staggered `(i % 6) * 0.12s` | [`library-skeleton-loading-1440`](./ui-shots/library-skeleton-loading-1440.png) |
 | — | `PageStage` | `{ pages: Page[]; mode: DisplayMode; fit: FitMode; dir: ReadDirection }` | single · double (RTL reverses) · vertical · loading · error | [`viewer-mode-double-spread-1440`](./ui-shots/viewer-mode-double-spread-1440.png), [`viewer-mode-vertical-scroll-1440`](./ui-shots/viewer-mode-vertical-scroll-1440.png), [`viewer-page-loading-indicator-1440`](./ui-shots/viewer-page-loading-indicator-1440.png), [`viewer-page-load-error-1440`](./ui-shots/viewer-page-load-error-1440.png) |
 | — | `NextVolumeCard` | `{ volume: Volume; onNext(); onBackToSeries() }` | shown at `page === total` and mode ≠ vertical | [`viewer-next-volume-card-1440`](./ui-shots/viewer-next-volume-card-1440.png) |
-| — | `SettingsDialog` | `{ roots; cache; defaults; log }` | — | [`settings-dialog-1440`](./ui-shots/settings-dialog-1440.png) |
+| — | `SettingsDialog` | `{ roots; cache; defaults; log; backup }` (`backup` = §8.6 4항 읽기 기록, E-68) | — | [`settings-dialog-1440`](./ui-shots/settings-dialog-1440.png) |
 | — | `ShortcutsDialog` | `{ open }` | — | [`shortcuts-dialog-1440`](./ui-shots/shortcuts-dialog-1440.png) |
 | — | `DoneSeal` (완독 낙관 · **E-46**) | `{ className? }` | one state. 38px square, `--accent-text` rule, `rotate(-9deg)`, 完讀 in the vendored seal face; accessible name `완독` | §4.5 |
 | — | `PageStamp` (읽은 자리 도장 · **E-46**) | `{ children }` | one state. 1.5px `--accent-text` rule, `rotate(-5deg)`, `--font-ui` tabular — the 이어보기 counter | §4.3 |
@@ -2208,7 +2259,7 @@ Things the prototype does **not** do that the URD/handoff require. Build them.
 | 7 | Root filtering exists, but no explicit "manual mark as read/unread" control | FR-VWR-012 |
 | 8 | DS stylesheet `@import`s Google Fonts | NFR-OPS-001/002. See §2.1 |
 | 9 | Cover images are drag-and-drop `image-slot` stubs; real covers come from `GET /api/series/{sid}/cover` | FR-THM-003 |
-| 10 | No progress export/import UI | FR-STT-004 (optional) |
+| 10 | ~~No progress export/import UI~~ **Built — §8.6 4항 읽기 기록 (ruling E-68)** | FR-STT-004 (optional) |
 
 ---
 

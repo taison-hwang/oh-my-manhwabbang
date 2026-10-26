@@ -8,10 +8,13 @@
  * FR-IDX-010 produced for the collection's broken archives.
  */
 
+import { readFile } from 'node:fs/promises'
+
 import type { Locator, Page } from '@playwright/test'
 
 import {
   booksOf,
+  clearProgress,
   expect,
   gotoLibrary,
   openSettings,
@@ -336,3 +339,112 @@ for (const seg of READ_DEFAULT_SEGS) {
     }
   })
 }
+
+// ---------------------------------------------------------------------------
+// E-68 — 읽기 기록: the history goes out to a file and comes back in
+// ---------------------------------------------------------------------------
+
+/** The slice of `GET /api/progress/export` (arch §7.11) this test reads. */
+interface ProgressDoc {
+  readonly format: string
+  readonly exported_at: number
+  readonly items: readonly { readonly book_id: string; readonly updated_at: number }[]
+}
+
+/** `3권`, `1,234권` — formatVolumeCount, which the panel's sentences use. */
+function volumes(n: number): string {
+  return `${n.toLocaleString('ko-KR')}권`
+}
+
+/** `YYYYMMDD` of a Unix time in the zone the projects run in (playwright.config.ts). */
+function seoulDate(unix: number): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' })
+    .format(new Date(unix * 1000))
+    .replaceAll('-', '')
+}
+
+async function exportDoc(page: Page): Promise<ProgressDoc> {
+  const response = await page.request.get('/api/progress/export')
+  expect(response.ok(), 'GET /api/progress/export').toBe(true)
+  return (await response.json()) as ProgressDoc
+}
+
+test('E-68 · 읽기 기록 — export saves the history, and a merge of it back changes nothing', async ({ page }) => {
+  // ui-spec §8.6 item 4. A merge of the server's own export is all ties
+  // (A-17: a tie keeps the local row), so it imports nothing and writes
+  // nothing. That needs a history of at least one book; when the specs before
+  // this one left none, one row is made here and taken away again, because a
+  // new row puts an 이어보기 card on the library that later specs and the
+  // pixel baseline would see (shelf.ts rule 2).
+  let seeded: string | null = null
+  if ((await exportDoc(page)).items.length === 0) {
+    const [book] = await booksOf(page, await seriesId(page, SERIES.clover))
+    if (book === undefined) throw new Error(`${SERIES.clover} has no books`)
+    const put = await page.request.put(`/api/books/${book.id}/progress`, { data: { page: 1 } })
+    expect(put.ok(), 'PUT …/progress to give the history one book').toBe(true)
+    seeded = book.id
+  }
+  const before = await exportDoc(page)
+
+  try {
+    await gotoLibrary(page)
+    await openSettings(page)
+    const dialog = page.getByRole('dialog', { name: '설정' })
+    const heading = page.getByRole('heading', { level: 3, name: '읽기 기록', exact: true })
+    const section = dialog.locator('section').filter({ has: heading })
+    await expect(dialog.locator('section').last(), '읽기 기록 is the dialog\'s last section').toContainText('읽기 기록')
+    await expect(section.getByRole('button', { name: '내보내기', exact: true })).toBeVisible()
+    await expect(section.getByRole('button', { name: '가져오기', exact: true })).toBeVisible()
+    // Both live regions are always mounted and only their text changes, so a
+    // message is asserted by its text, never by visibility or count.
+    const status = section.getByRole('status')
+
+    // ---- 내보내기 -----------------------------------------------------------
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      section.getByRole('button', { name: '내보내기', exact: true }).click(),
+    ])
+    const file = await download.path()
+    const doc = JSON.parse(await readFile(file, 'utf8')) as ProgressDoc
+    expect(doc.format, 'the file is a progress export').toBe('shelf-progress/1')
+    expect(doc.items.length, 'the history has at least one book').toBeGreaterThan(0)
+    expect(download.suggestedFilename(), 'named by the local date of exported_at').toBe(
+      `shelf-progress-${seoulDate(doc.exported_at)}.json`,
+    )
+    await expect(status).toHaveText(`책 ${volumes(doc.items.length)}의 기록을 내보냈습니다.`)
+
+    // ---- 가져오기: the confirmation step ---------------------------------------
+    await section.locator('input[type="file"]').setInputFiles({
+      name: download.suggestedFilename(),
+      mimeType: 'application/json',
+      buffer: await readFile(file),
+    })
+    await expect(section).toContainText(download.suggestedFilename())
+    await expect(section).toContainText(`책 ${volumes(doc.items.length)}의 기록`)
+    const method = section.getByRole('radiogroup', { name: '가져오기 방식' })
+    await expect(method.getByRole('radio', { name: '병합' }), 'merge is the default').toBeChecked()
+    await expect(method.getByRole('radio', { name: '덮어쓰기' })).not.toBeChecked()
+    await expect(section).toContainText('같은 책은 더 최근 기록을 남깁니다. 이 서버의 책별 보기 설정은 그대로 둡니다.')
+    await expect(
+      section.getByRole('button', { name: '내보내기', exact: true }),
+      'the confirmation replaces the button row',
+    ).toHaveCount(0)
+    const confirm = section.getByRole('button', { name: '가져오기', exact: true })
+    await expect(confirm).toHaveCount(1)
+
+    // ---- 가져오기: a merge of the server's own export ---------------------------
+    await confirm.click()
+    await expect(status).toHaveText(
+      `책 0권의 기록을 가져왔습니다. 이 서버의 기록이 더 최근인 ${volumes(doc.items.length)}은 그대로 두었습니다.`,
+    )
+    const after = await exportDoc(page)
+    expect(
+      after.items.map((i) => [i.book_id, i.updated_at]),
+      'a merge of all ties leaves every row as it was',
+    ).toEqual(before.items.map((i) => [i.book_id, i.updated_at]))
+
+    await page.keyboard.press('Escape')
+  } finally {
+    if (seeded !== null) await clearProgress(page, seeded)
+  }
+})

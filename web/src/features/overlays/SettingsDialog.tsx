@@ -1,6 +1,7 @@
 import { Button } from '../../components/ds/Button'
 import { Dialog } from '../../components/ds/Dialog'
 import { CachePanel } from './CachePanel'
+import { ProgressPanel } from './ProgressPanel'
 import { ReadDefaultsPanel } from './ReadDefaultsPanel'
 import { RootsPanel } from './RootsPanel'
 import { ScanLogPanel } from './ScanLogPanel'
@@ -8,9 +9,10 @@ import { ScanLogPanel } from './ScanLogPanel'
 /**
  * 설정 (prd UI-004, ui-spec §8.6, `settings-dialog-1440.png`).
  *
- * Four sections, in the spec's order: 루트 관리 · 캐시 + 읽기 기본값 (two
- * columns that stack below 768) · 스캔 로그. Each is its own file so the
- * dialog stays a layout and the panels stay testable on their own.
+ * Five sections, in the spec's order: 루트 관리 · 캐시 + 읽기 기본값 (two
+ * columns that stack below 768) · 스캔 로그 · 읽기 기록 (ruling E-68, last).
+ * Each is its own file so the dialog stays a layout and the panels stay
+ * testable on their own.
  *
  * It is a *dialog*, not a route (impl-plan §5.2): a modal in the back-button
  * history is a bug, so open/closed lives in `store/ui.ts`.
@@ -47,6 +49,9 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       </div>
 
       <ScanLogPanel />
+
+      {/* Last by ruling E-68 §2.2. It reads nothing until a button is pressed. */}
+      <ProgressPanel />
     </Dialog>
   )
 }

@@ -32,6 +32,7 @@ import {
   createRoot,
   deleteProgress,
   deleteRoot,
+  exportProgress,
   fetchImage,
   getAuthStatus,
   getBook,
@@ -45,6 +46,7 @@ import {
   getScanStatus,
   getSeries,
   getSettings,
+  importProgress,
   listSeries,
   login,
   logout,
@@ -68,7 +70,10 @@ import type {
   ContinueResponse,
   Health,
   ID,
+  ImportStrategy,
   Progress,
+  ProgressExport,
+  ProgressImportResult,
   ProgressUpdate,
   PurgeKind,
   RootCreate,
@@ -799,6 +804,48 @@ export function useScanCompletionRefresh(status: ScanStatus | undefined): void {
     if (status.state !== 'idle') return
     invalidateAfterScan(queryClient)
   }, [queryClient, status])
+}
+
+// ---------------------------------------------------------------------------
+// §7.11 Progress export / import (FR-STT-004, ruling E-68)
+// ---------------------------------------------------------------------------
+
+/**
+ * `GET /api/progress/export`, as a mutation: it is a file the user asks for
+ * with a click (the settings dialog's 읽기 기록), not state a screen reads, so
+ * nothing caches it and nothing refetches it.
+ */
+export function useExportProgress(): UseMutationResult<ProgressExport, Error, void> {
+  return useMutation({ mutationFn: () => exportProgress() })
+}
+
+export interface ImportProgressVariables {
+  payload: ProgressExport
+  /** Omitted for merge, the server's default; `'replace'` overwrites. */
+  strategy?: ImportStrategy
+}
+
+/**
+ * `POST /api/progress/import`. A success can have rewritten any book's
+ * progress and prefs, so it invalidates every `books` key (detail and prefs),
+ * every `series` key (their read counts) and 이어보기. A refusal invalidates
+ * nothing: the import is one transaction (`internal/userdata/export.go`).
+ */
+export function useImportProgress(): UseMutationResult<
+  ProgressImportResult,
+  Error,
+  ImportProgressVariables
+> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ payload, strategy }: ImportProgressVariables) =>
+      importProgress(payload, strategy),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.books.all })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.series.all })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.continueReading.all })
+    },
+  })
 }
 
 // ---------------------------------------------------------------------------

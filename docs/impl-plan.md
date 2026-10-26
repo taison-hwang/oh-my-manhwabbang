@@ -259,7 +259,7 @@ Every FR marked **필수** in stages 1–2 is in scope. Explicit per-FR list:
 | FR-STT-001 per-book progress | 필수 | 1 | 03, 12 | |
 | FR-STT-002 series aggregate | 필수 | 1 | 03, 12 | |
 | FR-STT-003 survives rebuild | 필수 | 1 | 02, 03, 13 | |
-| FR-STT-004 export/import | 선택 | 3 | 03, 12 | **backend endpoints only** — *trivially free* (~80 lines) and it protects the only authored data. **No UI.** |
+| FR-STT-004 export/import | 선택 | 3 | 03, 12, 10 | Backend endpoints — *trivially free* (~80 lines) and it protects the only authored data. ~~**No UI.**~~ **The UI is in by ruling E-68** (사용자 지시 2026-10-26, reversing D-04's "UI out"): the settings dialog's 읽기 기록 section, ui-spec §8.6 4항. |
 
 ### 1.2 IN — non-functional
 
@@ -271,7 +271,7 @@ NFR-SEC-001/002/003, CON-001…004. All in scope. Gates in §7.
 | Item | Why |
 |---|---|
 | **NFR-OPS-004 Docker image** | prd §9 stage 3, "부가적". `make release` cross-compilation (NFR-OPS-003) **is** in scope. |
-| **FR-STT-004 export/import *UI*** | stage 3. API only (above). |
+| ~~**FR-STT-004 export/import *UI***~~ | ~~stage 3. API only (above).~~ **Moved IN by ruling E-68** (사용자 지시 2026-10-26) — see §1.1. |
 | **Mobile gesture *optimisation*** (pinch-zoom, momentum, edge-swipe tuning) | stage 3. Basic tap zones + horizontal swipe are in (FR-VWR-011). |
 | **Archive format expansion** (RAR/CBR, 7z, nested ZIP) | prd §7.2 + stage 3. `internal/archive.Reader` is an interface so it can be added later; `.rar` files are logged and ignored. |
 | **`duplicate_of` hints, manual volume reordering** | prd §10 stage 3. |

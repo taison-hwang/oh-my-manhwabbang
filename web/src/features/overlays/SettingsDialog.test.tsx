@@ -168,6 +168,17 @@ function Harness() {
   )
 }
 
+/**
+ * The section under the `<h3>` named `name`. 읽기 기록 keeps its live regions
+ * mounted (ui-spec §8.6 item 4), so a dialog-wide `getByRole('alert')` is
+ * ambiguous; each section's alert is looked for in that section.
+ */
+function sectionOf(name: string): HTMLElement {
+  const el = screen.getByRole('heading', { level: 3, name }).closest('section')
+  if (el === null) throw new Error(`no section around ${name}`)
+  return el
+}
+
 function renderDialog(harness = false): void {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -186,15 +197,30 @@ function renderDialog(harness = false): void {
  * sections are level 3. Their look is the `.h6` class's, not the tag's.
  */
 describe('section headings (a11y audit #5)', () => {
-  it('puts all four sections at level 3', async () => {
+  it('puts all five sections at level 3', async () => {
     renderDialog()
     await screen.findByText('만화')
     // Level 3 only makes sense under the dialog's own level-2 title.
     expect(screen.getByRole('heading', { level: 2, name: '설정' })).toBeInTheDocument()
-    for (const name of ['루트 관리', '캐시', '읽기 기본값', '스캔 로그']) {
+    for (const name of ['루트 관리', '캐시', '읽기 기본값', '스캔 로그', '읽기 기록']) {
       expect(screen.getByRole('heading', { level: 3, name })).toBeInTheDocument()
     }
     expect(screen.queryAllByRole('heading', { level: 6 })).toHaveLength(0)
+  })
+
+  /**
+   * Ruling E-68 §2.2: 읽기 기록 is the dialog's last section, after 스캔 로그,
+   * so the references that point at §8.6 §3 stay right. Its behaviour is
+   * `ProgressPanel.test.tsx`'s.
+   */
+  it('ends with 읽기 기록, right after 스캔 로그 (ruling E-68)', async () => {
+    renderDialog()
+    await screen.findByText('만화')
+    const progress = screen.getByRole('heading', { level: 3, name: '읽기 기록' }).closest('section')
+    const scanLog = screen.getByRole('heading', { level: 3, name: '스캔 로그' }).closest('section')
+    expect(progress).not.toBeNull()
+    expect(screen.getByRole('dialog').lastElementChild).toBe(progress)
+    expect(progress?.previousElementSibling).toBe(scanLog)
   })
 })
 
@@ -666,7 +692,7 @@ describe('루트 추가/제거 (amendment A-11, ruling E-26)', () => {
     await userEvent.type(screen.getByLabelText('루트 경로'), '/srv/media/manga')
     await userEvent.click(screen.getByRole('button', { name: '추가' }))
 
-    const alert = await screen.findByRole('alert')
+    const alert = await within(sectionOf('루트 관리')).findByRole('alert')
     expect(alert).toHaveTextContent(expected)
     // The form stays open with the value in it: the user has to edit the path,
     // and a cleared field means retyping it to find out what was wrong.
@@ -693,7 +719,7 @@ describe('루트 추가/제거 (amendment A-11, ruling E-26)', () => {
     await userEvent.type(screen.getByLabelText('루트 경로'), '/srv/media/manga')
     await userEvent.click(screen.getByRole('button', { name: '추가' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('allow_root_editing')
+    expect(await within(sectionOf('루트 관리')).findByRole('alert')).toHaveTextContent('allow_root_editing')
   })
 
   // -- the remove flow -----------------------------------------------------
@@ -714,7 +740,7 @@ describe('루트 추가/제거 (amendment A-11, ruling E-26)', () => {
     await userEvent.click(within(row).getByRole('button', { name: '제거' }))
 
     expect(recorded.rootDeletes).toEqual([])
-    const alert = screen.getByRole('alert')
+    const alert = within(sectionOf('루트 관리')).getByRole('alert')
     expect(alert).toHaveTextContent('02. lanovel')
     expect(alert).toHaveTextContent('읽기 진행률은 유지됩니다')
     // R1: the index rows are purged, so nothing here may say they survive.
@@ -731,7 +757,7 @@ describe('루트 추가/제거 (amendment A-11, ruling E-26)', () => {
     await userEvent.click(within(row).getByRole('button', { name: '제거' }))
     await userEvent.click(within(row).getByRole('button', { name: '취소' }))
 
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(within(sectionOf('루트 관리')).queryByRole('alert')).not.toBeInTheDocument()
     expect(recorded.rootDeletes).toEqual([])
     expect(screen.getByText('02. lanovel')).toBeInTheDocument()
   })
@@ -779,7 +805,7 @@ describe('루트 추가/제거 (amendment A-11, ruling E-26)', () => {
       within(screen.getByTestId('root-row-mangga')).getByRole('button', { name: '제거' }),
     )
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('마지막 루트')
+    expect(await within(sectionOf('루트 관리')).findByRole('alert')).toHaveTextContent('마지막 루트')
     expect(screen.getByText('만화')).toBeInTheDocument()
   })
 
@@ -841,7 +867,7 @@ describe('루트 추가/제거 (amendment A-11, ruling E-26)', () => {
     // made "fails on both halves" unobservable: a collapsed table threw inside
     // the `waitFor`, so the negative half was never reached even on the rows
     // that had teeth.
-    const alert = await screen.findByRole('alert')
+    const alert = await within(sectionOf('루트 관리')).findByRole('alert')
     await waitFor(() => {
       expect(alert).not.toHaveTextContent(REMOVE_CONFIRM)
     })
@@ -881,7 +907,7 @@ describe('루트 추가/제거 (amendment A-11, ruling E-26)', () => {
     await userEvent.type(screen.getByLabelText('루트 경로'), '/srv/media/manga')
     await userEvent.click(screen.getByRole('button', { name: '추가' }))
 
-    const alert = await screen.findByRole('alert')
+    const alert = await within(sectionOf('루트 관리')).findByRole('alert')
     expect.soft(alert).toHaveTextContent(/여러 줄 목록/)
     expect.soft(alert).toHaveTextContent(/roots:/)
     // The sentence this replaces — the generic `409` answer for 추가, told to a
@@ -989,7 +1015,7 @@ describe('캐시 (FR-THM-008)', () => {
     renderDialog()
     await screen.findByText('썸네일 · 압축 해제 페이지 캐시')
     await userEvent.click(screen.getByRole('button', { name: '전체 삭제' }))
-    expect(screen.getByRole('alert')).toHaveTextContent('캐시를 모두 삭제할까요?')
+    expect(within(sectionOf('캐시')).getByRole('alert')).toHaveTextContent('캐시를 모두 삭제할까요?')
     expect(recorded.purges).toEqual([])
   })
 
@@ -1008,7 +1034,7 @@ describe('캐시 (FR-THM-008)', () => {
     await screen.findByText('썸네일 · 압축 해제 페이지 캐시')
     await userEvent.click(screen.getByRole('button', { name: '전체 삭제' }))
     await userEvent.click(screen.getByRole('button', { name: '취소' }))
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(within(sectionOf('캐시')).queryByRole('alert')).not.toBeInTheDocument()
     expect(recorded.purges).toEqual([])
   })
 })

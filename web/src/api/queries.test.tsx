@@ -26,6 +26,7 @@ import {
   errorEnvelope,
   ORIGIN,
   progress,
+  progressExport,
   rootEntry,
   rootsResponse,
   scanLogResponse,
@@ -50,6 +51,8 @@ import {
   useCreateRoot,
   useDeleteProgress,
   useDeleteRoot,
+  useExportProgress,
+  useImportProgress,
   usePageThumbImage,
   usePurgeCache,
   useRescanSeries,
@@ -974,5 +977,159 @@ describe('mutations invalidate what they change', () => {
       expect(isAuthError(result.current.create.error)).toBe(true)
     })
     expect(client.getQueryState(queryKeys.auth.status)?.isInvalidated).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// §7.11 Progress export / import (FR-STT-004, ruling E-68)
+// ---------------------------------------------------------------------------
+
+describe('progress export and import (FR-STT-004, ruling E-68)', () => {
+  it('exports through GET /api/progress/export and changes no cached query', async () => {
+    server.use(http.get(`${ORIGIN}/api/progress/export`, () => HttpResponse.json(progressExport)))
+    const client = makeClient()
+    client.setQueryData(queryKeys.books.detail(BOOK_ID), bookDetail)
+    const { result } = renderHook(() => useExportProgress(), { wrapper: makeWrapper(client) })
+
+    result.current.mutate()
+
+    await waitFor(() => {
+      expect(result.current.data).toEqual(progressExport)
+    })
+    expect(client.getQueryState(queryKeys.books.detail(BOOK_ID))?.isInvalidated).toBe(false)
+  })
+
+  it('posts the document as the body and passes the strategy through to the query string', async () => {
+    const seen: { strategy: string | null; body: unknown }[] = []
+    server.use(
+      http.post(`${ORIGIN}/api/progress/import`, async ({ request }) => {
+        seen.push({
+          strategy: new URL(request.url).searchParams.get('strategy'),
+          body: await request.json(),
+        })
+        return HttpResponse.json({ imported: 1, skipped: 0, conflicts: 0 })
+      }),
+    )
+    const client = makeClient()
+    const { result } = renderHook(() => useImportProgress(), { wrapper: makeWrapper(client) })
+
+    result.current.mutate({ payload: progressExport, strategy: 'replace' })
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    result.current.mutate({ payload: progressExport })
+    await waitFor(() => {
+      expect(seen).toHaveLength(2)
+    })
+
+    expect(seen).toEqual([
+      { strategy: 'replace', body: progressExport },
+      { strategy: null, body: progressExport },
+    ])
+  })
+
+  /**
+   * An import rewrites progress rows (book detail, the series' read counts,
+   * 이어보기) and per-book prefs (`books.prefs`), so all three families go
+   * stale on success (ui-spec §8.6 item 4).
+   */
+  it('a successful import invalidates books, series and 이어보기', async () => {
+    server.use(
+      http.post(`${ORIGIN}/api/progress/import`, () =>
+        HttpResponse.json({ imported: 1, skipped: 0, conflicts: 1 }),
+      ),
+    )
+    const client = makeClient()
+    client.setQueryData(queryKeys.books.detail(BOOK_ID), bookDetail)
+    client.setQueryData(queryKeys.books.prefs(BOOK_ID), bookPrefs)
+    client.setQueryData(queryKeys.series.detail(SERIES_ID), seriesDetail)
+    client.setQueryData(queryKeys.continueReading.list(20), continueResponse)
+    client.setQueryData(queryKeys.cache.usage, cacheUsage)
+    const { result } = renderHook(() => useImportProgress(), { wrapper: makeWrapper(client) })
+
+    result.current.mutate({ payload: progressExport })
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    expect(client.getQueryState(queryKeys.books.detail(BOOK_ID))?.isInvalidated).toBe(true)
+    expect(client.getQueryState(queryKeys.books.prefs(BOOK_ID))?.isInvalidated).toBe(true)
+    expect(client.getQueryState(queryKeys.series.detail(SERIES_ID))?.isInvalidated).toBe(true)
+    expect(client.getQueryState(queryKeys.continueReading.list(20))?.isInvalidated).toBe(true)
+    // An import writes no cache entry.
+    expect(client.getQueryState(queryKeys.cache.usage)?.isInvalidated).toBe(false)
+  })
+
+  /**
+   * The test above seeds entries no screen watches, so it cannot tell "go
+   * stale" from "go stale and refetch now". Here a screen has all three open,
+   * and each must ask the server again (ui-spec §8.6 item 4: "a screen that has
+   * them open refetches").
+   */
+  it('a successful import refetches the books, series and 이어보기 a screen has open', async () => {
+    const gets = { series: 0, book: 0, continueReading: 0 }
+    server.use(
+      http.get(`${ORIGIN}/api/series/${SERIES_ID}`, () => {
+        gets.series++
+        return HttpResponse.json(seriesDetail)
+      }),
+      http.get(`${ORIGIN}/api/books/${BOOK_ID}`, () => {
+        gets.book++
+        return HttpResponse.json(bookDetail)
+      }),
+      http.get(`${ORIGIN}/api/continue`, () => {
+        gets.continueReading++
+        return HttpResponse.json(continueResponse)
+      }),
+      http.post(`${ORIGIN}/api/progress/import`, () =>
+        HttpResponse.json({ imported: 1, skipped: 0, conflicts: 1 }),
+      ),
+    )
+    const client = makeClient()
+    const { result } = renderHook(
+      () => ({
+        series: useSeries(SERIES_ID),
+        book: useBook(BOOK_ID),
+        continueReading: useContinue(20),
+        importer: useImportProgress(),
+      }),
+      { wrapper: makeWrapper(client) },
+    )
+    await waitFor(() => {
+      expect(result.current.series.isSuccess).toBe(true)
+      expect(result.current.book.isSuccess).toBe(true)
+      expect(result.current.continueReading.isSuccess).toBe(true)
+    })
+    expect(gets).toEqual({ series: 1, book: 1, continueReading: 1 })
+
+    result.current.importer.mutate({ payload: progressExport })
+
+    await waitFor(() => {
+      expect(gets).toEqual({ series: 2, book: 2, continueReading: 2 })
+    })
+  })
+
+  it('a refused import invalidates nothing — it is one transaction', async () => {
+    server.use(
+      http.post(`${ORIGIN}/api/progress/import`, () =>
+        HttpResponse.json(errorEnvelope('bad_request', 'unknown field "note"', { field: 'note' }), {
+          status: 400,
+        }),
+      ),
+    )
+    const client = makeClient()
+    client.setQueryData(queryKeys.books.detail(BOOK_ID), bookDetail)
+    client.setQueryData(queryKeys.series.detail(SERIES_ID), seriesDetail)
+    client.setQueryData(queryKeys.continueReading.list(20), continueResponse)
+    const { result } = renderHook(() => useImportProgress(), { wrapper: makeWrapper(client) })
+
+    result.current.mutate({ payload: progressExport })
+
+    await waitFor(() => {
+      expect(result.current.isError).toBe(true)
+    })
+    expect(client.getQueryState(queryKeys.books.detail(BOOK_ID))?.isInvalidated).toBe(false)
+    expect(client.getQueryState(queryKeys.series.detail(SERIES_ID))?.isInvalidated).toBe(false)
+    expect(client.getQueryState(queryKeys.continueReading.list(20))?.isInvalidated).toBe(false)
   })
 })

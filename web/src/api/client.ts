@@ -473,7 +473,7 @@ export function getScanLog(
 }
 
 // ---------------------------------------------------------------------------
-// §7.11 Progress export / import (FR-STT-004 — API only, no UI in this build)
+// §7.11 Progress export / import (FR-STT-004 — the settings dialog's 읽기 기록, ruling E-68)
 // ---------------------------------------------------------------------------
 
 export function exportProgress(options?: RequestOptions): Promise<ProgressExport> {
