@@ -1591,7 +1591,7 @@ Measured contributions: base process + sqlite ≈ 33 MiB RSS; pdfium pool +43 Mi
 
 The frontend is built against this section in parallel with the backend. It is binding.
 
-> **Binding as amended.** The contract is this section **plus amendments A-1…A-16** in `impl-plan.md` §0.3
+> **Binding as amended.** The contract is this section **plus amendments A-1…A-17** in `impl-plan.md` §0.3
 > (D-47). Amendments in force: **A-4** `GET /api/series?progress=any|reading|done|unread`; **A-5**
 > `Settings.library_scope: string`; **A-6** default `w` on `/cover` and `/thumbs/{n}` is **120**
 > (`widths[0]` under A-1's `[120, 240, 400, 640]`); **A-8** `GET /api/series?scope=all|added` backed by
@@ -1606,9 +1606,10 @@ The frontend is built against this section in parallel with the backend. It is b
 > adopted digest back (§7.4, ruling **E-41**); **A-14** `ProgressUpdate.stale_seen?` and a `page_count` that an
 > unacknowledged write preserves (§7.6, ruling **E-45**); **A-15** `verbose.thumbs.{cover_depth,page_depth,
 > active,inflight}` of `GET /api/health?verbose=1` (§7.4, ruling **E-57**); **A-16** `SeriesDetail.encoding:
-> NameEncoding | null`, kenc's five labels, `mixed` gone (§7.5, ruling **E-56**). **A-7** freezes everything
+> NameEncoding | null`, kenc's five labels, `mixed` gone (§7.5, ruling **E-56**). **A-17** import never moves `started_at` later, and a
+> `prefs` row, which carries no `updated_at`, loses to a local override under merge (§7.11, ruling **E-64**). **A-7** freezes everything
 > else verbatim, and requires this table to be updated before anything else moves — which is what A-8
-> through A-16 did.
+> through A-17 did.
 > Rulings **E-14** (the `series.status` fold, §3.5/§7.3) and **E-15** (`Settings.library_sort` is the closed
 > FR-LIB-004 set, §7.8) are *sharpenings*, not amendments: they narrow a type to the values the server
 > already produced and accepted, so no client that was correct becomes incorrect.
@@ -2730,6 +2731,13 @@ interface ProgressExport {
 }
 ```
 Import merges by `book_id`, keeping the row with the newer `updated_at`; `?strategy=replace` overwrites unconditionally.
+
+**AMENDMENT A-17 (ruling E-64).** The sentence above is not the whole rule for `items`, and does not reach `prefs` at all:
+
+* **An import never moves `started_at` later, under either strategy.** When an incoming item is written over an existing row — under merge because its `updated_at` is newer, or under `?strategy=replace` — the stored value is `min(local, incoming)`. When merge keeps the local row, the item is not written and the local `started_at` stays, even if the incoming one is earlier. It is when the reader first opened the book, not part of any one write — the treatment §7.6 (A-14) already gives it. An incoming `started_at` of `0` is read as its `updated_at`.
+* **`last_page` is clamped to `[1, page_count]`** (the upper bound only when `page_count > 0`), exactly as the §7.6 progress write does.
+* **A `prefs` row carries no `updated_at`, so "newer" is undefined for it.** Under merge (the default), a book that already has a local override keeps it and the incoming row is dropped; a book without one takes the incoming row. `?strategy=replace` overwrites the override. A row whose three fields are all `null` is ignored under either strategy — it does not clear a local override. The stored `updated_at` of an imported prefs row is the import time. Prefs rows are not counted in `imported`/`skipped`/`conflicts`, which describe `items` only.
+* For `items`, a tie (`local.updated_at == incoming.updated_at`) keeps the local row under merge.
 
 ### 7.12 Auth (NFR-SEC-002)
 

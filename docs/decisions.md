@@ -4117,3 +4117,44 @@ SPA는 JS·CSS(약 475 KB)를 압축 없이 embed하고, 정적 핸들러도 압
 - `scripts/precompress/`(새), `Makefile`의 `web:` 레시피.
 - `internal/httpapi/spa.go`, `internal/httpapi/spa_precompressed_test.go`(새).
 - `docs/arch-backend.md` §2(그림의 `middleware.go`에 있지도 않던 "gzip-exempt"를 정정), §2.1 Serving rules 한 줄, §11 빌드 한 줄.
+
+## E-64 — **가져오기는 `started_at`을 늦추지 않고, `updated_at`이 없는 prefs 행은 merge에서 로컬 설정에 진다 (AMENDMENT A-17)** (사용자 결정 "현재 동작을 명세에 적기"·25 발견, 메인 판단 2026-10-26 — 코드 변화 없음, 와이어 모양 변화 없음) — BINDING
+
+### 1. 문제
+
+arch §7.11은 가져오기를 한 문장으로 정했다. "`book_id`로 합치되 `updated_at`이 더 최신인 행을 남기고, `?strategy=replace`는 무조건 덮는다."
+25의 g1 리뷰(차단 2건)가 이 문장과 구현(`internal/userdata/export.go`)이 두 곳에서 어긋남을 찾았다.
+
+- **prefs.** 내보내기 문서의 `prefs` 행에는 `updated_at`이 없다. 그러니 "더 최신인 행"이 정의되지 않는다. 구현은 merge에서 `ON CONFLICT DO NOTHING`(로컬 설정이 이김)이고, replace에서만 덮는다.
+- **`started_at`.** 들어온 행이 기록될 때(merge에서 `updated_at`이 이기거나 replace일 때) `started_at`은 `min(로컬, 들어온 값)`으로 남는다. replace도 같은 SQL 문을 쓰므로 똑같다(`export.go:171`, 20 확인). 그래서 "무조건 덮는다"도 이 열에 대해서는 틀리다.
+- **`last_page`.** 기록할 때 `clampPage`로 `[1, page_count]`에 맞춘다(`page_count > 0`일 때만 위쪽). 진도 쓰기와 같은 정규화다. 옛 문장은 이것도 말하지 않았다.
+
+### 2. 판정
+
+현재 동작이 맞고, 명세를 그쪽에 맞춘다. arch §7.11에 A-17 문단을 넣고, impl-plan §0.3 표를 먼저 갱신했다(A-7).
+
+1. 가져오기는 어느 전략에서도 `started_at`을 늦추지 않는다. 들어온 항목이 기존 행 위에 기록되면(merge에서 들어온 `updated_at`이 더 최신이거나 replace) 둘 중 이른 값을 남긴다. merge가 로컬 행을 남기면 그 항목은 기록되지 않으므로, 들어온 값이 더 일러도 로컬 `started_at`이 그대로다. `started_at`은 "처음 연 때"이고 어느 한 쓰기에 속하지 않는다. §7.6 A-14(E-45)가 진도 쓰기에서 이미 주는 취급과 같다. 들어온 `started_at`이 0이면 그 행의 `updated_at`으로 읽는다.
+2. merge(기본)에서 로컬 설정이 있는 책의 들어온 prefs 행은 버린다. 로컬 설정이 없는 책은 들어온 행을 받는다. replace는 덮는다. 세 필드가 모두 `null`인 행은 두 전략 모두 무시한다(로컬 설정을 지우지 않는다). 저장되는 prefs의 `updated_at`은 가져온 시각이다. `imported`/`skipped`/`conflicts`는 `items`만 센다.
+3. `items`에서 `updated_at`이 같으면 merge는 로컬을 남긴다.
+4. 기록되는 `last_page`는 `[1, page_count]`로 자른다(`page_count > 0`일 때만 위쪽). 진도 쓰기 경로와 같다.
+
+**개정(amendment)이지 날카롭게 하기(sharpening, E-14/E-15)가 아니다.** 와이어 모양은 그대로다. 그러나 옛 문장을 글자대로 믿은 클라이언트나 테스트는 틀린 것이 된다. replace로 `started_at`을 되돌리거나, merge로 들어온 prefs가 이기기를 기대했다면 그렇다.
+
+### 3. 기각한 대안
+
+- **코드를 옛 문장에 맞추기.** prefs에 시각이 없으니 "최신"을 판정할 근거가 없다. 내보내기 형식(`shelf-progress/1`)에 `updated_at`을 더하면 형식 개정이 된다. `started_at`을 덮으면 처음 연 때가 기기 사이에서 늦어지는 쪽으로만 흔들린다. 사용자는 현재 동작을 명세에 적기로 결정했다.
+
+### 4. 검증
+
+- 코드는 바뀌지 않았다. A-17의 네 항목은 `internal/userdata/userdata_test.go`가 고정한다(25, 판정 뒤 추가·정리, 뮤턴트 15개 전부 빨강):
+  - `started_at`: `TestImport_keepsTheEarlierStartedAt` — merge·replace 양쪽, merge가 건너뛴 행(로컬 100/300, 들어온 행 50/200 → 100)까지. 0은 `TestImport_readsAZeroStartedAtAsItsUpdatedAt`.
+  - `last_page` clamp: `TestImport_clampsPageNumbersLikeTheWritePath`.
+  - prefs: `TestImport_prefsAgainstAnExistingOverride`(가져온 시각, 집계 제외 포함), `TestImport_allNullPrefsRowIsIgnored`.
+  - tie: `TestImport_mergeKeepsTheNewerRow_replaceOverwrites`.
+  - HTTP 기본 전략이 merge인 것은 `internal/httpapi/progress_import_test.go`가 본다.
+- `scripts/contractcheck`의 checkAmendments가 impl-plan 행과 arch의 `AMENDMENT A-17` 표지를 대조한다. 초록이다.
+
+### 5. 바뀐 것
+
+- `docs/arch-backend.md` §7 머리말(A-1…A-17, A-17 요약)과 §7.11의 A-17 문단.
+- `docs/impl-plan.md` §0.3 A-17 행과 각주, §0.3 참조 범위(A-1 … A-17).
