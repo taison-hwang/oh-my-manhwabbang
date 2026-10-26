@@ -2,6 +2,7 @@ package nested_test
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"io"
 	"math/rand"
@@ -238,5 +239,166 @@ func TestOpen_readPastTheEnd(t *testing.T) {
 			t.Errorf("method %d: straddling ReadAt returned the wrong bytes", method)
 		}
 		r.Close()
+	}
+}
+
+// salvagedOverstated is an outer container in the shape the reference
+// collection's damaged ZIPs take: the central directory is gone, so zipidx
+// rebuilds the entry from its local header, and that header records an
+// uncompressed size `extra` bytes larger than the deflate stream produces.
+// The salvaged ref therefore promises bytes that do not exist. inner may be
+// empty: the stream then produces nothing at all and every promised byte is
+// missing.
+func salvagedOverstated(t *testing.T, inner []byte, extra int) ([]byte, archive.EntryRef) {
+	t.Helper()
+	outer, ref := outerOf(t, inner, testutil.MethodDeflate)
+	hdr := ref.LocalHdrOff
+	dataOff := hdr + 30 + int64(binary.LittleEndian.Uint16(outer[hdr+26:])) + int64(binary.LittleEndian.Uint16(outer[hdr+28:]))
+	bad := append([]byte(nil), outer[:dataOff+ref.CompSize]...) // no directory, no end record
+	binary.LittleEndian.PutUint32(bad[hdr+22:], uint32(len(inner)+extra))
+
+	ix, err := zipidx.ReadCentralDirectory(t.Context(), bytes.NewReader(bad), int64(len(bad)))
+	if !errors.Is(err, archive.ErrCorrupt) || len(ix.Entries) != 1 {
+		t.Fatalf("outer index = %d entries, %v; want 1 salvaged entry and a corrupt verdict", len(ix.Entries), err)
+	}
+	got := ix.Entries[0].Ref()
+	if got.Size != int64(len(inner)+extra) {
+		t.Fatalf("salvaged size = %d, want the overstated %d — the fixture did not reach the damaged shape", got.Size, len(inner)+extra)
+	}
+	return bad, got
+}
+
+// A deflate stream that ends before the recorded size used to panic in the tail
+// window: fillTail stopped at the stream's real end, and the window's slice was
+// indexed at an offset past it. A ReadAt past the bytes that exist is a short
+// read, the same answer the sequential path gives — and since every byte of
+// the inner archive is in fact present, zipidx then indexes and serves it whole
+// (FR-IDX-010: a damaged book stays readable).
+func TestOpen_recordedSizeLongerThanTheStream(t *testing.T) {
+	t.Parallel()
+
+	inner := innerVolume(t, 40)
+	want, err := zipidx.ReadCentralDirectory(t.Context(), bytes.NewReader(inner), int64(len(inner)))
+	if err != nil {
+		t.Fatalf("indexing the intact inner archive: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name     string
+		extra    int
+		salvaged bool // whether zipidx must fall back to the local headers
+	}{
+		// The real end of the inner archive lies within the end-record scan
+		// (the last 65 557 bytes of the declared size): the end record is
+		// found and the directory is read as it is.
+		{"overstated by 5000 bytes", 5000, false},
+		// The real end lies megabytes before the declared one. The tail
+		// window still holds the bytes the stream did produce — here the
+		// whole inner archive — but the end-record scan only looks at the
+		// declared end, where nothing exists, so the inner index comes back
+		// only by salvaging the inner archive's local headers.
+		{"overstated by more than the tail window", 3 << 20, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			bad, ref := salvagedOverstated(t, inner, tc.extra)
+			r, err := nested.Open(t.Context(), bytes.NewReader(bad), ref)
+			if err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+			defer r.Close()
+
+			// Past the bytes that exist: nothing, and io.EOF.
+			for _, off := range []int64{r.Size() - 22, int64(len(inner)) + 1} {
+				if n, err := r.ReadAt(make([]byte, 22), off); n != 0 || !errors.Is(err, io.EOF) {
+					t.Errorf("ReadAt(22 bytes at %d) = (%d, %v), want (0, io.EOF)", off, n, err)
+				}
+			}
+			// Straddling the real end: the bytes that exist, and io.EOF.
+			buf := make([]byte, 64)
+			n, err := r.ReadAt(buf, int64(len(inner))-16)
+			if n != 16 || !errors.Is(err, io.EOF) || !bytes.Equal(buf[:16], inner[len(inner)-16:]) {
+				t.Errorf("ReadAt across the real end = (%d, %v) %x, want (16, io.EOF) %x", n, err, buf[:n], inner[len(inner)-16:])
+			}
+
+			got, err := zipidx.ReadCentralDirectory(t.Context(), r, r.Size())
+			if salvaged := errors.Is(err, zipidx.ErrSalvagedFromLocalHeaders); salvaged != tc.salvaged || (!salvaged && err != nil) {
+				t.Errorf("inner index err = %v, want salvaged from local headers = %v", err, tc.salvaged)
+			}
+			if got == nil || len(got.Entries) != len(want.Entries) {
+				n := 0
+				if got != nil {
+					n = len(got.Entries)
+				}
+				t.Fatalf("inner index = %d entries (%v), want all %d", n, err, len(want.Entries))
+			}
+			for i, e := range got.Entries {
+				if e.Name != want.Entries[i].Name {
+					t.Errorf("entry %d = %q, want %q", i, e.Name, want.Entries[i].Name)
+					continue
+				}
+				if page := readEntry(t, r, e.Ref()); !bytes.Equal(page, readEntry(t, bytes.NewReader(inner), want.Entries[i].Ref())) {
+					t.Errorf("entry %d (%s) reads back different bytes", i, e.Name)
+				}
+			}
+		})
+	}
+}
+
+// The empty-tail edge of the same defect: the inner entry's deflate stream
+// produces no bytes at all while its salvaged local header promises some, so
+// fillTail leaves the window empty and every positive offset lies past it.
+func TestOpen_recordedSizeOverAnEmptyStream(t *testing.T) {
+	t.Parallel()
+
+	bad, ref := salvagedOverstated(t, nil, 5000)
+	r, err := nested.Open(t.Context(), bytes.NewReader(bad), ref)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer r.Close()
+
+	for _, off := range []int64{1, r.Size() / 2, r.Size() - 22} {
+		if n, err := r.ReadAt(make([]byte, 22), off); n != 0 || !errors.Is(err, io.EOF) {
+			t.Errorf("ReadAt(22 bytes at %d of %d) = (%d, %v), want (0, io.EOF)", off, r.Size(), n, err)
+		}
+	}
+	// Nothing to index, and the book is reported damaged rather than empty.
+	if ix, err := zipidx.ReadCentralDirectory(t.Context(), r, r.Size()); !errors.Is(err, archive.ErrCorrupt) || (ix != nil && len(ix.Entries) > 0) {
+		t.Errorf("inner index over an empty stream = %v, %v; want no entries and archive.ErrCorrupt", ix, err)
+	}
+}
+
+func readEntry(t *testing.T, r io.ReaderAt, ref archive.EntryRef) []byte {
+	t.Helper()
+	rc, err := zipidx.OpenEntry(t.Context(), r, ref)
+	if err != nil {
+		t.Fatalf("OpenEntry: %v", err)
+	}
+	defer rc.Close()
+	b, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("reading entry: %v", err)
+	}
+	return b
+}
+
+// An inner archive marked encrypted is refused, not handed back as a reader
+// over ciphertext that zipidx would then try to parse as a ZIP.
+func TestOpen_refusesAnEncryptedInnerArchive(t *testing.T) {
+	t.Parallel()
+	for _, method := range []uint16{testutil.MethodStore, testutil.MethodDeflate} {
+		outer := testutil.BuildZIP(t, testutil.ZIPSpec{Entries: []testutil.Entry{{
+			RawName: testutil.CP949(t, "겟백커스 01.zip"), Data: innerVolume(t, 2),
+			Method: method, Flags: testutil.FlagEncrypted,
+		}}})
+		ix, err := zipidx.ReadCentralDirectory(t.Context(), bytes.NewReader(outer), int64(len(outer)))
+		if err != nil || len(ix.Entries) != 1 {
+			t.Fatalf("method %d: outer index = %v, %v", method, ix, err)
+		}
+		_, err = nested.Open(t.Context(), bytes.NewReader(outer), ix.Entries[0].Ref())
+		if !errors.Is(err, archive.ErrEncrypted) {
+			t.Errorf("method %d: Open on an encrypted inner archive = %v, want archive.ErrEncrypted", method, err)
+		}
 	}
 }

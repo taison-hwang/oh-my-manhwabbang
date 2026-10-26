@@ -166,7 +166,8 @@ type inflateAt struct {
 	stream io.ReadCloser
 	pos    int64 // logical offset of the next byte stream will produce
 
-	// tail is the last min(size, tailWindow) bytes, valid once tailDone is set.
+	// tail is the last min(size, tailWindow) bytes the stream produced, valid
+	// once tailDone is set. A stream shorter than size leaves it ending early.
 	tail     []byte
 	tailOff  int64
 	tailDone bool
@@ -298,7 +299,14 @@ func (z *inflateAt) ReadAt(p []byte, off int64) (int, error) {
 			return 0, err
 		}
 		if off >= z.tailOff {
+			// The stream can end before z.size: a damaged outer archive may
+			// record a longer inner one than its deflate data holds, and
+			// fillTail then stops at the real end. Past it there is nothing,
+			// which is the short read the sequential path gives too.
 			lo := off - z.tailOff
+			if lo >= int64(len(z.tail)) {
+				return 0, io.EOF
+			}
 			n := copy(p[:want], z.tail[lo:])
 			if int64(n) < want || short {
 				return n, io.EOF
