@@ -113,13 +113,22 @@ function retryQuery(failureCount: number, error: Error): boolean {
   return failureCount < 2
 }
 
-/** Defaults for the app's `QueryClient`; the shell (WP-05) may use this as-is. */
+/**
+ * The app's one `QueryClient` configuration: `main.tsx` boots with it, and a
+ * test that means "under the app's defaults" builds its client here rather than
+ * copying them.
+ */
 export function createQueryClient(): QueryClient {
   return new QueryClient({
     defaultOptions: {
       queries: {
         retry: retryQuery,
+        // A single-user LAN tool; window focus is not a signal that anything
+        // changed, and the viewer refetching on every alt-tab is user-hostile.
         refetchOnWindowFocus: false,
+        // The index is a local SQLite file behind a localhost server: refetching
+        // is cheap, but a 30 s window still collapses the storm of duplicate
+        // requests a grid of cards would otherwise make.
         staleTime: 30_000,
       },
       mutations: { retry: false },

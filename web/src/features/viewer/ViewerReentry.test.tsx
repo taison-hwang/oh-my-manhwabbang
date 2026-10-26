@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom/vitest'
 
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClientProvider } from '@tanstack/react-query'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
@@ -19,7 +19,7 @@ import {
   settings,
 } from '../../api/fixtures'
 import type { BookDetail, PageInfo, Progress } from '../../api/types'
-import { queryKeys } from '../../api/queries'
+import { createQueryClient, queryKeys } from '../../api/queries'
 import { resetBasePath } from '../../api/urls'
 import { cancelChromeAutoHide, useViewerStore } from '../../store/viewer'
 import { failUnhandled } from '../../test/msw'
@@ -204,13 +204,6 @@ function SeriesStandIn() {
   )
 }
 
-/** The app's QueryClient (`main.tsx`), minus nothing. */
-function appQueryClient(): QueryClient {
-  return new QueryClient({
-    defaultOptions: { queries: { staleTime: 30_000, refetchOnWindowFocus: false, retry: 1 } },
-  })
-}
-
 /** A data router like `router.tsx`'s — its updates go through `startTransition`. */
 function mountApp(strict: boolean) {
   const router = createMemoryRouter(
@@ -220,7 +213,8 @@ function mountApp(strict: boolean) {
     ],
     { initialEntries: [BOOK_URL] },
   )
-  const client = appQueryClient()
+  // The app's own client, what `main.tsx` boots with.
+  const client = createQueryClient()
   const tree: ReactNode = (
     <QueryClientProvider client={client}>
       <Suspense fallback={null}>

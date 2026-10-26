@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClientProvider } from '@tanstack/react-query'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { RouterProvider } from 'react-router-dom'
@@ -9,6 +9,7 @@ import './styles/fonts.css'
 import './styles/tokens.css'
 import './styles/base.css'
 
+import { createQueryClient } from './api/queries'
 import { applyTheme } from './lib/theme'
 import { router } from './router'
 import { useUiStore } from './store/ui'
@@ -31,20 +32,7 @@ if (container === null) {
   throw new Error('mounting 석교만화방: #root is missing from index.html')
 }
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      // The index is a local SQLite file behind a localhost server: refetching
-      // is cheap, but a 30 s window still collapses the storm of duplicate
-      // requests a grid of cards would otherwise make.
-      staleTime: 30_000,
-      // A single-user LAN tool; window focus is not a signal that anything
-      // changed, and the viewer refetching on every alt-tab is user-hostile.
-      refetchOnWindowFocus: false,
-      retry: 1,
-    },
-  },
-})
+const queryClient = createQueryClient()
 
 createRoot(container).render(
   <StrictMode>

@@ -44,6 +44,7 @@ import {
   scanStatusRunning,
   settings,
 } from './api/fixtures'
+import { createQueryClient } from './api/queries'
 import { SETTINGS_SAVE_DEBOUNCE_MS } from './api/settingsWriter'
 import type { AuthStatus, SeriesListResponse, Settings, SettingsUpdate } from './api/types'
 import { resetBasePath } from './api/urls'
@@ -510,16 +511,6 @@ function renderShellAt(
   )
 }
 
-/**
- * `main.tsx`'s query defaults, copied: what a query that sets no `retry` of its
- * own inherits in the app (`retry: 1`), where the test default above would hide it.
- */
-function productionClient(): QueryClient {
-  return new QueryClient({
-    defaultOptions: { queries: { staleTime: 30_000, refetchOnWindowFocus: false, retry: 1 } },
-  })
-}
-
 /** Past the settings writer's debounce, so a write-back would have been sent. */
 async function settle(): Promise<void> {
   await act(async () => {
@@ -592,8 +583,8 @@ describe('ShellDataProvider — the server theme on every route', () => {
    * a password the settings read is one more `401`. It must cost one request
    * (a 4xx is not retried, and the `401` only re-reads the auth status), leave
    * the local theme alone, and be answered by the login's refetch-everything.
-   * Under the app's own query defaults, so the "not retried" is `useSettings`'s
-   * `retryQuery` and not this file's `retry: false`.
+   * Under the app's own client (`createQueryClient`, what `main.tsx` boots with),
+   * so the "not retried" is the app's `retryQuery` and not this file's `retry: false`.
    */
   it('reads the settings once behind the login screen, then hydrates once logged in', async () => {
     const user = userEvent.setup()
@@ -623,9 +614,9 @@ describe('ShellDataProvider — the server theme on every route', () => {
       }),
     )
 
-    renderShellAt('/series/s1', productionClient())
+    renderShellAt('/series/s1', createQueryClient())
     await screen.findByRole('heading', { name: '비밀번호를 입력하세요' })
-    // Past the first retry `retry: 1` would schedule (1 s after the failure).
+    // Past the first retry a retrying policy would schedule (1 s after the failure).
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 1_600))
     })
