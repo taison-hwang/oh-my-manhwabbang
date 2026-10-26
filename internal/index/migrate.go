@@ -33,23 +33,23 @@ func (db *DB) migrate(ctx context.Context) error {
 			db.path, stored, schemaVersion, ErrSchemaTooNew)
 	}
 
-	if stored == schemaVersion {
+	// The id scheme is checked at every stored version, not only the current
+	// one: an older file would otherwise carry its rows up the ladder, and each
+	// rung stamps the current id_version over the foreign one.
+	if stored > 0 {
 		ok, err := db.idVersionMatches(ctx)
 		if err != nil {
 			return err
 		}
-		if ok {
+		if ok && stored == schemaVersion {
 			return nil
 		}
-		db.log.Warn("index id scheme changed, discarding derived index",
-			"path", db.path, "want", idVersion)
-		if err := db.writeTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-			_, execErr := tx.ExecContext(ctx, dropAllSQL)
-			return execErr
-		}); err != nil {
-			return fmt.Errorf("dropping stale index: %w", err)
+		if !ok {
+			if err := db.dropStale(ctx); err != nil {
+				return err
+			}
+			stored = 0
 		}
-		stored = 0
 	}
 
 	now := time.Now().Unix()
@@ -76,6 +76,19 @@ func (db *DB) migrate(ctx context.Context) error {
 			return err
 		}
 		db.log.Info("index schema applied", "path", db.path, "version", m.to)
+	}
+	return nil
+}
+
+// dropStale discards a derived index written under another id scheme.
+func (db *DB) dropStale(ctx context.Context) error {
+	db.log.Warn("index id scheme changed, discarding derived index",
+		"path", db.path, "want", idVersion)
+	if err := db.writeTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		_, execErr := tx.ExecContext(ctx, dropAllSQL)
+		return execErr
+	}); err != nil {
+		return fmt.Errorf("dropping stale index: %w", err)
 	}
 	return nil
 }

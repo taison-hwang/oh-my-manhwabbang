@@ -543,6 +543,56 @@ func TestOpen_foreignIDVersion_rebuildsIndex(t *testing.T) {
 	}
 }
 
+// The id scheme is checked whatever schema version the file is at. An older
+// file with a foreign id_version used to skip the check and climb the ladder
+// with its rows intact, so books kept ids this build no longer derives — and
+// the migration then stamped the file with the current id_version, hiding it
+// from every later open.
+func TestOpen_olderSchemaWithForeignIDVersion_rebuildsIndex(t *testing.T) {
+	t.Parallel()
+	idx, _, dir := newDBs(t)
+	seed(t, idx, "manga", library())
+	if err := idx.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	raw := openRaw(t, filepath.Join(dir, "index.db"))
+	for _, q := range []string{
+		`ALTER TABLE books DROP COLUMN name_encoding`,
+		`UPDATE meta SET value = '2' WHERE key = 'schema_version'`,
+		`UPDATE meta SET value = 'shelf-id/9' WHERE key = 'id_version'`,
+	} {
+		if _, err := raw.Exec(q); err != nil {
+			t.Fatalf("making a v2 file with a foreign id scheme (%s): %v", q, err)
+		}
+	}
+	_ = raw.Close()
+
+	idx2, err := index.Open(t.Context(), index.Options{
+		Path:     filepath.Join(dir, "index.db"),
+		UserPath: filepath.Join(dir, "user.db"),
+		Logger:   quietLogger(),
+	})
+	if err != nil {
+		t.Fatalf("Open on a v2 index with a foreign id scheme: %v", err)
+	}
+	defer func() { _ = idx2.Close() }()
+
+	list, err := idx2.ListSeries(t.Context(), index.SeriesFilter{})
+	if err != nil {
+		t.Fatalf("ListSeries: %v", err)
+	}
+	if list.Total != 0 {
+		t.Errorf("total after opening = %d, want 0 (rows under a foreign id scheme must be discarded)", list.Total)
+	}
+	if v, err := idx2.SchemaVersion(t.Context()); err != nil || v != 3 {
+		t.Errorf("schema version = %d (%v), want 3", v, err)
+	}
+	if v, _, _ := idx2.Meta(t.Context(), "id_version"); v != "shelf-id/1" {
+		t.Errorf("id_version = %q, want shelf-id/1", v)
+	}
+}
+
 func TestOpen_corruptFile_isCleanError(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
