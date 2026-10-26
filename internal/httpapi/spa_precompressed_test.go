@@ -344,6 +344,75 @@ func TestPrecompressed_UnsatisfiableRangeIsNotLabelledGzip(t *testing.T) {
 	}
 }
 
+// The year-long immutable policy describes the asset's bytes, so only a
+// response that carries them, or vouches for them, may say it. A 412 (an
+// If-Match no embedded asset can satisfy: there is no ETag) is written by
+// ServeContent directly, past the header cleanup its other error paths do; a
+// shared cache storing it under that policy would answer the next plain GET
+// for a year with 412. A 304 is the other way round: RFC 9110 §15.4.5 wants
+// the Cache-Control the 200 would have carried. The plain asset (a dist from
+// `pnpm build` alone) is held to the same rule.
+func TestPrecompressed_CachePolicyOnlyOnSuccess(t *testing.T) {
+	e := newPrecompEnv(t)
+	cases := []struct {
+		name   string
+		target string
+		mutate []func(*http.Request)
+		code   int
+		cached bool
+	}{
+		{"412 gzip", precompJSPath, []func(*http.Request){acceptEncoding("gzip"), ifMatch(`"x"`)}, http.StatusPreconditionFailed, false},
+		{"412 identity", precompJSPath, []func(*http.Request){ifMatch(`"x"`)}, http.StatusPreconditionFailed, false},
+		{"412 plain", plainJSPath, []func(*http.Request){acceptEncoding("gzip"), ifMatch(`"x"`)}, http.StatusPreconditionFailed, false},
+		{"416 gzip", precompJSPath, []func(*http.Request){acceptEncoding("gzip"), rangeOf("bytes=999999-")}, http.StatusRequestedRangeNotSatisfiable, false},
+		{"416 identity", precompJSPath, []func(*http.Request){rangeOf("bytes=999999-")}, http.StatusRequestedRangeNotSatisfiable, false},
+		{"416 plain", plainJSPath, []func(*http.Request){rangeOf("bytes=999999-")}, http.StatusRequestedRangeNotSatisfiable, false},
+		{"304 gzip", precompJSPath, []func(*http.Request){acceptEncoding("gzip"), ifNoneMatch("*")}, http.StatusNotModified, true},
+		{"304 identity", precompJSPath, []func(*http.Request){ifNoneMatch("*")}, http.StatusNotModified, true},
+		{"304 plain", plainJSPath, []func(*http.Request){ifNoneMatch("*")}, http.StatusNotModified, true},
+		{"206 gzip", precompJSPath, []func(*http.Request){acceptEncoding("gzip"), rangeOf("bytes=0-9")}, http.StatusPartialContent, true},
+		{"206 plain", plainJSPath, []func(*http.Request){rangeOf("bytes=0-9")}, http.StatusPartialContent, true},
+		{"200 plain", plainJSPath, nil, http.StatusOK, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			w := e.get(c.target, c.mutate...)
+			if w.Code != c.code {
+				t.Fatalf("status = %d, want %d; body %q", w.Code, c.code, w.Body.String())
+			}
+			// No status here sends the gzip bytes except 206 gzip, whose
+			// encoding TestPrecompressed_Range pins.
+			if ce := w.Header().Values("Content-Encoding"); len(ce) != 0 && c.code != http.StatusPartialContent {
+				t.Errorf("%d Content-Encoding = %q, want none", c.code, ce)
+			}
+			got := w.Header().Values("Cache-Control")
+			if c.cached {
+				if len(got) != 1 || got[0] != immutable {
+					t.Errorf("%d Cache-Control = %q, want %q", c.code, got, immutable)
+				}
+				return
+			}
+			for _, v := range got {
+				if strings.Contains(v, "immutable") || strings.Contains(v, "max-age") {
+					t.Errorf("%d Cache-Control = %q: an error must not be cached as the asset", c.code, got)
+				}
+			}
+		})
+	}
+}
+
+func ifMatch(v string) func(*http.Request) {
+	return func(r *http.Request) { r.Header.Set("If-Match", v) }
+}
+
+func ifNoneMatch(v string) func(*http.Request) {
+	return func(r *http.Request) { r.Header.Set("If-None-Match", v) }
+}
+
+func rangeOf(v string) func(*http.Request) {
+	return func(r *http.Request) { r.Header.Set("Range", v) }
+}
+
 // index.html is rewritten per request by serveIndex and never comes from a
 // .gz, even when one sits next to it; neither does a client-side route.
 func TestPrecompressed_IndexAndRoutesNeverNegotiate(t *testing.T) {

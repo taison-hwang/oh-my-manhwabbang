@@ -4078,7 +4078,7 @@ SPA는 JS·CSS(약 475 KB)를 압축 없이 embed하고, 정적 핸들러도 압
 2. 폰트(woff2, 이미 brotli 압축)·`index.html`(요청마다 `<base href>`를 끼운다)·그 밖의 파일은 그대로 둔다.
 3. 서버(`internal/httpapi/spa.go`)는 `assets/` 아래 이름이 없고 `이름.gz`가 있을 때만 압축 표현으로 다룬다.
    `Accept-Encoding`이 gzip을 허용하면(RFC 9110 §12.5.3: 명시한 `gzip`의 q > 0, 명시가 없으면 `*`의 q > 0) 그 바이트를 `Content-Encoding: gzip`으로,
-   아니면 프로세스당 한 번 푼 바이트를 보낸다. 둘 다 `Vary: Accept-Encoding`과 기존 `immutable`을 단다. `Content-Type`은 원래 확장자로 정한다.
+   아니면 프로세스당 한 번 푼 바이트를 보낸다. 둘 다 `Vary: Accept-Encoding`을 달고, 기존 `immutable`은 성공 응답(200·206·304)에만 단다(§4의 412 수정). `Content-Type`은 원래 확장자로 정한다.
    Range·HEAD는 지금처럼 `http.ServeContent`가 처리하고, Range는 고른 표현에 적용된다. 오류 응답(416 등)에는 `Content-Encoding`을 달지 않는다.
 4. 원본이 있으면 지금과 똑같이 보낸다. 그래서 `make web-gates`의 build(검증용, 압축 안 함)로 만든 `web/dist`를 embed한 바이너리도 그대로 동작한다.
    반대로 압축을 거친 `web/dist`는 `vite preview`가 자산을 읽지 못한다. `pnpm build`를 다시 하면 돌아온다.
@@ -4105,7 +4105,10 @@ SPA는 JS·CSS(약 475 KB)를 압축 없이 embed하고, 정적 핸들러도 압
   go.mod를 올리는 순간 드러나므로 테스트가 GODEBUG를 1.26 기본값으로 고정하고 본다.
 - 리뷰: codex 1회. 수용(다중 Range + gzip이 multipart 봉투에 gzip을 붙임 / 캐시가 패키지 전역이라 Server가 수거되지 않음 / 동시 첫 해제·두 서버 테스트 / precompress 실패 경로 테스트),
   반박(`identity;q=0`이면 406 — RFC 9110은 헤더를 무시하고 압축 없이 보내는 것을 허용하고, 그쪽이 어느 클라이언트에게도 틀리지 않는다),
-  보류(평문 자산에도 있던 동작: `If-Match`에 대한 412가 `immutable`을 그대로 단다. 브라우저는 하위 자원에 If-Match를 보내지 않는다). 수정은 구현자가 아닌 에이전트가 했다.
+  보류(평문 자산에도 있던 동작: `If-Match`에 대한 412가 `immutable`을 그대로 단다). 수정은 구현자가 아닌 에이전트가 했다.
+  보류분은 뒤이어 고쳤다(T2, "새 결함 보류 없음"): `assetWriter`가 `Cache-Control`을 상태 코드를 쓰는 순간 200·206·304에만 단다(304는 RFC 9110 §15.4.5).
+  ServeContent의 412는 416과 달리 헤더 정리를 거치지 않기 때문이다. 평문 자산도 같은 래퍼를 쓴다. 테스트는 412·416·304·206·200 × gzip·identity·평문 표이고,
+  뮤테이션 7개(정책 선설정 ×3 경로, 304 누락, 상태 무관 설정, 평문 래퍼 제거, 304에 gzip 표시)가 전부 RED였다. codex 1회: 차단 0, 비차단 1(304의 Content-Encoding 미검사) 수용.
 - 게이트: 합친 트리 사본에서 `make lint`·`make test` exit 0. 좁은 `-race -count=3`도 통과.
 - 실바이너리(`make build`, go1.26.9): `precompress: 2 files, 476469 -> 147774 bytes`. curl로 gzip 요청 → `Content-Encoding: gzip`, 본문이 embed된 `.gz`와 바이트 일치.
   `Accept-Encoding` 없음 → 원본 429 076 B를 그대로 보냄. HEAD·Range·`gzip;q=0`도 기대대로이고, `/`에는 `Content-Encoding`·`Vary`가 없다.

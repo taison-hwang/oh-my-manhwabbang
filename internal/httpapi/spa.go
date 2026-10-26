@@ -103,16 +103,16 @@ func (s *Server) serveStatic(w http.ResponseWriter, r *http.Request, a *spaAsset
 	if ct := mime.TypeByExtension(path.Ext(name)); ct != "" {
 		w.Header().Set("Content-Type", ct)
 	}
-	if strings.HasPrefix(name, assetPrefix) {
-		// The file name carries a content hash, so the bytes at this URL can
-		// never change.
-		w.Header().Set("Cache-Control", assetCacheControl)
-	} else {
-		w.Header().Set("Cache-Control", "no-cache")
-	}
 	// An embedded file has no meaningful mtime, so ServeContent is given a zero
 	// time and therefore emits no Last-Modified: a wrong validator is worse
 	// than none.
+	if strings.HasPrefix(name, assetPrefix) {
+		// The file name carries a content hash, so the bytes at this URL can
+		// never change; assetWriter says so on the responses that carry them.
+		http.ServeContent(&assetWriter{ResponseWriter: w}, r, name, time.Time{}, rs)
+		return nil
+	}
+	w.Header().Set("Cache-Control", "no-cache")
 	http.ServeContent(w, r, name, time.Time{}, rs)
 	return nil
 }
@@ -221,8 +221,7 @@ func (s *Server) servePrecompressed(w http.ResponseWriter, r *http.Request, a *s
 	if !gzipOK {
 		// Inflate before a single header is set: a failure here becomes the
 		// 500 envelope, and writeError adds to whatever headers are already
-		// on w — an `immutable` Cache-Control on an error would pin it in
-		// every cache for a year.
+		// on w — the asset's Vary and Content-Type do not belong on it.
 		identity, err = a.inflated(name, rs)
 		if err != nil {
 			return internalErr(err)
@@ -243,20 +242,28 @@ func (s *Server) servePrecompressed(w http.ResponseWriter, r *http.Request, a *s
 		ct = "application/octet-stream"
 	}
 	h.Set("Content-Type", ct)
-	h.Set("Cache-Control", assetCacheControl)
 
 	if gzipOK {
-		http.ServeContent(&gzipOnSuccess{ResponseWriter: w}, singleRangeOnly(r), name, time.Time{}, rs)
+		http.ServeContent(&assetWriter{ResponseWriter: w, gzip: true}, singleRangeOnly(r), name, time.Time{}, rs)
 		return nil
 	}
-	http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(identity))
+	http.ServeContent(&assetWriter{ResponseWriter: w}, r, name, time.Time{}, bytes.NewReader(identity))
 	return nil
 }
 
-// gzipOnSuccess adds `Content-Encoding: gzip` at the moment the status is
-// written, and only for 200 and 206.
+// assetWriter adds the headers that describe an asset's bytes at the moment
+// the status is written, and only on the statuses they are true for:
+//   - Cache-Control (assetCacheControl) on 200, 206 and 304. A 304 vouches for
+//     the stored bytes, and RFC 9110 §15.4.5 wants it to carry the
+//     Cache-Control the 200 would have; any other status is not the asset, and
+//     a year-long public policy on it would let a shared cache answer later
+//     requests with the error. ServeContent's 412 (an If-Match, which no
+//     embedded asset satisfies: there is no ETag) is written directly, past the
+//     header cleanup of its 416 path, so setting the policy beforehand would
+//     leave it there.
+//   - Content-Encoding: gzip, when gzip is set, on 200 and 206 only.
 //
-// Setting the header before ServeContent instead would cost two things,
+// Setting Content-Encoding before ServeContent instead would cost two things,
 // both read off net/http/fs.go (go1.25 and go1.26 alike):
 //   - serveContent omits Content-Length on a full response when
 //     Content-Encoding is already set — a guard for handlers that compress on
@@ -267,43 +274,51 @@ func (s *Server) servePrecompressed(w http.ResponseWriter, r *http.Request, a *s
 //
 // Deciding at WriteHeader keeps both independent of those details: the length
 // ServeContent computes is the length of the bytes it copies, which are the
-// gzip bytes, and a plain-text error body is never labelled gzip.
+// gzip bytes, and a plain-text error body is never labelled gzip or cached as
+// the asset.
 //
 // It forwards nothing but Write and WriteHeader. ServeContent copies a
 // known-length body with io.CopyN and never flushes, hijacks or sets
 // deadlines, so the wrapper hides no capability this path uses; Unwrap is
 // there so http.ResponseController still reaches the real writer should a
 // middleware above ever ask.
-type gzipOnSuccess struct {
+type assetWriter struct {
 	http.ResponseWriter
+	gzip        bool
 	wroteHeader bool
 }
 
-func (g *gzipOnSuccess) WriteHeader(code int) {
-	if !g.wroteHeader {
-		g.wroteHeader = true
-		if code == http.StatusOK || code == http.StatusPartialContent {
-			g.Header().Set("Content-Encoding", "gzip")
+func (a *assetWriter) WriteHeader(code int) {
+	if !a.wroteHeader {
+		a.wroteHeader = true
+		switch code {
+		case http.StatusOK, http.StatusPartialContent:
+			a.Header().Set("Cache-Control", assetCacheControl)
+			if a.gzip {
+				a.Header().Set("Content-Encoding", "gzip")
+			}
+		case http.StatusNotModified:
+			a.Header().Set("Cache-Control", assetCacheControl)
 		}
 	}
-	g.ResponseWriter.WriteHeader(code)
+	a.ResponseWriter.WriteHeader(code)
 }
 
-func (g *gzipOnSuccess) Write(b []byte) (int, error) {
-	if !g.wroteHeader {
-		g.WriteHeader(http.StatusOK)
+func (a *assetWriter) Write(b []byte) (int, error) {
+	if !a.wroteHeader {
+		a.WriteHeader(http.StatusOK)
 	}
-	return g.ResponseWriter.Write(b)
+	return a.ResponseWriter.Write(b)
 }
 
-func (g *gzipOnSuccess) Unwrap() http.ResponseWriter { return g.ResponseWriter }
+func (a *assetWriter) Unwrap() http.ResponseWriter { return a.ResponseWriter }
 
 // singleRangeOnly returns r, or a clone of it without Range and If-Range when
 // Range asks for more than one range.
 //
 // ServeContent answers a multi-range request with a multipart/byteranges
 // envelope: MIME boundaries and part headers in plain text around slices of
-// the stored bytes. gzipOnSuccess would label that envelope gzip, and a
+// the stored bytes. assetWriter would label that envelope gzip, and a
 // decoder would meet a boundary where it expects a gzip header. There is no
 // correct way to send it either — Content-Encoding applies to the whole
 // message content, and a part has no header that says its slice is gzip — so
