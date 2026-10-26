@@ -290,3 +290,50 @@ describe('the route error screen (a11y audit #5)', () => {
     silence.mockRestore()
   })
 })
+
+/**
+ * The drawer as a modal, on its own (10-23 accessibility audit #2): Tab wraps
+ * inside it (`trapTab`), Esc closes it wherever focus has got to, and what is
+ * outside it is inert while it is open (`useModalLayer`). jsdom ignores
+ * `inert`, so it is asserted as an attribute.
+ */
+describe('MobileDrawer is modal (a11y audit #2)', () => {
+  const renderDrawer = (onClose = vi.fn()) => {
+    render(
+      <>
+        <button type="button">outside</button>
+        <MobileDrawer open onClose={onClose}>
+          <button type="button">first row</button>
+          <button type="button">last row</button>
+        </MobileDrawer>
+      </>,
+    )
+    return onClose
+  }
+
+  it('keeps Tab inside: off the last control it wraps to the first, and back', async () => {
+    renderDrawer()
+    screen.getByRole('button', { name: 'last row' }).focus()
+
+    await userEvent.tab()
+    expect(screen.getByRole('button', { name: '닫기' })).toHaveFocus()
+
+    await userEvent.tab({ shift: true })
+    expect(screen.getByRole('button', { name: 'last row' })).toHaveFocus()
+  })
+
+  it('closes on Esc wherever focus is', async () => {
+    const onClose = renderDrawer()
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+
+    await userEvent.keyboard('{Escape}')
+
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('inerts what is outside it, and not itself', () => {
+    renderDrawer()
+    expect(screen.getByRole('button', { name: 'outside' }).closest('[inert]')).not.toBeNull()
+    expect(screen.getByRole('dialog', { name: '라이브러리 탐색' }).closest('[inert]')).toBeNull()
+  })
+})

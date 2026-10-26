@@ -347,6 +347,54 @@ describe('landmarks (a11y audit #6)', () => {
   })
 })
 
+/**
+ * The drawer is a modal (10-23 accessibility audit #2).
+ *
+ * It said `aria-modal="true"` and was nothing of the kind: Tab ran off its last
+ * row into the page under the scrim — 22 of 40 presses at 400 landed on the
+ * hamburger, the search box, the sort select and the cards — and from there Esc
+ * did nothing, because only the panel listened for it. While it is open,
+ * everything but the drawer is inert (`lib/modalLayer.ts`). jsdom has no
+ * `inert`: it neither blocks focus nor filters roles, so the attribute is
+ * asserted on the nodes, and the browser half is measured with Tab.
+ */
+describe('the drawer is modal (a11y audit #2)', () => {
+  it('inerts the page under it, not itself or its scrim, and lets go on close', async () => {
+    stubViewport(400)
+    renderShell(LOADED_ROOTS)
+    const hamburger = screen.getByRole('button', { name: '라이브러리 탐색 열기' })
+    const search = screen.getByRole('searchbox')
+
+    await userEvent.click(hamburger)
+    const drawer = await screen.findByRole('dialog', { name: '라이브러리 탐색' })
+
+    expect(search.closest('[inert]')).not.toBeNull()
+    expect(hamburger.closest('[inert]')).not.toBeNull()
+    expect(drawer.closest('[inert]')).toBeNull()
+    // The scrim closes the drawer on a press; inert, it could not.
+    expect(document.querySelector('.drawer-backdrop')?.closest('[inert]')).toBeNull()
+
+    await userEvent.keyboard('{Escape}')
+
+    expect(screen.queryByRole('dialog', { name: '라이브러리 탐색' })).toBeNull()
+    expect(search.closest('[inert]')).toBeNull()
+    expect(hamburger).toHaveFocus()
+  })
+
+  it('leaves one navigation reachable when it opens over the rail (768–1023)', async () => {
+    stubViewport(900)
+    renderShell(LOADED_ROOTS)
+    const rail = screen.getByRole('navigation', { name: '라이브러리 탐색' })
+
+    await userEvent.click(screen.getByRole('button', { name: '라이브러리 탐색 열기' }))
+    const drawer = await screen.findByRole('dialog', { name: '라이브러리 탐색' })
+
+    expect(rail.closest('[inert]')).not.toBeNull()
+    const inDrawer = within(drawer).getByRole('navigation', { name: '라이브러리 탐색' })
+    expect(inDrawer.closest('[inert]')).toBeNull()
+  })
+})
+
 describe('the responsive layer (ui-spec §7, NFR-CMP-002)', () => {
   it('keeps the 240px sidebar with labels at 1440', () => {
     stubViewport(1440)

@@ -1,4 +1,5 @@
 import { TriangleAlert } from 'lucide-react'
+import { useId } from 'react'
 
 import { useScanLog, useScanStatus } from '../../api/queries'
 import type { LogLevel, ScanLogEntry } from '../../api/types'
@@ -57,17 +58,31 @@ export function ScanLogPanel() {
   const items: readonly ScanLogEntry[] = log.data?.items ?? []
   const warns = countLevel(items, 'warn')
   const errors = countLevel(items, 'error')
+  const headingId = useId()
 
   return (
     <section className="flex min-w-0 flex-col gap-2">
       <div className="flex items-baseline gap-3">
-        <h3 className="h6 flex-1">스캔 로그</h3>
+        <h3 id={headingId} className="h6 flex-1">스캔 로그</h3>
         <span className="flex items-center gap-[6px] text-xs tabular-nums text-accent-text">
           <TriangleAlert size={12} aria-hidden={true} />
           {`경고 ${formatCount(warns)} · 오류 ${formatCount(errors)}`}
         </span>
       </div>
+      {/* A tab stop because the log scrolls inside the settings dialog and a
+          keyboard user has no other way to scroll it (axe
+          scrollable-region-focusable). Chrome makes such a box focusable on
+          its own, but the dialog's Tab trap (lib/modalLayer.ts) counts only
+          declared stops, so the box declares itself; the ring is base.css's
+          global `:focus-visible`.
+
+          A named region, not `role="log"`: a log is a polite live region, and
+          a running scan appends rows every second (E-59) — a screen reader
+          would read the scan aloud for as long as it runs. */}
       <div
+        role="region"
+        aria-labelledby={headingId}
+        tabIndex={0}
         className="max-h-[200px] overflow-y-auto border-t-2 border-rule-strong text-sm tracking-[.01em]"
         data-testid="scan-log-body"
       >

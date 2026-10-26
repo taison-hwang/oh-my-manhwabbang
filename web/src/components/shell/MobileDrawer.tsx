@@ -2,6 +2,7 @@ import { X } from 'lucide-react'
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
+import { trapTab, useModalLayer } from '../../lib/modalLayer'
 import { Button } from '../ds/Button'
 import { VisuallyHidden } from '../ds/VisuallyHidden'
 
@@ -16,6 +17,13 @@ import { VisuallyHidden } from '../ds/VisuallyHidden'
  *
  * Rendered into a portal so the fixed panel is not trapped by the shell's
  * `overflow: hidden`.
+ *
+ * It is a modal (10-23 accessibility audit #2): while open the page under it —
+ * the icon rail at 768–1023 included — is inert (`lib/modalLayer.ts`), Tab
+ * wraps inside the panel, and Esc closes it wherever focus is. The backdrop and
+ * the panel share one wrapper, and that wrapper is the layer: modalLayer inerts
+ * the layer's siblings, so with the panel as the layer the scrim would go inert
+ * and stop closing the drawer on a press.
  */
 export interface MobileDrawerProps {
   open: boolean
@@ -24,21 +32,35 @@ export interface MobileDrawerProps {
 }
 
 export function MobileDrawer({ open, onClose, children }: MobileDrawerProps) {
+  const layerRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+
+  useModalLayer(layerRef, open, { initialFocus: 'first' })
 
   useEffect(() => {
     if (!open) return undefined
-    const opener = document.activeElement
-    panelRef.current?.focus()
-    return () => {
-      if (opener instanceof HTMLElement) opener.focus()
+    // Focus can be outside the panel (the focused row unmounted → <body>), where
+    // its onKeyDown never hears Esc. The global ladder runs first and marks the
+    // Esc it used (an overlay opened from here); one consumed in the panel never
+    // reaches window.
+    const onWindowKeyDown = (e: globalThis.KeyboardEvent): void => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      e.preventDefault()
+      onClose()
     }
-  }, [open])
+    window.addEventListener('keydown', onWindowKeyDown)
+    return () => {
+      window.removeEventListener('keydown', onWindowKeyDown)
+    }
+  }, [open, onClose])
 
   if (!open) return null
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>): void => {
-    if (e.key !== 'Escape') return
+    if (e.key !== 'Escape') {
+      if (panelRef.current !== null) trapTab(e, panelRef.current)
+      return
+    }
     // Consume it: the global Esc ladder must not also close an overlay.
     e.preventDefault()
     e.stopPropagation()
@@ -46,7 +68,7 @@ export function MobileDrawer({ open, onClose, children }: MobileDrawerProps) {
   }
 
   return createPortal(
-    <>
+    <div ref={layerRef}>
       <div className="drawer-backdrop" onMouseDown={onClose} />
       <div
         ref={panelRef}
@@ -65,7 +87,7 @@ export function MobileDrawer({ open, onClose, children }: MobileDrawerProps) {
         </div>
         {children}
       </div>
-    </>,
+    </div>,
     document.body,
   )
 }

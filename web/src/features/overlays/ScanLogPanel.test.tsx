@@ -272,3 +272,23 @@ describe('ScanLogPanel follows a running scan (HANDOFF ab)', () => {
     expect(logRequests).toEqual([null, 3, null])
   })
 })
+
+/**
+ * The log scrolls inside the settings dialog, so a keyboard has to be able to
+ * reach it (axe `scrollable-region-focusable`). Chrome used to make the box a
+ * tab stop on its own; the dialog's Tab trap (`lib/modalLayer.ts`) counts only
+ * what says it is focusable, so after it learned to wrap past implicit stops
+ * the log could no longer be scrolled from the keyboard. The box says so now,
+ * and is named by the section's heading. Not `role="log"`: that is a polite
+ * live region, and a running scan adds rows every second (E-59).
+ */
+describe('the log is reachable from the keyboard', () => {
+  it('is a tab stop named by its heading, and not a live region', () => {
+    renderPanel()
+    const region = screen.getByRole('region', { name: '스캔 로그' })
+
+    expect(region).toBe(screen.getByTestId('scan-log-body'))
+    expect(region).toHaveAttribute('tabindex', '0')
+    expect(region).not.toHaveAttribute('aria-live')
+  })
+})
