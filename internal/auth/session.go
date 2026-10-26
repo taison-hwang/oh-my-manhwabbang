@@ -80,9 +80,10 @@ func (s *signer) verify(token string, now time.Time) bool {
 	if p.V != sessionVersion {
 		return false
 	}
-	// The window is half-open at both ends: a token is dead the second it
-	// expires, and one claiming to have been issued in the future is a clock
-	// problem or a forgery attempt and is refused either way.
+	// A token is dead the second it expires. Its issue time may run up to 60
+	// seconds ahead of this clock, to absorb clock skew; one claiming to have
+	// been issued later than that is a clock problem or a forgery attempt and
+	// is refused either way.
 	if p.Exp <= now.Unix() || p.IAT > now.Unix()+60 {
 		return false
 	}

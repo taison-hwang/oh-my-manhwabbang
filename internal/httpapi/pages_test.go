@@ -2,7 +2,9 @@ package httpapi
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"hash/crc32"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,8 +13,11 @@ import (
 	"testing"
 	"time"
 
+	"shelf/internal/archive"
 	"shelf/internal/index"
 	"shelf/internal/scanner"
+	"shelf/internal/source"
+	"shelf/internal/testutil"
 )
 
 // FR-SRV-008 / AC-001 — the response body is byte-identical to the archive
@@ -679,5 +684,245 @@ func reindexFixtureArchive(t *testing.T, e *env, cv string) {
 	}
 	if err := w.Flush(ctx); err != nil {
 		t.Fatalf("flushing the reindex: %v", err)
+	}
+}
+
+// arch §5.3 defines each strong validator over named inputs: a zip page over
+// (book_id, page_no, crc32) and a dir page over (book_id, page_no, size,
+// mtime). A prefix check cannot tell a tag computed from those inputs from one
+// that ignores them, and a tag that ignores them is a stale 304 waiting for a
+// replaced file. The expected tags are built from the fixture's payload bytes
+// and file metadata, not from the server's output.
+func TestPage_etagIsTheSection53FormulaOverItsInputs(t *testing.T) {
+	e := newEnv(t)
+
+	for i, payload := range e.zipPayloads {
+		n := i + 1
+		want := fmt.Sprintf(`"p1-%s-%d-%08x"`, e.bookZipID, n, crc32.ChecksumIEEE(payload))
+		w := e.get(fmt.Sprintf("/api/books/%s/pages/%d", e.bookZipID, n))
+		if got := w.Header().Get("ETag"); got != want {
+			t.Errorf("zip page %d ETag = %s, want %s (crc32 of the entry's bytes)", n, got, want)
+		}
+	}
+	for i, payload := range e.dirPayloads {
+		n := i + 1
+		want := fmt.Sprintf(`"f1-%s-%d-%x-%x"`, e.bookDirID, n, len(payload), fixedMtime.Unix())
+		w := e.get(fmt.Sprintf("/api/books/%s/pages/%d", e.bookDirID, n))
+		if got := w.Header().Get("ETag"); got != want {
+			t.Errorf("dir page %d ETag = %s, want %s (size and mtime of the file)", n, got, want)
+		}
+	}
+}
+
+// The behaviour the formula exists for: once the bytes behind a page URL are
+// replaced and re-indexed, the old validator must stop matching. A client
+// revalidating with it gets 200 and the new bytes, never a 304 that pins the
+// superseded page.
+func TestPage_replacedContentGetsANewETagAndNo304(t *testing.T) {
+	later := fixedMtime.Add(time.Hour)
+
+	t.Run("zip page", func(t *testing.T) {
+		e := newEnv(t)
+		target := "/api/books/" + e.bookZipID + "/pages/1"
+		oldTag := e.get(target).Header().Get("ETag")
+		if oldTag == "" {
+			t.Fatal("no ETag on the original page")
+		}
+
+		// "Somebody re-downloaded a better scan": same names, same methods,
+		// different bytes.
+		fresh := testutil.TinyJPEG(t, 32, 48)
+		raw := testutil.BuildZIP(t, testutil.ZIPSpec{Entries: []testutil.Entry{
+			{Name: "001.jpg", Data: fresh, Method: testutil.MethodStore, Modified: later},
+			{Name: "002.jpg", Data: testutil.TinyJPEG(t, 36, 54), Method: testutil.MethodDeflate, Modified: later},
+			{Name: "010.png", Data: testutil.TinyPNG(t, 10, 14), Method: testutil.MethodDeflate, Modified: later},
+		}})
+		path := filepath.Join(e.media, filepath.FromSlash(bookZipPath))
+		rewriteFile(t, path, raw, later)
+		reindexBookPages(t, e, e.bookZipID, path, "7777666655554444", pagesFromZIP(t, raw))
+
+		w := e.get(target, func(r *http.Request) { r.Header.Set("If-None-Match", oldTag) })
+		if w.Code != http.StatusOK {
+			t.Fatalf("revalidating with the superseded ETag = %d, want 200", w.Code)
+		}
+		if !bytes.Equal(w.Body.Bytes(), fresh) {
+			t.Error("the body is not the replaced archive's entry")
+		}
+		want := fmt.Sprintf(`"p1-%s-1-%08x"`, e.bookZipID, crc32.ChecksumIEEE(fresh))
+		if got := w.Header().Get("ETag"); got == oldTag || got != want {
+			t.Errorf("ETag after replacement = %s (old %s), want %s", got, oldTag, want)
+		}
+	})
+
+	t.Run("dir page", func(t *testing.T) {
+		e := newEnv(t)
+		target := "/api/books/" + e.bookDirID + "/pages/1"
+		oldTag := e.get(target).Header().Get("ETag")
+		if oldTag == "" {
+			t.Fatal("no ETag on the original page")
+		}
+
+		fresh := testutil.TinyJPEG(t, 40, 60)
+		path := filepath.Join(e.media, filepath.FromSlash(bookDirPath), "01.jpg")
+		rewriteFile(t, path, fresh, later)
+		reindexBookPages(t, e, e.bookDirID, "", "1111222233334444", []index.Page{{
+			PageNo: 1, Name: "01.jpg", EntryPath: "01.jpg", Ext: ".jpg",
+			Size: int64(len(fresh)), Mtime: later.Unix(),
+		}, {
+			PageNo: 2, Name: "02.jpg", EntryPath: "02.jpg", Ext: ".jpg",
+			Size: int64(len(e.dirPayloads[1])), Mtime: fixedMtime.Unix(),
+		}})
+
+		w := e.get(target, func(r *http.Request) { r.Header.Set("If-None-Match", oldTag) })
+		if w.Code != http.StatusOK {
+			t.Fatalf("revalidating with the superseded ETag = %d, want 200", w.Code)
+		}
+		if !bytes.Equal(w.Body.Bytes(), fresh) {
+			t.Error("the body is not the replaced file")
+		}
+		want := fmt.Sprintf(`"f1-%s-1-%x-%x"`, e.bookDirID, len(fresh), later.Unix())
+		if got := w.Header().Get("ETag"); got == oldTag || got != want {
+			t.Errorf("ETag after replacement = %s (old %s), want %s", got, oldTag, want)
+		}
+	})
+}
+
+// Ruling E-54 §4 keeps `encrypted` refusing on its own account even though
+// damaged books with page rows now serve. The fixture gives the encrypted book
+// the full page list of a readable archive — the "entries were somehow listed"
+// case — so the only thing that can refuse is the status. Asserted: §7.6's 404
+// envelope, no entry bytes and no image Content-Type in the response, and no
+// Acquire on the handle pool (hits + misses unchanged): neither the staleness
+// check nor an entry open touched the container, so the refusal comes before
+// any of its bytes are read, not after.
+func TestPage_encryptedBookIsRefusedEvenWithPageRows(t *testing.T) {
+	e := newEnv(t)
+	target := "/api/books/" + e.bookZipID + "/pages/1"
+
+	// Control: the same rows under `ok` stream, so a refusal below is the
+	// status's doing and nothing else's.
+	if w := e.get(target); w.Code != http.StatusOK {
+		t.Fatalf("control: the unencrypted book's page = %d, want 200", w.Code)
+	}
+
+	setBookStatus(t, e, e.bookZipID, "encrypted", "zip: archive is password-protected")
+	acquired := func() int64 { st := e.srv.pool.Stats(); return st.Hits + st.Misses }
+	before := acquired()
+	for _, q := range []string{"", "?v=" + cvZip} {
+		w := e.get(target + q)
+		errorBody(t, w, http.StatusNotFound, CodeNotFound)
+		if bytes.Contains(w.Body.Bytes(), e.zipPayloads[0]) {
+			t.Errorf("%s streamed the encrypted book's entry", target+q)
+		}
+		if ct := w.Header().Get("Content-Type"); strings.HasPrefix(ct, "image/") {
+			t.Errorf("%s answered Content-Type %q", target+q, ct)
+		}
+	}
+	if got := acquired() - before; got != 0 {
+		t.Errorf("the encrypted book's container was acquired %d times; the refusal must come before it is opened", got)
+	}
+}
+
+// arch §8.4 — an error message never carries an absolute filesystem path
+// outside the configured roots, and the cause of a source failure is logged,
+// not sent. errSecret's path is outside every root, so it must not appear in
+// any branch of the mapping, the default one included.
+func TestSourceError_neverPutsTheCauseOnTheWire(t *testing.T) {
+	cases := []struct {
+		name   string
+		err    error
+		status int
+		code   string
+	}{
+		{"default", errSecret, http.StatusServiceUnavailable, CodeUnavailable},
+		{"wrapped default", fmt.Errorf("reading entry: %w", errSecret), http.StatusServiceUnavailable, CodeUnavailable},
+		{"unknown root", errors.Join(source.ErrUnknownRoot, errSecret), http.StatusServiceUnavailable, CodeUnavailable},
+		{"unsupported", errors.Join(source.ErrUnsupported, errSecret), http.StatusNotImplemented, CodeUnsupported},
+		{"no pages", errors.Join(source.ErrNoPages, errSecret), http.StatusNotFound, CodeNotFound},
+		{"unsafe path", errors.Join(source.ErrUnsafePath, errSecret), http.StatusInternalServerError, CodeInternal},
+		{"encrypted", errors.Join(archive.ErrEncrypted, errSecret), http.StatusUnprocessableEntity, CodeUnprocessable},
+		{"corrupt", errors.Join(archive.ErrCorrupt, errSecret), http.StatusUnprocessableEntity, CodeUnprocessable},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newRecorder()
+			writeError(w, requestFor("/api/books/x/pages/1"), discard(), sourceError(tc.err))
+			errorBody(t, w, tc.status, tc.code)
+			for _, leak := range []string{"/var/lib/s3cr3t", "permission denied", "index.db"} {
+				if strings.Contains(w.Body.String(), leak) {
+					t.Errorf("the response carries %q: %s", leak, w.Body.String())
+				}
+			}
+		})
+	}
+}
+
+// rewriteFile replaces a fixture file in place and stamps its mtime, the way a
+// re-download would leave it.
+func rewriteFile(t *testing.T, path string, data []byte, mtime time.Time) {
+	t.Helper()
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("rewriting %s: %v", path, err)
+	}
+	if err := os.Chtimes(path, mtime, mtime); err != nil {
+		t.Fatalf("stamping %s: %v", path, err)
+	}
+}
+
+// reindexBookPages replays what a scanner run writes for a replaced book: a new
+// content version, the container's current (size, mtime) when it has one, and
+// the new page rows.
+func reindexBookPages(t *testing.T, e *env, bookID, containerPath, cv string, pages []index.Page) {
+	t.Helper()
+	ctx := t.Context()
+	book, err := e.idx.GetBook(ctx, bookID)
+	if err != nil {
+		t.Fatalf("reading the book row: %v", err)
+	}
+	row := book.Book
+	if containerPath != "" {
+		fi, err := os.Stat(containerPath)
+		if err != nil {
+			t.Fatalf("stat of %s: %v", containerPath, err)
+		}
+		row.FileSize = fi.Size()
+		row.FileMtime = fi.ModTime().Unix()
+	}
+	row.ContentVersion = cv
+	row.PageCount = int64(len(pages))
+
+	w := e.idx.Writer(index.WriterOptions{})
+	defer func() { _ = w.Close() }()
+	if err := w.UpsertBook(ctx, row); err != nil {
+		t.Fatalf("reindexing the book: %v", err)
+	}
+	if err := w.ReplacePages(ctx, bookID, pages); err != nil {
+		t.Fatalf("replacing the pages: %v", err)
+	}
+	if err := w.Flush(ctx); err != nil {
+		t.Fatalf("flushing the reindex: %v", err)
+	}
+}
+
+// setBookStatus rewrites a book's status and error and leaves its page rows
+// alone.
+func setBookStatus(t *testing.T, e *env, bookID, status, msg string) {
+	t.Helper()
+	ctx := t.Context()
+	book, err := e.idx.GetBook(ctx, bookID)
+	if err != nil {
+		t.Fatalf("reading the book row: %v", err)
+	}
+	row := book.Book
+	row.Status = status
+	row.Error = msg
+
+	w := e.idx.Writer(index.WriterOptions{})
+	defer func() { _ = w.Close() }()
+	if err := w.UpsertBook(ctx, row); err != nil {
+		t.Fatalf("updating the book status: %v", err)
+	}
+	if err := w.Flush(ctx); err != nil {
+		t.Fatalf("flushing the status update: %v", err)
 	}
 }

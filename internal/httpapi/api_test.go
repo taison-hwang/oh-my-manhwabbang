@@ -3,10 +3,13 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"shelf/internal/config"
 	"shelf/internal/ids"
@@ -1400,5 +1403,143 @@ func TestPanicInHandler_isRecoveredAsA500Envelope(t *testing.T) {
 	}
 	if env.Error.Code != CodeInternal {
 		t.Errorf("code = %q, want %q", env.Error.Code, CodeInternal)
+	}
+}
+
+// arch §7.1 — "A syntactically invalid id is `400`; a well-formed but unknown id
+// is `404`", on every route that takes one. TestIDs_invalidIs400_wellFormed
+// UnknownIs404 pins the 400 half on `{sid}` only, so a book handler that skipped
+// the syntax check and let the lookup miss would answer 404 there unseen. Each
+// book route is asked here, every verb it serves, with `detail.param` naming
+// the wildcard.
+func TestIDs_malformedBookIDIs400OnEveryBookRoute(t *testing.T) {
+	e := newEnv(t)
+
+	routes := []struct {
+		method string
+		suffix string
+		body   string
+	}{
+		{http.MethodGet, "", ""},
+		{http.MethodGet, "/pages/1", ""},
+		{http.MethodGet, "/thumbs/1", ""},
+		{http.MethodPut, "/progress", `{"page":1}`},
+		{http.MethodDelete, "/progress", ""},
+		{http.MethodGet, "/prefs", ""},
+		{http.MethodPut, "/prefs", `{}`},
+	}
+	for _, id := range []string{"NOT-AN-ID", "tooshort", "aaaaaaaaaaaaaaa1", "AAAAAAAAAAAAAAAA"} {
+		for _, rt := range routes {
+			target := "/api/books/" + id + rt.suffix
+			t.Run(rt.method+" "+target, func(t *testing.T) {
+				var w *httptest.ResponseRecorder
+				if rt.body == "" {
+					w = e.do(rt.method, target, nil)
+				} else {
+					w = e.jsonBody(rt.method, target, rt.body)
+				}
+				body := errorBody(t, w, http.StatusBadRequest, CodeBadRequest)
+				if body.Detail["param"] != "bid" {
+					t.Errorf("detail.param = %v, want \"bid\"", body.Detail["param"])
+				}
+			})
+		}
+	}
+}
+
+// arch §7.5 — the documented defaults of `GET /api/series`: `scope=all`,
+// `status=all`, `progress=any`, `sort=name`, `order` = asc for `name` and desc
+// for every other key, `offset=0`, `limit=60`. The fixture's five series order
+// differently under each key that is asserted: by natural name 군계 is second,
+// but it is the only series with a first sighting in user.db (3 days ago, the
+// rest fall back to added_at 30 days ago), so `sort=added` puts it first
+// descending and last ascending; four of the five have no series_seen row, so
+// a default that drifted to `scope=added` would shrink the list to one; and
+// 손상, last by name, is given the newest mtime here, because with the
+// harness's shared mtime a `sort=mtime` default would tie and fall back to name
+// order, indistinguishable from `sort=name`.
+func TestSeriesList_documentedDefaults(t *testing.T) {
+	e := newEnv(t)
+	bumpSeriesMtime(t, e, e.seriesBrokenID, fixedMtime.Add(24*time.Hour))
+	idsOf := func(l SeriesListResponse) []string {
+		out := make([]string, len(l.Items))
+		for i, it := range l.Items {
+			out[i] = it.ID
+		}
+		return out
+	}
+	list := func(q string) SeriesListResponse {
+		t.Helper()
+		return decodeBody[SeriesListResponse](t, e.get("/api/series"+q), http.StatusOK)
+	}
+
+	// Natural order of the display names (§4.7): Latin before Hangul, then
+	// 군 < 꼬 < 미 < 손.
+	byName := []string{e.seriesCloverID, e.seriesFolderID, e.seriesSalvagedID, e.seriesPDFID, e.seriesBrokenID}
+
+	def := list("")
+	if def.Total != 5 || def.Offset != 0 || def.Limit != 60 {
+		t.Errorf("defaults total/offset/limit = %d/%d/%d, want 5/0/60", def.Total, def.Offset, def.Limit)
+	}
+	if got := idsOf(def); !slices.Equal(got, byName) {
+		t.Errorf("default order = %v, want natural name order ascending %v", got, byName)
+	}
+	explicit := list("?scope=all&status=all&progress=any&sort=name&order=asc&offset=0&limit=60")
+	if !slices.Equal(idsOf(explicit), idsOf(def)) || explicit.Total != def.Total {
+		t.Errorf("the spelled-out defaults %v differ from the bare request %v", idsOf(explicit), idsOf(def))
+	}
+	if added := list("?scope=added"); added.Total == def.Total {
+		t.Fatalf("scope=added total = %d, the same as the default; the fixture cannot tell the scopes apart", added.Total)
+	}
+
+	nameDesc := list("?sort=name&order=desc")
+	reversed := slices.Clone(byName)
+	slices.Reverse(reversed)
+	if got := idsOf(nameDesc); !slices.Equal(got, reversed) {
+		t.Errorf("sort=name&order=desc = %v, want %v", got, reversed)
+	}
+
+	if mtime := list("?sort=mtime"); len(mtime.Items) == 0 || mtime.Items[0].ID != e.seriesBrokenID {
+		t.Fatalf("sort=mtime does not put the newest series first; the fixture cannot tell mtime from name")
+	}
+
+	addedDefault := list("?sort=added")
+	addedDesc := list("?sort=added&order=desc")
+	addedAsc := list("?sort=added&order=asc")
+	if len(addedDefault.Items) != 5 || len(addedAsc.Items) != 5 {
+		t.Fatalf("sort=added returned %d / %d items, want 5", len(addedDefault.Items), len(addedAsc.Items))
+	}
+	if addedDefault.Items[0].ID != e.seriesFolderID {
+		t.Errorf("sort=added first = %s, want the most recently added %s (order defaults to desc)",
+			addedDefault.Items[0].ID, e.seriesFolderID)
+	}
+	if !slices.Equal(idsOf(addedDefault), idsOf(addedDesc)) {
+		t.Errorf("sort=added = %v, want the same as order=desc %v", idsOf(addedDefault), idsOf(addedDesc))
+	}
+	if addedAsc.Items[len(addedAsc.Items)-1].ID != e.seriesFolderID {
+		t.Errorf("sort=added&order=asc last = %s, want %s; the fixture cannot tell the orders apart",
+			addedAsc.Items[len(addedAsc.Items)-1].ID, e.seriesFolderID)
+	}
+}
+
+// bumpSeriesMtime rewrites one series' mtime and leaves the rest of its row as
+// the harness seeded it.
+func bumpSeriesMtime(t *testing.T, e *env, seriesID string, mtime time.Time) {
+	t.Helper()
+	ctx := t.Context()
+	detail, err := e.idx.GetSeries(ctx, seriesID)
+	if err != nil {
+		t.Fatalf("reading series %s: %v", seriesID, err)
+	}
+	row := detail.Series
+	row.Mtime = mtime.Unix()
+
+	w := e.idx.Writer(index.WriterOptions{})
+	defer func() { _ = w.Close() }()
+	if err := w.UpsertSeries(ctx, row); err != nil {
+		t.Fatalf("updating series %s: %v", seriesID, err)
+	}
+	if err := w.Flush(ctx); err != nil {
+		t.Fatalf("flushing the series update: %v", err)
 	}
 }

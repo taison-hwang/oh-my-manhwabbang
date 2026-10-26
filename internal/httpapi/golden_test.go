@@ -4,11 +4,16 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -405,4 +410,103 @@ func TestGolden_browse(t *testing.T) {
 		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
 	}
 	assertGoldenRedacted(t, "browse", w.Body.Bytes(), e)
+}
+
+// Every file in testdata/golden is pinned by some test. A golden nothing
+// references is a contract snapshot nobody checks: it keeps agreeing with
+// web/src/api/types.ts (WP-13) while the endpoint it describes drifts.
+//
+// A reference is counted from the syntax tree, never from text, so a comment
+// or an unrelated table that happens to spell a golden's name does not count.
+// Exactly two forms are references: a string-literal first argument (after
+// `t`) to assertGolden / assertGoldenRedacted in any test file, and a `name:`
+// field of the `cases` table in TestGolden, whose loop passes `tc.name` to
+// assertGoldenRedacted.
+func TestGolden_everyFileIsReferencedByATest(t *testing.T) {
+	sources, err := filepath.Glob("*_test.go")
+	if err != nil || len(sources) == 0 {
+		t.Fatalf("listing the test sources: %v (%d files)", err, len(sources))
+	}
+	referenced := make(map[string]bool)
+	stringLit := func(x ast.Expr) (string, bool) {
+		lit, ok := x.(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			return "", false
+		}
+		v, err := strconv.Unquote(lit.Value)
+		return v, err == nil
+	}
+	fset := token.NewFileSet()
+	for _, src := range sources {
+		f, err := parser.ParseFile(fset, src, nil, 0)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", src, err)
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok || len(call.Args) < 2 {
+				return true
+			}
+			if fn, ok := call.Fun.(*ast.Ident); ok && (fn.Name == "assertGolden" || fn.Name == "assertGoldenRedacted") {
+				if name, ok := stringLit(call.Args[1]); ok {
+					referenced[name] = true
+				}
+			}
+			return true
+		})
+		for _, decl := range f.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Name.Name != "TestGolden" || fn.Body == nil {
+				continue
+			}
+			for _, stmt := range fn.Body.List {
+				assign, ok := stmt.(*ast.AssignStmt)
+				if !ok || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
+					continue
+				}
+				if id, ok := assign.Lhs[0].(*ast.Ident); !ok || id.Name != "cases" {
+					continue
+				}
+				table, ok := assign.Rhs[0].(*ast.CompositeLit)
+				if !ok {
+					t.Fatalf("%s: TestGolden's cases is not a composite literal", src)
+				}
+				for _, elt := range table.Elts {
+					row, ok := elt.(*ast.CompositeLit)
+					if !ok {
+						continue
+					}
+					for _, field := range row.Elts {
+						kv, ok := field.(*ast.KeyValueExpr)
+						if !ok {
+							continue
+						}
+						if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "name" {
+							if name, ok := stringLit(kv.Value); ok {
+								referenced[name] = true
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	if len(referenced) == 0 {
+		t.Fatal("no golden references found; the parser no longer recognises the call sites")
+	}
+
+	goldens, err := filepath.Glob(filepath.Join(goldenDir, "*"))
+	if err != nil || len(goldens) == 0 {
+		t.Fatalf("listing %s: %v (%d files)", goldenDir, err, len(goldens))
+	}
+	for _, g := range goldens {
+		name, ok := strings.CutSuffix(filepath.Base(g), ".json")
+		if !ok {
+			t.Errorf("%s is not a .json golden; assertGolden only ever reads <name>.json", g)
+			continue
+		}
+		if !referenced[name] {
+			t.Errorf("%s is referenced by no test (no assertGolden call or TestGolden case names %q)", g, name)
+		}
+	}
 }

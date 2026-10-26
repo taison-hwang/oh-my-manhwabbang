@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"image/jpeg"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 
 	"shelf/internal/pdfium"
+	"shelf/internal/testutil"
 )
 
 // The rendered-PDF half of `GET /api/books/{bid}/pages/{n}` (arch §7.6,
@@ -218,6 +220,24 @@ func TestPDFPage_rendersAreCached(t *testing.T) {
 	}
 	if got := second.Header().Get("Content-Type"); got != "image/jpeg" {
 		t.Errorf("the cache-hit Content-Type = %q, want image/jpeg", got)
+	}
+
+	// Byte-identity above cannot tell a cache hit from a second render — the
+	// rasteriser is deterministic, so re-rendering every time passes it. Put a
+	// valid JPEG in the cache file that this render cannot produce (7×11 px,
+	// where the render is 400 px wide): a request answered from the cache
+	// returns exactly those bytes, a request that re-renders does not.
+	planted := testutil.TinyJPEG(t, 7, 11)
+	if err := os.WriteFile(res.Path, planted, 0o644); err != nil {
+		t.Fatalf("replacing the cached render: %v", err)
+	}
+	hit := e.get(target)
+	if hit.Code != http.StatusOK {
+		t.Fatalf("cache hit = %d: %s", hit.Code, hit.Body.String())
+	}
+	if !bytes.Equal(hit.Body.Bytes(), planted) {
+		w, h := decodeJPEG(t, hit.Body.Bytes())
+		t.Errorf("the request was not served from the render cache: got a %dx%d image, want the 7x11 cache file", w, h)
 	}
 
 	// The cache key carries the content version, so a book whose bytes changed
