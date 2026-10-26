@@ -33,6 +33,7 @@ import { PAGE_LOADING_LABEL, PageLoadingIndicator } from './PageLoadingIndicator
 import { PageStage } from './PageStage'
 import { ViewerBottomBar } from './ViewerBottomBar'
 import { ViewerTopBar } from './ViewerTopBar'
+import { bookErrorMessage } from './bookErrors'
 import { makeDimsLookup, nextPage, prevPage, stagePages, type PageDims } from './fit'
 import { usePrefsWriter } from './prefsWriter'
 import { useDelayedFlag } from './useDelayedFlag'
@@ -1114,7 +1115,7 @@ export function ViewerPage() {
           <EmptyState
             headingLevel={2}
             title="책을 열 수 없습니다"
-            body={book.error.message}
+            body={bookErrorMessage(book.error)}
             action={{ label: '시리즈로', onClick: exit }}
           />
         </div>

@@ -8,6 +8,7 @@ import { formatVolumeCount } from '../../lib/format'
 import { useSeriesDirStore } from '../../store/seriesDir'
 import { useUiStore } from '../../store/ui'
 import { SeriesHeader } from './SeriesHeader'
+import { rescanErrorMessage, seriesErrorMessage } from './seriesErrors'
 import { VolumeGrid } from './VolumeGrid'
 import { VolumeList } from './VolumeList'
 import { firstOpenableBook, resumeTarget } from './volume'
@@ -56,7 +57,11 @@ export function SeriesDetailPage() {
   if (series.isError) {
     return (
       <div className="flex h-full flex-col overflow-auto p-4">
-        <EmptyState headingLevel={1} title="화면을 열 수 없습니다" body={series.error.message} />
+        <EmptyState
+          headingLevel={1}
+          title="화면을 열 수 없습니다"
+          body={seriesErrorMessage(series.error)}
+        />
       </div>
     )
   }
@@ -70,7 +75,7 @@ export function SeriesDetailPage() {
   const resume = resumeTarget(detail.books, detail.progress)
   const first = firstOpenableBook(detail.books)
 
-  const notice = rescan.isError ? rescan.error.message : null
+  const notice = rescan.isError ? rescanErrorMessage(rescan.error) : null
 
   return (
     <div className="flex h-full flex-col overflow-auto">

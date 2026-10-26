@@ -20,11 +20,13 @@ import {
   settings,
   SERIES_ID,
 } from '../../api/fixtures'
+import { ApiError } from '../../api/errors'
 import { resetBasePath } from '../../api/urls'
 import type { BookSummary, SeriesDetail } from '../../api/types'
 import { useSeriesDirStore } from '../../store/seriesDir'
 import { useUiStore } from '../../store/ui'
 import { SeriesDetailPage } from './SeriesDetailPage'
+import { rescanErrorMessage, seriesErrorMessage } from './seriesErrors'
 import {
   VOLUME_ROW_COLUMNS_BASE,
   VOLUME_ROW_COLUMNS_LG,
@@ -694,7 +696,9 @@ describe('이 시리즈 재스캔 (WP-10 acceptance 4)', () => {
     await setup(detailOf(), 409)
     await userEvent.click(screen.getByRole('button', { name: '이 시리즈 재스캔' }))
     const notice = await screen.findByRole('status')
-    expect(notice).toHaveTextContent('a scan is already running')
+    const busy = new ApiError({ status: 409, code: 'conflict', message: 'a scan is already running' })
+    expect(notice).toHaveTextContent(rescanErrorMessage(busy))
+    expect(notice, 'the envelope message is English').not.toHaveTextContent(busy.message)
     // Non-blocking: the volume list is still there and still interactive.
     expect(screen.getByTestId('volume-grid')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '이 시리즈 재스캔' })).toBeEnabled()
@@ -1028,7 +1032,9 @@ describe('failure and empty states', () => {
       http.get(`${ORIGIN}/api/scan/status`, () => HttpResponse.json(scanStatusIdle)),
     )
     renderPage()
-    expect(await screen.findByText('unknown series')).toBeInTheDocument()
+    const unknown = new ApiError({ status: 404, code: 'not_found', message: 'unknown series' })
+    expect(await screen.findByText(seriesErrorMessage(unknown))).toBeInTheDocument()
+    expect(screen.queryByText(unknown.message), 'the envelope message is English').toBeNull()
   })
 
   it('shows the reason and refuses to offer a dead 읽기 시작 when nothing is readable (E-14)', async () => {

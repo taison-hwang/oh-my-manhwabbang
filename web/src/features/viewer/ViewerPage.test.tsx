@@ -45,7 +45,9 @@ import {
   cancelChromeAutoHide,
   useViewerStore,
 } from '../../store/viewer'
+import { ApiError } from '../../api/errors'
 import { PROGRESS_DEBOUNCE_MS, queryKeys } from '../../api/queries'
+import { bookErrorMessage } from './bookErrors'
 import { CHROME_HINT, EDGE_STRIP_PX, POINTER_IDLE_MS, ViewerPage } from './ViewerPage'
 import { PREFS_SAVE_DEBOUNCE_MS, resetPrefsWriter } from './prefsWriter'
 import { OVERRIDE_CHIP_LABEL } from './ViewerTopBar'
@@ -3627,6 +3629,9 @@ describe('a book that cannot be opened', () => {
     expect(
       await screen.findByRole('heading', { level: 2, name: '책을 열 수 없습니다' }),
     ).toBeInTheDocument()
+    const unknown = new ApiError({ status: 404, code: 'not_found', message: 'book not found' })
+    expect(screen.getByText(bookErrorMessage(unknown))).toBeInTheDocument()
+    expect(screen.queryByText(unknown.message), 'the envelope message is English').toBeNull()
     expect(screen.getByRole('button', { name: '시리즈로' })).toBeInTheDocument()
     expect(document.querySelector('[data-role="stage"]')).toBeNull()
   })
