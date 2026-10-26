@@ -39,6 +39,11 @@ export interface ViewerBottomBarProps {
   onJump: (page: number) => void
 }
 
+/** Whether the focus is on the page slider. */
+function inSlider(node: Element | null): boolean {
+  return node?.closest('[data-role="page-slider"]') != null
+}
+
 export function ViewerBottomBar({
   visible,
   bookId,
@@ -64,6 +69,27 @@ export function ViewerBottomBar({
   useLayoutEffect(() => {
     barRef.current?.toggleAttribute('inert', !visible)
   }, [visible])
+
+  // E-62 holds the chrome up while the keyboard focus is in it. A 다음 권 that
+  // cannot be opened (`pages: []`) arrives without a `close()`, so the slider
+  // can hold the focus at the moment it turns disabled — and a disabled control
+  // loses it to `body`: out of the bar, the hold let go, the next Tab back at
+  // the top of the page. **The focus goes to the next control in the bar, 썸네일
+  // · T, instead.**
+  //
+  // Read during the render rather than after the commit: this render runs
+  // before the DOM changes, while the slider is still enabled and focused.
+  // After the commit the blur is the engine's to schedule — Chromium 156 waits
+  // for the next frame, and nothing promises every engine waits that long.
+  // Hidden, the bar is inert and keeps out of it: `ViewerPage`'s landing puts
+  // that focus on the root (E-62 §2.5).
+  const sliderStrandsFocus = visible && pageCount <= 0 && inSlider(document.activeElement)
+  useLayoutEffect(() => {
+    if (!sliderStrandsFocus) return
+    barRef.current
+      ?.querySelector<HTMLElement>('[data-role="strip-toggle"]')
+      ?.focus({ preventScroll: true })
+  }, [sliderStrandsFocus])
 
   return (
     <div
@@ -98,11 +124,17 @@ export function ViewerBottomBar({
           썸네일 · T stop fitting on one line, and without it the slider is
           crushed to a few pixels of travel rather than moving to its own row. */}
       <div className="flex flex-wrap items-center gap-4 px-4 pb-3 pt-2">
+        {/* Empty while there are no pages — an error screen, or a detail still
+            on the wire — because `pageCount` is then the closed store's 0 and
+            the counter read `1 / 0`: the quiet counter's rule, suppressed
+            wherever it would lie (ui-spec §6.1). Emptied rather than removed,
+            so the 84px box holds the slider and 썸네일 · T where a book puts
+            them instead of shifting them left until one arrives. */}
         <span
           data-role="page-counter"
           className="min-w-[84px] text-base tabular-nums tracking-[.04em] text-ink"
         >
-          {formatViewerCounter(page, pageCount)}
+          {pageCount > 0 && formatViewerCounter(page, pageCount)}
         </span>
 
         <PageSlider
@@ -120,6 +152,7 @@ export function ViewerBottomBar({
 
         <Button
           variant="secondary"
+          data-role="strip-toggle"
           aria-pressed={stripOpen}
           // `--on-control-accent` for the pressed state, and no border at all.
           //

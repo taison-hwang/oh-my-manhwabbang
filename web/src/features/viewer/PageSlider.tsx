@@ -2,6 +2,7 @@ import type { ChangeEvent } from 'react'
 
 import { usePageThumbImage } from '../../api/queries'
 import { thumbWidthFor } from '../../api/urls'
+import { cn } from '../../lib/cn'
 import type { ReadingDirection } from '../../store/viewer'
 import { sliderPercent } from './fit'
 
@@ -71,12 +72,15 @@ export function PageSlider({
   onDrag,
   onCommit,
 }: PageSliderProps) {
+  const hasPages = pageCount > 0
+  // See the note on `disabled` below: with no pages, nothing previews.
+  const previewing = dragging && hasPages
   const value = dragging && dragPage !== null ? dragPage : page
   const previewPage = dragPage ?? page
   const preview = usePageThumbImage(bookId, previewPage, {
     w: thumbWidthFor('sliderPreview'),
     v: cv,
-    enabled: dragging && pageCount > 0,
+    enabled: previewing,
   })
 
   const handleChange = (event: ChangeEvent<HTMLInputElement>): void => {
@@ -86,8 +90,12 @@ export function PageSlider({
     else onCommit(next)
   }
 
+  const startDrag = (): void => {
+    if (hasPages) onDragStart(page)
+  }
+
   const commit = (): void => {
-    if (!dragging) return
+    if (!dragging || !hasPages) return
     onCommit(dragPage ?? page)
   }
 
@@ -100,21 +108,30 @@ export function PageSlider({
         max={Math.max(1, pageCount)}
         step={1}
         value={value}
+        // No pages — an error screen, or a detail still on the wire — is
+        // nothing to seek. Disabled, the input leaves the Tab order and is
+        // reported unavailable; `aria-valuetext` goes because it would say
+        // "1 / 0" (the bar's counter is emptied for the same reason). The
+        // `cursor-pointer` utility goes too, or it would outrank base.css's
+        // `:disabled { cursor: not-allowed }`. A book with pages is untouched.
+        //
+        // **Disabled does not stop a press.** React 18 withholds only the
+        // *mouse* handlers from a disabled element (react-dom's
+        // `shouldPreventMouseEvent`); `onTouchStart` still fires, and a touch
+        // raised a drag preview labelled "1" over a book with no page 1. So the
+        // press, the release and the preview each check `hasPages` themselves.
+        disabled={!hasPages}
         aria-label="페이지"
-        aria-valuetext={`${String(value)} / ${String(pageCount)}`}
-        className="on-dark w-full cursor-pointer bg-transparent"
+        aria-valuetext={hasPages ? `${String(value)} / ${String(pageCount)}` : undefined}
+        className={cn('on-dark w-full', hasPages && 'cursor-pointer', 'bg-transparent')}
         onChange={handleChange}
-        onMouseDown={() => {
-          onDragStart(page)
-        }}
-        onTouchStart={() => {
-          onDragStart(page)
-        }}
+        onMouseDown={startDrag}
+        onTouchStart={startDrag}
         onMouseUp={commit}
         onTouchEnd={commit}
         onBlur={commit}
       />
-      {dragging && (
+      {previewing && (
         <div
           data-role="slider-preview"
           // E-32 §1: the drag preview's border is a `--color-hot` marker — it
