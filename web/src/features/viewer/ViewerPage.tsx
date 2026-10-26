@@ -988,7 +988,9 @@ export function ViewerPage() {
       )}
       {book.isError ? (
         <div className="flex min-h-0 flex-1 items-center justify-start p-8">
+          {/* Level 2: under the top bar's level-1 title (10-23 a11y audit). */}
           <EmptyState
+            headingLevel={2}
             title="책을 열 수 없습니다"
             body={book.error.message}
             action={{ label: '시리즈로', onClick: exit }}
@@ -1001,6 +1003,7 @@ export function ViewerPage() {
       ) : pages.length === 0 ? (
         <div className="flex min-h-0 flex-1 items-center justify-start p-8">
           <EmptyState
+            headingLevel={2}
             title="열 수 없는 파일"
             {...(detail.error === null ? {} : { body: detail.error })}
             action={{ label: '시리즈로', onClick: exit }}

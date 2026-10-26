@@ -469,6 +469,27 @@ describe('series header (prd UI-002, ui-spec §5.1)', () => {
   })
 })
 
+describe('a series the server cannot open', () => {
+  /**
+   * The error state replaces the whole screen, header and all, so its band is
+   * the only heading left: it has to be the level-1 one, not an `<h3>` under
+   * nothing (10-23 a11y audit).
+   */
+  it('titles the error state as the screen’s one level-1 heading', async () => {
+    server.use(...baseHandlers(detailOf(), newRecorded()))
+    server.use(
+      http.get(`${ORIGIN}/api/series/:sid`, () =>
+        HttpResponse.json(errorEnvelope('not_found', 'series not found'), { status: 404 }),
+      ),
+    )
+    renderPage()
+
+    const title = await screen.findByRole('heading', { level: 1, name: '화면을 열 수 없습니다' })
+    expect(screen.getAllByRole('heading', { level: 1 })).toEqual([title])
+    expect(screen.queryByRole('banner')).not.toBeInTheDocument()
+  })
+})
+
 // ---------------------------------------------------------------------------
 // Volume list — FR-LIB-009, E-5, FR-IDX-010
 // ---------------------------------------------------------------------------

@@ -468,6 +468,66 @@ describe('EmptyState (ui-spec §4.5, §9 catalogue)', () => {
     render(<EmptyState variant="hero" title="읽을 폴더를 등록하세요" />)
     expect(screen.getByRole('heading', { level: 1, name: '읽을 폴더를 등록하세요' })).toBeVisible()
   })
+
+  /**
+   * The band's level follows the outline it sits in, its look does not (10-23
+   * a11y audit): a band that is the whole screen is that screen's `<h1>`, one
+   * right under a level-1 title its `<h2>`. The tag changes and base.css's `.h3`
+   * twin keeps the size — the only declaration base.css gives `h1`/`h2` and not
+   * `h3` is `font-size`, which the class outranks.
+   */
+  it('titles the band at level 3 when it is given no level', () => {
+    render(<EmptyState title="시리즈가 없습니다" />)
+    const title = screen.getByRole('heading', { name: '시리즈가 없습니다' })
+    expect(title.tagName).toBe('H3')
+    expect(title).not.toHaveClass('h3')
+  })
+
+  it.each([1, 2] as const)('titles the band at level %i with the level-3 look', (level) => {
+    render(<EmptyState headingLevel={level} title="화면을 열 수 없습니다" body="not found" />)
+    const title = screen.getByRole('heading', { level, name: '화면을 열 수 없습니다' })
+    expect(title.tagName).toBe(`H${String(level)}`)
+    expect(title).toHaveClass('h3')
+    expect(title).toHaveTextContent(/^화면을 열 수 없습니다$/)
+    expect(screen.queryByRole('heading', { level: 3 })).not.toBeInTheDocument()
+    // Still the band: only the heading's tag moved.
+    expect(title.parentElement).toHaveClass('border-y-2', 'border-rule-strong')
+  })
+
+  it('leaves base.css nothing that would draw an h1.h3 or h2.h3 unlike an h3', () => {
+    // jsdom has no cascade, so the "look stays h3's" half is read off the sheet:
+    // every rule reaching an `h1`/`h2` element and not `h3` may set only
+    // `font-size`, which `.h3` sets again and outranks (a class beats a tag).
+    const css = stripComments(readFileSync(resolve(process.cwd(), 'src/styles/base.css'), 'utf8'))
+    const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(([, sel = '', body = '']) => ({
+      selectors: sel.split(',').map((s) => s.trim()),
+      props: [...body.matchAll(/([a-z-]+)\s*:/g)].map(([, prop = '']) => prop),
+    }))
+    const tag = (level: string) => new RegExp(`(^|[^\\w.#-])h${level}(?![\\w-])`)
+    const h1h2Only = rules.filter(
+      (r) => r.selectors.some((s) => tag('[12]').test(s)) && !r.selectors.includes('h3'),
+    )
+    expect(h1h2Only.length).toBeGreaterThan(0) // the size scale is there to be read
+    expect(h1h2Only.flatMap((r) => r.props)).toEqual(h1h2Only.map(() => 'font-size'))
+    expect(rules.some((r) => r.selectors.includes('.h3') && r.props.includes('font-size'))).toBe(
+      true,
+    )
+  })
+
+  it('keeps the hero at level 1 with its own look, and takes no level', () => {
+    render(
+      <EmptyState
+        variant="hero"
+        // @ts-expect-error -- the hero is the screen's `<h1>`; a level would be ignored
+        headingLevel={2}
+        title="읽을 폴더를 등록하세요"
+      />,
+    )
+    const title = screen.getByRole('heading', { name: '읽을 폴더를 등록하세요' })
+    expect(title.tagName).toBe('H1')
+    expect(title).toHaveClass('text-balance')
+    expect(title).not.toHaveClass('h3')
+  })
 })
 
 describe('Dialog (impl-plan WP-10 acceptance 9)', () => {

@@ -56,7 +56,7 @@ export function SeriesDetailPage() {
   if (series.isError) {
     return (
       <div className="flex h-full flex-col overflow-auto p-4">
-        <EmptyState title="화면을 열 수 없습니다" body={series.error.message} />
+        <EmptyState headingLevel={1} title="화면을 열 수 없습니다" body={series.error.message} />
       </div>
     )
   }

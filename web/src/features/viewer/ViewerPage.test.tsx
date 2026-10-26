@@ -3592,8 +3592,42 @@ describe('a book that cannot be opened', () => {
         </MemoryRouter>
       </QueryClientProvider>,
     )
-    expect(await screen.findByText('열 수 없는 파일')).toBeInTheDocument()
+    // Level 2: the band sits under the top bar's level-1 title (10-23 a11y audit).
+    expect(
+      await screen.findByRole('heading', { level: 2, name: '열 수 없는 파일' }),
+    ).toBeInTheDocument()
     expect(screen.getByText('unexpected EOF')).toBeInTheDocument()
+    expect(document.querySelector('[data-role="stage"]')).toBeNull()
+  })
+
+  it('says so, at level 2, when the book itself cannot be fetched', async () => {
+    const recorded = newRecorded()
+    server.use(...handlers(detailOf(), recorded))
+    // A later `use` goes in front of the book handler above.
+    server.use(
+      http.get(`${ORIGIN}/api/books/:bid`, () =>
+        HttpResponse.json(errorEnvelope('not_found', 'book not found'), { status: 404 }),
+      ),
+    )
+    stubViewport(1_440)
+    stubImage(recorded)
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[`/series/${SERIES_ID}/books/${BOOK_ID}`]}>
+          <Routes>
+            <Route path="/series/:sid" element={<LocationProbe />} />
+            <Route path="/series/:sid/books/:bid" element={<ViewerPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    expect(
+      await screen.findByRole('heading', { level: 2, name: '책을 열 수 없습니다' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '시리즈로' })).toBeInTheDocument()
     expect(document.querySelector('[data-role="stage"]')).toBeNull()
   })
 })
