@@ -546,10 +546,13 @@ test.describe('6.5 (⑥) · what the top bar changes on the series screen stays 
 
   test('루트 — a root clicked in the sidebar on a series screen scopes the library', async ({ page }) => {
     const roots = (await (await page.request.get('/api/roots')).json()) as {
-      items: { name: string; label: string; enabled: boolean; pending?: boolean }[]
+      items: { name: string; label: string; enabled: boolean; pending?: boolean; series_count: number }[]
     }
-    const root = roots.items.find((r) => r.enabled && r.pending !== true)
-    expect(root, 'GET /api/roots must list a selectable root').toBeDefined()
+    // A root that holds series: e2e.sh step 8b adds an empty one ahead of the
+    // fixture's, and scoping to it shows 시리즈가 없습니다 with no scroller —
+    // correct, and not what this test is about.
+    const root = roots.items.find((r) => r.enabled && r.pending !== true && r.series_count > 0)
+    expect(root, 'GET /api/roots must list a selectable root that holds series').toBeDefined()
     const name = root?.name ?? ''
     const label = root?.label === '' || root?.label === undefined ? name : root.label
     // The full row's name is the label and then its count; the rail's is the label.

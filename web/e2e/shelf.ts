@@ -420,6 +420,17 @@ export async function shot(page: Page, info: TestInfo, name: string): Promise<vo
         cover(box.left, box.top, host.right - box.left, box.height)
       }
     }
+    // The series header's source path (SeriesHeader.tsx, the `p[title]` under
+    // the h1) is absolute, and in the synthetic round it begins with e2e.sh's
+    // per-run state directory, /tmp/shelf-e2e-<pid>/fixture/…: not a clock, but
+    // a value defined to differ every round all the same, and it moved 28
+    // frames out of the baseline (2026-10-26). The paragraph is a truncating
+    // block, so its box is the column's width and not the text's; covering that
+    // box hides the one line and nothing else on the header.
+    for (const line of document.querySelectorAll('h1 + p[title]')) {
+      const box = line.getBoundingClientRect()
+      if (box.width > 0 && box.height > 0) cover(box.left, box.top, box.width, box.height)
+    }
     // 설정 → 스캔 로그: every row opens with the wall-clock HH:MM:SS of the
     // scan, in tabular figures, so the column is one width whatever the time.
     // Only the column — the rows also arrive in a different order each round

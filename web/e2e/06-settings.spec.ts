@@ -40,7 +40,10 @@ test('6.10 · cache, theme, read-only roots and the scan log', async ({ page }, 
   // rather than of the URL. Assert the response first, then the field.
   const response = await page.request.get('/api/cache/usage')
   expect(response.ok(), 'GET /api/cache/usage').toBe(true)
-  const cache = (await response.json()) as { total_bytes: number }
+  const cache = (await response.json()) as {
+    total_bytes: number
+    entries: { kind: string; files: number; bytes: number }[]
+  }
   expect(cache.total_bytes, 'the scan and step 7 have populated the cache').toBeGreaterThan(0)
 
   await gotoLibrary(page)
@@ -55,7 +58,22 @@ test('6.10 · cache, theme, read-only roots and the scan log', async ({ page }, 
   await expect(cacheSection).toContainText('thumbs')
   await expect(cacheSection.getByRole('button', { name: '전체 삭제' })).toBeVisible()
   const shown = (await cacheSection.innerText()).replace(/\s+/g, ' ')
-  expect(shown, 'the usage figure must not read zero').not.toMatch(/(^|\s)0 (KB|MB|GB)/)
+  expect(shown, 'the total usage figure must not read zero').not.toMatch(/^캐시 0 (KB|MB|GB)/)
+  // A kind's row may read zero only where the server says that kind holds
+  // nothing: the pdf row is `0개 · 0 KB` until some spec has rendered a PDF
+  // page, which is the order the specs ran in, not a defect. What must not
+  // happen is a kind with bytes on the server drawn as zero (512 B is where
+  // formatBytes starts printing 1 KB).
+  for (const entry of cache.entries) {
+    const row = cacheSection.locator('li').filter({ hasText: entry.kind })
+    await expect(row, `one row for the ${entry.kind} cache`).toHaveCount(1)
+    const text = (await row.innerText()).replace(/\s+/g, ' ')
+    if (entry.bytes >= 512) {
+      expect(text, `${entry.kind} holds ${String(entry.bytes)} B on the server and must not read zero`).not.toMatch(
+        /(^|\s)0 (KB|MB|GB)/,
+      )
+    }
+  }
 
   // ---- 루트 관리 (C-5 / E-3, as amended by A-11 / E-26) -------------------
   const roots = rootsSection(page)
