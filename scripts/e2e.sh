@@ -68,7 +68,10 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-REAL_ROOT="${SHELF_E2E_ROOT:-/mnt/big-data/pds/taison-data/02. books/01. mangga}"
+# The real collection is named in one place, scripts/media-root (ruling E-66);
+# the Makefile reads the same file. Missing or empty is an error, not a guess.
+REAL_ROOT="${SHELF_E2E_ROOT:-$(cat "$repo/scripts/media-root" 2>/dev/null || :)}"
+[ -n "$REAL_ROOT" ] || { echo "e2e.sh: scripts/media-root is missing or empty (it names the real collection, E-66)" >&2; exit 2; }
 STATE="${SHELF_E2E_STATE:-/tmp/shelf-e2e-$$}"
 FIXTURE="$STATE/fixture"
 SRVTMP="$STATE/tmp"          # the server's private TMPDIR — step 9 asserts it stays empty

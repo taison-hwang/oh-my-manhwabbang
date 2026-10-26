@@ -58,7 +58,10 @@ SYNTHETIC_EXTRA=(
 )
 
 synthetic=0
-root="${SHELF_E2E_ROOT:-/mnt/big-data/pds/taison-data/02. books/01. mangga}"
+# The real collection is named in one place, scripts/media-root (ruling E-66);
+# the Makefile reads the same file. Missing or empty is an error, not a guess.
+root="${SHELF_E2E_ROOT:-$(cat "$repo/scripts/media-root" 2>/dev/null || :)}"
+[ -n "$root" ] || { echo "e2e-config.sh: scripts/media-root is missing or empty (it names the real collection, E-66)" >&2; exit 2; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --synthetic) synthetic=1 ;;

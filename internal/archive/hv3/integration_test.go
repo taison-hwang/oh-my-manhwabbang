@@ -12,12 +12,15 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf8"
 
 	"shelf/internal/archive"
 	"shelf/internal/archive/hv3"
+	"shelf/internal/testutil"
 )
 
 // realHV3 is one HV3 container reachable under the test root, named by where
@@ -73,6 +76,30 @@ func (c realHV3) open() (io.ReaderAt, int64, func(), error) {
 	return nil, 0, func() {}, fs.ErrNotExist
 }
 
+// pinned are the ZIPs every search opens, sampled or not (ruling E-66), as
+// paths relative to the collection root. A draw of a few hundred out of eleven
+// thousand would almost never reach the one that matters.
+var pinned = []string{
+	// The collection's only real HV3, as a deflated entry (findRealHV3s).
+	"펌프킨 시저스 1~13권/펌프킨 시저스 04.zip",
+}
+
+// search is findRealHV3s's result for the root it last searched. Both tests
+// below need the same list, and opening eleven thousand central directories
+// twice was most of what this tier cost (E-66).
+//
+// What the search reported is shared along with what it found. A search that
+// failed — a pin gone or unopenable — reported it to the test that ran it;
+// failedIn names that test so a later one reusing the list fails too, rather
+// than passing on a list the search itself said was short.
+var search struct {
+	sync.Mutex
+	root     string
+	done     bool
+	found    []realHV3
+	failedIn string // the test that ran a search that reported errors, or ""
+}
+
 // findRealHV3s collects every HV3 container under root: the loose `.hv3` files
 // on disk, AND the `.hv3` entries inside `.zip`/`.cbz` containers.
 //
@@ -94,10 +121,31 @@ func (c realHV3) open() (io.ReaderAt, int64, func(), error) {
 // JPEG, which deflate cannot help) and the oracle needs an io.ReaderAt.
 // Nothing is written to disk: FR-CFG-005 binds the test as it binds the
 // product.
+//
+// # What a sampled run searches
+//
+// Every loose `.hv3`, always. Of the ZIPs, SHELF_TEST_SAMPLE drawn by
+// testutil.Sample plus the pinned one above, because opening every central
+// directory is what made this tier take thirteen minutes (E-66). The pin does
+// not undo the lesson above: if the container moves, PickSample fails on the
+// pin by name, and if it stays but no longer opens, the search fails on it by
+// name — never a quiet pass on whatever else the search found — and a full run
+// (`make test-int-full`) still follows the subject wherever it went.
 func findRealHV3s(t *testing.T, root string) []realHV3 {
 	t.Helper()
+	search.Lock()
+	defer search.Unlock()
+	if search.done && search.root == root {
+		if search.failedIn != "" {
+			t.Errorf("the shared search of %s failed in %s, so the %d HV3 containers reused here are not all it should have found",
+				root, search.failedIn, len(search.found))
+		}
+		t.Logf("reusing this run's search of %s: %d HV3 containers", root, len(search.found))
+		return search.found
+	}
+
 	var out []realHV3
-	var zips int
+	var zips []string
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			t.Logf("walk: %v", err)
@@ -110,32 +158,53 @@ func findRealHV3s(t *testing.T, root string) []realHV3 {
 		case ".hv3":
 			out = append(out, realHV3{label: p, path: p})
 		case ".zip", ".cbz":
-			// The central directory only — no entry payload is read here, and
-			// a container that will not open is not this tier's business.
-			zr, err := zip.OpenReader(p)
+			rel, err := filepath.Rel(root, p)
 			if err != nil {
-				return nil
+				return err
 			}
-			zips++
-			for _, f := range zr.File {
-				if !strings.EqualFold(path.Ext(f.Name), ".hv3") {
-					continue
-				}
-				if f.UncompressedSize64 > maxInline {
-					t.Logf("%s :: %s is %d bytes, past the %d-byte inline cap — not checked",
-						p, f.Name, f.UncompressedSize64, maxInline)
-					continue
-				}
-				out = append(out, realHV3{label: p + " :: " + f.Name, path: p, inner: f.Name})
-			}
-			_ = zr.Close()
+			zips = append(zips, filepath.ToSlash(rel))
 		}
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("walking %s: %v", root, err)
 	}
-	t.Logf("found %d HV3 containers under %s (%d ZIPs read)", len(out), root, zips)
+
+	var read int
+	for _, rel := range testutil.PickSample(t, "ZIPs searched for a nested HV3", zips, pinned) {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		// The central directory only — no entry payload is read here, and a
+		// container that will not open is not this tier's business, unless it
+		// is pinned: the pin is there to be examined, and passing over it would
+		// leave both tests passing on any loose `.hv3` beside it.
+		zr, err := zip.OpenReader(p)
+		if err != nil {
+			if slices.Contains(pinned, rel) {
+				t.Errorf("pinned %q cannot be opened, so the HV3 it stands for is not examined: %v", rel, err)
+			}
+			continue
+		}
+		read++
+		for _, f := range zr.File {
+			if !strings.EqualFold(path.Ext(f.Name), ".hv3") {
+				continue
+			}
+			if f.UncompressedSize64 > maxInline {
+				t.Logf("%s :: %s is %d bytes, past the %d-byte inline cap — not checked",
+					p, f.Name, f.UncompressedSize64, maxInline)
+				continue
+			}
+			out = append(out, realHV3{label: p + " :: " + f.Name, path: p, inner: f.Name})
+		}
+		_ = zr.Close()
+	}
+	t.Logf("found %d HV3 containers under %s (%d ZIPs read)", len(out), root, read)
+	search.root, search.done, search.found, search.failedIn = root, true, out, ""
+	// Nothing before the search can fail this test without ending it
+	// (MediaRoot only skips or fails fatally), so Failed here is the search.
+	if t.Failed() {
+		search.failedIn = t.Name()
+	}
 	return out
 }
 
@@ -143,6 +212,8 @@ func findRealHV3s(t *testing.T, root string) []realHV3 {
 //
 //	SHELF_TEST_ROOT="/mnt/big-data/…/01. mangga" \
 //	  go test -tags integration ./internal/archive/hv3 -run Integration -timeout 30m
+//
+// That searches every ZIP; `make test-int` searches a sample (findRealHV3s).
 //
 // There is no second implementation to differ against the way zipidx has
 // archive/zip and rar4 has rardecode — nothing in Go reads HoneyView
@@ -161,10 +232,7 @@ func findRealHV3s(t *testing.T, root string) []realHV3 {
 // It is read-only by construction (FR-CFG-005) and gated on the env var, so
 // `make test` on a machine without the media volume simply skips it.
 func TestIntegration_realCollection_matchesRecordedCRC(t *testing.T) {
-	root := os.Getenv("SHELF_TEST_ROOT")
-	if root == "" {
-		t.Skip("SHELF_TEST_ROOT is not set")
-	}
+	root := testutil.MediaRoot(t)
 
 	found := findRealHV3s(t, root)
 	if len(found) == 0 {
@@ -247,10 +315,7 @@ func TestIntegration_realCollection_matchesRecordedCRC(t *testing.T) {
 // container must be servable as a seekable window, because that is what makes
 // a page one seek and a Range request cost the range.
 func TestIntegration_realCollection_isStoredAndSeekable(t *testing.T) {
-	root := os.Getenv("SHELF_TEST_ROOT")
-	if root == "" {
-		t.Skip("SHELF_TEST_ROOT is not set")
-	}
+	root := testutil.MediaRoot(t)
 
 	found := findRealHV3s(t, root)
 	if len(found) == 0 {

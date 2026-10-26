@@ -3,10 +3,11 @@
 // Package integration is the suite of impl-plan §6.2: the whole product, wired
 // exactly as `cmd/shelf` wires it, running against the **real** collection.
 //
-//	make test-int SHELF_TEST_ROOT="/mnt/big-data/pds/taison-data/02. books/01. mangga"
+//	make test-int        # SHELF_TEST_ROOT defaults to scripts/media-root (E-66)
 //
-// With SHELF_TEST_ROOT unset every test skips, so `make test-int` is a no-op on
-// a machine with no media volume rather than a failure.
+// Without a usable SHELF_TEST_ROOT every test that reads the collection skips
+// (testutil.MediaRoot), or fails under SHELF_TEST_REQUIRE_ROOT=1, which gate
+// 5/5 sets so that a run that lost its root is not recorded as a run.
 //
 // # Nothing is copied
 //
@@ -41,6 +42,7 @@ import (
 
 	"shelf/internal/app"
 	"shelf/internal/config"
+	"shelf/internal/testutil"
 )
 
 // Ten of impl-plan §6.3's curated series, exact names.
@@ -106,19 +108,14 @@ func escapeGlob(s string) string {
 	return b.String()
 }
 
-// testRoot is the collection, or "" when the suite must skip.
-func testRoot() string { return os.Getenv("SHELF_TEST_ROOT") }
+// testRoot is the collection, or "" when there is none; a test reaches it only
+// after requireRoot has let it run.
+func testRoot() string { return os.Getenv(testutil.RootEnv) }
 
+// requireRoot is the root, or a skip — a failure under SHELF_TEST_REQUIRE_ROOT=1.
 func requireRoot(t *testing.T) string {
 	t.Helper()
-	root := testRoot()
-	if root == "" {
-		t.Skip("SHELF_TEST_ROOT is unset; see impl-plan §6.2")
-	}
-	if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
-		t.Skipf("SHELF_TEST_ROOT=%q is not a readable directory: %v", root, err)
-	}
-	return root
+	return testutil.MediaRoot(t)
 }
 
 // writeConfig renders the curated-subset configuration into stateDir.

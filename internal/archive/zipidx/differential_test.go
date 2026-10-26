@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"errors"
+	"fmt"
 	"hash/crc32"
 	"io"
 	"os"
@@ -67,7 +68,7 @@ func TestDifferential_frozenTestdata_matchesArchiveZip(t *testing.T) {
 // It takes an io.ReaderAt rather than a []byte so the integration run can hand
 // it a 1.34 GB archive without loading it (NFR-PRF-006 applies to the test
 // suite too).
-func compareWithOracle(t *testing.T, name string, r io.ReaderAt, size int64) {
+func compareWithOracle(t testing.TB, name string, r io.ReaderAt, size int64) {
 	t.Helper()
 
 	oracle, oracleErr := zip.NewReader(r, size)
@@ -125,26 +126,50 @@ func compareWithOracle(t *testing.T, name string, r io.ReaderAt, size int64) {
 		}
 
 		// 3. DataOffset parity — the field FR-SRV-002 needs and archive/zip
-		//    only exposes after the fact.
-		wantOff, err := want.DataOffset()
-		if err != nil {
-			t.Errorf("%s entry %q: archive/zip DataOffset: %v", name, want.Name, err)
-			continue
-		}
-		gotOff, err := zipidx.DataOffset(t.Context(), r, got.LocalHdrOff)
-		if err != nil {
-			t.Errorf("%s entry %q: zipidx DataOffset: %v", name, want.Name, err)
-			continue
-		}
-		if gotOff != wantOff {
-			t.Errorf("%s entry %q: data offset = %d, archive/zip says %d", name, want.Name, gotOff, wantOff)
-		}
+		//    only exposes after the fact. The verdicts are compared first, as
+		//    in step 1: both refusing — as both do where the central directory
+		//    points at zeros — is agreement, and one refusing is not
+		//    (checkOffset, TestDifferential_zeroedLocalHeader_isRefusedByBoth).
+		wantOff, wantErr := want.DataOffset()
+		gotOff, gotErr := zipidx.DataOffset(t.Context(), r, got.LocalHdrOff)
+		checkOffset(t, name, want.Name, wantOff, wantErr, gotOff, gotErr)
 	}
 
 	if oracle.Comment != ix.Comment {
 		t.Errorf("%s: comment length = %d, archive/zip says %d", name, len(ix.Comment), len(oracle.Comment))
 	}
 }
+
+// checkOffset compares the two readers' answers for one local header, the way
+// step 1 compares their answers for a whole archive: both refusing is agreement
+// and leaves a log line, so a real round still shows how many entries it met
+// damaged; one refusing is a failure, and two offsets must be the same offset.
+func checkOffset(t testing.TB, name, entry string, wantOff int64, wantErr error, gotOff int64, gotErr error) {
+	t.Helper()
+	switch {
+	case wantErr != nil && gotErr != nil:
+		t.Logf("%s entry %q: both refuse the local header — archive/zip: %v; zipidx: %v",
+			name, entry, wantErr, gotErr)
+	case wantErr != nil || gotErr != nil:
+		t.Errorf("%s entry %q: local header verdict mismatch — archive/zip err = %v, zipidx err = %v",
+			name, entry, wantErr, gotErr)
+	case gotOff != wantOff:
+		t.Errorf("%s entry %q: data offset = %d, archive/zip says %d", name, entry, gotOff, wantOff)
+	}
+}
+
+// spy is a testing.TB that keeps what a comparison reports instead of acting on
+// it, so a test can assert which of Errorf and Logf it reached. Everything else
+// — Fatalf, Context, Helper — is the real T's.
+type spy struct {
+	*testing.T
+	errs, logs []string
+}
+
+func (s *spy) Errorf(format string, args ...any) {
+	s.errs = append(s.errs, fmt.Sprintf(format, args...))
+}
+func (s *spy) Logf(format string, args ...any) { s.logs = append(s.logs, fmt.Sprintf(format, args...)) }
 
 // nameNeedsNoDecision reports whether f's name is settled before any decision
 // about the whole archive is made. A name that is valid UTF-8 is read as UTF-8
@@ -176,6 +201,73 @@ func TestDifferential_shiftJISArchive_matchesArchiveZip(t *testing.T) {
 		{Name: "001.jpg", Data: page, Method: testutil.MethodStore},
 	}})
 	compareWithOracle(t, "shift_jis", bytes.NewReader(data), int64(len(data)))
+}
+
+// A central directory can point at a local header that has been zeroed. Two
+// volumes of the real collection have that: in 우에키의 법칙 13 (entries #1–#3)
+// and ＋ 02 (#88–#89) the 64 bytes at each recorded offset are all zero, and
+// the first sampled integration run (E-66) drew both. Both readers refuse such
+// an entry, and both refusing is agreement, as a refused archive is in step 1 —
+// the comparison must not fail on the oracle's refusal without asking zipidx.
+func TestDifferential_zeroedLocalHeader_isRefusedByBoth(t *testing.T) {
+	t.Parallel()
+	page := testutil.TinyJPEG(t, 8, 8)
+	data := testutil.BuildZIP(t, testutil.ZIPSpec{Entries: []testutil.Entry{
+		{Name: "001.jpg", Data: page, Method: testutil.MethodStore},
+		{Name: "002.jpg", Data: page, Method: testutil.MethodDeflate},
+		{Name: "003.jpg", Data: page, Method: testutil.MethodStore},
+	}})
+	ix, err := zipidx.ReadCentralDirectory(t.Context(), bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	off := ix.Entries[1].LocalHdrOff
+	if !bytes.HasPrefix(data[off:], []byte("PK\x03\x04")) {
+		t.Fatalf("no local header at %d to zero; the fixture is not the shape it claims", off)
+	}
+	clear(data[off : off+30]) // the fixed part of a local header
+	oracle, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := oracle.File[1].DataOffset(); err == nil {
+		t.Fatal("archive/zip reads a zeroed local header; the fixture refuses nothing")
+	}
+	s := &spy{T: t}
+	compareWithOracle(s, "zeroed local header", bytes.NewReader(data), int64(len(data)))
+	if len(s.errs) != 0 || len(s.logs) != 1 || !strings.Contains(s.logs[0], `entry "002.jpg": both refuse`) {
+		t.Errorf("errors %q, logs %q; want no error and one both-refuse line for 002.jpg", s.errs, s.logs)
+	}
+}
+
+// The rule compareWithOracle applies to every local header, on its own, down
+// to which of Errorf and Logf it reaches: the zeroed-header fixture above can
+// only show the both-refuse row, because the product refuses what archive/zip
+// refuses. A rule — or a report — that let one side's refusal pass would hide
+// exactly the divergence the oracle is for.
+func TestCheckOffset(t *testing.T) {
+	t.Parallel()
+	bad := errors.New("zip: not a valid zip file")
+	for _, tc := range []struct {
+		name            string
+		wantOff, gotOff int64
+		wantErr, gotErr error
+		errs, logs      int
+	}{
+		{"both read the same offset", 30, 30, nil, nil, 0, 0},
+		{"both read, different offsets", 30, 31, nil, nil, 1, 0},
+		{"both refuse", 0, 0, bad, bad, 0, 1},
+		// The refusing side's offset is set equal to the other's, so the
+		// failure has to come from the refusal and not from the offsets.
+		{"only archive/zip refuses", 30, 30, bad, nil, 1, 0},
+		{"only zipidx refuses", 30, 30, nil, bad, 1, 0},
+	} {
+		s := &spy{T: t}
+		checkOffset(s, "x.zip", "001.jpg", tc.wantOff, tc.wantErr, tc.gotOff, tc.gotErr)
+		if len(s.errs) != tc.errs || len(s.logs) != tc.logs {
+			t.Errorf("%s: errors %q, logs %q; want %d error(s), %d log line(s)", tc.name, s.errs, s.logs, tc.errs, tc.logs)
+		}
+	}
 }
 
 // The bytes we stream must be the bytes archive/zip streams, for every entry

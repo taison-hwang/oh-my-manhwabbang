@@ -485,6 +485,12 @@ func makeEnv() []string {
 		// be overridden from the environment, but a guard about what the Makefile
 		// derives should not depend on that staying true.
 		"RACE": true, "INT_PKGS": true, "NOPDF_PKGS": true,
+		// E-66: the integration knobs are `?=` too, and the two roots are what
+		// the `gates` pre-check reads — an operator's export of either would
+		// otherwise answer for scripts/media-root.
+		"SHELF_TEST_ROOT": true, "SHELF_MEDIA_ROOT": true, "SHELF_E2E_ROOT": true,
+		"TEST_INT_SAMPLE": true, "TEST_INT_REQUIRE_ROOT": true, "GATES_E2E": true,
+		"SHELF_TEST_SAMPLE": true, "SHELF_TEST_REQUIRE_ROOT": true,
 	}
 	env := os.Environ()
 	kept := env[:0]

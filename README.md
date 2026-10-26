@@ -136,7 +136,8 @@ make test           # unit suite, -race
 make lint           # vet + staticcheck + the static guards + the contract gate
 make check-readonly # the three static guards on their own
 make contract       # the frozen-contract gate on its own
-make test-int       # integration suite; needs SHELF_TEST_ROOT
+make test-int       # integration suite on a fixed sample of the real collection
+make test-int-full  # the same over every archive — before a release, about an hour
 make bench          # benchmarks with -benchmem
 make release        # 7 targets × 2 variants (default static, -avif) + SHA256SUMS
 make e2e            # end-to-end against the real collection
@@ -217,18 +218,30 @@ product:
 
 ### 3. Integration — `make test-int`
 
-`-tags integration`, gated on `SHELF_TEST_ROOT`. Brings the whole product up
-exactly as `cmd/shelf` does, against ten real series (~5.1 GB) selected out of
-the collection with `scan.include_globs`. **Nothing is copied**: the tests read
-the genuine 2012–2018 mtimes, the genuine CP949 entry names and the genuine
-truncated archives.
+`-tags integration`, against `SHELF_TEST_ROOT` — by default the collection named
+in `scripts/media-root`, the one file `make e2e` reads it from too. Brings the
+whole product up exactly as `cmd/shelf` does, against ten real series (~5.1 GB)
+selected out of the collection with `scan.include_globs`. **Nothing is copied**:
+the tests read the genuine 2012–2018 mtimes, the genuine CP949 entry names and
+the genuine truncated archives.
+
+The archive readers' differential tests compare against the whole collection,
+which takes about an hour, so `make test-int` runs them on a fixed sample
+(decision E-66): `TEST_INT_SAMPLE` archives (default 500) chosen by a hash of
+their path, plus a few named in the tests. The same collection always yields
+the same sample. `make test-int-full` checks every archive; run it before a
+release.
 
 ```bash
-make test-int SHELF_TEST_ROOT="/mnt/big-data/pds/taison-data/02. books/01. mangga"
+make test-int                          # sample, against scripts/media-root
+make test-int SHELF_TEST_ROOT=/elsewhere
+make test-int-full                     # every archive
 ```
 
-With `SHELF_TEST_ROOT` unset every test skips, so the target is a no-op on a
-machine with no media volume rather than a failure.
+Without a readable root the tests that need one skip, so the target is not a
+failure on a machine with no media volume. `make gates` runs it as part of
+gate 5/5 with `TEST_INT_REQUIRE_ROOT=1`, which turns that skip into a failure,
+and refuses to start at all when the root is not there.
 
 ### 4. End to end — `make e2e`
 

@@ -292,7 +292,7 @@ Every file, its owning work package, and its purpose. **Ownership is exclusive.*
 zip-viewer/
 ├── go.mod                                  [WP-00] module shelf, go 1.25.0  (bare path — ruling E-1)
 ├── go.sum                                  [WP-00] pinned deps (arch §1.1 versions, exact)
-├── Makefile                                [WP-00] web/build/dev/test/test-int/bench/lint/fmt/tidy/release/e2e/clean
+├── Makefile                                [WP-00] web/build/dev/test/test-int/test-int-full/bench/lint/fmt/tidy/release/e2e/clean
 ├── shelf.example.yaml                      [WP-00] fully commented config = arch §3.2 + amendments A-1..A-3
 ├── .gitignore                              [WP-00] web/node_modules, web/dist/*, dist/, *.db*, .e2e/
 ├── README.md                               [WP-00] build + run in 20 lines; points at docs/
@@ -490,7 +490,7 @@ and may run fully in parallel.
 **Acceptance**
 1. `GOPROXY=… GOTOOLCHAIN=auto CGO_ENABLED=0 go build ./...` succeeds on a clean checkout with `web/dist/` containing only `.gitkeep`.
 2. `go.mod` pins **exactly** the arch §1.1 versions: `modernc.org/sqlite v1.54.0`, `golang.org/x/text v0.40.0`, `golang.org/x/image v0.44.0`, `github.com/disintegration/imaging v1.6.2`, `github.com/gen2brain/avif v0.6.0`, `github.com/klippa-app/go-pdfium v1.19.6`, `github.com/tetratelabs/wazero v1.12.0`, `gopkg.in/yaml.v3 v3.0.1`, `golang.org/x/crypto v0.54.0`. No router library. `go 1.25.0`.
-3. `make` targets exist and are wired exactly as arch §11 (`web build dev test test-int bench lint fmt tidy release clean` + `e2e`), all `go` calls carrying `GOPROXY=https://proxy.golang.org,direct GOSUMDB=sum.golang.org GOTOOLCHAIN=auto CGO_ENABLED=0`.
+3. `make` targets exist and are wired exactly as arch §11 (`web build dev test test-int test-int-full bench lint fmt tidy release clean` + `e2e`), all `go` calls carrying `GOPROXY=https://proxy.golang.org,direct GOSUMDB=sum.golang.org GOTOOLCHAIN=auto CGO_ENABLED=0`.
 4. `cd web && pnpm install && pnpm build && pnpm typecheck` succeeds against an empty `src/` stub (a single `main.tsx` printing nothing is fine and is then replaced by WP-05 — **WP-00 must not create `src/main.tsx`; it creates `src/.gitkeep`** and `vite.config.ts` tolerates it).
 5. `testutil.BuildZIP` can produce: stored + deflate entries, GP bit 0 (encrypted), GP bit 11 set/clear, arbitrary **raw name bytes** (so CP949 golden vectors are byte-exact), a 40 KiB archive comment, a truncated tail, a 0-byte entry, a directory entry, `__MACOSX/…` and `Thumbs.db` entries. `BuildZIP64` forces the ZIP64 EOCD + `0x0001` extra field on a tiny archive. Round-trip test: every generated archive opens in `archive/zip` with the expected entry set (except the deliberately broken ones).
 6. `shelf.example.yaml` reproduces arch §3.2 **plus** A-1, A-2, A-3, and carries the warning comment that renaming a root orphans its progress.
@@ -909,7 +909,8 @@ make build          # pnpm build, then the static binary into dist/shelf
 make dev            # go run ./cmd/shelf --config ./shelf.yaml --log-level debug   (port 8790)
 make test           # go test ./... -race -count=1
 make lint           # vet + staticcheck + check-readonly
-make test-int       # SHELF_TEST_ROOT=... go test -tags integration ./... -timeout 30m
+make test-int       # sample (E-66): SHELF_TEST_SAMPLE=$(TEST_INT_SAMPLE) go test -tags integration $(INT_PKGS) -timeout 30m
+make test-int-full  # every archive: SHELF_TEST_SAMPLE=all, -timeout 120m — before a release
 make bench          # -bench . -benchmem
 make release        # 7 targets × 2 variants (static default, -avif) + SHA256SUMS
 make e2e            # scripts/e2e.sh — full curated-subset run, see §6.3
@@ -953,7 +954,7 @@ Ports: **8790** backend dev · **5173** Vite dev · **8791** E2E server (verifie
 
 ### 6.2 Integration tests (`-tags integration`, gated on `SHELF_TEST_ROOT`, `make test-int`)
 
-Run against the curated root of §6.3, **not** the whole 414 GB tree.
+Run against the curated root of §6.3, **not** the whole 414 GB tree. The archive readers' real-collection differential tests (zipidx, hv3) run on a deterministic sample by default — `TEST_INT_SAMPLE` (500) archives in sha256 order of their root-relative path plus pinned cases; `make test-int-full` runs every archive (decision E-66).
 
 | # | Test | Assertion |
 |---|---|---|
@@ -1140,7 +1141,7 @@ The build is done when **every** box below is ticked. Each is verifiable by a co
 - [ ] `make lint` clean (vet + staticcheck + `check-readonly`).
 - [ ] `make test` green with `-race`.
 - [ ] `pnpm typecheck && pnpm lint && pnpm test` green.
-- [ ] `make test-int` green with `SHELF_TEST_ROOT` set to the curated root.
+- [ ] `make gates` gate 5/5 (`make e2e` + `make test-int` sample) RAN on the real root, and `make test-int-full` green before the release (E-66).
 - [ ] `make e2e` green; screenshots in `docs/e2e-shots/` reviewed against `docs/ui-shots/`.
 - [ ] `dist/` contains no `https://fonts.g` string and no `rounded-lg` class (C-14, ui-spec §0.1).
 - [ ] `docs/decisions.md` has no unresolved escalation older than this build.

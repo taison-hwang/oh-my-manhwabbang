@@ -16,6 +16,7 @@ import (
 
 	"shelf/internal/archive"
 	"shelf/internal/archive/rar4"
+	"shelf/internal/testutil"
 )
 
 // The differential oracle for RAR, run over the real collection, in the shape
@@ -40,10 +41,7 @@ import (
 // It is read-only by construction (FR-CFG-005) and gated on the env var, so
 // `make test` on a machine without the media volume simply skips it.
 func TestIntegration_realCollection_matchesUnpacker(t *testing.T) {
-	root := os.Getenv("SHELF_TEST_ROOT")
-	if root == "" {
-		t.Skip("SHELF_TEST_ROOT is not set")
-	}
+	root := testutil.MediaRoot(t)
 
 	var archives, entries, packed, stored int
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {

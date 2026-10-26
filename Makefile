@@ -156,8 +156,8 @@ FROZEN_DEPS := \
 	gopkg.in/yaml.v3:v3.0.1 \
 	golang.org/x/crypto:v0.54.0
 
-.PHONY: all web build build-go dev test test-int bench lint check-readonly contract \
-        fmt tidy release e2e e2e-synthetic gates web-gates clean help
+.PHONY: all web build build-go dev test test-int test-int-full bench lint check-readonly contract \
+        fmt tidy release e2e e2e-synthetic gates gates-precheck web-gates clean help
 
 all: build
 
@@ -291,27 +291,110 @@ test:
 	@echo ">> test 3/3: the nopdf build, in the packages it changes (-tags \"$(TAGS) nopdf\")"
 	$(GOENV) CGO_ENABLED=1 $(GO) test -tags "$(TAGS) nopdf" $(NOPDF_PKGS) $(RACE) -count=1
 
-## test-int — the integration suite of impl-plan §6.2. Needs the media volume.
+## test-int — the integration suite of impl-plan §6.2, on a deterministic SAMPLE
+## of the media volume (E-66). Gate 5/5 runs it; `test-int-full` is the whole set.
 #
 # It runs $(INT_PKGS): every package holding a `//go:build integration` file
 # (see the comment above that variable), not just ./integration.
 #
-# SHELF_TEST_ROOT must point at the collection the curated subset lives in; with
-# it unset every test in ./integration and the archive readers' integration
-# tests skip themselves. Not everything skips: internal/scanner's
-# incremental-vs-cold ratio test (`integration && !race`) needs no root and runs
-# regardless — it lives here because it is a slow timing measurement that
-# `make test`'s -race would distort. `-tags integration` also reruns those
-# packages' ordinary unit tests, without -race and with cgo off, which is the
-# price of compiling their tagged files in the same package.
+# THE ROOT. SHELF_TEST_ROOT defaults to the one line in scripts/media-root, which
+# is the only place the media volume's path is written (E-66 §2.4); scripts/e2e.sh
+# and scripts/e2e-config.sh read the same file for SHELF_E2E_ROOT. The file is
+# found next to this Makefile, not in the working directory, so `make -f` from
+# elsewhere reads the same default. $(file <) drops the final newline and nothing
+# else — no $(strip), because the path holds spaces and a strip would be one more
+# reader with its own idea of the value. The environment or the command line still
+# override it through `?=`, and an explicitly empty value stays empty.
+#
+# Finding "next to this Makefile" without a shell: $(MAKEFILE_LIST) is a
+# space-separated list, so `$(dir $(lastword …))` cuts a path with spaces in it
+# in half. Here (no `include` above this line) the list is normally just this
+# Makefile, so the whole list is read as ONE path first — spaces swapped for a
+# marker, $(dir) taken, spaces put back. If no scripts/media-root sits there,
+# the list held more than one makefile (`-f a.mk -f Makefile`, or $MAKEFILES),
+# and the last word is used as before. Not covered: a tab in the path, or
+# several makefiles in the list AND a space in one of them, which make itself
+# cannot tell apart; the default is then empty, and the gates pre-check and
+# test-int name the empty SHELF_TEST_ROOT.
+#
+# With the root missing, the tests that NEED it skip themselves (those that build
+# their own tree, as from scripts/mkfixture, run regardless) and `go test` exits
+# 0. That is fine for an operator's ad-hoc run, and wrong for a gate, where the
+# skip would read as RAN:
+# TEST_INT_REQUIRE_ROOT=1 (what gate 5/5 passes) reaches the Go side as
+# SHELF_TEST_REQUIRE_ROOT=1, and `testutil.MediaRoot` then fails the test instead
+# of skipping it (E-66 §2.6). The default is 0, so a bare `make test-int` on a
+# machine without the volume behaves as it always has.
+#
+# THE SAMPLE. The full run does not fit a gate — zipidx alone timed out at 30
+# minutes on the real root — so SHELF_TEST_SAMPLE carries TEST_INT_SAMPLE, a
+# positive decimal integer, to the archive readers' integration tests, which
+# pick that many files by a hash of their root-relative path plus the pinned ones
+# the tests name (`testutil`; the rule is E-66 §2.2). Unset means ALL to the Go
+# side, for a bare `go test`; that is why dropping the word from the line below
+# would not fail, it would quietly bring the timeout back. A value make cannot
+# read as a count is refused here, before INT_PKGS compiles, rather than handed
+# on: `0` and `007` included, since neither is what anyone means to type.
+#
+# Not everything needs a root: internal/scanner's incremental-vs-cold ratio test
+# (`integration && !race`) runs regardless — it lives here because it is a slow
+# timing measurement that `make test`'s -race would distort. `-tags integration`
+# also reruns those packages' ordinary unit tests, without -race and with cgo
+# off, which is the price of compiling their tagged files in the same package.
+#
+# The root notice both recipes print is for a human and changes no outcome:
+# whether a missing root skips or fails is TEST_INT_REQUIRE_ROOT's business.
+#
+# internal/buildinfo/testint_test.go pins both recipes' environment, -timeout and
+# package list, the defaults below, and the refusal.
+shelf_empty           :=
+shelf_sp              := $(shelf_empty) $(shelf_empty)
+shelf_whole_dir       := $(subst <shelf:sp>,$(shelf_sp),$(dir $(subst $(shelf_sp),<shelf:sp>,$(MAKEFILE_LIST))))
+shelf_media_whole     := $(file <$(shelf_whole_dir)scripts/media-root)
+SHELF_MEDIA_ROOT      := $(if $(shelf_media_whole),$(shelf_media_whole),$(file <$(dir $(lastword $(MAKEFILE_LIST)))scripts/media-root))
+SHELF_TEST_ROOT       ?= $(SHELF_MEDIA_ROOT)
+TEST_INT_SAMPLE       ?= 500
+TEST_INT_REQUIRE_ROOT ?= 0
+
+# is_count: non-empty iff $(1) is a positive decimal integer without a leading
+# zero — one word, nothing but digits once they are all deleted, not `0…`.
+strip_digits = $(subst 0,,$(subst 1,,$(subst 2,,$(subst 3,,$(subst 4,,$(subst 5,,$(subst 6,,$(subst 7,,$(subst 8,,$(subst 9,,$(1)))))))))))
+is_count     = $(and $(1),$(if $(word 2,x$(1)x),,y),$(if $(call strip_digits,$(1)),,y),$(filter-out 0%,$(1)))
+TEST_INT_SAMPLE_CHECK = $(if $(call is_count,$(TEST_INT_SAMPLE)),,$(error TEST_INT_SAMPLE must be a \
+  positive decimal integer without a leading zero (got "$(TEST_INT_SAMPLE)"). For the whole \
+  set run `make test-int-full`, which passes SHELF_TEST_SAMPLE=all (E-66 §2.2, §2.3)))
+
 test-int:
 	@$(if $(INT_PKGS),,$(error INT_PKGS is empty: no package has a //go:build integration file. go test would test the current directory and pass. See the comment above INT_PKGS))
-	@if [ -z "$(SHELF_TEST_ROOT)" ]; then \
-		echo ">> SHELF_TEST_ROOT is unset: the tests that need the collection will skip."; \
-		echo ">> Run: make test-int SHELF_TEST_ROOT=\"/path/to/the/collection\""; \
+	@$(TEST_INT_SAMPLE_CHECK)
+	@if [ ! -d "$(SHELF_TEST_ROOT)" ] || [ ! -r "$(SHELF_TEST_ROOT)" ]; then \
+		echo ">> SHELF_TEST_ROOT (\"$(SHELF_TEST_ROOT)\") is not a readable directory: the"; \
+		echo ">> tests that need the collection will skip (fail, with TEST_INT_REQUIRE_ROOT=1)."; \
+		echo ">> The default is the path in scripts/media-root. Elsewhere, run:"; \
+		echo ">>   make $@ SHELF_TEST_ROOT=\"/path/to/the/collection\""; \
 	fi
 	$(GOENV) CGO_ENABLED=0 SHELF_TEST_ROOT="$(SHELF_TEST_ROOT)" \
+		SHELF_TEST_SAMPLE="$(TEST_INT_SAMPLE)" SHELF_TEST_REQUIRE_ROOT="$(TEST_INT_REQUIRE_ROOT)" \
 		$(GO) test -tags integration $(INT_PKGS) -count=1 -timeout 30m -v
+
+## test-int-full — test-int over EVERY file of the root (SHELF_TEST_SAMPLE=all).
+## Not a gate: run it before a release, ahead of the commit approval (E-66 §2.3).
+#
+# Same recipe as test-int but for the sample and the timeout: the whole set takes
+# well over the gate's budget, so -timeout is 120m rather than 30m. It passes
+# TEST_INT_REQUIRE_ROOT through like test-int does; a release run that should not
+# be able to skip says `make test-int-full TEST_INT_REQUIRE_ROOT=1`.
+test-int-full:
+	@$(if $(INT_PKGS),,$(error INT_PKGS is empty: no package has a //go:build integration file. go test would test the current directory and pass. See the comment above INT_PKGS))
+	@if [ ! -d "$(SHELF_TEST_ROOT)" ] || [ ! -r "$(SHELF_TEST_ROOT)" ]; then \
+		echo ">> SHELF_TEST_ROOT (\"$(SHELF_TEST_ROOT)\") is not a readable directory: the"; \
+		echo ">> tests that need the collection will skip (fail, with TEST_INT_REQUIRE_ROOT=1)."; \
+		echo ">> The default is the path in scripts/media-root. Elsewhere, run:"; \
+		echo ">>   make $@ SHELF_TEST_ROOT=\"/path/to/the/collection\""; \
+	fi
+	$(GOENV) CGO_ENABLED=0 SHELF_TEST_ROOT="$(SHELF_TEST_ROOT)" \
+		SHELF_TEST_SAMPLE=all SHELF_TEST_REQUIRE_ROOT="$(TEST_INT_REQUIRE_ROOT)" \
+		$(GO) test -tags integration $(INT_PKGS) -count=1 -timeout 120m -v
 
 ## bench — impl-plan §6.4. A >20 % regression against the baseline fails review.
 bench:
@@ -533,12 +616,27 @@ web-gates:
 ## green; it says nothing at all.
 ##
 ##   make gates                 all five
-##   make gates GATES_E2E=0     skip `make e2e`, which needs the media volume
+##   make gates GATES_E2E=0     skip gate 5/5 (`make e2e` + `make test-int`),
+##                              which needs the media volume
+##
+## The five: 1/5 make lint, 2/5 make test, 3/5 web-gates, 4/5 make e2e-synthetic,
+## and 5/5 the real collection — `make e2e` and then the integration suite on its
+## sample (`make test-int TEST_INT_REQUIRE_ROOT=1`), one line, one record, RAN
+## only when both return 0 (E-66 §2.1). Both need the media volume, so GATES_E2E
+## turns them on and off together, and the count stays five.
 ##
 ## Ordered so a failure surfaces soonest — the frontend four take seconds to a
-## couple of minutes, `make test` runs the Go suite TWICE, and the two E2E
-## rounds are minutes each. That is a different order from the one HANDOFF §6
+## couple of minutes, `make test` runs the Go suite three times, and the real
+## rounds are the longest. That is a different order from the one HANDOFF §6
 ## prints; the numbering below follows §6's names so cross-references still read.
+##
+## The same ordering argument is why `gates-precheck` runs before gate 3/5: with
+## GATES_E2E on, an unreadable SHELF_TEST_ROOT or e2e root (both default to
+## scripts/media-root) would otherwise fail 5/5 after every other gate had run.
+## It also refuses a TEST_INT_SAMPLE that test-int would refuse (E-66 §2.5). The
+## root REQUIRED on 5/5 is the other half: there a missing root fails the
+## integration tests that need it instead of skipping them, so no skip can be
+## recorded RAN.
 ##
 ## Three rules this target must keep:
 ##   * no pipes around a gate — `make test | tail; echo $$?` reports tail's exit
@@ -562,14 +660,48 @@ web-gates:
 ##     this Makefile as an artefact from outside — same shape as
 ##     check-readonly.sh and contractcheck, and for the same reason. It runs in
 ##     `make lint`. Its header explains what it asserts.
+##     internal/buildinfo/testint_test.go runs this recipe against a stub
+##     $(MAKE), so the pre-check's position and the 5/5 `&&` chain are observed
+##     rather than read.
 ##
 ##     The log is written outside the repository on purpose: e2e step 9 fails on
 ##     new files under the tree, and that check is correct.
 GATES_E2E  ?= 1
 GATES_TOTAL := 5
+# Whether 5/5 runs: off iff GATES_E2E is exactly `0`, on for anything else —
+# empty, `0 0`, `no`. One predicate, read by gates-precheck and by gates alike:
+# when the pre-check used `$(filter-out 0,…)` and the recipe `[ … = "0" ]`,
+# an empty GATES_E2E skipped the sample check yet ran 5/5, so the bad sample
+# surfaced after the other four gates. Same one-word test as is_count below.
+gates_e2e_on = $(if $(word 2,x$(GATES_E2E)x),on,$(if $(filter x0x,x$(GATES_E2E)x),,on))
 GATES_LOG   := $(shell mktemp -u "$${TMPDIR:-/tmp}/shelf-gates-XXXXXX.log")
 
+# The pre-check of E-66 §2.5. Its own target so that it can be run — and tested
+# — without running any gate; `gates` invokes it as its very first command.
+# On a refusal its shell exits 1 (a bad sample is make's $(error)); make reports
+# the failed recipe, so `make gates` itself exits 2, as make does for any failure.
+gates-precheck:
+	@$(if $(gates_e2e_on),$(TEST_INT_SAMPLE_CHECK))
+	@if [ -z "$(gates_e2e_on)" ]; then exit 0; fi; \
+	e2e_root="$${SHELF_E2E_ROOT:-$(SHELF_MEDIA_ROOT)}"; bad=0; \
+	for pair in "SHELF_TEST_ROOT=$(SHELF_TEST_ROOT)" "SHELF_E2E_ROOT=$$e2e_root"; do \
+		name=$${pair%%=*}; dir=$${pair#*=}; \
+		if [ ! -d "$$dir" ] || [ ! -r "$$dir" ]; then \
+			echo "gates: $$name (\"$$dir\") is not a readable directory."; bad=1; \
+		fi; \
+	done; \
+	if [ "$$bad" -ne 0 ]; then \
+		echo "  Gate 5/5 runs make e2e and make test-int against the real collection, last,"; \
+		echo "  so this run would fail there after every other gate. Stopping before any."; \
+		echo "  Both roots default to the path in scripts/media-root. Point them elsewhere:"; \
+		echo "    make gates SHELF_TEST_ROOT=\"/path/to/the/collection\" SHELF_E2E_ROOT=\"/path/to/the/collection\""; \
+		echo "  or skip gate 5/5, which the banner will report as SKIPPED:"; \
+		echo "    make gates GATES_E2E=0"; \
+		exit 1; \
+	fi
+
 gates:
+	@$(MAKE) --no-print-directory gates-precheck
 	@rm -f '$(GATES_LOG)'
 	@echo ''
 	@echo '=== gate 3/5 · web: typecheck · lint · test · build ==================='
@@ -584,12 +716,12 @@ gates:
 	@echo '=== gate 4/5 · make e2e-synthetic ===================================='
 	@$(MAKE) --no-print-directory e2e-synthetic && echo '4/5  make e2e-synthetic              RAN' >> '$(GATES_LOG)'
 	@echo ''
-	@if [ "$(GATES_E2E)" = "0" ]; then \
-		echo '=== gate 5/5 · make e2e · SKIPPED ===================================='; \
-		echo '5/5  make e2e                        SKIPPED (GATES_E2E=0)' >> '$(GATES_LOG)'; \
+	@if [ -z "$(gates_e2e_on)" ]; then \
+		echo '=== gate 5/5 · make e2e + test-int · SKIPPED ========================='; \
+		echo '5/5  make e2e + test-int (sample)    SKIPPED (GATES_E2E=0)' >> '$(GATES_LOG)'; \
 	else \
-		echo '=== gate 5/5 · make e2e ============================================='; \
-		$(MAKE) --no-print-directory e2e && echo '5/5  make e2e                        RAN' >> '$(GATES_LOG)'; \
+		echo '=== gate 5/5 · make e2e + test-int (sample) =========================='; \
+		$(MAKE) --no-print-directory e2e && $(MAKE) --no-print-directory test-int TEST_INT_REQUIRE_ROOT=1 && echo '5/5  make e2e + test-int (sample)    RAN' >> '$(GATES_LOG)'; \
 	fi
 	@echo ''
 	@echo '  ────────────────────────────────────────────────────────────'

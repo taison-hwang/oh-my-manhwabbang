@@ -4191,3 +4191,65 @@ arch §7.6 `GET /api/books/{bid}/pages/{n}`의 오류 목록에는 404·409·501
 
 - `docs/arch-backend.md` §7.6 페이지 오류 목록(404의 `encrypted` 문장, `AMENDMENT A-18` 항목: 페이지 행 없음의 404와 422), §7 머리말(A-1…A-18, A-18 요약).
 - `docs/impl-plan.md` §0.3 A-18 행과 각주, §0.3 참조 범위(A-1 … A-18).
+
+## E-66 — **test-int는 gates 5/5에서 실 라운드(e2e)와 함께 돈다. 실 루트에서는 결정적 표본만 돌리고, 전량은 `make test-int-full`로 릴리스 전에 돌린다** (사용자 결정 ②, 2026-10-26 · ea·45 설계, 메인 배분 — 게이트 수 다섯 그대로, 화면·HTTP 계약 변화 없음) — BINDING
+
+### 1. 문제
+
+- `make test-int`(impl-plan §6.2)는 어느 게이트에도 없었다. 사람의 기억에 맡긴 게이트는 돌지 않는다(HANDOFF §6.5, `e2e-synthetic`이 세 세션 동안 깨져 있던 일).
+- 실 루트 실측(10-26, ea): 1804 s 만에 zipidx가 30분 타임아웃에 걸렸다(ZIP 11 080개 중 6 178개). hv3 794 s, integration 359 s.
+  hv3는 시간 대부분이 탐색이다. 두 테스트가 각자 ZIP 11 080개의 중앙 디렉터리를 연다. 전량은 게이트가 될 수 없다.
+- `SHELF_TEST_ROOT` 없이 부르면 루트가 필요한 테스트가 skip하고 exit 0으로 끝난다. 게이트에 묶으면 그 skip이 RAN으로 읽힌다.
+
+### 2. 판정
+
+1. 게이트 5/5는 `make e2e`와 `make test-int`(표본)다. 한 줄에 `&&`로 묶고 기록도 하나다. 둘 다 0일 때만 RAN이다.
+   `GATES_E2E=0`이면 둘 다 SKIPPED다. `GATES_TOTAL`은 5 그대로다.
+2. 표본은 `SHELF_TEST_SAMPLE`로 정한다. 값은 양의 정수 N이나 `all`이다. unset은 전량이다(go test를 직접 부르는 경우). 그 밖의 값은 실패다.
+   Make는 `TEST_INT_SAMPLE`(기본 500, 실측 후 확정)을 넘긴다.
+   규칙: 루트 기준 slash 상대 경로마다 sha256("shelf-sample/1"‖0x00‖rel)를 구해 그 순서로 앞 N개를 고르고(bottom-k), 테스트 파일에 적은 고정 표본(pinned)을 더한다.
+   등간격과 달리 파일이 하나 늘어도 표본은 많아야 하나만 바뀌고, 마운트 경로와도 무관하다.
+   zipidx의 N은 비교할 ZIP 수다. hv3의 N은 중첩 HV3를 찾으려고 열어 볼 ZIP 수다. 느슨한 `.hv3`와 pinned는 항상 들어가고, 탐색은 패키지에서 한 번만 한다.
+   rar4(20 s)와 integration(큐레이션 부분집합)은 표본 대상이 아니다. 표본이면 로그에 "sample N of M (…) + k pinned"를 남긴다.
+3. `make test-int-full`은 `SHELF_TEST_SAMPLE=all`, `-timeout 120m`이다. 게이트가 아니며, 릴리스 전(커밋 승인 직전)에 돈다.
+4. 미디어 루트 경로는 `scripts/media-root` 한 줄에만 둔다. Makefile의 `SHELF_TEST_ROOT` 기본값과 `scripts/e2e.sh`·`e2e-config.sh`의 `SHELF_E2E_ROOT` 기본값이 그 파일을 읽는다.
+5. `make gates`는 `GATES_E2E`가 0이 아니면, 게이트를 하나도 돌리기 전에 test-int와 e2e가 쓸 루트가 읽을 수 있는 디렉터리인지 본다. 아니면 안내를 출력하고 게이트를 하나도 돌리지 않은 채 실패로 끝낸다(make의 종료 코드는 2).
+   `GATES_E2E`는 정확히 `0`일 때만 꺼짐이고, 빈 값을 포함한 그 밖의 값은 켜짐이다. 사전 점검과 5/5가 같은 규칙을 쓴다.
+6. 5/5의 test-int는 `TEST_INT_REQUIRE_ROOT=1`로 부르고, 이것이 `SHELF_TEST_REQUIRE_ROOT=1`로 넘어간다. `testutil.MediaRoot`는 이때 루트 부재를 skip이 아니라 실패로 바꾼다.
+   루트 없이 skip한 실행은 RAN이 될 수 없다.
+7. 목표 시간: 실 루트에서 `make test-int` 전체가 10분 안쪽.
+8. 지키는 곳:
+   - `scripts/check-gates.sh`: GATE_TARGETS에 test-int를 넣고, 개수는 기록 줄 수로 센다. 5/5 줄의 `e2e && test-int`를 단언한다.
+   - `internal/buildinfo`: 두 레시피의 env·`-timeout`, `TEST_INT_SAMPLE`이 양의 정수인지, Makefile·`scripts/*.sh`에 경로 리터럴이 없는지 본다.
+   - `internal/testutil`의 sample 테스트: 파싱과 결정성을 본다.
+
+### 3. 기각한 대안
+
+- **test-int를 여섯째 게이트로.** 게이트 수는 다섯으로 고정이다(사용자 결정). 둘 다 실 미디어가 있어야 하므로 `GATES_E2E` 하나로 켜고 끄는 것이 맞다.
+- **전량을 게이트에.** 한 시간이 넘는다.
+- **등간격 표본.** 파일 하나가 늘면 뒤쪽 표본이 통째로 밀린다. **난수 표본**은 실패를 재현할 수 없다.
+- **출력에서 SKIP 수 세기.** go test 줄을 파이프로 감싸야 하고, 그 모양(`| tee`)은 buildinfo 가드가 막는다(`|`는 exit status를 넘긴다).
+  루트 부재를 Go 쪽에서 실패로 바꾸는 편이 좁고 정확하다.
+- **기본 루트 없이 사전 점검만.** 인자 없는 `make gates` 흐름을 깬다(e2e는 이미 기본 경로로 돈다).
+
+### 4. 검증
+
+- 구현은 opus 에이전트가 TDD로 했다. 새 buildinfo 테스트 7개가 바꾸기 전 Makefile에서 모두 빨갛게 나오는 것을 먼저 확인했다.
+  테스트는 레시피 문자열만 보지 않고 동작을 돌려 본다. `make gates MAKE=<스텁>`으로 사전 점검만 진짜로 돌리고 나머지 게이트 호출은 기록만 해서 다음을 실행으로 확인한다:
+  호출 순서, 루트 부재·잘못된 표본 값이면 게이트를 하나도 부르지 않음, `GATES_E2E=0`이면 SKIPPED, e2e나 test-int가 실패하면 실제 `GATES_LOG`에 5/5 RAN이 없음.
+  스크래치 뮤테이션 15개(표본 env 누락, timeout 교환, REQUIRE_ROOT 누락, 기록 분리, `;` 연결, 사전 점검 제거·후행, `?= 0`, 경로 리터럴, GATE_TARGETS 누락, `GATES_TOTAL := 6` 등)가 전부 RED였다.
+- 리뷰: codex 1회. 반박 1건: 차단 "사전 점검의 종료 코드가 1이 아니라 2". 레시피가 실패하면 make는 언제나 2를 돌려주므로 이 판정 §2.5의 문구를 고쳤다.
+  수용 3건, 수정은 구현자가 아닌 에이전트가 했다:
+  - Makefile 경로에 공백이 있으면 기본 루트를 못 찾음 → `$(MAKEFILE_LIST)`를 경로 하나로 읽고, 한계는 주석에 적음.
+  - `GATES_E2E=`·`"0 0"`에서 사전 점검과 5/5가 엇갈림 → 술어 `gates_e2e_on` 하나로 통일.
+  - 가드가 stdout만 봄 → 실제 로그를 읽고, check-gates는 기록을 출현 횟수로 세며 `||` 뒤 기록을 거부.
+  이 수정의 뮤테이션 8개도 전부 RED였다.
+- 게이트(합친 트리, heavy.lock): `make lint` exit 0(12 s), `make test` exit 0(763 s). 메인 착지 후 `go test ./internal/buildinfo/ ./internal/testutil/`와 `scripts/check-gates.sh` exit 0.
+- 실 루트(같은 트리, `make test-int TEST_INT_REQUIRE_ROOT=1`):
+  - N=20: 172 s, SKIP 0. 로그에 `sample 20 of 11079 archives … + 6 pinned`, `26 archives: 26 agree`가 남았다.
+  - N=500: **206 s**, SKIP 0. 패키지별: zipidx 189 s, integration 204 s, hv3 31 s(794 s에서 줄어듦), rar4 15 s. 목표 10분 안쪽을 지켰으므로 기본 N은 500으로 확정한다.
+  - 같은 실행의 FAIL은 이 판정의 결함이 아니다. 표본이 실제로 무엇을 보는지 보여 준다. 소유자에게 넘겼다:
+    - zipidx 2개(`우에키의 법칙 13.zip`·`우에키의 법칙＋ 02.zip`, archive/zip `DataOffset` 실패)
+    - NFR-PRF-005 유휴 RSS 297 MB(N=20 실행에서는 통과)
+    - 스냅숏에 들어간 작업 중 D-6 테스트
+  - 10-26 오전 전량 실행에서 "실패 서브테스트 0"으로 보고한 것은 틀린 읽기였다. `-v`는 하위 테스트 결과를 부모가 끝날 때 찍는데, 부모가 타임아웃으로 죽어 아무것도 찍히지 않았다.
