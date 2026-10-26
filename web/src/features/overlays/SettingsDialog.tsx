@@ -27,13 +27,13 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       onClose={onClose}
       width="min(760px, 100%)"
       panelClassName="max-h-[88vh] overflow-y-auto gap-6"
-      title={
-        <span className="flex items-center gap-3">
-          <span className="flex-1">설정</span>
-          <Button variant="secondary" className="text-sm" aria-label="닫기" onClick={onClose}>
-            esc
-          </Button>
-        </span>
+      // ui-spec §8.6: `.dialog-title` `flex:1` `설정` + the `esc` button *beside*
+      // it. Beside, not inside — inside, the dialog was named "설정 닫기" (audit #7).
+      title="설정"
+      titleAside={
+        <Button variant="secondary" className="text-sm" aria-label="닫기" onClick={onClose}>
+          esc
+        </Button>
       }
     >
       {/* Every panel reads its own query — including `RootsPanel`'s config path

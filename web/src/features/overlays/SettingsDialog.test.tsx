@@ -1162,6 +1162,19 @@ describe('스캔 로그 (FR-IDX-004)', () => {
 // ---------------------------------------------------------------------------
 
 describe('the dialog contract (WP-10 acceptance 9)', () => {
+  /**
+   * Audit #7: the name is `설정`, exactly. The esc button used to sit inside the
+   * title element `aria-labelledby` points at, and the dialog was announced as
+   * "설정 닫기". ui-spec §8.6 puts the button *beside* `.dialog-title`.
+   */
+  it('is named 설정 by its level-2 heading, with the esc button outside it', async () => {
+    renderDialog()
+    await screen.findByText('만화')
+    expect(screen.getByRole('dialog', { name: '설정' })).toBeInTheDocument()
+    const heading = screen.getByRole('heading', { level: 2, name: '설정' })
+    expect(heading.contains(screen.getByRole('button', { name: '닫기' }))).toBe(false)
+  })
+
   it('is aria-modal, traps Tab, closes on Esc and restores focus', async () => {
     renderDialog(true)
     const trigger = screen.getByRole('button', { name: '설정 열기' })

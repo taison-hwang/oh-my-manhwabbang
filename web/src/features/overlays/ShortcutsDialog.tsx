@@ -54,12 +54,12 @@ export function ShortcutsDialog({ open, onClose }: ShortcutsDialogProps) {
       open={open}
       onClose={onClose}
       width="min(560px, 100%)"
-      title={
-        <span className="flex items-baseline gap-3">
-          키보드 단축키
-          <span className="text-3xs uppercase tracking-[.12em] text-accent">뷰어</span>
-        </span>
-      }
+      // ui-spec §8.5: a baseline-aligned row of `.dialog-title` and the `뷰어`
+      // kicker. The kicker is beside the heading, so the name is "키보드 단축키"
+      // and not "키보드 단축키 뷰어" (audit #7's shape).
+      title="키보드 단축키"
+      titleLayout="inline"
+      titleAside={<span className="text-3xs uppercase tracking-[.12em] text-accent">뷰어</span>}
     >
       <Hr className="my-0" />
       <div data-testid="shortcut-list" className="grid grid-cols-2 gap-x-6 gap-y-2">

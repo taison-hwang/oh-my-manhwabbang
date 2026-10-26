@@ -92,8 +92,12 @@ describe('ShortcutsDialog (ui-spec §8.5)', () => {
     render(<ShortcutsDialog open onClose={() => undefined} />)
     const dialog = screen.getByRole('dialog')
     expect(dialog).toHaveAttribute('aria-modal', 'true')
-    expect(dialog).toHaveAccessibleName(expect.stringContaining('키보드 단축키') as unknown as string)
-    expect(screen.getByText('뷰어')).toBeInTheDocument()
+    // Audit #7's shape: the 뷰어 kicker sat inside the title element, so the name
+    // read "키보드 단축키 뷰어". Exact match — the kicker is beside the heading.
+    expect(dialog).toHaveAccessibleName('키보드 단축키')
+    const heading = screen.getByRole('heading', { level: 2, name: '키보드 단축키' })
+    const kicker = screen.getByText('뷰어')
+    expect(heading.contains(kicker)).toBe(false)
   })
 
   it('prints ⌘K on Apple keyboards and Ctrl K everywhere else', () => {

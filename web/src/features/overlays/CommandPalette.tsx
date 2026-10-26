@@ -136,6 +136,9 @@ export function CommandPalette({ open, query, onQueryChange, onClose }: CommandP
     <Dialog
       open={open}
       onClose={onClose}
+      // No visible title (ui-spec §8.4), so the name is a label — the
+      // component's Korean name in ui-spec §10 #15 (audit #3).
+      ariaLabel="커맨드 팔레트"
       align="top"
       width="min(620px, 100%)"
       panelClassName="gap-0 p-0"

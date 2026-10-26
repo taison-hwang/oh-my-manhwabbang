@@ -534,6 +534,123 @@ describe('Dialog (impl-plan WP-10 acceptance 9)', () => {
     )
     expect(screen.queryByRole('dialog')).toBeNull()
   })
+
+  /**
+   * 10-23 accessibility audit #7: the name is the `<h2>` and only the `<h2>`.
+   * The settings dialog put its close button inside `title`, and `aria-labelledby`
+   * pointed at the whole title element, so the dialog was announced as
+   * "설정 닫기". `titleAside` sits beside the heading, never inside it.
+   */
+  it('is named by its <h2> title alone, not by what sits beside it (audit #7)', () => {
+    render(
+      <Dialog
+        open
+        onClose={() => undefined}
+        title="설정"
+        titleAside={
+          <button type="button" aria-label="닫기">
+            esc
+          </button>
+        }
+      >
+        body
+      </Dialog>,
+    )
+    expect(screen.getByRole('dialog', { name: '설정' })).toBeInTheDocument()
+    const heading = screen.getByRole('heading', { level: 2, name: '설정' })
+    expect(heading).toHaveClass('dialog-title')
+    expect(heading.contains(screen.getByRole('button', { name: '닫기' }))).toBe(false)
+  })
+
+  it('takes an aria-label when it has no visible title (audit #3)', () => {
+    render(
+      <Dialog open onClose={() => undefined} ariaLabel="커맨드 팔레트">
+        body
+      </Dialog>,
+    )
+    expect(screen.getByRole('dialog', { name: '커맨드 팔레트' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading')).toBeNull()
+  })
+
+  it('refuses a nameless dialog, and a doubly named one, at the type level', () => {
+    // @ts-expect-error -- a dialog needs a title or an ariaLabel
+    const nameless = <Dialog open={false} onClose={() => undefined} />
+    // @ts-expect-error -- one name, not two
+    const doubly = <Dialog open={false} onClose={() => undefined} title="a" ariaLabel="b" />
+    expect([nameless, doubly]).toHaveLength(2)
+  })
+
+  /** Starts closed, so there is an opener for focus to go back to. */
+  function Triggered({ empty = false }: { empty?: boolean }) {
+    const [open, setOpen] = useState(false)
+    return (
+      <>
+        <button
+          type="button"
+          onClick={() => {
+            setOpen(true)
+          }}
+        >
+          opener
+        </button>
+        <Dialog
+          open={open}
+          onClose={() => {
+            setOpen(false)
+          }}
+          title="키보드 단축키"
+        >
+          {empty ? (
+            <p>nothing to focus</p>
+          ) : (
+            <>
+              <button type="button">first</button>
+              <button type="button">last</button>
+            </>
+          )}
+        </Dialog>
+      </>
+    )
+  }
+
+  it('wraps Shift+Tab from the first control to the last', async () => {
+    render(<Triggered />)
+    await userEvent.click(screen.getByRole('button', { name: 'opener' }))
+    expect(screen.getByRole('button', { name: 'first' })).toHaveFocus()
+    await userEvent.tab({ shift: true })
+    expect(screen.getByRole('button', { name: 'last' })).toHaveFocus()
+  })
+
+  it('keeps focus on the panel when nothing inside can take it', async () => {
+    render(<Triggered empty />)
+    await userEvent.click(screen.getByRole('button', { name: 'opener' }))
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toHaveFocus()
+    await userEvent.tab()
+    expect(dialog).toHaveFocus()
+    await userEvent.tab({ shift: true })
+    expect(dialog).toHaveFocus()
+  })
+
+  it('closes on Esc and gives focus back to the opener', async () => {
+    render(<Triggered />)
+    const opener = screen.getByRole('button', { name: 'opener' })
+    await userEvent.click(opener)
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(opener).toHaveFocus()
+  })
+
+  /** Audit #8: `aria-modal` alone leaves the page in Chrome's tree. */
+  it('makes the page behind it inert while open, and only while open', async () => {
+    render(<Triggered />)
+    const opener = screen.getByRole('button', { name: 'opener' })
+    await userEvent.click(opener)
+    expect(opener.closest('[inert]')).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'first' }).closest('[inert]')).toBeNull()
+    await userEvent.keyboard('{Escape}')
+    expect(document.querySelector('[inert]')).toBeNull()
+  })
 })
 
 describe('Wordmark', () => {

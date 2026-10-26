@@ -304,6 +304,13 @@ describe('keyboard (ui-spec §8.4)', () => {
 })
 
 describe('the dialog contract (WP-10 acceptance 9)', () => {
+  /** Audit #3: the palette has no visible title, so it carries a label (ui-spec §10 #15). */
+  it('is a dialog named 커맨드 팔레트', async () => {
+    renderPalette()
+    await screen.findByText('최근 항목')
+    expect(screen.getByRole('dialog', { name: '커맨드 팔레트' })).toHaveAttribute('aria-modal', 'true')
+  })
+
   it('autofocuses the query, closes on Esc and restores focus to the opener', async () => {
     renderPalette(true)
     const trigger = screen.getByRole('button', { name: '팔레트 열기' })

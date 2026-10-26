@@ -6,7 +6,16 @@ import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
 import { MemoryRouter } from 'react-router-dom'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+} from 'vitest'
 
 import {
   cacheUsage,
@@ -19,6 +28,7 @@ import {
 } from '../../api/fixtures'
 import type { Settings } from '../../api/types'
 import { resetBasePath } from '../../api/urls'
+import { useGlobalHotkeys } from '../../lib/useHotkeys'
 import { useUiStore } from '../../store/ui'
 import { Overlays } from './Overlays'
 import { failUnhandled } from '../../test/msw'
@@ -123,6 +133,32 @@ beforeEach(() => {
   useUiStore.setState({ overlays: [], paletteQuery: '' })
   server.use(http.get(`${ORIGIN}/api/continue`, () => HttpResponse.json(continueResponse)))
 })
+
+/** The shell's real key dispatcher, so an `Esc` reaches window the way it does in the app. */
+function HotkeyHost() {
+  useGlobalHotkeys()
+  return null
+}
+
+/**
+ * The overlays as the shell mounts them: beside the global dispatcher, over a
+ * page with something to have opened them. Returns that page control.
+ */
+function renderShell(): HTMLElement {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={['/']}>
+        <HotkeyHost />
+        <button type="button">배경</button>
+        <Overlays />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+  return screen.getByRole('button', { name: '배경' })
+}
 
 function renderOverlays(): void {
   const client = new QueryClient({
@@ -230,5 +266,119 @@ describe('Overlays', () => {
     await userEvent.click(await screen.findByRole('option', { name: /군계/ }))
     expect(useUiStore.getState().overlays).not.toContain('palette')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  /**
+   * Audit #8 with two overlays at once: the palette opened over settings.
+   *
+   * Only the top layer is live — the page *and* the settings dialog under the
+   * palette are inert — and `Esc` unwinds one layer at a time, each time handing
+   * focus back to the element that opened that layer, after that element has
+   * left the inert set (read inside its own `focus` listener: jsdom lets focus
+   * land inside an inert subtree, so `toHaveFocus()` alone cannot see the order).
+   *
+   * The real global dispatcher is mounted: "one layer at a time" is a claim
+   * about the dialog's own `Esc` *and* the window ladder together — without it
+   * a keystroke both of them handle would still pop exactly one here.
+   */
+  it('unwinds the palette over settings one Esc at a time, with inert following the top', async () => {
+    recordSettingsRequests()
+    const background = renderShell()
+    background.focus()
+
+    act(() => {
+      useUiStore.getState().openOverlay('settings')
+    })
+    await screen.findByText('루트 관리')
+    const close = screen.getByRole('button', { name: '닫기' })
+    expect(close).toHaveFocus()
+    expect(background.closest('[inert]')).not.toBeNull()
+
+    act(() => {
+      useUiStore.getState().openOverlay('palette')
+    })
+    const input = await screen.findByPlaceholderText('시리즈로 이동…')
+    expect(input).toHaveFocus()
+    expect(input.closest('[inert]')).toBeNull()
+    expect(close.closest('[inert]')).not.toBeNull()
+    expect(background.closest('[inert]')).not.toBeNull()
+
+    const inertWhenFocused = new Map<Element, Element | null>()
+    for (const el of [close, background]) {
+      el.addEventListener('focus', () => {
+        inertWhenFocused.set(el, el.closest('[inert]'))
+      })
+    }
+
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByPlaceholderText('시리즈로 이동…')).not.toBeInTheDocument()
+    expect(useUiStore.getState().overlays).toEqual(['settings'])
+    expect(close).toHaveFocus()
+    expect(inertWhenFocused.get(close)).toBeNull()
+    expect(close.closest('[inert]')).toBeNull()
+    expect(background.closest('[inert]')).not.toBeNull()
+
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(useUiStore.getState().overlays).toEqual([])
+    expect(background).toHaveFocus()
+    expect(inertWhenFocused.get(background)).toBeNull()
+    expect(document.querySelector('[inert]')).toBeNull()
+  })
+
+  /**
+   * Review #2, keystroke for keystroke: settings → `Ctrl+K` → a result focused →
+   * `?` opens the shortcuts dialog from the palette → `Ctrl+K` closes the palette
+   * *underneath* it → `Esc`. The shortcuts dialog's opener left with the
+   * palette, and settings is still modal, so focus goes into settings — not to
+   * `<body>`, and not, while the shortcuts dialog is up, to the inert settings.
+   */
+  it('hands focus to settings when the layer that opened the shortcuts dialog closed under it', async () => {
+    recordSettingsRequests()
+    const background = renderShell()
+    background.focus()
+
+    act(() => {
+      useUiStore.getState().openOverlay('settings')
+    })
+    await screen.findByText('루트 관리')
+    const close = screen.getByRole('button', { name: '닫기' })
+    expect(close).toHaveFocus()
+
+    // Every focus from here on, and whether it landed in an inert subtree —
+    // jsdom lets it, and React's post-commit focus restore would then hide it.
+    const intoInert: string[] = []
+    const onFocus = (e: FocusEvent): void => {
+      if (e.target instanceof Element && e.target.closest('[inert]') !== null) {
+        intoInert.push(e.target.outerHTML.slice(0, 80))
+      }
+    }
+    document.addEventListener('focus', onFocus, true)
+    onTestFinished(() => {
+      document.removeEventListener('focus', onFocus, true)
+    })
+
+    await userEvent.keyboard('{Control>}k{/Control}')
+    const result = await screen.findByRole('option', { name: /군계/ })
+    result.focus()
+    await userEvent.keyboard('?')
+    expect(useUiStore.getState().overlays).toEqual(['settings', 'palette', 'shortcuts'])
+    const shortcuts = screen.getByRole('dialog', { name: '키보드 단축키' })
+    expect(shortcuts).toHaveFocus()
+
+    await userEvent.keyboard('{Control>}k{/Control}')
+    expect(useUiStore.getState().overlays).toEqual(['settings', 'shortcuts'])
+    expect(shortcuts).toHaveFocus()
+
+    let inertWhenFocused: Element | null | undefined
+    close.addEventListener('focus', () => {
+      inertWhenFocused = close.closest('[inert]')
+    })
+    await userEvent.keyboard('{Escape}')
+    expect(useUiStore.getState().overlays).toEqual(['settings'])
+    expect(close).toHaveFocus()
+    expect(inertWhenFocused).toBeNull()
+    expect(background.closest('[inert]')).not.toBeNull()
+    expect(intoInert).toEqual([])
   })
 })
