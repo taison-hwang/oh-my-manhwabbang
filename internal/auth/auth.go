@@ -367,7 +367,7 @@ func (a *Authenticator) Cookie(r *http.Request, token string, expires time.Time)
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		Secure:   a.Secure(r),
-		MaxAge:   int(time.Until(expires).Seconds()),
+		MaxAge:   int(expires.Sub(a.now()).Seconds()),
 		Expires:  expires,
 	}
 }

@@ -347,6 +347,32 @@ func TestLogin_untrustedForwardedFor_cannotEvadeTheLimiter(t *testing.T) {
 	}
 }
 
+// arch §7 — `Max-Age=<session_ttl>` on login. The fake clock sits years in
+// the past, so a Max-Age computed from the wall clock comes out negative and
+// the browser would drop the session cookie on arrival.
+func TestCookie_maxAgeIsTheTTLOnTheInjectedClock(t *testing.T) {
+	t.Parallel()
+	a, clk, _ := enabled(t, "hunter2")
+	r := req("10.0.0.1:1")
+	token, expires, err := a.Login(r, []byte("hunter2"))
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	c := a.Cookie(r, token, expires)
+	if want := int((2 * time.Hour).Seconds()); c.MaxAge != want {
+		t.Errorf("Max-Age = %d, want %d (session_ttl)", c.MaxAge, want)
+	}
+	if !c.Expires.Equal(expires) {
+		t.Errorf("Expires = %v, want %v", c.Expires, expires)
+	}
+
+	// Max-Age and Expires name the same instant, on the same clock.
+	clk.advance(30 * time.Minute)
+	if got, want := a.Cookie(r, token, expires).MaxAge, int((90 * time.Minute).Seconds()); got != want {
+		t.Errorf("Max-Age 30 min after issue = %d, want %d", got, want)
+	}
+}
+
 // arch §8.2 — HttpOnly, SameSite=Lax, Path scoped to the base path, and Secure
 // only when the request actually arrived over TLS.
 func TestCookie_attributes(t *testing.T) {
