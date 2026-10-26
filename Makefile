@@ -93,9 +93,9 @@ AVIF_ARTEFACTS   := $(foreach t,$(LINUX_TARGETS),dist/shelf-$(VERSION)-$(subst /
 # names no size at all. Measured on linux/amd64 with this recipe's own flags and
 # go1.26.9 — these are MEASURED_* below, and `release` re-measures them:
 #
-#     default (noavif, static)   33 444 002   SPA + SQLite + codecs + pdfium
-#     + AVIF  (`-avif` variant)  35 029 257   AVIF = 1 585 255  (FR-IDX-011, 필수)
-#     -tags "noavif nopdf"       22 864 034   PDF  = 10 579 968 (FR-SRV-006, 필수)
+#     default (noavif, static)   33 210 530   SPA + SQLite + codecs + pdfium
+#     + AVIF  (`-avif` variant)  34 787 593   AVIF = 1 577 063  (FR-IDX-011, 필수)
+#     -tags "noavif nopdf"       22 630 562   PDF  = 10 579 968 (FR-SRV-006, 필수)
 #
 # Both deltas are against the default. (E-19's table also had an AVIF-enabled
 # `-tags nopdf` row, which is where arch §1.2's smaller PDF figure comes from; no
@@ -103,7 +103,8 @@ AVIF_ARTEFACTS   := $(foreach t,$(LINUX_TARGETS),dist/shelf-$(VERSION)-$(subst /
 #
 # 33 554 432 is E-19's headroom over the build it measured, which was 7.4 MB
 # smaller than the one above — most of the difference is the vendored fonts that
-# E-46, E-53 and E-55 added after E-19 measured — so the margin left is under 1%.
+# E-46, E-53 and E-55 added after E-19 measured — so the margin left is about 1%,
+# and that only after E-63 stopped embedding the SPA's JS and CSS uncompressed.
 # pdfium WASM ≈8.34 MB, AVIF WASM ≈1.58 MB, pure-Go SQLite (CON-001 forces
 # modernc.org/sqlite) and the embedded SPA are what occupy the budget. The gate
 # still cannot be satisfied by anything that matters and still trips on a
@@ -134,9 +135,9 @@ SIZE_BUDGET := 33554432
 # `make release MEASURED_CHECK=0` waives it for one run. `:=`, not `?=`, so an
 # exported MEASURED_CHECK in someone's environment cannot waive it for every run.
 MEASURED_TOOLCHAIN := go1.26.9
-MEASURED_DEFAULT   := 33444002
-MEASURED_AVIF      := 35029257
-MEASURED_NOPDF     := 22864034
+MEASURED_DEFAULT   := 33210530
+MEASURED_AVIF      := 34787593
+MEASURED_NOPDF     := 22630562
 MEASURED_SLACK     := 4096
 MEASURED_CHECK     := 1
 

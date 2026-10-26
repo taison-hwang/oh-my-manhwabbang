@@ -50,8 +50,8 @@ Requires **Go 1.25+** (or any Go with `GOTOOLCHAIN=auto`, which fetches it),
 make build          # pnpm build, then the static binary into dist/shelf
 ```
 
-Two files can come out. `make build` produces `dist/shelf`, **33.4 MB** on
-linux/amd64 (33 444 002 B, go1.26.9) with the SPA, SQLite, pdfium and every
+Two files can come out. `make build` produces `dist/shelf`, **33.2 MB** on
+linux/amd64 (33 210 530 B, go1.26.9) with the SPA, SQLite, pdfium and every
 image codec but AVIF compiled in — and, on linux, **statically linked**: no libc,
 no dynamic loader, so it starts on a musl or old-glibc NAS. That is the whole point of
 `CGO_ENABLED=0` (CON-001) and it is not something the flag gives you for free:
@@ -63,13 +63,13 @@ independent passes, 500 ZIPs and ~56k entries (`docs/data-survey.md`,
 still streams its original bytes and every target browser decodes it, only the
 server-side thumbnail degrades to `422 thumb_unavailable`.
 
-`make release` also emits an `-avif` variant per platform — **35.0 MB**
-(35 029 257 B), AVIF thumbnails working, **dynamically linked on linux**. Take
+`make release` also emits an `-avif` variant per platform — **34.8 MB**
+(34 787 593 B), AVIF thumbnails working, **dynamically linked on linux**. Take
 it only on a glibc host. Both variants are in `dist/SHA256SUMS`, and
 `dist/ARTIFACTS.txt` says which is which.
 
-Adding `nopdf` drops PDF support entirely and takes the default down to 22.9 MB
-(22 864 034 B) — **10.6 MB** (10 579 968 B) below the default, and the floor a
+Adding `nopdf` drops PDF support entirely and takes the default down to 22.6 MB
+(22 630 562 B) — **10.6 MB** (10 579 968 B) below the default, and the floor a
 `CGO_ENABLED=0` build with pure-Go SQLite can reach. Spell it
 `make build TAGS="noavif nopdf"`: tags are space-separated here and the Makefile
 rejects a comma, because the `-avif` release variant is derived from `TAGS` by
@@ -80,11 +80,13 @@ ruling E-19's, measured against the *AVIF-enabled* build of that day.)
 linux/amd64 build exceeds `SIZE_BUDGET`, which is ≤ **32 MiB = 33 554 432 bytes**
 (ruling **E-19**). Pass `SIZE_BUDGET=0` to waive the gate for one run.
 
-**The budget is nearly spent.** The default build above leaves **110 430 B**
-(0.1 MB) of it, and the vendored fonts alone are about a fifth of the binary
-(see [§2](#2-names-render-in-vendored-faces--with-three-exceptions)). Any new dependency, embedded asset or font coverage
-will push `make release` over; decide what to drop, or re-rule the budget,
-before adding one.
+**The budget is tight.** The default build above leaves **343 902 B**
+(about 344 KB) of it, most of which came back when the SPA's JavaScript and CSS
+started being embedded gzip-only (ruling **E-63**), and the vendored fonts alone
+are about a fifth of the binary
+(see [§2](#2-names-render-in-vendored-faces--with-three-exceptions)). One new dependency, embedded asset or font
+coverage can still push `make release` over; check the headroom before adding
+one, and decide what to drop, or re-rule the budget, if it does not fit.
 
 It also re-measures the three sizes above — default, `-avif` and `nopdf`, all
 linux/amd64 — and fails when one has moved more than `MEASURED_SLACK` bytes from
