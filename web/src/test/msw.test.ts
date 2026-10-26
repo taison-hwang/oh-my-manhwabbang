@@ -68,9 +68,10 @@ describe('installStrictMsw', () => {
     expect(afterAllHook).toHaveBeenCalledWith(assertNoUnhandled)
   })
 
-  // The check only works because src/test/setup.ts installs it; vitest.config.ts
-  // wires that file in only if it exists. Sampled before the test above runs
-  // its own install.
+  // The check only works because src/test/setup.ts installs it, and this is
+  // what notices if it stops running: vitest.config.ts fails a run whose setup
+  // file is missing, but not one whose setup file no longer calls
+  // installStrictMsw. Sampled before the test above runs its own install.
   it('is installed by the shared setup file', () => {
     expect(installedBySetup).toBe(true)
   })

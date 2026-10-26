@@ -938,18 +938,41 @@ describe('mutations invalidate what they change', () => {
     )
     const client = makeClient()
     client.setQueryData(queryKeys.auth.status, authStatus)
-    const { result } = renderHook(() => useCreateRoot(), { wrapper: makeWrapper(client) })
+    // `useAuthStatus` is mounted because its effect is what installs the 401 →
+    // invalidate listener; without it nothing could invalidate the status and the
+    // last assertion would hold whatever a 403 did. Disabled, so an invalidation
+    // stays visible as `isInvalidated` instead of being cleared by a refetch.
+    const { result } = renderHook(
+      () => ({ auth: useAuthStatus({ enabled: false }), create: useCreateRoot() }),
+      { wrapper: makeWrapper(client) },
+    )
 
-    result.current.mutate({ path: '/srv/media/manga' })
+    result.current.create.mutate({ path: '/srv/media/manga' })
 
     await waitFor(() => {
-      expect(result.current.isError).toBe(true)
+      expect(result.current.create.isError).toBe(true)
     })
-    const error = result.current.error
+    const error = result.current.create.error
     expect(isApiError(error)).toBe(true)
     expect(isApiError(error) ? error.code : null).toBe('forbidden')
     expect(isApiError(error) ? error.status : null).toBe(403)
     expect(isAuthError(error)).toBe(false)
     expect(client.getQueryState(queryKeys.auth.status)?.isInvalidated).toBe(false)
+
+    // Positive control, same harness: a 401 from the same endpoint *does* mark the
+    // status stale, so the assertion above is one that can fail.
+    server.use(
+      http.post(`${ORIGIN}/api/roots`, () =>
+        HttpResponse.json(errorEnvelope('unauthorized', 'authentication required'), {
+          status: 401,
+        }),
+      ),
+    )
+    result.current.create.mutate({ path: '/srv/media/manga' })
+
+    await waitFor(() => {
+      expect(isAuthError(result.current.create.error)).toBe(true)
+    })
+    expect(client.getQueryState(queryKeys.auth.status)?.isInvalidated).toBe(true)
   })
 })

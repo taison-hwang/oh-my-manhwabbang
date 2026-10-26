@@ -63,7 +63,10 @@ export interface ShellListCounts {
 
 export interface ShellData {
   auth: ShellAuth
-  /** Submits the password. Rejects with a message the login screen shows. */
+  /**
+   * Submits the password. Rejects on failure; the login screen maps the rejection
+   * to a sentence (`features/auth/loginErrors.ts`).
+   */
   login: (password: string) => Promise<void>
   loginPending: boolean
 

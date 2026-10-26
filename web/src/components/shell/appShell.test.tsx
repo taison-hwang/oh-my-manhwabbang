@@ -7,6 +7,7 @@ import { RouterProvider, createMemoryRouter } from 'react-router-dom'
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { App } from '../../App'
+import { ApiError } from '../../api/errors'
 import { DEFAULT_SHELL_DATA, ShellDataContext, type ShellData } from '../../lib/shellData'
 import { router } from '../../router'
 import { useUiStore } from '../../store/ui'
@@ -150,7 +151,10 @@ describe('the auth gate (NFR-SEC-002)', () => {
     renderShell({
       ...LOADED_ROOTS,
       auth: { auth_required: true, authenticated: false },
-      login: () => Promise.reject(new Error('비밀번호가 올바르지 않습니다.')),
+      login: () =>
+        Promise.reject(
+          new ApiError({ status: 401, code: 'unauthorized', message: 'authentication required' }),
+        ),
     })
     await userEvent.type(screen.getByLabelText('비밀번호'), 'nope')
     await userEvent.click(screen.getByRole('button', { name: '로그인' }))
