@@ -3,14 +3,19 @@ package httpapi
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 
 	"shelf/internal/auth"
+	"shelf/internal/thumbs"
+	"shelf/internal/userdata"
 )
 
 // NFR-SEC-002 / ruling E-8 — with no `auth:` block there is no password, and
@@ -130,6 +135,162 @@ func TestAuth_gateAndLoginFlow(t *testing.T) {
 	if !settings.Server.AuthEnabled {
 		t.Error("settings.server.auth_enabled = false with a password configured")
 	}
+}
+
+// NFR-SEC-002 — the gate is not a GET gate. Every route that writes answers
+// 401 without a session and changes nothing; the same request with a session
+// gets past the gate. A gate that only looked at reads would let anyone on the
+// LAN save settings, start scans, purge the cache and overwrite progress, and
+// TestAuth_gateAndLoginFlow above — all GETs — would stay green.
+//
+// Root editing is switched on, and a second root configured, so the two root
+// routes would succeed if they got through rather than stopping at their own
+// 403 — or at the 409 that refuses to remove the last root.
+func TestAuth_gateCoversEveryWriteMethod(t *testing.T) {
+	e := newEnv(t, withPassword("hunter2"), withRootEditing(), withSecondRoot())
+	ctx := t.Context()
+
+	importDoc := `{"format":"shelf-progress/1","exported_at":1785229200,"id_version":"shelf-id/1",` +
+		`"items":[{"book_id":"` + e.bookDirID + `","series_id":"` + e.seriesFolderID + `",` +
+		`"root_name":"manga","book_path":"` + jsonEscape(bookDirPath) + `","last_page":2,` +
+		`"page_count":2,"completed":true,"started_at":1785229100,"updated_at":1785229150}],"prefs":[]}`
+	// want is the status each request earns once it is past the gate, taken
+	// from the contract rather than from what the code happens to return:
+	// TestRoutes_everyEndpointOfSection713Answers for the §7 routes, §7.4 for
+	// the two root routes (201 / 204), golden_test.go for the import (200), and
+	// TestMethod_wrongVerb_is405WithAllowHeader for verbs no route registers.
+	writes := []struct {
+		method, target, body string
+		want                 int
+	}{
+		{http.MethodPost, "/api/roots", `{"path":` + quoteJSON(t.TempDir()) + `}`, http.StatusCreated},
+		{http.MethodDelete, "/api/roots/" + secondRootName, "", http.StatusNoContent},
+		{http.MethodPost, "/api/series/" + e.seriesFolderID + "/rescan", "", http.StatusAccepted},
+		{http.MethodPut, "/api/books/" + e.bookZipID + "/progress", `{"page":5}`, http.StatusOK},
+		{http.MethodDelete, "/api/books/" + e.bookZipID + "/progress", "", http.StatusNoContent},
+		{http.MethodPut, "/api/books/" + e.bookZipID + "/prefs", `{"fit_mode":"width"}`, http.StatusOK},
+		{http.MethodPut, "/api/settings", `{"theme":"dark"}`, http.StatusOK},
+		{http.MethodDelete, "/api/cache?kind=thumbs", "", http.StatusOK},
+		{http.MethodPost, "/api/scan", `{}`, http.StatusAccepted},
+		{http.MethodPost, "/api/scan/cancel", "", http.StatusNoContent},
+		{http.MethodPost, "/api/progress/import", importDoc, http.StatusOK},
+		// Verbs no route registers are still behind the gate: a 405 would tell
+		// a stranger which methods a path accepts.
+		{http.MethodPatch, "/api/settings", `{"theme":"dark"}`, http.StatusMethodNotAllowed},
+		{http.MethodOptions, "/api/series", "", http.StatusMethodNotAllowed},
+	}
+	send := func(method, target, body string, mutate ...func(*http.Request)) *httptest.ResponseRecorder {
+		t.Helper()
+		asJSON := func(r *http.Request) {
+			if body != "" {
+				r.Header.Set("Content-Type", "application/json")
+			}
+		}
+		return e.do(method, target, strings.NewReader(body), append([]func(*http.Request){asJSON}, mutate...)...)
+	}
+
+	rootsBefore := fmt.Sprint(e.configFileRoots())
+	settingsBefore, err := e.user.Settings().All(ctx)
+	if err != nil {
+		t.Fatalf("reading settings: %v", err)
+	}
+	prefsBefore, err := e.user.GetPrefs(ctx, e.bookZipID)
+	if err != nil {
+		t.Fatalf("reading prefs: %v", err)
+	}
+	progressBefore, err := e.user.GetProgress(ctx, e.bookZipID)
+	if err != nil {
+		t.Fatalf("reading the seeded progress: %v", err)
+	}
+	// The purge needs something to purge, or "the cache survived" is true of
+	// an empty directory whether the request got through or not. Generate is
+	// the synchronous twin of the HTTP path, so the file exists on return.
+	thumb, err := e.thumbs.Generate(ctx, thumbs.Request{ID: e.bookZipID, PageNo: 1, Width: 120, ContentVersion: cvZip})
+	if err != nil {
+		t.Fatalf("generating a thumbnail for the purge to find: %v", err)
+	}
+	if _, err := os.Stat(thumb.Path); err != nil {
+		t.Fatalf("the generated thumbnail is not on disk: %v", err)
+	}
+
+	for _, w := range writes {
+		t.Run("401 "+w.method+" "+w.target, func(t *testing.T) {
+			errorBody(t, send(w.method, w.target, w.body), http.StatusUnauthorized, CodeUnauthorized)
+		})
+	}
+	if w := e.do(http.MethodHead, "/api/series", nil); w.Code != http.StatusUnauthorized {
+		t.Errorf("HEAD /api/series = %d without a session, want 401", w.Code)
+	}
+
+	// Nothing those requests asked for happened.
+	if e.scan.starts != 0 || e.scan.cancels != 0 {
+		t.Errorf("scanner saw %d starts and %d cancels from requests without a session, want none",
+			e.scan.starts, e.scan.cancels)
+	}
+	if len(e.scan.added) != 0 {
+		t.Errorf("scanner was handed roots %v by a request without a session", e.scan.added)
+	}
+	if got := fmt.Sprint(e.configFileRoots()); got != rootsBefore {
+		t.Errorf("configured roots after POST/DELETE without a session = %s, want %s", got, rootsBefore)
+	}
+	if got, err := e.user.Settings().All(ctx); err != nil || !equalStringMaps(got, settingsBefore) {
+		t.Errorf("settings after PUT without a session = %v (%v), want %v", got, err, settingsBefore)
+	}
+	if got, err := e.user.GetPrefs(ctx, e.bookZipID); err != nil || prefsText(got) != prefsText(prefsBefore) {
+		t.Errorf("prefs after PUT without a session = %s (%v), want %s", prefsText(got), err, prefsText(prefsBefore))
+	}
+	if got, err := e.user.GetProgress(ctx, e.bookZipID); err != nil || got != progressBefore {
+		t.Errorf("progress after PUT/DELETE without a session = %+v (%v), want %+v", got, err, progressBefore)
+	}
+	if _, err := e.user.GetProgress(ctx, e.bookDirID); !errors.Is(err, userdata.ErrNotFound) {
+		t.Errorf("progress for %s after an import without a session: %v, want ErrNotFound", e.bookDirID, err)
+	}
+	if _, err := os.Stat(thumb.Path); err != nil {
+		t.Errorf("thumbnail %s after DELETE /api/cache?kind=thumbs without a session: %v, want it still cached", thumb.Path, err)
+	}
+
+	// With a session the same requests get past the gate, so the 401s above
+	// came from it and not from somewhere further in.
+	login := e.jsonBody(http.MethodPost, "/api/auth/login", `{"password":"hunter2"}`)
+	if login.Code != http.StatusNoContent {
+		t.Fatalf("login = %d, want 204: %s", login.Code, login.Body.String())
+	}
+	session := login.Result().Cookies()[0]
+	withCookie := func(r *http.Request) { r.AddCookie(session) }
+	for _, w := range writes {
+		if got := send(w.method, w.target, w.body, withCookie); got.Code != w.want {
+			t.Errorf("%s %s with the session = %d, want %d: %s", w.method, w.target, got.Code, w.want, got.Body.String())
+		}
+	}
+	// And the thumbnail was one the purge removes, so its survival above meant
+	// something.
+	if _, err := os.Stat(thumb.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("thumbnail %s after the purge with a session: %v, want it gone", thumb.Path, err)
+	}
+}
+
+// prefsText spells a Prefs by value; its overrides are pointers, so == would
+// compare addresses.
+func prefsText(p userdata.Prefs) string {
+	deref := func(s *string) string {
+		if s == nil {
+			return "<default>"
+		}
+		return *s
+	}
+	return fmt.Sprintf("%s/%s/%s@%d", deref(p.ReadingDir), deref(p.DisplayMode), deref(p.FitMode), p.UpdatedAt)
+}
+
+func equalStringMaps(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if bv, ok := b[k]; !ok || bv != v {
+			return false
+		}
+	}
+	return true
 }
 
 // arch §8.2 — the login limiter is 5 per minute, burst 5, then 429 with a
