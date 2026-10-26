@@ -187,6 +187,25 @@ func TestReleaseSizeBudget_GateStillFailsTheBuild(t *testing.T) {
 	}
 }
 
+// logicalLines joins a recipe's backslash continuations, so that each element is
+// one shell invocation — the unit make runs and judges by its exit status.
+func logicalLines(recipe string) []string {
+	var out []string
+	var cur strings.Builder
+	for _, line := range strings.Split(recipe, "\n") {
+		trimmed := strings.TrimRight(line, " \t")
+		if body, ok := strings.CutSuffix(trimmed, "\\"); ok {
+			cur.WriteString(body)
+			cur.WriteString(" ")
+			continue
+		}
+		cur.WriteString(trimmed)
+		out = append(out, cur.String())
+		cur.Reset()
+	}
+	return out
+}
+
 // section returns the recipe of the target whose line starts with prefix, up to
 // the next target definition.
 func section(makefile, prefix string) string {

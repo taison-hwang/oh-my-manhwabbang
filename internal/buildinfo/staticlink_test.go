@@ -479,6 +479,12 @@ func makeEnv() []string {
 		"TAGS": true, "AVIF_TAGS": true, "VERSION": true,
 		"RELEASE_TARGETS": true, "LINUX_TARGETS": true,
 		"STATIC_ARTEFACTS": true, "AVIF_ARTEFACTS": true, "SIZE_BUDGET": true,
+		// RACE is `?=`, so a `RACE=` in the operator's shell — the documented
+		// escape hatch on a machine without a C compiler — would otherwise answer
+		// for the Makefile's default. The two package lists are `:=` and cannot
+		// be overridden from the environment, but a guard about what the Makefile
+		// derives should not depend on that staying true.
+		"RACE": true, "INT_PKGS": true, "NOPDF_PKGS": true,
 	}
 	env := os.Environ()
 	kept := env[:0]
@@ -560,23 +566,96 @@ func TestDefaultBuildIsConfiguredStatic(t *testing.T) {
 	// left `go test -tags noavif ./...` failing (two golden files pinned
 	// `avif_enabled: true`, which a default build can no longer report) with every
 	// gate green, because `make lint` only *vets* the shipped tags.
+	//
+	// The assertions are per `$(GO) test` LINE, not substrings of the recipe: a
+	// recipe-wide Contains was satisfied by `-tags "$(TAGS)"` tacked onto pass 1
+	// (which deletes the untagged superset while every check stayed green), and
+	// by a `$(RACE)` present on one pass and missing from another. And they read
+	// each line's WORDS (goRuns, testcoverage_test.go), not its text: per-line
+	// substrings still passed `@echo '$(GO) test …'` in place of a pass, `-run
+	// '^$'` appended to one, and `$(RACE)` moved into an echoed string.
 	testRecipe := commands(section(makefile, "test:"))
 	if testRecipe == "" {
 		t.Fatal("Makefile has no `test` target")
 	}
-	if !strings.Contains(testRecipe, `-tags "$(TAGS)"`) {
-		t.Errorf("the `test` recipe no longer runs the suite with `-tags \"$(TAGS)\"`:\n%s\n"+
-			"Ruling E-21 made `noavif` the default, so $(TAGS) is what users receive. "+
-			"Without this pass nothing anywhere runs the tests in the shipped "+
-			"configuration — `make lint`'s `go vet -tags` does not run tests.", testRecipe)
+	passes := []struct {
+		name string
+		is   func(goRun) bool
+		why  string
+	}{
+		{"pass 1, untagged",
+			func(r goRun) bool { _, tagged := r.flag("tags"); return !tagged && r.packages() == "./..." },
+			"That pass is the superset: thumbs.TestGenerate_avif_decodesThroughThe" +
+				"SerialisedSlowPath self-skips under `-tags noavif`, so dropping it deletes " +
+				"the only live AVIF decode coverage in the repository."},
+		{"pass 2, -tags \"$(TAGS)\" ./...",
+			func(r goRun) bool { tags, _ := r.flag("tags"); return tags == "$(TAGS)" && r.packages() == "./..." },
+			"Ruling E-21 made `noavif` the default, so $(TAGS) is what users receive. " +
+				"Without this pass nothing anywhere runs the tests in the shipped " +
+				"configuration — `make lint`'s `go vet -tags` does not run tests."},
+		{"pass 3, -tags \"$(TAGS) nopdf\" $(NOPDF_PKGS)",
+			func(r goRun) bool {
+				tags, _ := r.flag("tags")
+				return tags == "$(TAGS) nopdf" && r.packages() == "$(NOPDF_PKGS)"
+			},
+			"nopdf is a supported build, and its stub tests (internal/pdfium/" +
+				"pool_stub_test.go, internal/source/{pdfsource_stub_test.go," +
+				"encoding_nopdf_test.go}) compile under no other pass. Removing the " +
+				"rounding in pdfium/pool_stub.go is red only here."},
 	}
-	// …and must not do it by REPLACING the untagged pass, which is the only one
-	// that carries a decoder and can therefore exercise the live AVIF path.
-	if !strings.Contains(testRecipe, "$(GO) test ./...") {
-		t.Errorf("the `test` recipe no longer runs the suite untagged:\n%s\n"+
-			"That pass is the superset: thumbs.TestGenerate_avif_decodesThroughThe"+
-			"SerialisedSlowPath self-skips under `-tags noavif`, so dropping it deletes "+
-			"the only live AVIF decode coverage in the repository.", testRecipe)
+	runs, problems := goRuns(testRecipe, "test") // testcoverage_test.go
+	for _, p := range problems {
+		t.Errorf("a `test` line that mentions `$(GO) test` does not run it:\n  %s", p)
+	}
+	lines := make([]string, len(runs))
+	for i, r := range runs {
+		lines[i] = r.line
+	}
+	if len(runs) != len(passes) {
+		t.Errorf("the `test` recipe runs `$(GO) test` %d times, want exactly %d "+
+			"(untagged, $(TAGS), $(TAGS) nopdf):\n  %s",
+			len(runs), len(passes), strings.Join(lines, "\n  "))
+	}
+	for _, p := range passes {
+		n := 0
+		for _, l := range runs {
+			if p.is(l) {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Errorf("the `test` recipe has %d lines that are %s, want 1:\n  %s\n%s",
+				n, p.name, strings.Join(lines, "\n  "), p.why)
+		}
+	}
+	for _, r := range runs {
+		l := r.line
+		if !r.has("$(RACE)") {
+			t.Errorf("a `test` pass has lost `$(RACE)`:\n  %s\nimpl-plan §5.1 requires "+
+				"-race on the unit suite; every pass carries the variable so that the "+
+				"operator's `make RACE=` drops it everywhere at once and nowhere else.", l)
+		}
+		if !r.has("-count=1") {
+			t.Errorf("a `test` pass has lost `-count=1`:\n  %s\nWithout it `go test` "+
+				"replays cached results, and a gate that reads the cache did not run.", l)
+		}
+	}
+	if !strings.Contains(testRecipe, "$(if $(NOPDF_PKGS),,$(error") {
+		t.Errorf("the `test` recipe no longer stops on an empty NOPDF_PKGS. `go test` " +
+			"with no package arguments tests the current directory and succeeds, so a " +
+			"broken derivation would pass 3 silently.")
+	}
+
+	// RACE: the value is make's, the operator escape hatch is `?=`.
+	if race := makeVar(t, "RACE"); race != "-race" {
+		t.Errorf("`make print-RACE` expands to %q, want \"-race\". impl-plan §5.1 "+
+			"requires the race detector on the unit suite, and every `test` pass takes "+
+			"its flag from this variable.", race)
+	}
+	if !hasAssignment(makefile, "RACE", "?=") {
+		t.Error("Makefile has no `RACE ?= …`. `?=` is the operator's `make RACE=` " +
+			"escape hatch on a machine with no C compiler (the race detector needs cgo); " +
+			"a `:=` or `=` silently ignores it from the environment.")
 	}
 }
 

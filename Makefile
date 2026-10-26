@@ -172,8 +172,48 @@ build-go:
 dev:
 	$(BUILDENV) $(GO) run ./cmd/shelf --config ./shelf.yaml --log-level debug
 
-## test — the hermetic unit suite (impl-plan §6.1), run TWICE: untagged, then in
-## the tag set that actually ships.
+# The packages a build tag changes, DERIVED from the source rather than written
+# out, so that a new tagged file joins its target without anyone remembering to.
+# A hand-written `./integration/...` is how internal/archive/{zipidx,rar4,hv3}'s
+# integration tests and internal/scanner's ratio test came to be compiled by no
+# target at all; nothing failed, because a file no build includes cannot fail.
+#
+# GO_FIND walks the tree the way `./...` does: testdata/, vendor/, and names
+# starting with `.` or `_` are pruned (so .worktrees/ is), and so is node_modules/,
+# where pnpm keeps third-party .go files. A directory with its own go.mod is
+# another module, outside `./...`: GO_MODULES (every go.mod but the root's) drops
+# what lies under it. Pruning those inside find would cost a `test` process per
+# directory on every make run, these being `:=`. Symlinks are taken (`-type l`,
+# POSIX, so not GNU-only like -xtype): the go tool compiles a symlink to a file
+# and ignores one to a directory, as `grep -d skip` does. tagged_pkgs turns the
+# files whose `//go:build` line matches $(1) into a sorted `./dir` list; leading
+# blanks are allowed because go/build trims each line before reading it.
+#
+#   INT_PKGS    the tag is REQUIRED: `integration` not preceded by `!`, so
+#               `integration && !race` is in and `!integration` is out.
+#   NOPDF_PKGS  the tag is MENTIONED, in either polarity: a package with only a
+#               `!nopdf` file (internal/httpapi) is still a different package
+#               under nopdf, and that configuration is what pass 3 runs.
+#
+# Both are greps, and deliberately NOT a constraint parser: `!(integration)` and
+# `!(!integration)` are read wrong, and that is accepted. The semantic authority
+# is internal/buildinfo/testcoverage_test.go, which holds them to go/build's own
+# constraint matcher on this tree and on a synthetic one built from the shapes a
+# grep gets wrong — so a misreading is a red test naming the package, never a
+# silent loss (that claim is itself tested). An empty list is an error in the
+# recipes that use it: `go test` with no package arguments tests the current
+# directory and passes.
+GO_PRUNE    := \( -name testdata -o -name vendor -o -name node_modules \
+                  -o -name '.?*' -o -name '_*' \) -prune
+GO_MODULES  := $(filter-out .,$(patsubst %/go.mod,%,$(shell find . $(GO_PRUNE) -o -type f -name go.mod -print)))
+GO_FIND     := find . $(GO_PRUNE) -o \( -type f -o -type l \) -name '*.go'
+tagged_pkgs = $(sort $(patsubst %/,%,$(dir $(filter-out $(addsuffix /%,$(GO_MODULES)),$(shell \
+                  $(GO_FIND) -exec grep -d skip -lE '$(1)' {} +)))))
+INT_PKGS    := $(call tagged_pkgs,^[[:space:]]*//go:build(.*[^!A-Za-z0-9_.])?integration([^A-Za-z0-9_.]|$$))
+NOPDF_PKGS  := $(call tagged_pkgs,^[[:space:]]*//go:build(.*[^A-Za-z0-9_.])?nopdf([^A-Za-z0-9_.]|$$))
+
+## test — the hermetic unit suite (impl-plan §6.1), run in THREE passes: untagged,
+## the tag set that ships, and the nopdf build in the packages it changes.
 #
 # CGO_ENABLED=1 here, and only here. impl-plan §5.1 requires `-race`, and the
 # race detector is implemented in C: `go test -race` under CGO_ENABLED=0 fails
@@ -196,30 +236,52 @@ dev:
 #   pass 2  -tags "$(TAGS)" — what SHIPS. Compiles internal/thumbs/avif_off.go
 #           and asserts the product behaves in the configuration users get.
 #
-# Both are needed: neither is a subset of the other. Dropping pass 2 is the
-# defect above; dropping pass 1 would delete the AVIF decode coverage entirely.
-# internal/buildinfo/staticlink_test.go asserts pass 2 stays in this recipe.
+#   pass 3  -tags "$(TAGS) nopdf" over $(NOPDF_PKGS) — the supported build
+#           without PDFium. Its stub tests (internal/pdfium/pool_stub_test.go,
+#           internal/source/{pdfsource_stub_test.go,encoding_nopdf_test.go})
+#           compile under no other pass, so until this pass existed nothing ran
+#           them: deleting the rounding in pdfium/pool_stub.go stayed green.
+#
+# Passes 1 and 2 are both needed: neither is a subset of the other. Dropping pass
+# 2 is the defect above; dropping pass 1 would delete the AVIF decode coverage
+# entirely. Pass 3 is NOT the whole suite a third time: a package with no nopdf
+# constraint compiles to the same code under it, and `make test` is already the
+# job most likely to run the machine out of memory. Every pass carries $(RACE)
+# and -count=1. internal/buildinfo/staticlink_test.go asserts all three passes,
+# line by line, and that RACE defaults to -race through `?=`.
 RACE ?= -race
 test:
-	@echo ">> test 0/2: the E2E gate's own assertions (no server, ~1 s)"
+	@$(if $(NOPDF_PKGS),,$(error NOPDF_PKGS is empty: no package has a nopdf build constraint. Pass 3 would test the current directory and pass. See the comment above INT_PKGS))
+	@echo ">> test 0/3: the E2E gate's own assertions (no server, ~1 s)"
 	@python3 scripts/e2e-assert-rescan-test.py
-	@echo ">> test 1/2: untagged (the superset — includes the live AVIF decode path)"
+	@echo ">> test 1/3: untagged (the superset — includes the live AVIF decode path)"
 	$(GOENV) CGO_ENABLED=1 $(GO) test ./... $(RACE) -count=1
-	@echo ">> test 2/2: the SHIPPED tag set (-tags \"$(TAGS)\")"
+	@echo ">> test 2/3: the SHIPPED tag set (-tags \"$(TAGS)\")"
 	$(GOENV) CGO_ENABLED=1 $(GO) test -tags "$(TAGS)" ./... $(RACE) -count=1
+	@echo ">> test 3/3: the nopdf build, in the packages it changes (-tags \"$(TAGS) nopdf\")"
+	$(GOENV) CGO_ENABLED=1 $(GO) test -tags "$(TAGS) nopdf" $(NOPDF_PKGS) $(RACE) -count=1
 
 ## test-int — the integration suite of impl-plan §6.2. Needs the media volume.
 #
+# It runs $(INT_PKGS): every package holding a `//go:build integration` file
+# (see the comment above that variable), not just ./integration.
+#
 # SHELF_TEST_ROOT must point at the collection the curated subset lives in; with
-# it unset every test in ./integration skips itself and the target is a no-op
-# that still proves the tag compiles.
+# it unset every test in ./integration and the archive readers' integration
+# tests skip themselves. Not everything skips: internal/scanner's
+# incremental-vs-cold ratio test (`integration && !race`) needs no root and runs
+# regardless — it lives here because it is a slow timing measurement that
+# `make test`'s -race would distort. `-tags integration` also reruns those
+# packages' ordinary unit tests, without -race and with cgo off, which is the
+# price of compiling their tagged files in the same package.
 test-int:
+	@$(if $(INT_PKGS),,$(error INT_PKGS is empty: no package has a //go:build integration file. go test would test the current directory and pass. See the comment above INT_PKGS))
 	@if [ -z "$(SHELF_TEST_ROOT)" ]; then \
-		echo ">> SHELF_TEST_ROOT is unset: the integration tests will skip."; \
+		echo ">> SHELF_TEST_ROOT is unset: the tests that need the collection will skip."; \
 		echo ">> Run: make test-int SHELF_TEST_ROOT=\"/path/to/the/collection\""; \
 	fi
 	$(GOENV) CGO_ENABLED=0 SHELF_TEST_ROOT="$(SHELF_TEST_ROOT)" \
-		$(GO) test -tags integration ./integration/... -count=1 -timeout 30m -v
+		$(GO) test -tags integration $(INT_PKGS) -count=1 -timeout 30m -v
 
 ## bench — impl-plan §6.4. A >20 % regression against the baseline fails review.
 bench:
@@ -236,12 +298,25 @@ bench:
 # `-tags "$(TAGS)"` is what actually SHIPS (ruling E-21 made `noavif` the
 # default), and nothing else in the repo ever compiles that configuration —
 # internal/thumbs/avif_off.go would otherwise rot unnoticed.
+#
+# Then once more for each tag-only file set, over just the packages it changes
+# (INT_PKGS, NOPDF_PKGS): neither vet above can see an `integration` or `nopdf`
+# file, by construction. staticcheck is NOT repeated per tag. `go vet` with the
+# tag already type-checks those files, which is the rot that matters, and each
+# staticcheck run is a fresh `go run …@latest` analysis of the whole dependency
+# graph — the expensive step of this recipe, not worth paying twice more for
+# a handful of test files.
 lint:
 	@scripts/check-readonly.sh
 	@scripts/check-gates.sh
 	$(BUILDENV) $(GO) vet ./...
 	@echo ">> vet of the SHIPPED tag set (-tags \"$(TAGS)\")"
 	$(BUILDENV) $(GO) vet -tags "$(TAGS)" ./...
+	@echo ">> vet of the tag-only files (-tags integration; -tags \"$(TAGS) nopdf\")"
+	@$(if $(INT_PKGS),,$(error INT_PKGS is empty. See the comment above it))
+	@$(if $(NOPDF_PKGS),,$(error NOPDF_PKGS is empty. See the comment above it))
+	$(BUILDENV) $(GO) vet -tags integration $(INT_PKGS)
+	$(BUILDENV) $(GO) vet -tags "$(TAGS) nopdf" $(NOPDF_PKGS)
 	$(BUILDENV) $(GO) run honnef.co/go/tools/cmd/staticcheck@latest ./...
 	@$(BUILDENV) $(GO) run ./scripts/contractcheck
 
