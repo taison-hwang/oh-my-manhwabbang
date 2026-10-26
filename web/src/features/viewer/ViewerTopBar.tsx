@@ -9,6 +9,8 @@ import {
   MoveHorizontal,
   MoveVertical,
 } from 'lucide-react'
+import { useLayoutEffect, useRef } from 'react'
+
 import { Button } from '../../components/ds/Button'
 import { Seg, type SegOption } from '../../components/ds/Seg'
 import { cn } from '../../lib/cn'
@@ -20,7 +22,8 @@ import type { DisplayMode, FitMode, ReadingDirection } from '../../store/viewer'
  *
  * Fades on **opacity**, never `display:none`: the bar stays mounted so the wake
  * is a 180 ms fade rather than a reflow of three segmented controls on every
- * mouse move. `pointer-events` is what actually turns it off.
+ * mouse move. `pointer-events` is what turns it off for the pointer, and
+ * `inert` (E-62) for the keyboard and the accessibility tree.
  *
  * **No hover-hold handlers here.** E-27's "a pointer resting in the chrome pins
  * it open" used to be `onMouseEnter`/`onMouseLeave` on this element, and that
@@ -183,6 +186,16 @@ export function ViewerTopBar({
   onDirChange,
   onFitChange,
 }: ViewerTopBarProps) {
+  const barRef = useRef<HTMLDivElement | null>(null)
+  // E-62 §2.1: hidden, the bar is `inert` — out of the Tab order and the
+  // accessibility tree, not merely transparent and unclickable. A DOM attribute
+  // rather than a prop: React 18.3 drops `inert={true}` and @types/react 18 does
+  // not declare it. A layout effect, so the attribute is in place before the
+  // frame that hides the bar is painted.
+  useLayoutEffect(() => {
+    barRef.current?.toggleAttribute('inert', !visible)
+  }, [visible])
+
   const modeSeg = (
     <Seg
       aria-label="표시 모드"
@@ -213,6 +226,7 @@ export function ViewerTopBar({
 
   return (
     <div
+      ref={barRef}
       data-role="viewer-top-bar"
       data-visible={visible ? 'true' : 'false'}
       className={cn(

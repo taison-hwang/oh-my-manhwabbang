@@ -14,6 +14,8 @@
  * `H` arrived with ruling **E-27**, which took the chrome off the mouse: page
  * turns do not wake it and the viewer opens without it, so a keyboard reader
  * who never touches the screen edges needs a key that summons it.
+ * **E-62** lets it through from a radio or a range input as well — see
+ * `leaveToControl`.
  *
  * These are **viewer-only** keys and are deliberately not in
  * `lib/useHotkeys.ts`: a bare `2` must not switch display mode while the
@@ -55,6 +57,46 @@ export interface ViewerKeysOptions {
   enabled?: boolean
 }
 
+/**
+ * Inputs that take no text: a key pressed on one is not being typed.
+ *
+ * `HTMLInputElement.type` is normalised — lower-case, and `text` for a missing
+ * or unknown value — so anything not listed here is text entry and keeps its
+ * keys. The list is closed on purpose: a type nobody thought about is safer
+ * typed into than taken.
+ */
+const NON_TEXT_INPUT_TYPES: ReadonlySet<string> = new Set([
+  'radio',
+  'checkbox',
+  'range',
+  'button',
+  'submit',
+  'reset',
+  'color',
+  'file',
+  'image',
+])
+
+/**
+ * Whether the viewer should leave `event` to the control it was pressed on.
+ *
+ * `isTypingTarget` answers that for every key but `H`, exactly as before: on a
+ * radio or the page slider the arrows are the control's own step or selection,
+ * and `Space`, the digits, `T` and `F` stay the control's too.
+ *
+ * **`H` is narrower (E-62 §2.2).** It is the keyboard reader's only way to put
+ * the chrome away, and the controls a keyboard reader is on when they want to
+ * are a seg radio or the slider — neither takes text, and neither does anything
+ * with `h`. So only real text entry (a text-like input, a textarea, a select's
+ * type-ahead, contenteditable) keeps it.
+ */
+function leaveToControl(event: KeyboardEvent): boolean {
+  if (!isTypingTarget(event.target)) return false
+  if (event.key.toLowerCase() !== 'h') return true
+  const target = event.target
+  return !(target instanceof HTMLInputElement && NON_TEXT_INPUT_TYPES.has(target.type))
+}
+
 /** `1` / `2` / `3` → the wire display modes (C-1: `spread`, never `double`). */
 const MODE_KEYS: Readonly<Record<string, DisplayMode>> = {
   '1': 'single',
@@ -81,7 +123,7 @@ export function useViewerKeys(options: ViewerKeysOptions): void {
     const onKeyDown = (event: KeyboardEvent): void => {
       // Ctrl/Cmd/Alt combinations belong to the browser or to the global map.
       if (event.metaKey || event.ctrlKey || event.altKey) return
-      if (isTypingTarget(event.target)) return
+      if (leaveToControl(event)) return
       // A dialog is on top: the viewer is not the thing being driven.
       if (useUiStore.getState().overlays.length > 0) return
 

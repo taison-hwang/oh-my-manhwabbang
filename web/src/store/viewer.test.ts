@@ -6,6 +6,7 @@ import {
   DEFAULT_FIT,
   STALE_NOTICE_MS,
   cancelChromeAutoHide,
+  registerChromeFocusHold,
   selectAtVolumeEnd,
   selectStaleAckOwed,
   useViewerStore,
@@ -445,6 +446,24 @@ describe('chrome auto-hide (ui-spec §8.2, widened to 2 600 ms by E-27)', () => 
     expect(useViewerStore.getState().dragPage).toBe(100)
   })
 
+  /**
+   * …and neither does a toggle (E-62 review). `H` reaches the viewer from the
+   * slider now, and hiding there moves the focus off it, whose blur commits the
+   * drag, whose commit wakes the chrome again — a blink rather than a hide. The
+   * toggle declines mid-drag for the timer's reason, and works again after.
+   */
+  it('does not toggle the chrome away mid-drag either', () => {
+    open(214, 12)
+    useViewerStore.getState().setDragging(true, 100)
+    useViewerStore.getState().toggleChrome()
+    expect(useViewerStore.getState().chromeVisible).toBe(true)
+    expect(useViewerStore.getState().dragging).toBe(true)
+
+    useViewerStore.getState().setDragging(false)
+    useViewerStore.getState().toggleChrome()
+    expect(useViewerStore.getState().chromeVisible).toBe(false)
+  })
+
   it('toggles both ways from a tap in the centre zone', () => {
     open(10)
     useViewerStore.getState().toggleChrome()
@@ -486,7 +505,7 @@ describe('chrome auto-hide (ui-spec §8.2, widened to 2 600 ms by E-27)', () => 
    * twitch of a mouse resting over the page — a chrome that never goes away,
    * which is E-27 read backwards.
    */
-  it('releasing a chrome nobody is holding does not push the deadline back', () => {
+  it('releasing a hold nobody has taken does not push the deadline back', () => {
     open(10)
     useViewerStore.getState().wake()
     vi.advanceTimersByTime(CHROME_AUTOHIDE_MS - 200)
@@ -509,7 +528,7 @@ describe('chrome auto-hide (ui-spec §8.2, widened to 2 600 ms by E-27)', () => 
   /**
    * **A hold may not outlive the viewer that took it.**
    *
-   * `chromeHeld` is module-scoped, so it survives every unmount — and a hold
+   * The hold flag is module-scoped, so it survives every unmount — and a hold
    * left standing disarms the auto-hide for the rest of the session, with
    * nothing on screen able to re-arm it. `close()` is the guarantee: the viewer
    * unmounts through it (`ViewerPage`'s cleanup effect) and 뒤로/`Esc` call it
@@ -551,6 +570,16 @@ describe('chrome auto-hide (ui-spec §8.2, widened to 2 600 ms by E-27)', () => 
     expect(useViewerStore.getState().chromeVisible).toBe(false)
   })
 
+  it('a hold does not survive a deliberate hide', () => {
+    open(10)
+    useViewerStore.getState().wake()
+    useViewerStore.getState().holdChrome()
+    useViewerStore.getState().hideChrome()
+    useViewerStore.getState().wake()
+    vi.advanceTimersByTime(CHROME_AUTOHIDE_MS)
+    expect(useViewerStore.getState().chromeVisible).toBe(false)
+  })
+
   // Necessary, and on its own **not sufficient** — that is the whole history of
   // this rule. Its predecessor asserted the same thing about a store action no
   // screen could call, so the shipped build woke the chrome on every arrow key
@@ -576,6 +605,123 @@ describe('chrome auto-hide (ui-spec §8.2, widened to 2 600 ms by E-27)', () => 
     useViewerStore.getState().hideChrome()
     useViewerStore.getState().goTo(90)
     expect(useViewerStore.getState().chromeVisible).toBe(true)
+  })
+})
+
+/**
+ * **The keyboard-focus hold is a question, asked when the deadline comes (E-62,
+ * revised after review).**
+ *
+ * It used to be a second flag beside E-30's, taken on `focusin` and dropped on
+ * `focusout`. Three ways of being wrong came with that, each a missing event: a
+ * focused control unmounted under the keyboard sends React no `focusout`, so the
+ * flag was never dropped; arrow keys on a control a click had focused move no
+ * focus, so it was never taken; and `open()` on the next volume reset it while
+ * the focus stayed where it was. A predicate the screen registers — it alone can
+ * see the DOM — has nothing to miss: the auto-hide asks it when it fires, hides
+ * on "no", and asks again a full `CHROME_AUTOHIDE_MS` later on "yes".
+ */
+describe('the keyboard-focus hold is asked, not kept (E-62)', () => {
+  let keyboardInABar = false
+  let unregister: () => void = () => undefined
+
+  beforeEach(() => {
+    keyboardInABar = false
+    unregister = registerChromeFocusHold(() => keyboardInABar)
+  })
+  afterEach(() => {
+    unregister()
+  })
+
+  it('keeps the chrome up while it answers yes, and lets go at the next deadline after a no', () => {
+    open(10)
+    useViewerStore.getState().wake()
+    keyboardInABar = true
+    vi.advanceTimersByTime(CHROME_AUTOHIDE_MS * 3)
+    expect(useViewerStore.getState().chromeVisible).toBe(true)
+
+    // No event, no release call: the answer changing is all there is.
+    keyboardInABar = false
+    vi.advanceTimersByTime(CHROME_AUTOHIDE_MS)
+    expect(useViewerStore.getState().chromeVisible).toBe(false)
+  })
+
+  it('is asked at the deadline, not before — a no until then hides on time', () => {
+    open(10)
+    useViewerStore.getState().wake()
+    keyboardInABar = true
+    vi.advanceTimersByTime(CHROME_AUTOHIDE_MS - 1)
+    keyboardInABar = false
+    vi.advanceTimersByTime(1)
+    expect(useViewerStore.getState().chromeVisible).toBe(false)
+  })
+
+  it('outlives the next volume’s open(), which has nothing of it to reset', () => {
+    open(10)
+    useViewerStore.getState().wake()
+    keyboardInABar = true
+    useViewerStore.getState().open('bk-2', { pageCount: 10, page: 1, fit: DEFAULT_FIT })
+    vi.advanceTimersByTime(CHROME_AUTOHIDE_MS * 2)
+    expect(useViewerStore.getState().chromeVisible).toBe(true)
+  })
+
+  /**
+   * E-30's releases are the pointer's. A mouse moving over the stage
+   * (`nudgePointer`) says nothing about where the keyboard focus is.
+   */
+  it('is not dropped by a pointer release', () => {
+    open(10)
+    useViewerStore.getState().wake()
+    keyboardInABar = true
+    useViewerStore.getState().holdChrome()
+    for (let i = 0; i < 5; i++) useViewerStore.getState().releaseChrome()
+    vi.advanceTimersByTime(CHROME_AUTOHIDE_MS * 3)
+    expect(useViewerStore.getState().chromeVisible).toBe(true)
+  })
+
+  it('does not stand in the way of a deliberate hide — H, the centre tap', () => {
+    open(10)
+    useViewerStore.getState().wake()
+    keyboardInABar = true
+    useViewerStore.getState().toggleChrome()
+    expect(useViewerStore.getState().chromeVisible).toBe(false)
+  })
+
+  it('still lets the drag decline the hide on its own terms', () => {
+    open(10)
+    useViewerStore.getState().setDragging(true, 3)
+    keyboardInABar = true
+    vi.advanceTimersByTime(CHROME_AUTOHIDE_MS)
+    keyboardInABar = false
+    vi.advanceTimersByTime(CHROME_AUTOHIDE_MS * 2)
+    expect(useViewerStore.getState().chromeVisible, 'mid-drag').toBe(true)
+    useViewerStore.getState().setDragging(false)
+    vi.advanceTimersByTime(CHROME_AUTOHIDE_MS)
+    expect(useViewerStore.getState().chromeVisible).toBe(false)
+  })
+
+  /**
+   * One screen registers at a time, but a remount runs the new effect before —
+   * or, under StrictMode, between — the old one's cleanup. A stale unregister
+   * must not take the live predicate with it.
+   */
+  it('is unregistered by the registration that put it there, and only by it', () => {
+    const stale = unregister
+    unregister = registerChromeFocusHold(() => keyboardInABar)
+    stale()
+
+    open(10)
+    useViewerStore.getState().wake()
+    keyboardInABar = true
+    vi.advanceTimersByTime(CHROME_AUTOHIDE_MS * 2)
+    expect(useViewerStore.getState().chromeVisible).toBe(true)
+
+    // The live unregister does take it. The predicate still answers "held", so
+    // only its removal lets the next deadline hide; an unregister that does
+    // nothing leaks it, and a screen that has gone holds every later chrome.
+    unregister()
+    vi.advanceTimersByTime(CHROME_AUTOHIDE_MS)
+    expect(useViewerStore.getState().chromeVisible, 'held by an unregistered predicate').toBe(false)
   })
 })
 

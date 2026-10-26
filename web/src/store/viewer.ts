@@ -183,6 +183,10 @@ export interface ViewerState {
    * of them would hand the reader a chrome that never goes away as long as the
    * mouse keeps twitching over the page. So a call that does not change the
    * answer does nothing at all.
+   *
+   * **The pointer's alone.** E-62's keyboard-focus hold is not taken or dropped
+   * here — it is asked, at the deadline (`registerChromeFocusHold`) — so no
+   * release on this pair can touch it.
    */
   holdChrome: () => void
   releaseChrome: () => void
@@ -223,7 +227,7 @@ let hintTimer: ReturnType<typeof setTimeout> | null = null
 let staleTimer: ReturnType<typeof setTimeout> | null = null
 
 /**
- * True while the pointer rests inside the chrome.
+ * True while the pointer rests inside the chrome (E-30).
  *
  * Module-scoped for the same reason as the timer: it is not state — nothing
  * renders from it, and it only ever decides whether an already-running wake
@@ -237,6 +241,36 @@ let staleTimer: ReturnType<typeof setTimeout> | null = null
  * the session with nothing on screen able to re-arm it.
  */
 let chromeHeld = false
+
+/**
+ * **E-62's keyboard-focus hold: a question, not a flag.** "Is the keyboard in a
+ * bar right now?" — registered by the viewer screen, which alone can see the
+ * DOM, and asked by the auto-hide at the moment it would hide.
+ *
+ * It was a second flag beside `chromeHeld`, taken on `focusin` and dropped on
+ * `focusout`, and every way it went wrong was an event that did not come: a
+ * focused control unmounted under the keyboard sends React no `focusout`, so it
+ * was never dropped and the chrome stayed up for good; arrow keys on a control a
+ * click had focused move no focus, so it was never taken; and `open()` on the
+ * next volume reset it while the focus stayed where it was. A question asked at
+ * the deadline has no event to miss. Unlike the pointer's hold, the timer keeps
+ * running under it — that timer is the only thing that will ever ask again.
+ */
+let focusHold: (() => boolean) | null = null
+
+/**
+ * Register the keyboard-focus hold's question (above); returns the unregister.
+ *
+ * The unregister clears only its own registration: a remount runs the new
+ * effect before the old cleanup, and a stale cleanup must not take the live
+ * predicate with it.
+ */
+export function registerChromeFocusHold(predicate: () => boolean): () => void {
+  focusHold = predicate
+  return () => {
+    if (focusHold === predicate) focusHold = null
+  }
+}
 
 function clearAutoHide(): void {
   if (autoHideTimer !== null) {
@@ -259,16 +293,25 @@ function clearStale(): void {
   }
 }
 
-/** Arm the auto-hide, unless the pointer is holding the chrome open. */
+/**
+ * Arm the auto-hide, unless the pointer is holding the chrome open.
+ *
+ * When it fires it declines mid-drag (the slider preview lives in the chrome;
+ * the drag's own end wakes it again), and while the keyboard is in a bar it asks
+ * again a full `CHROME_AUTOHIDE_MS` later (E-62) — so the chrome goes at the
+ * first deadline that finds the keyboard gone, however it went.
+ */
 function armAutoHide(): void {
   clearAutoHide()
   if (chromeHeld) return
   autoHideTimer = setTimeout(() => {
     autoHideTimer = null
-    // Never steal the chrome away mid-drag: the slider preview lives in it.
-    if (!useViewerStore.getState().dragging) {
-      useViewerStore.setState({ chromeVisible: false })
+    if (useViewerStore.getState().dragging) return
+    if (focusHold?.() === true) {
+      armAutoHide()
+      return
     }
+    useViewerStore.setState({ chromeVisible: false })
   }, CHROME_AUTOHIDE_MS)
 }
 
@@ -491,6 +534,11 @@ export const useViewerStore = create<ViewerState>()((set, get) => ({
   },
 
   toggleChrome: () => {
+    // Not mid-drag, for the auto-hide's reason: the slider preview lives in the
+    // bar. `H` reaches the viewer from the slider (E-62 §2.2), and hiding there
+    // moves the focus off it, whose blur commits the drag, whose commit wakes
+    // the chrome straight back — a blink, not a hide.
+    if (get().dragging) return
     // A deliberate toggle also answers the hint, so it does not come back when
     // the chrome goes down again inside the hint's window.
     get().dismissHint()

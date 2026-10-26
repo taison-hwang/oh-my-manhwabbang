@@ -1330,12 +1330,13 @@ the page — the principle broken at the one moment it matters most. The viewer 
 
 | | Shipped | Taken from |
 |---|---|---|
-| Auto-hide | **2600 ms** after the last wake | `CHROME_AUTOHIDE_MS`, `web/src/store/viewer.ts:21` |
-| …**held** while the pointer rests inside either bar | **Derived from where the pointer is, not latched by the bars** (**E-30**). One rule on the viewer root answers `pointerover`/`pointerout` with "is the node under the pointer inside `[data-role=viewer-top-bar]` or `[data-role=viewer-bottom-bar]`?" → `holdChrome()` / `releaseChrome()`. A wake during a hold does not arm a timer behind it. Without the hold the bars dissolve under a pointer resting on the control it is about to press. **A touch never holds** (`pointerType === 'touch'`): a tap inside a bar leaves the 2600 ms running like anywhere else, because a finger does not *rest* on a control | `trackChromeHover`, `web/src/features/viewer/ViewerPage.tsx:719`; the root's three handlers at `:788`–`:790`; `holdChrome`/`releaseChrome`, `web/src/store/viewer.ts:500`–`:513` |
-| …and never fires mid-drag | the timer runs but declines to hide while `dragging` — the slider's preview lives in the bar it would have taken away | `web/src/store/viewer.ts:297` |
-| Cursor | hidden **1600 ms** after the pointer stops moving, **independently of the chrome**; `pointer` over the two page-turn zones while awake, `default` over the centre and over the bars | `POINTER_IDLE_MS`, `web/src/features/viewer/ViewerPage.tsx:94`; the cursor itself at `:785` |
-| Summons the chrome | a **44px screen-edge strip** at the top or the bottom (`mouseenter` *or* click) wakes it; the **centre 36 %** tap zone and the **`H`** key *toggle* it, so a second tap or press sends it away | `EDGE_STRIP_PX`, `ViewerPage.tsx:107`; the strips at `:800`–`:815`; §8.2, §8.3 |
-| Does **not** wake it | moving the mouse — only the cursor comes back — and scrolling a webtoon, which reports its page through `syncPage` precisely so it cannot | `nudgePointer`, `ViewerPage.tsx:562`; `web/src/store/viewer.ts:448` |
+| Auto-hide | **2600 ms** after the last wake | `CHROME_AUTOHIDE_MS`, `web/src/store/viewer.ts` |
+| …**held** while the pointer rests inside either bar | **Derived from where the pointer is, not latched by the bars** (**E-30**). One rule on the viewer root answers `pointerover`/`pointerout` with "is the node under the pointer inside `[data-role=viewer-top-bar]` or `[data-role=viewer-bottom-bar]`?" → `holdChrome()` / `releaseChrome()`. A wake during a hold does not arm a timer behind it. Without the hold the bars dissolve under a pointer resting on the control it is about to press. **A touch never holds** (`pointerType === 'touch'`): a tap inside a bar leaves the 2600 ms running like anywhere else, because a finger does not *rest* on a control | `trackChromeHover` and the root's three pointer handlers, `web/src/features/viewer/ViewerPage.tsx`; `holdChrome`/`releaseChrome`, `web/src/store/viewer.ts` |
+| …**held** while the **keyboard** is inside either bar | **E-62.** Independent of the pointer hold, and a question rather than a flag: when the auto-hide deadline comes it asks "was the last input a key that was not a page turn, and is `document.activeElement` inside a bar?" — yes re-arms it for another 2600 ms, no hides. Focus from a click or a tap does **not** hold — every click on a bar control focuses it, and holding on that would pin the chrome open after one tap, the defect E-30 removed — and neither does reading on with ←/→/Space after one. A stage `mousemove` releases the pointer hold only. Hidden, the bars are `inert` (§9 row 12), so focus cannot be in them unless the chrome is up | E-62 |
+| …and never fires mid-drag | the timer runs but declines to hide while `dragging` — the slider's preview lives in the bar it would have taken away | `armAutoHide`, `web/src/store/viewer.ts` |
+| Cursor | hidden **1600 ms** after the pointer stops moving, **independently of the chrome**; `pointer` over the two page-turn zones while awake, `default` over the centre and over the bars | `POINTER_IDLE_MS` and the root's `cursor`, `web/src/features/viewer/ViewerPage.tsx` |
+| Summons the chrome | a **44px screen-edge strip** at the top or the bottom (`mouseenter` *or* click) wakes it; the **centre 36 %** tap zone and the **`H`** key *toggle* it, so a second tap or press sends it away | `EDGE_STRIP_PX` and the two edge strips, `ViewerPage.tsx`; §8.2, §8.3 |
+| Does **not** wake it | moving the mouse — only the cursor comes back — and scrolling a webtoon, which reports its page through `syncPage` precisely so it cannot | `nudgePointer`, `ViewerPage.tsx`; `syncPage`, `web/src/store/viewer.ts` |
 
 The edge strips are rendered **only while the chrome is away**. Once the bars are up they are what the
 pointer reaches for, and a strip over them would eat the first click on 뒤로. A click on a strip also stops
@@ -1361,11 +1362,22 @@ for the rest of the session: `chromeHeld` is module-scoped and nothing renders f
 state a reader could see or correct. The hold is taken without a crossing, so the release may not depend on
 the matching crossing arriving either. (1) a `pointerout` whose destination is not a bar — including
 `relatedTarget: null`, the pointer leaving the window; (2) `onPointerLeave` on the root; (3) a plain
-`mousemove` over the stage, folded into `nudgePointer` (`ViewerPage.tsx:562`) — a different event family
+`mousemove` over the stage, folded into `nudgePointer` (`ViewerPage.tsx`) — a different event family
 that keeps arriving rather than firing once at a boundary; (4) `open()` and `close()` reset the flag
-(`store/viewer.ts:373`, `:418`), so a viewer that was left, or a volume swapped underneath one, cannot
+(`store/viewer.ts`), so a viewer that was left, or a volume swapped underneath one, cannot
 bequeath a hold. Mutation showed (1) and (2) are genuinely independent: breaking the `pointerout` release
 left the window-exit case still releasing through the root's `pointerleave`.
+
+**The keyboard hold (E-62) is not a flag and not a fifth release.** The viewer registers a predicate
+with the store and the auto-hide timer asks it when it fires; the last input is recorded on `window` in the
+capture phase (`keydown` → keyboard unless only a modifier was pressed, `pointerdown`/`pointerup` →
+pointer; the viewer's page turns overwrite it with "reading"). Nothing is taken or dropped, so nothing can be stranded: a focused thumbnail unmounted by `T`, a
+clicked slider then driven by keys, and `open()` of the next volume all read the live DOM at the deadline.
+The chrome therefore goes at the first deadline after the keyboard leaves the bars. `H` does nothing while
+the slider is being dragged. When the chrome hides with focus still in a bar — `H`, a centre tap, or the
+auto-hide after the focus was a click's — the focus moves to the viewer root first (`tabIndex=-1`, no ring),
+so the reading keys keep working instead of focus falling to `body`. `T` closing the thumbnail strip
+with focus inside it lands focus on the root the same way, before the strip unmounts.
 
 **`holdChrome` and `releaseChrome` are idempotent, and that is a contract.** The derived rule fires many
 times for one journey across a bar, so an unconditional `releaseChrome` would push the 2600 ms deadline
@@ -1861,7 +1873,7 @@ inside a bar — a property of *where the pointer is*, answered on the viewer ro
 handler on the bar, and never taken for a touch (**E-30**, §6.1) — and suspended while the slider is being
 dragged. It is **not** bound to `mousemove` — nothing
 in the reading path calls it. What calls it is listed in §6.1 and §8.3: the two screen edges, the centre
-tap zone, `H`, and operating a control.
+tap zone, `H`, and operating a control. Keyboard focus inside a bar *holds* it (**E-62**); focus never calls it.
 
 ### 8.3 Pointer and touch
 
@@ -1877,7 +1889,8 @@ tap zone, `H`, and operating a control.
 | Slider `mouseup`/`touchend` | `dragging = false`, commit the page |
 | Top / bottom **44px screen edge** — `mouseenter` or click | Wake the chrome (**E-27**). Rendered only while the chrome is away, and the click does not propagate to the tap zone underneath |
 | Pointer **resting** inside either bar | Holds the auto-hide off while it is there, and lets go the moment it is not (**E-27**, mechanism per **E-30**). Answered from `pointerover`/`pointerout` on the viewer root, so it engages even when the bar lights up *underneath* a pointer that never moved — which is what a wake from a screen edge does. Released four independent ways; §6.1 |
-| **Tap** inside either bar | Does **not** hold (**E-30**): the chrome auto-hides 2600 ms after the last wake exactly as it does elsewhere. `pointerType === 'touch'` is what tells a finger from a mouse — Chrome's compatibility mouse events do not, which is how the shipped build ended up pinning the chrome open for good after one tap in the bottom bar at 400px. There is no pointer *resting* on a control on a touch screen, and E-27's justification for the hold goes with it |
+| **Tap** inside either bar | Does **not** hold (**E-30**): the chrome auto-hides 2600 ms after the last wake exactly as it does elsewhere. `pointerType === 'touch'` is what tells a finger from a mouse — Chrome's compatibility mouse events do not, which is how the shipped build ended up pinning the chrome open for good after one tap in the bottom bar at 400px. There is no pointer *resting* on a control on a touch screen, and E-27's justification for the hold goes with it. The tap focuses the control, and that focus does not hold either (**E-62**) |
+| **Keyboard** focus inside either bar | Holds the auto-hide while it stays there and the last key was not a page turn (**E-62**). `H` works with focus on a radio or a range input — only text entry swallows it — except while the slider is dragged |
 | Grid card hover | Reveal the action overlay. Mirror it on `:focus-within` so keyboard users get the same actions. A pointer that **cannot** hover gets nothing here, deliberately — ruling **E-29**, §4.5 |
 
 ### 8.4 Command palette
@@ -2113,7 +2126,7 @@ interface Volume {
 | 9 | `SortSelect` (정렬 드롭다운) | `{ value: SortKey; onChange() }` | closed · open · plus the sortable list-header cells with ↑/↓ | [`library-list-sorted-size-desc-1440`](./ui-shots/library-list-sorted-size-desc-1440.png) |
 | 10 | `ViewToggle` (뷰 토글) | `{ value: ViewMode; onChange() }` | grid selected · list selected (accent field) | [`library-grid-1440`](./ui-shots/library-grid-1440.png) / [`library-list-1440`](./ui-shots/library-list-1440.png) |
 | 11 | `ScanIndicator` (스캔 인디케이터) | `{ scanning: boolean; pct: number; label: string; onOpenLog() }` — **`pct` is not a prop of the shipped component** (`components/shell/ScanIndicator.tsx` takes `{ scanning, label, onOpenLog, compact }`; the percentage is the top bar's, computed there from `scanPercent`). Flagged, not corrected — see E-36 §2 | idle (grey dot) · scanning (accent dot + 96px bar in the top bar) · **a third site: the 스캔 진행 block inside the settings dialog, which is not this component — §8.6 §1, E-38** | [`library-scanning-progress-1440`](./ui-shots/library-scanning-progress-1440.png) |
-| 12 | `ViewerOverlayBar` (뷰어 오버레이 바) | `{ position:'top'\|'bottom'; visible: boolean; children }` | visible (`opacity:1; pointer-events:auto`) · hidden (`opacity:0; pointer-events:none`) | [`viewer-overlay-visible-1440`](./ui-shots/viewer-overlay-visible-1440.png), [`viewer-chromeless-base-1440`](./ui-shots/viewer-chromeless-base-1440.png) |
+| 12 | `ViewerOverlayBar` (뷰어 오버레이 바) | `{ position:'top'\|'bottom'; visible: boolean; children }` | visible (`opacity:1; pointer-events:auto`) · hidden (`opacity:0; pointer-events:none`; **`inert`**, so neither Tab nor the accessibility tree reaches it — **E-62**) | [`viewer-overlay-visible-1440`](./ui-shots/viewer-overlay-visible-1440.png), [`viewer-chromeless-base-1440`](./ui-shots/viewer-chromeless-base-1440.png) |
 | 13 | `PageSlider` (페이지 슬라이더) | `{ page: number; total: number; onChange(); onDragStart(); onDragEnd() }` | idle · dragging (thumbnail preview above the thumb) | [`viewer-slider-drag-preview-1440`](./ui-shots/viewer-slider-drag-preview-1440.png) |
 | 14 | `ThumbnailStrip` (썸네일 스트립) | `{ total: number; current: number; onJump(n) }` | closed · open · current-page highlighted (accent border) | [`viewer-thumbnail-strip-1440`](./ui-shots/viewer-thumbnail-strip-1440.png) |
 | 15 | `CommandPalette` (커맨드 팔레트) | `{ open: boolean; query: string; items: Series[]; onQuery(); onPick() }` | recent (empty query) · results · empty · row 0 preselected | [`command-palette-recent-1440`](./ui-shots/command-palette-recent-1440.png), [`command-palette-chosung-search-1440`](./ui-shots/command-palette-chosung-search-1440.png) |

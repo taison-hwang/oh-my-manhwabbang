@@ -911,7 +911,7 @@ describe('the chromeless ground (acceptance 1, 2; ui-spec §6.1, ruling E-27)', 
    * …and it lets go again, by three routes that do not share a failure.
    *
    * A hold that is never released disarms the auto-hide for the rest of the
-   * session — `chromeHeld` is module-scoped and nothing on screen renders from
+   * session — the hold flags are module-scoped and nothing on screen renders from
    * it, so there is no state a reader could see or correct. The hold above was
    * taken without a crossing, so the release must not depend on the matching
    * crossing arriving either.
@@ -1151,6 +1151,765 @@ describe('the chromeless ground (acceptance 1, 2; ui-spec §6.1, ruling E-27)', 
 // ---------------------------------------------------------------------------
 // Ruling E-31 — the edge strip wakes on *entry*
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// E-62 — the hidden chrome and the keyboard
+// ---------------------------------------------------------------------------
+
+/**
+ * A key pressed wherever the focus is **now** — `keydown` on the active element,
+ * which is where a browser dispatches it, and bubbling from there to the
+ * viewer's window listener. Returns `false` when something called
+ * `preventDefault()`, i.e. when the key was taken from the control it was
+ * pressed on.
+ */
+function press(key: string, init: Omit<KeyboardEventInit, 'key'> = {}): boolean {
+  return fireEvent.keyDown(document.activeElement ?? document.body, { key, ...init })
+}
+
+/**
+ * Tab to `control`: the `keydown` a browser sends, then the focus move that
+ * jsdom does not perform on its own.
+ */
+function tabTo(control: HTMLElement): void {
+  press('Tab')
+  act(() => {
+    control.focus()
+  })
+}
+
+/**
+ * A press on `control` with a pointer of `pointerType`, in the browser's order:
+ * `pointerdown`, the focus the press gives the control, then the click.
+ *
+ * jsdom 26 has no `PointerEvent`; a `MouseEvent` carrying the name and a
+ * `pointerType` is what a listener receives from Chrome (see `crossPointer`).
+ */
+function pressWith(pointerType: 'mouse' | 'touch', control: HTMLElement): void {
+  const down = new MouseEvent('pointerdown', { bubbles: true, cancelable: true })
+  Object.defineProperty(down, 'pointerType', { value: pointerType })
+  fireEvent(control, down)
+  act(() => {
+    control.focus()
+  })
+  fireEvent.click(control)
+}
+
+/** Whether `node` is inside one of the two chrome bars. */
+function inABar(node: Element | null): boolean {
+  return node?.closest('[data-role="viewer-top-bar"],[data-role="viewer-bottom-bar"]') != null
+}
+
+/** A bare `pointerdown` of `pointerType` on `target` — the pointer taking over, nothing more. */
+function pointerDown(pointerType: 'mouse' | 'touch', target: Element): void {
+  const down = new MouseEvent('pointerdown', { bubbles: true, cancelable: true })
+  Object.defineProperty(down, 'pointerType', { value: pointerType })
+  fireEvent(target, down)
+}
+
+/** The `pointerup` that ends a press — the browser sends it before the `mouseup`. */
+function pointerUp(pointerType: 'mouse' | 'touch', target: Element): void {
+  const up = new MouseEvent('pointerup', { bubbles: true, cancelable: true })
+  Object.defineProperty(up, 'pointerType', { value: pointerType })
+  fireEvent(target, up)
+}
+
+/** A width for the virtualised thumbnail strip to fill, which jsdom does not lay out. */
+const STRIP_RECT = {
+  x: 0,
+  y: 0,
+  left: 0,
+  top: 0,
+  right: 1_000,
+  bottom: 72,
+  width: 1_000,
+  height: 72,
+  toJSON: () => ({}),
+} as DOMRect
+
+/**
+ * **Ruling E-62.** While the chrome is hidden its bars are invisible and
+ * unclickable (`opacity:0; pointer-events:none`), and before the ruling they
+ * were still in the Tab order and the accessibility tree: Tab put the focus on a
+ * control nobody could see (WCAG 2.4.7), and a screen reader read both bars out
+ * while the reader was reading.
+ *
+ * The fix has four parts and each is pinned here: the hidden bars are `inert`;
+ * keyboard focus inside a bar holds the auto-hide as a **second, independent**
+ * hold beside E-30's pointer; the chrome hiding with the focus in a bar puts the
+ * focus on the viewer root rather than letting it fall to `body`; and `H`
+ * reaches the viewer from a radio or a range input. Transitions are asserted as
+ * a transition log (`watchChrome`, E-31): "nothing happened" is the claim, and a
+ * retrying `toHaveAttribute` agrees with a chrome that hid and came back.
+ */
+describe('the hidden chrome is inert, and keyboard focus holds it (ruling E-62)', () => {
+  const back = (): HTMLElement => screen.getByRole('button', { name: '뒤로' })
+  const slider = (): HTMLElement => screen.getByRole('slider', { name: '페이지' })
+  const thumbs = (): HTMLElement => screen.getByRole('button', { name: '썸네일 · T' })
+  const bottomBar = (): HTMLElement => need('viewer-bottom-bar')
+
+  it('takes both hidden bars out of reach, and gives them back with the chrome', async () => {
+    await setup()
+    expect(useViewerStore.getState().chromeVisible).toBe(false)
+    // On the bar roots — the whole of each bar, nothing less and nothing more.
+    expect(back().closest('[inert]')).toBe(topBar())
+    expect(slider().closest('[inert]')).toBe(bottomBar())
+    expect(thumbs().closest('[inert]')).toBe(bottomBar())
+    // The page is what is being read; inert there would take the reading keys'
+    // focus target with it.
+    expect(zones().closest('[inert]')).toBeNull()
+
+    press('h')
+    expect(useViewerStore.getState().chromeVisible).toBe(true)
+    expect(back().closest('[inert]')).toBeNull()
+    expect(slider().closest('[inert]')).toBeNull()
+
+    press('h')
+    expect(useViewerStore.getState().chromeVisible).toBe(false)
+    expect(back().closest('[inert]')).toBe(topBar())
+    expect(slider().closest('[inert]')).toBe(bottomBar())
+  })
+
+  /**
+   * Without the hold, `H` → Tab → choosing a control runs into the 2 600 ms
+   * deadline, the chrome hides, the bars go inert, and the focus goes with them.
+   */
+  it('holds the auto-hide while keyboard focus is inside a bar, across both bars', async () => {
+    await setup()
+    vi.useFakeTimers()
+    try {
+      press('h')
+      tabTo(back())
+      const watch = watchChrome()
+      act(() => {
+        vi.advanceTimersByTime(3_000)
+      })
+      expect(watch.flips(), 'keyboard focus in the top bar holds the chrome').toEqual([])
+
+      // From one bar to the other is still inside the chrome.
+      tabTo(slider())
+      act(() => {
+        vi.advanceTimersByTime(CHROME_AUTOHIDE_MS * 2)
+      })
+      expect(watch.flips(), 'and so does keyboard focus in the bottom bar').toEqual([])
+      watch.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  /**
+   * A mouse move over the stage is E-30's third release, and it releases the
+   * **pointer's** hold. With one shared flag it would drop the focus hold too: a
+   * keyboard reader who nudges the mouse loses the chrome, and the focus with it.
+   */
+  it('keeps the focus hold through a mouse move over the stage', async () => {
+    await setup()
+    vi.useFakeTimers()
+    try {
+      press('h')
+      tabTo(back())
+      const watch = watchChrome()
+      fireEvent.mouseMove(zones(), { clientX: 500, clientY: 400 })
+      act(() => {
+        vi.advanceTimersByTime(CHROME_AUTOHIDE_MS * 2)
+      })
+      expect(watch.flips()).toEqual([])
+      watch.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  /**
+   * The hold is asked at each deadline, so letting go takes effect at the
+   * **first deadline after** the focus leaves — not a fresh 2 600 ms from the
+   * leaving. The focus leaves 1 000 ms past a deadline here, so the two readings
+   * differ; at a deadline-aligned moment this test could not tell them apart.
+   */
+  it('lets go when keyboard focus leaves the bars, at the first deadline after', async () => {
+    await setup()
+    vi.useFakeTimers()
+    try {
+      press('h')
+      tabTo(back())
+      act(() => {
+        vi.advanceTimersByTime(CHROME_AUTOHIDE_MS * 2 + 1_000)
+      })
+      expect(
+        useViewerStore.getState().chromeVisible,
+        'the release cannot be observed unless something was holding it',
+      ).toBe(true)
+
+      // Shift+Tab off the first control: out of the document, to the browser's
+      // own UI — `relatedTarget` null.
+      press('Tab', { shiftKey: true })
+      act(() => {
+        back().blur()
+      })
+      const watch = watchChrome()
+      act(() => {
+        vi.advanceTimersByTime(CHROME_AUTOHIDE_MS - 1_000 - 1)
+      })
+      expect(watch.flips()).toEqual([])
+      act(() => {
+        vi.advanceTimersByTime(1)
+      })
+      expect(watch.flips()).toEqual(['hidden'])
+      watch.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  /**
+   * **The E-30 regression watch (E-62 §2.4).** Every press on a bar control
+   * focuses it, so a hold on *any* focus would pin the chrome open after one
+   * click — and after one tap at 400, which is the defect E-30 removed. The
+   * chrome is woken by `H` here so the last input before the press really was a
+   * key: the press itself is what has to change the answer.
+   */
+  it.each(['mouse', 'touch'] as const)(
+    'does not hold for a %s press, which focuses the control it lands on (E-30)',
+    async (pointerType) => {
+      await setup()
+      vi.useFakeTimers()
+      try {
+        press('h')
+        if (pointerType === 'mouse') crossPointer('pointerover', thumbs(), zones())
+        pressWith(pointerType, thumbs())
+        expect(document.activeElement, 'the press focused the control').toBe(thumbs())
+
+        if (pointerType === 'mouse') {
+          // E-30's own hold, while the pointer rests on the bar…
+          act(() => {
+            vi.advanceTimersByTime(CHROME_AUTOHIDE_MS * 2)
+          })
+          expect(useViewerStore.getState().chromeVisible).toBe(true)
+          // …and only that one: the pointer leaves, the focus stays.
+          crossPointer('pointerout', thumbs(), zones())
+        }
+        const watch = watchChrome()
+        act(() => {
+          vi.advanceTimersByTime(CHROME_AUTOHIDE_MS - 1)
+        })
+        expect(watch.flips()).toEqual([])
+        act(() => {
+          vi.advanceTimersByTime(1)
+        })
+        expect(watch.flips(), 'a press’s focus does not hold the chrome').toEqual(['hidden'])
+        watch.stop()
+      } finally {
+        vi.useRealTimers()
+      }
+    },
+  )
+
+  /**
+   * The press that lands on the control the keyboard already focused. No focus
+   * event follows — the focus does not move — so the press itself has to drop
+   * the keyboard's claim, or the chrome stays pinned until the focus leaves.
+   */
+  it('drops the keyboard hold when a press lands on the control that already has the focus', async () => {
+    await setup()
+    vi.useFakeTimers()
+    try {
+      press('h')
+      tabTo(thumbs())
+      act(() => {
+        vi.advanceTimersByTime(CHROME_AUTOHIDE_MS * 2)
+      })
+      expect(useViewerStore.getState().chromeVisible, 'held by the keyboard focus').toBe(true)
+
+      pressWith('touch', thumbs())
+      const watch = watchChrome()
+      act(() => {
+        vi.advanceTimersByTime(CHROME_AUTOHIDE_MS - 1)
+      })
+      expect(watch.flips()).toEqual([])
+      act(() => {
+        vi.advanceTimersByTime(1)
+      })
+      expect(watch.flips()).toEqual(['hidden'])
+      watch.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  /**
+   * **The focused control is taken away from under the keyboard** (E-62 review,
+   * finding 1). Tab onto a thumbnail and press `T`: the strip closes and the
+   * node that has the focus is unmounted with it. Nothing tells the viewer — a
+   * node removed in a commit sends React no `focusout` — so a hold kept by focus
+   * events stays taken, and the chrome never hides again. `T` woke the chrome,
+   * so exactly one auto-hide is owed from that press.
+   */
+  it('lets go when the keyboard-focused control is unmounted — T closing the strip', async () => {
+    await setup()
+    // The strip is virtualised and jsdom lays nothing out: give it a width to fill.
+    const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(STRIP_RECT)
+    vi.useFakeTimers()
+    try {
+      press('h')
+      press('t')
+      const thumb = document.querySelector<HTMLElement>('[data-role="thumb"]')
+      if (thumb === null) throw new Error('the strip drew no thumbnails')
+      tabTo(thumb)
+      act(() => {
+        vi.advanceTimersByTime(CHROME_AUTOHIDE_MS * 2)
+      })
+      expect(useViewerStore.getState().chromeVisible, 'held by the keyboard focus').toBe(true)
+
+      press('t')
+      expect(useViewerStore.getState().stripOpen).toBe(false)
+      expect(thumb.isConnected, 'the focused thumbnail went with the strip').toBe(false)
+      const watch = watchChrome()
+      act(() => {
+        vi.advanceTimersByTime(CHROME_AUTOHIDE_MS - 1)
+      })
+      expect(watch.flips()).toEqual([])
+      act(() => {
+        vi.advanceTimersByTime(1)
+      })
+      expect(watch.flips(), 'nothing is holding it any more').toEqual(['hidden'])
+      watch.stop()
+    } finally {
+      vi.useRealTimers()
+      rect.mockRestore()
+    }
+  })
+
+  /**
+   * **The keyboard takes over without moving the focus** (E-62 review, finding
+   * 2). A click leaves the focus on the slider without a hold — rightly, that is
+   * E-30's tap. The reader then works the same slider with the arrow keys: no
+   * focus event, so a hold taken on `focusin` is never taken, and the chrome
+   * hides — and the focus is pulled off the slider — between two steps. The
+   * hold then lasts while the focus stays, as a Tab-arrived one does, and a
+   * press is the pointer taking over again.
+   */
+  it('takes the hold when the keyboard takes over a control a click focused — the slider', async () => {
+    await setup()
+    vi.useFakeTimers()
+    try {
+      press('h')
+      // A click on the slider: in over the bar, press, and back out to the page.
+      crossPointer('pointerover', slider(), zones())
+      pressWith('mouse', slider())
+      crossPointer('pointerout', slider(), zones())
+      fireEvent.mouseMove(zones(), { clientX: 500, clientY: 400 })
+      expect(document.activeElement).toBe(slider())
+
+      // The arrow is the slider's own step; the browser reports it as one `change`.
+      expect(press('ArrowRight'), 'the arrow is the slider’s').toBe(true)
+      fireEvent.change(slider(), { target: { value: '13' } })
+      expect(useViewerStore.getState().page).toBe(13)
+      const watch = watchChrome()
+      act(() => {
+        vi.advanceTimersByTime(CHROME_AUTOHIDE_MS * 2)
+      })
+      expect(watch.flips(), 'the keyboard is working the slider').toEqual([])
+      expect(document.activeElement).toBe(slider())
+
+      pointerDown('mouse', zones())
+      act(() => {
+        vi.advanceTimersByTime(CHROME_AUTOHIDE_MS)
+      })
+      expect(watch.flips(), 'a press is the pointer taking over again').toEqual(['hidden'])
+      watch.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  /**
+   * **다음 권 does not drop a hold that is still true** (E-62 review, finding 3).
+   * `open()` resets the store's holds, which is right for a pointer resting on
+   * the volume that went away (E-30 §3-4) — but the keyboard focus in a bar
+   * control that persists across the change is still there, and no focus event
+   * follows to say so.
+   */
+  it('keeps the keyboard hold across 다음 권 while volume 2 loads underneath it', async () => {
+    let release = (): void => {
+      throw new Error('the held handler was never installed')
+    }
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await setupOnFakeClock({ search: '?page=214' })
+    server.use(
+      http.get(`${ORIGIN}/api/books/:bid`, async ({ params }) => {
+        if (params.bid === BOOK_ID) return HttpResponse.json(detailOf())
+        await held
+        return HttpResponse.json({
+          ...detailOf(),
+          id: String(params.bid),
+          page_count: NEXT_PAGE_COUNT,
+          pages: PAGES.slice(0, NEXT_PAGE_COUNT),
+          next_book_id: null,
+        })
+      }),
+    )
+    await tickUntil(() => screen.queryByText('권의 마지막 페이지') !== null)
+
+    press('h')
+    expect(useViewerStore.getState().chromeVisible).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: '다음 권 읽기' }))
+    tabTo(back())
+    await advance(500)
+    expect(useViewerStore.getState().bookId, 'volume 2 is still in flight').toBe(BOOK_ID)
+
+    release()
+    await tickUntil(() => useViewerStore.getState().bookId === NEXT_BOOK_ID)
+    expect(document.activeElement).toBe(back())
+    const watch = watchChrome()
+    await advance(CHROME_AUTOHIDE_MS * 2)
+    expect(watch.flips(), 'the focus is still in the bar').toEqual([])
+    watch.stop()
+  })
+
+  /**
+   * **Reading is not the keyboard taking over a bar** (E-62 review). Finding 2
+   * makes a key pressed with the focus in a bar count as the keyboard's — but
+   * the arrows and `Space` on a bar *button* are not the button's: the viewer
+   * takes them and turns the page. A click on 썸네일 · T followed by reading on
+   * with → would otherwise pin the chrome open for the rest of the volume, the
+   * E-30 tap defect come back through the keyboard. Reading does not hold the
+   * chrome (E-27), whichever way the focus got into the bar.
+   */
+  it.each(['a click', 'Tab'] as const)(
+    'does not hold for page turns from the keyboard when %s put the focus in a bar',
+    async (arrival) => {
+      await setup()
+      vi.useFakeTimers()
+      try {
+        press('h')
+        if (arrival === 'Tab') tabTo(back())
+        else pressWith('mouse', thumbs())
+        const control = document.activeElement
+        expect(inABar(control), 'the focus is in a bar').toBe(true)
+
+        const before = useViewerStore.getState().page
+        expect(press('ArrowRight'), 'the viewer takes the arrow from a button').toBe(false)
+        press(' ')
+        expect(useViewerStore.getState().page).toBe(before + 2)
+        const watch = watchChrome()
+        act(() => {
+          vi.advanceTimersByTime(CHROME_AUTOHIDE_MS)
+        })
+        expect(watch.flips(), 'reading lets the chrome go').toEqual(['hidden'])
+        expect(document.activeElement).toBe(viewerRoot())
+        watch.stop()
+      } finally {
+        vi.useRealTimers()
+      }
+    },
+  )
+
+  /**
+   * **`H` mid-drag** (E-62 review, finding 4). `H` now reaches the viewer from
+   * the slider. Hiding there moves the focus to the root, the slider's blur
+   * commits the drag, and the commit wakes the chrome straight back: a blink, not
+   * a hide. The auto-hide already declines mid-drag for the same reason — the
+   * preview lives in the bar — so `H` does nothing until the drag is over.
+   */
+  it('does nothing with H while the slider is dragged — no hide, and no wake behind it', async () => {
+    await setup()
+    press('h')
+    pointerDown('mouse', slider())
+    fireEvent.mouseDown(slider())
+    act(() => {
+      slider().focus()
+    })
+    fireEvent.change(slider(), { target: { value: '40' } })
+    expect(useViewerStore.getState().dragging).toBe(true)
+
+    const watch = watchChrome()
+    press('h')
+    expect(watch.flips(), 'H mid-drag').toEqual([])
+    expect(document.activeElement).toBe(slider())
+    expect(useViewerStore.getState().dragging, 'the drag is still the reader’s').toBe(true)
+
+    fireEvent.mouseUp(slider())
+    expect(useViewerStore.getState().page).toBe(40)
+    expect(watch.flips()).toEqual([])
+    watch.stop()
+  })
+
+  /**
+   * **…and the `H` it ignored is not the last input once the drag is over**
+   * (E-62 follow-up). It was: the release left the focus on the slider with a
+   * key as the last input, so the hold engaged and the chrome stayed pinned
+   * until the focus left — for a reader who had only ever used the mouse on it.
+   * The release is the pointer acting last.
+   */
+  it('does not hold after an H pressed mid-drag, once the slider is released', async () => {
+    await setup()
+    vi.useFakeTimers()
+    try {
+      press('h')
+      pointerDown('mouse', slider())
+      fireEvent.mouseDown(slider())
+      act(() => {
+        slider().focus()
+      })
+      fireEvent.change(slider(), { target: { value: '40' } })
+      press('h')
+      expect(useViewerStore.getState().chromeVisible, 'H mid-drag does nothing').toBe(true)
+
+      pointerUp('mouse', slider())
+      fireEvent.mouseUp(slider())
+      expect(useViewerStore.getState().page).toBe(40)
+      expect(document.activeElement).toBe(slider())
+      const watch = watchChrome()
+      act(() => {
+        vi.advanceTimersByTime(CHROME_AUTOHIDE_MS - 1)
+      })
+      expect(watch.flips()).toEqual([])
+      act(() => {
+        vi.advanceTimersByTime(1)
+      })
+      expect(watch.flips(), 'the drag was the mouse’s, start to end').toEqual(['hidden'])
+      expect(document.activeElement).toBe(viewerRoot())
+      watch.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  /**
+   * **A modifier on its own is not the keyboard** (E-62 follow-up). After a
+   * click focused a bar control, a hand resting on Shift — or Ctrl, Alt, Meta,
+   * Caps Lock — counted as the keyboard taking the bar over, and the chrome
+   * stayed pinned over the click's focus until it left: E-30's tap defect back
+   * through a key that operates nothing.
+   */
+  it.each([
+    { key: 'Shift', init: { shiftKey: true } },
+    { key: 'Control', init: { ctrlKey: true } },
+    { key: 'Alt', init: { altKey: true } },
+    { key: 'Meta', init: { metaKey: true } },
+    { key: 'CapsLock', init: {} },
+  ])('does not hold for a lone $key after a click focused a bar control', async ({ key, init }) => {
+    await setup()
+    vi.useFakeTimers()
+    try {
+      press('h')
+      crossPointer('pointerover', thumbs(), zones())
+      pressWith('mouse', thumbs())
+      crossPointer('pointerout', thumbs(), zones())
+      expect(document.activeElement).toBe(thumbs())
+
+      press(key, init)
+      const watch = watchChrome()
+      act(() => {
+        vi.advanceTimersByTime(CHROME_AUTOHIDE_MS - 1)
+      })
+      expect(watch.flips()).toEqual([])
+      act(() => {
+        vi.advanceTimersByTime(1)
+      })
+      expect(watch.flips(), `a lone ${key} is not the keyboard`).toEqual(['hidden'])
+      watch.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  /** …while the key a modifier modifies is: Shift, then Shift+Tab into the next control, holds. */
+  it('still holds for the key after the modifier — Shift+Tab from a clicked control', async () => {
+    await setup()
+    vi.useFakeTimers()
+    try {
+      press('h')
+      pressWith('touch', thumbs())
+      press('Shift', { shiftKey: true })
+      press('Tab', { shiftKey: true })
+      act(() => {
+        slider().focus()
+      })
+      const watch = watchChrome()
+      act(() => {
+        vi.advanceTimersByTime(CHROME_AUTOHIDE_MS * 2)
+      })
+      expect(watch.flips(), 'Shift+Tab is the keyboard').toEqual([])
+      watch.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  /**
+   * **`T` takes the focused thumbnail away** (E-62 §2.5, for the strip). The
+   * node with the focus is unmounted with the strip and the focus fell to
+   * `body`. It lands on the root instead, as it does when the chrome hides.
+   */
+  it('puts the focus on the viewer root when T closes the strip over a focused thumbnail', async () => {
+    await setup()
+    const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(STRIP_RECT)
+    try {
+      press('h')
+      press('t')
+      const thumb = document.querySelector<HTMLElement>('[data-role="thumb"]')
+      if (thumb === null) throw new Error('the strip drew no thumbnails')
+      tabTo(thumb)
+      const focus = vi.spyOn(viewerRoot(), 'focus')
+
+      press('t')
+      expect(useViewerStore.getState().stripOpen).toBe(false)
+      expect(thumb.isConnected, 'the focused thumbnail went with the strip').toBe(false)
+      expect(document.activeElement, 'not body').toBe(viewerRoot())
+      expect(focus).toHaveBeenCalledWith({ preventScroll: true })
+    } finally {
+      rect.mockRestore()
+    }
+  })
+
+  it('leaves a focus that was not in the strip where it was — on 썸네일 · T', async () => {
+    await setup()
+    const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(STRIP_RECT)
+    try {
+      press('h')
+      tabTo(thumbs())
+      press('t')
+      expect(useViewerStore.getState().stripOpen).toBe(true)
+      const focus = vi.spyOn(viewerRoot(), 'focus')
+
+      press('t')
+      expect(useViewerStore.getState().stripOpen).toBe(false)
+      expect(document.activeElement).toBe(thumbs())
+      expect(focus).not.toHaveBeenCalled()
+    } finally {
+      rect.mockRestore()
+    }
+  })
+
+  /**
+   * Inert bars drop their focus to `body`. The root is the landing instead:
+   * `tabIndex=-1` (focusable, not a Tab stop) and no ring, as `ds/Dialog`'s panel.
+   */
+  it('puts the focus on the viewer root when H hides the chrome with the focus in a bar', async () => {
+    await setup()
+    const root = viewerRoot()
+    expect(root).toHaveAttribute('tabindex', '-1')
+    expect(root).toHaveClass('focus:outline-none', 'focus-visible:outline-none')
+
+    press('h')
+    tabTo(back())
+    expect(document.activeElement).toBe(back())
+    const focus = vi.spyOn(root, 'focus')
+
+    press('h')
+    expect(useViewerStore.getState().chromeVisible).toBe(false)
+    expect(document.activeElement).toBe(root)
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true })
+  })
+
+  it('does the same when the auto-hide takes the chrome from under a press’s focus', async () => {
+    await setup()
+    vi.useFakeTimers()
+    try {
+      act(() => {
+        useViewerStore.getState().wake()
+      })
+      pressWith('touch', thumbs())
+      expect(document.activeElement).toBe(thumbs())
+      act(() => {
+        vi.advanceTimersByTime(CHROME_AUTOHIDE_MS)
+      })
+      expect(useViewerStore.getState().chromeVisible).toBe(false)
+      expect(document.activeElement).toBe(viewerRoot())
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('moves no focus that is not in a bar', async () => {
+    await setup()
+    const focus = vi.spyOn(viewerRoot(), 'focus')
+    press('h')
+    press('h')
+    expect(useViewerStore.getState().chromeVisible).toBe(false)
+    expect(focus).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(document.body)
+  })
+
+  /**
+   * A keyboard reader on a seg or on the slider had no key to put the chrome
+   * away: `H` was swallowed as if typed into a text box (E-62 §2.2).
+   */
+  it.each([
+    { what: 'a seg radio', control: () => radio('단면') },
+    { what: 'the page slider', control: () => screen.getByRole('slider', { name: '페이지' }) },
+  ])('takes H from $what, which is not text entry', async ({ control }) => {
+    await setup()
+    press('h')
+    tabTo(control())
+    expect(document.activeElement).toBe(control())
+
+    expect(press('h'), 'H is the viewer’s, not the control’s').toBe(false)
+    expect(useViewerStore.getState().chromeVisible).toBe(false)
+    press('h')
+    expect(useViewerStore.getState().chromeVisible).toBe(true)
+  })
+
+  /**
+   * …and **only** `H`. The arrows on a range input are its own step and on a
+   * radio group its own selection; `Space`, the digits, `T` and `F` keep today's
+   * behaviour as well — left to the control, not turned into reading keys.
+   */
+  it('leaves every other key on a radio or the slider to the control, as before', async () => {
+    await setup()
+    press('h')
+    const before = useViewerStore.getState().page
+
+    tabTo(slider())
+    for (const key of ['ArrowRight', 'ArrowLeft', ' ', '2', 't', 'f']) {
+      expect(press(key), `${key} on the slider is the slider's`).toBe(true)
+    }
+    tabTo(radio('단면'))
+    for (const key of ['ArrowRight', 'ArrowLeft', ' ', '2', 't', 'f']) {
+      expect(press(key), `${key} on a radio is the radio's`).toBe(true)
+    }
+    expect(useViewerStore.getState().page).toBe(before)
+    expect(useViewerStore.getState().mode).toBe('single')
+    expect(useViewerStore.getState().stripOpen).toBe(false)
+    expect(useViewerStore.getState().chromeVisible).toBe(true)
+  })
+
+  it.each([
+    { what: 'a text input', make: () => Object.assign(document.createElement('input'), { type: 'text' }) },
+    { what: 'an input with no type', make: () => document.createElement('input') },
+    { what: 'a search input', make: () => Object.assign(document.createElement('input'), { type: 'search' }) },
+    { what: 'a number input', make: () => Object.assign(document.createElement('input'), { type: 'number' }) },
+    { what: 'a textarea', make: () => document.createElement('textarea') },
+    { what: 'a select', make: () => document.createElement('select') },
+    {
+      what: 'a contenteditable',
+      make: () => {
+        const div = document.createElement('div')
+        div.setAttribute('contenteditable', 'true')
+        div.tabIndex = 0
+        return div
+      },
+    },
+  ])('still leaves H to $what — text entry types it', async ({ make }) => {
+    await setup()
+    const field = make()
+    document.body.append(field)
+    try {
+      act(() => {
+        field.focus()
+      })
+      expect(document.activeElement).toBe(field)
+      expect(press('h')).toBe(true)
+      expect(useViewerStore.getState().chromeVisible).toBe(false)
+    } finally {
+      field.remove()
+    }
+  })
+})
 
 /**
  * **Waking is an event, not a state (E-31).**

@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -20,6 +21,7 @@ import { useMediaQuery } from '../../lib/useMediaQuery'
 import { openingDirection, useSeriesDirStore } from '../../store/seriesDir'
 import { useUiStore } from '../../store/ui'
 import {
+  registerChromeFocusHold,
   selectStaleAckOwed,
   useViewerStore,
   type DisplayMode,
@@ -143,13 +145,44 @@ export const CHROME_HINT = '좌·우 클릭으로 페이지 · 중앙 클릭 또
 /** FR-VWR-009's one line. */
 const STALE_NOTICE = '파일이 변경되었습니다'
 
-/** The two surfaces a resting pointer is allowed to hold the chrome open from. */
+/**
+ * The two surfaces the chrome can be held open from — by a pointer resting on
+ * one (E-30), or by the keyboard's focus inside one (E-62).
+ */
 const CHROME_BARS = '[data-role="viewer-top-bar"],[data-role="viewer-bottom-bar"]'
 
-/** Whether the thing the pointer is over belongs to one of the two bars. */
+/** Whether a node — under the pointer, or holding the focus — belongs to one of the two bars. */
 function inChrome(node: EventTarget | null): boolean {
   return node instanceof Element && node.closest(CHROME_BARS) !== null
 }
+
+/** Whether the focus is in the thumbnail strip — on a thumbnail, or on the scroller itself. */
+function inStrip(node: Element | null): boolean {
+  return node?.closest('[data-role="thumbnail-strip"]') != null
+}
+
+/**
+ * `KeyboardEvent.key` values that only modify another key (UI Events, "Modifier
+ * keys"; `OS` is Firefox's old name for Meta). Pressed alone they operate
+ * nothing, so they are not the keyboard taking over a bar (E-62 §2.4).
+ */
+const MODIFIER_KEYS: ReadonlySet<string> = new Set([
+  'Alt',
+  'AltGraph',
+  'CapsLock',
+  'Control',
+  'Fn',
+  'FnLock',
+  'Hyper',
+  'Meta',
+  'NumLock',
+  'OS',
+  'ScrollLock',
+  'Shift',
+  'Super',
+  'Symbol',
+  'SymbolLock',
+])
 
 export function ViewerPage() {
   const { sid, bid } = useParams()
@@ -497,11 +530,114 @@ export function ViewerPage() {
     void toggleFullscreen(rootRef.current ?? undefined)
   }, [])
 
+  // -------------------------------------------------------------------------
+  // The keyboard-focus hold (E-62 §2.3–2.4)
+  // -------------------------------------------------------------------------
+  //
+  // **Keyboard focus inside a bar holds the auto-hide**, so the reader who
+  // pressed `H` and is Tabbing to a control is not overtaken by the 2 600 ms
+  // deadline (and, the bars then going inert, by the loss of the focus too).
+  //
+  // **It is a question, not a flag** (`registerChromeFocusHold`): the auto-hide
+  // asks it when it fires, and the answer is read off the live DOM — "was the
+  // last input a key, and is `document.activeElement` in a bar?" It used to be
+  // taken on `focusin` and dropped on `focusout`, and each way that went wrong
+  // was an event that never came: the focused thumbnail unmounted by `T` (React
+  // passes on no `focusout` for a node removed in a commit — the hold stayed and
+  // the chrome never hid again), arrow keys on a slider a click had focused (no
+  // focus moved, so no hold — the chrome hid mid-use and took the focus), and
+  // 다음 권's `open()` resetting a hold whose focus had not moved.
+  //
+  // **Not every focus, and not every key.** Focus from a click or a tap does not
+  // hold: every press on a bar control focuses it, and holding on that pins the
+  // chrome open after one tap — the defect E-30 removed. And a key the viewer
+  // takes to **turn the page** is reading, not the keyboard working a bar: the
+  // arrows and `Space` on a bar *button* (a thumbnail just clicked, 썸네일 · T)
+  // turn pages, and counting them would pin the chrome over the reading (E-27).
+  // So the screen remembers the last input, and only a key that was not a turn
+  // makes the focus in a bar count. Not `:focus-visible`: jsdom cannot evaluate
+  // it, and the rule would then be untestable below the browser tier.
+
+  /**
+   * The reader's last input (E-62 §2.4): `keydown`, `pointerdown`/`pointerup`,
+   * or a keyboard page turn, which overwrites the `keydown` it came from.
+   *
+   * Listened for on the **window**, in the capture phase, rather than on the
+   * root: the first `Tab` into a bar is pressed with the focus on `body` —
+   * nothing in the viewer has it yet — and that `keydown` never passes through
+   * the root. Capture, so no handler can stop it first, and so it is recorded
+   * before `useViewerKeys`' bubble-phase listener decides the key is a turn. A
+   * ref: nothing renders from it.
+   *
+   * Two inputs that are not the keyboard working a bar, each of which used to
+   * pin the chrome over a pointer's focus until that focus left:
+   *
+   *  * **A modifier on its own** (`MODIFIER_KEYS`) — a hand resting on Shift,
+   *    Ctrl+scrolling, the first half of a shortcut. It operates nothing; the
+   *    key it modifies, if one comes, is recorded as usual (Shift+Tab is a Tab).
+   *  * **Keys inside a press.** A drag on the slider, `H` (ignored mid-drag),
+   *    release: the `keydown` was the last input and the focus is on the
+   *    slider, so the hold engaged. `pointerup` ends the gesture the key was
+   *    pressed inside of, and the pointer is the input that acted last.
+   */
+  const lastInput = useRef<'keyboard' | 'pointer' | 'reading' | null>(null)
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (MODIFIER_KEYS.has(event.key)) return
+      lastInput.current = 'keyboard'
+    }
+    const onPointer = (): void => {
+      lastInput.current = 'pointer'
+    }
+    window.addEventListener('keydown', onKey, true)
+    window.addEventListener('pointerdown', onPointer, true)
+    window.addEventListener('pointerup', onPointer, true)
+    return () => {
+      window.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('pointerdown', onPointer, true)
+      window.removeEventListener('pointerup', onPointer, true)
+    }
+  }, [])
+
+  useEffect(
+    () =>
+      registerChromeFocusHold(
+        () => lastInput.current === 'keyboard' && inChrome(document.activeElement),
+      ),
+    [],
+  )
+
+  const readNext = useCallback(() => {
+    lastInput.current = 'reading'
+    goNext()
+  }, [goNext])
+  const readPrev = useCallback(() => {
+    lastInput.current = 'reading'
+    goPrev()
+  }, [goPrev])
+
+  /**
+   * `T` and 썸네일 · T — the E-62 §2.5 landing, for the strip.
+   *
+   * Closing the strip unmounts the thumbnail that has the focus, and a node
+   * removed in a commit drops the focus to `body`, where the reading keys do
+   * not reach the viewer. So the focus goes to the root first, while the
+   * thumbnail is still there to be left: after the commit there is nothing left
+   * to ask `activeElement` about. Same landing as the chrome's below.
+   */
+  const toggleStripLandingFocus = useCallback(() => {
+    if (useViewerStore.getState().stripOpen && inStrip(document.activeElement)) {
+      rootRef.current?.focus({ preventScroll: true })
+    }
+    toggleStrip()
+  }, [toggleStrip])
+
   useViewerKeys({
     dir,
-    onNext: goNext,
-    onPrev: goPrev,
-    onToggleStrip: toggleStrip,
+    onNext: readNext,
+    onPrev: readPrev,
+    onToggleStrip: toggleStripLandingFocus,
     onToggleFullscreen,
     onToggleChrome: toggleChrome,
     onExit: exit,
@@ -583,6 +719,8 @@ export function ViewerPage() {
       // arriving for as long as the reader's hand is on the mouse. Idempotent
       // in the store, so a reader who never touched the chrome pays nothing and
       // the 2 600 ms deadline is not pushed back by moving the mouse (E-27).
+      // The **pointer's** hold only: a mouse move says nothing about where the
+      // keyboard focus is, and E-62's hold is asked, not released.
       releaseChrome()
       const rect = stage.getBoundingClientRect()
       setHoverZone(zoneAt(event.clientX - rect.left, rect.width))
@@ -743,6 +881,27 @@ export function ViewerPage() {
     [releaseChrome],
   )
 
+  // -------------------------------------------------------------------------
+  // The focus landing (E-62 §2.5)
+  // -------------------------------------------------------------------------
+  //
+  // Hidden, the bars are `inert` (each bar sets it on itself), so Tab cannot
+  // reach a control nobody can see — and a focus already in a bar when it goes
+  // would fall to `body`. **The chrome hiding with the focus in a bar puts the
+  // focus on the root** (`tabIndex=-1`, no ring) instead — and so does the strip
+  // closing over a focused thumbnail (`toggleStripLandingFocus`). The
+  // keyboard-focus hold, the other half of E-62, sits with the key wiring above.
+
+  // Whatever hid the chrome — `H`, a centre tap, the auto-hide — and whatever
+  // the input was. A layout effect, so the focus has moved before the frame is
+  // painted; the bars' own layout effects (children first) have made them inert
+  // by now, and `activeElement` still names the control the focus was on.
+  useLayoutEffect(() => {
+    if (chromeVisible) return
+    if (!inChrome(document.activeElement)) return
+    rootRef.current?.focus({ preventScroll: true })
+  }, [chromeVisible])
+
   const touch = useTouchZones({
     dir,
     mode,
@@ -790,7 +949,10 @@ export function ViewerPage() {
       data-theme="dark"
       data-role="viewer"
       data-chrome={chromeVisible ? 'visible' : 'hidden'}
-      className="fixed inset-0 z-viewer flex flex-col overflow-hidden bg-bg text-ink"
+      // E-62: where the focus lands when the chrome hides from under it. Not a
+      // Tab stop, and no ring — the same reasoning as `ds/Dialog`'s panel.
+      tabIndex={-1}
+      className="fixed inset-0 z-viewer flex flex-col overflow-hidden bg-bg text-ink focus:outline-none focus-visible:outline-none"
       style={{
         cursor: pointerAwake ? (hoverZone === 'centre' ? 'default' : 'pointer') : 'none',
       }}
@@ -995,7 +1157,7 @@ export function ViewerPage() {
         stripOpen={stripOpen}
         dragging={dragging}
         dragPage={dragPage}
-        onToggleStrip={toggleStrip}
+        onToggleStrip={toggleStripLandingFocus}
         onDragStart={(n) => {
           setDragging(true, n)
         }}

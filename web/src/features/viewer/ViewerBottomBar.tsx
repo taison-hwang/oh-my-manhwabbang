@@ -1,4 +1,5 @@
 import { PanelTop } from 'lucide-react'
+import { useLayoutEffect, useRef } from 'react'
 
 import { Button } from '../../components/ds/Button'
 import { cn } from '../../lib/cn'
@@ -54,8 +55,19 @@ export function ViewerBottomBar({
   onCommit,
   onJump,
 }: ViewerBottomBarProps) {
+  const barRef = useRef<HTMLDivElement | null>(null)
+  // E-62 §2.1: hidden, the bar is `inert` — out of the Tab order and the
+  // accessibility tree, not merely transparent and unclickable. A DOM attribute
+  // rather than a prop: React 18.3 drops `inert={true}` and @types/react 18 does
+  // not declare it. A layout effect, so the attribute is in place before the
+  // frame that hides the bar is painted.
+  useLayoutEffect(() => {
+    barRef.current?.toggleAttribute('inert', !visible)
+  }, [visible])
+
   return (
     <div
+      ref={barRef}
       data-role="viewer-bottom-bar"
       data-visible={visible ? 'true' : 'false'}
       className={cn(

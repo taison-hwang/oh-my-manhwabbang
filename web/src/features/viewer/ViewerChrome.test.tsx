@@ -10,6 +10,7 @@ import type { BookSummary } from '../../api/types'
 import { NextVolumeCard } from './NextVolumeCard'
 import { PageSlider } from './PageSlider'
 import { ThumbnailCell } from './ThumbnailCell'
+import { ViewerBottomBar } from './ViewerBottomBar'
 import { OVERRIDE_CHIP_LABEL, ViewerTopBar } from './ViewerTopBar'
 
 /**
@@ -293,5 +294,83 @@ describe('the next-volume card’s title (open item `o`, ui-spec §6.5)', () => 
 
     await user.click(scrim as HTMLElement)
     expect(onDismiss).toHaveBeenCalledTimes(1)
+  })
+})
+
+/**
+ * **A hidden bar is `inert` (E-62 §2.1)** — out of the Tab order and the
+ * accessibility tree, not merely transparent and unclickable.
+ *
+ * Set as a DOM attribute rather than a prop: React 18.3 drops `inert={true}`
+ * (it is not in its attribute list until 19) and `@types/react` 18 does not
+ * declare it, so a prop would type-check nowhere and render nothing. Asserted
+ * across a re-render both ways, because the attribute is React-unmanaged and
+ * nothing but the bar's own effect will take it off again.
+ */
+describe('a hidden chrome bar is inert (E-62)', () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+
+  const topBar = (visible: boolean) => (
+    <QueryClientProvider client={client}>
+      <ViewerTopBar
+        visible={visible}
+        seriesName="[만화] 몬스터 1~18"
+        bookName="01권.zip"
+        mode="single"
+        dir="rtl"
+        fit="width"
+        isOverride={false}
+        onBack={vi.fn()}
+        onLibrary={vi.fn()}
+        onResetPrefs={vi.fn()}
+        onModeChange={vi.fn()}
+        onDirChange={vi.fn()}
+        onFitChange={vi.fn()}
+      />
+    </QueryClientProvider>
+  )
+
+  const bottomBar = (visible: boolean) => (
+    <QueryClientProvider client={client}>
+      <ViewerBottomBar
+        visible={visible}
+        bookId="b1"
+        cv={null}
+        page={3}
+        pageCount={10}
+        dir="ltr"
+        stripOpen={false}
+        dragging={false}
+        dragPage={null}
+        onToggleStrip={vi.fn()}
+        onDragStart={vi.fn()}
+        onDrag={vi.fn()}
+        onCommit={vi.fn()}
+        onJump={vi.fn()}
+      />
+    </QueryClientProvider>
+  )
+
+  it.each([
+    { role: 'viewer-top-bar', ui: topBar },
+    { role: 'viewer-bottom-bar', ui: bottomBar },
+  ])('$role is inert exactly while it is hidden', ({ role, ui }) => {
+    const { container, rerender } = render(ui(false))
+    const bar = container.querySelector(`[data-role="${role}"]`)
+    expect(bar).toHaveAttribute('inert')
+
+    rerender(ui(true))
+    expect(bar).not.toHaveAttribute('inert')
+
+    rerender(ui(false))
+    expect(bar).toHaveAttribute('inert')
+  })
+
+  it.each([
+    { role: 'viewer-top-bar', ui: topBar },
+    { role: 'viewer-bottom-bar', ui: bottomBar },
+  ])('$role mounts visible without it', ({ role, ui }) => {
+    const { container } = render(ui(true))
+    expect(container.querySelector(`[data-role="${role}"]`)).not.toHaveAttribute('inert')
   })
 })
