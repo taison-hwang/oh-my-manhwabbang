@@ -309,12 +309,16 @@ type tsTypes struct {
 	enums map[string][]string
 	// constArrays maps the const name to its members.
 	constArrays map[string][]string
+	// scalars maps a plain alias (`type Unix = number`) to the primitive it
+	// names.
+	scalars map[string]string
 }
 
 var (
 	reInterface = regexp.MustCompile(`(?m)^export interface ([A-Za-z0-9_]+)(?:\s+extends\s+([A-Za-z0-9_,\s]+?))?\s*\{`)
 	reConstArr  = regexp.MustCompile(`(?ms)^export const ([A-Z0-9_]+)\s*=\s*\[(.*?)\]\s*as const`)
 	reEnumAlias = regexp.MustCompile(`(?m)^export type ([A-Za-z0-9_]+)\s*=\s*\(typeof ([A-Z0-9_]+)\)\[number\]`)
+	reScalarAl  = regexp.MustCompile(`(?m)^export type ([A-Za-z0-9_]+)\s*=\s*(string|number|boolean)\s*$`)
 	reMember    = regexp.MustCompile(`'([^']*)'`)
 	reFieldLine = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)(\??):\s*(.+?);?$`)
 )
@@ -324,6 +328,10 @@ func parseTypes(src string) (*tsTypes, error) {
 		interfaces:  map[string][]tsField{},
 		enums:       map[string][]string{},
 		constArrays: map[string][]string{},
+		scalars:     map[string]string{},
+	}
+	for _, m := range reScalarAl.FindAllStringSubmatch(src, -1) {
+		t.scalars[m[1]] = m[2]
 	}
 
 	for _, m := range reConstArr.FindAllStringSubmatch(src, -1) {
@@ -551,16 +559,76 @@ func (c *checker) value(v any, ref typeRef, path string) {
 			return
 		}
 		c.object(tv, ref.name, fields, path)
-	case string:
-		if members, ok := c.ts.enums[ref.name]; ok {
-			for _, m := range members {
-				if m == tv {
-					return
-				}
-			}
-			c.report(path, "value %q is not a member of %s (%s)", tv, ref.name, strings.Join(members, " | "))
-		}
+	default:
+		c.scalar(v, ref, path)
 	}
+}
+
+// scalar checks a string, number or boolean against its declared type: the
+// kind first, then enum membership or the literal for a string.
+func (c *checker) scalar(v any, ref typeRef, path string) {
+	if ref.unknown || ref.name == "" {
+		return
+	}
+	want, shown := c.ts.scalarKind(ref.name)
+	if want == "" {
+		c.report(path, "types.ts declares %s, which this check cannot resolve to a kind", ref.name)
+		return
+	}
+	if got := jsonKind(v); got != want {
+		c.report(path, "types.ts declares %s, the server sends %s", shown, got)
+		return
+	}
+	tv, ok := v.(string)
+	if !ok {
+		return
+	}
+	if lit, ok := stringLiteral(ref.name); ok {
+		if tv != lit {
+			c.report(path, "value %q is not %s", tv, ref.name)
+		}
+		return
+	}
+	if members, ok := c.ts.enums[ref.name]; ok {
+		for _, m := range members {
+			if m == tv {
+				return
+			}
+		}
+		c.report(path, "value %q is not a member of %s (%s)", tv, ref.name, strings.Join(members, " | "))
+	}
+}
+
+// scalarKind returns the jsonKind a type admits, and the type as findings
+// should name it: `number`, or `Unix (number)` for an alias. It returns ""
+// for a name it cannot resolve.
+func (t *tsTypes) scalarKind(name string) (kind, shown string) {
+	kinds := map[string]string{"string": "a string", "number": "a number", "boolean": "a boolean"}
+	if k, ok := kinds[name]; ok {
+		return k, name
+	}
+	label := func(k string) string { return fmt.Sprintf("%s (%s)", name, k) }
+	if p, ok := t.scalars[name]; ok {
+		return kinds[p], label(p)
+	}
+	if _, ok := t.enums[name]; ok {
+		return "a string", label("string")
+	}
+	if _, ok := t.interfaces[name]; ok {
+		return "an object", label("an object")
+	}
+	if _, ok := stringLiteral(name); ok {
+		return "a string", label("string")
+	}
+	return "", ""
+}
+
+// stringLiteral reads a single-quoted literal type such as 'shelf-id/1'.
+func stringLiteral(name string) (string, bool) {
+	if len(name) >= 2 && name[0] == '\'' && name[len(name)-1] == '\'' {
+		return name[1 : len(name)-1], true
+	}
+	return "", false
 }
 
 func (c *checker) object(obj map[string]any, typeName string, fields []tsField, path string) {

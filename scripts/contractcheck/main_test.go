@@ -20,9 +20,22 @@ export const CODES = [
 ] as const
 export type Code = (typeof CODES)[number]
 
+export type ID = string
+export type Unix = number
+
 export interface Inner {
   n: number
   label: string | null
+}
+
+export interface Scalars {
+  count: number
+  flag: boolean
+  at: Unix
+  ref: ID
+  kind: Kind
+  schema: 'shelf-id/1'
+  inner: Inner
 }
 
 export interface Base {
@@ -73,12 +86,21 @@ func TestParseTypes_extendsIsFlattened(t *testing.T) {
 
 func check1(t *testing.T, ts *tsTypes, body string) []string {
 	t.Helper()
+	return checkAs(t, ts, "Thing", body)
+}
+
+// checkAs decodes body the way checkGoldens does (UseNumber), so a number
+// reaches the checker as a json.Number and not a float64.
+func checkAs(t *testing.T, ts *tsTypes, typeName, body string) []string {
+	t.Helper()
 	var doc any
-	if err := json.NewDecoder(strings.NewReader(body)).Decode(&doc); err != nil {
+	dec := json.NewDecoder(strings.NewReader(body))
+	dec.UseNumber()
+	if err := dec.Decode(&doc); err != nil {
 		t.Fatalf("bad test JSON: %v", err)
 	}
 	c := &checker{ts: ts, file: "sample.json"}
-	c.value(doc, typeRef{name: "Thing"}, "")
+	c.value(doc, typeRef{name: typeName}, "")
 	return c.findings
 }
 
@@ -142,6 +164,69 @@ func TestChecker_findsEveryKindOfDisagreement(t *testing.T) {
 				t.Errorf("findings did not mention %q:\n%s", tc.want, joined)
 			}
 		})
+	}
+}
+
+// A golden that sends `"2"` for a `number` field agreed with types.ts until
+// the checker compared scalar kinds: only enum membership was ever looked at,
+// so book_count could turn into a string and every check stayed green.
+const scalarsOK = `{"count": 2, "flag": true, "at": 1700000000, "ref": "b1",
+  "kind": "zip", "schema": "shelf-id/1", "inner": {"n": 1, "label": null}}`
+
+func TestChecker_scalarKindsThatAgree(t *testing.T) {
+	t.Parallel()
+	if got := checkAs(t, mustParse(t), "Scalars", scalarsOK); len(got) != 0 {
+		t.Fatalf("expected no findings, got %v", got)
+	}
+}
+
+func TestChecker_scalarKindDisagreements(t *testing.T) {
+	t.Parallel()
+	ts := mustParse(t)
+	cases := []struct {
+		field, value, want string
+	}{
+		{"count", `"2"`, "count: types.ts declares number, the server sends a string"},
+		{"count", `true`, "count: types.ts declares number, the server sends a boolean"},
+		{"flag", `1`, "flag: types.ts declares boolean, the server sends a number"},
+		{"flag", `"true"`, "flag: types.ts declares boolean, the server sends a string"},
+		{"at", `"1700000000"`, "at: types.ts declares Unix (number), the server sends a string"},
+		{"ref", `42`, "ref: types.ts declares ID (string), the server sends a number"},
+		{"kind", `7`, "kind: types.ts declares Kind (string), the server sends a number"},
+		{"schema", `3`, "schema: types.ts declares 'shelf-id/1' (string), the server sends a number"},
+		{"schema", `"shelf-id/2"`, `schema: value "shelf-id/2" is not 'shelf-id/1'`},
+		{"inner", `5`, "inner: types.ts declares Inner (an object), the server sends a number"},
+		{"inner", `"x"`, "inner: types.ts declares Inner (an object), the server sends a string"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.field+"="+tc.value, func(t *testing.T) {
+			t.Parallel()
+			var doc map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(scalarsOK), &doc); err != nil {
+				t.Fatal(err)
+			}
+			doc[tc.field] = json.RawMessage(tc.value)
+			body, err := json.Marshal(doc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := checkAs(t, ts, "Scalars", string(body))
+			if len(got) != 1 || !strings.HasSuffix(got[0], tc.want) {
+				t.Errorf("want exactly one finding ending %q, got %q", tc.want, got)
+			}
+		})
+	}
+}
+
+// A type name the checker cannot resolve must not pass a scalar silently:
+// that is how a renamed alias would stop being checked without anyone noticing.
+func TestChecker_unresolvedScalarTypeIsReported(t *testing.T) {
+	t.Parallel()
+	ts := mustParse(t)
+	c := &checker{ts: ts, file: "sample.json"}
+	c.value("x", typeRef{name: "Mystery"}, "f")
+	if len(c.findings) != 1 || !strings.Contains(c.findings[0], "Mystery") {
+		t.Fatalf("want one finding naming Mystery, got %q", c.findings)
 	}
 }
 

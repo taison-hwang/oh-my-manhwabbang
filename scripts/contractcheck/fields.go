@@ -30,8 +30,11 @@ import (
 //   - types.ts ↔ Go, the request bodies: names only. A decoder needs no
 //     omitempty for a field the client may leave out (RootCreate.label).
 //
-// Field types (nullability included) are not compared here; the golden diff
-// does that for the values it sees.
+// Field types are not compared here. The golden diff compares them, but only
+// for the values a golden carries: null against `| null`, arrays, objects by
+// interface, and scalars by kind (string, number, boolean) with enum and
+// literal membership on top (checker.scalar). A field no golden sends is not
+// type-checked anywhere.
 func checkInterfaceFields(root string, ts *tsTypes) ([]string, error) {
 	arch, gs, err := readInterfaceSources(root)
 	if err != nil {
