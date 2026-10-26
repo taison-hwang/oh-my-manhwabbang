@@ -66,7 +66,7 @@ import { useViewerKeys } from './useViewerKeys'
  *  * **Where each page number comes from.** The store owns the current page;
  *    the *opening* page is the route's `?page=` (set by the series screen) or
  *    the server's `progress.last_page` (FR-VWR-009 resume). The guard is a ref
- *    on the book id, not a dependency list — the prefs write puts the fresh
+ *    on the book id (`openedRef`), not a dependency list — the prefs write puts the fresh
  *    prefs into the book cache, and a re-run would throw the reader back to
  *    where they resumed on every 양면/화면 press.
  *  * **Which page turn.** `nextPage`/`prevPage` committed through the store's
@@ -185,9 +185,11 @@ const MODIFIER_KEYS: ReadonlySet<string> = new Set([
 ])
 
 export function ViewerPage() {
-  const { sid, bid } = useParams()
-  const seriesId = sid ?? ''
-  const bookId = bid ?? ''
+  // Kept whole, not only destructured: the object itself is the open effect's
+  // "a navigation landed here" token — see `openedRef`.
+  const params = useParams()
+  const seriesId = params.sid ?? ''
+  const bookId = params.bid ?? ''
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
 
@@ -303,12 +305,57 @@ export function ViewerPage() {
   // -------------------------------------------------------------------------
 
   const requestedPage = Number(searchParams.get('page'))
-  const openedRef = useRef<string | null>(null)
+
+  /**
+   * The book this instance opened, and the route render it last saw it under.
+   *
+   * A book id alone used to be the whole latch, and it was never tied to the
+   * store being open. Two sequences close the store **without unmounting this
+   * instance**, and each left the latch set over a closed store, so the viewer
+   * never opened again (store `bookId` null under a mounted screen):
+   *
+   *  * StrictMode's dev mount → unmount → mount. Refs survive it; the unmount
+   *    cleanup below closes the store, so it also clears the latch.
+   *  * 뒤로 / 라이브러리 / `Esc` call `close()` synchronously — the global `Esc`
+   *    ladder keys off `bookId !== null`, so the close cannot wait — while the
+   *    navigation away is a transition. A return to this URL before that
+   *    transition commits (the browser's Back, say) supersedes it, and the
+   *    route this instance renders never changed.
+   *
+   * **Why `params` and not `location.key`.** Back is a POP to the very history
+   * entry the leave started from, which hands back that entry's *own* key —
+   * measured: `default` before, `default` after — and the router memoises the
+   * location by its fields, so neither the key nor the location object moves.
+   * `useParams()` is rebuilt every time the router renders this route, which is
+   * what a navigation landing here does, POP included.
+   *
+   * **Why the route, and not merely "is the store closed".** The leave's own
+   * `close()` leaves a closed store under a mounted viewer for as long as its
+   * transition is in flight. A detail write landing then (a progress `PUT`'s
+   * answer — `useSaveProgress.onSuccess` replaces `books.detail`) re-runs this
+   * effect, and reopening there resets the page to `?page=` just before the
+   * unmount flush writes it (D-13). No route render since the store was last
+   * seen open means the close was the leave's, and it stands.
+   *
+   * The assumption this rests on: the router renders this route during a leave
+   * only to land a navigation. True while no route has a `loader` (a pending
+   * leave would publish a `loading` state first) — see `router.tsx`.
+   */
+  const openedRef = useRef<{ bookId: string; route: object } | null>(null)
 
   useEffect(() => {
     if (detail === undefined || bookId === '') return
-    if (openedRef.current === bookId) return
-    openedRef.current = bookId
+    const opened = openedRef.current
+    if (opened?.bookId === bookId) {
+      const routedHere = opened.route !== params
+      opened.route = params
+      // Still open: a refetch, a `PUT`'s answer, a prefs write — and re-running
+      // `open()` would throw the reader back to where they resumed.
+      if (useViewerStore.getState().bookId === bookId) return
+      // Closed, and nothing has navigated here since: our own leave, in flight.
+      if (!routedHere) return
+    }
+    openedRef.current = { bookId, route: params }
     const resume =
       Number.isFinite(requestedPage) && requestedPage >= 1
         ? Math.trunc(requestedPage)
@@ -326,12 +373,14 @@ export function ViewerPage() {
       // detail has just been fetched and no `PUT` has answered over it yet.
       stale: detail.progress?.stale === true,
     })
-  }, [bookId, detail, open, requestedPage, seedDir])
+  }, [bookId, detail, open, params, requestedPage, seedDir])
 
   // Leaving the screen must not leave a viewer open in the store — the global
-  // `Esc` ladder and the shell both key off `bookId !== null`.
+  // `Esc` ladder and the shell both key off `bookId !== null`. The latch goes
+  // with it, for StrictMode's remount of this same instance (see `openedRef`).
   useEffect(
     () => () => {
+      openedRef.current = null
       useViewerStore.getState().close()
     },
     [],
