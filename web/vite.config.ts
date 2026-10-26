@@ -1,11 +1,11 @@
 import { existsSync, writeFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import react from '@vitejs/plugin-react'
 import { defineConfig, type Plugin } from 'vite'
 
 const appEntry = fileURLToPath(new URL('./src/main.tsx', import.meta.url))
-const distGitkeep = fileURLToPath(new URL('./dist/.gitkeep', import.meta.url))
 
 /**
  * Lets `pnpm build` succeed before WP-05 has created `src/main.tsx`.
@@ -49,13 +49,23 @@ function tolerateMissingEntry(): Plugin {
  * `//go:embed all:dist` in web/embed.go always has something to match. Without
  * this, the sequence `pnpm build` then `git clean`/checkout of dist/ leaves the
  * Go package uncompilable with "pattern dist: no matching files found".
+ *
+ * It writes into the directory *this* build emptied — `build.outDir` resolved
+ * against the root — and nowhere else. It used to write web/dist/.gitkeep
+ * whatever `--outDir` said, so a build into scratch still touched the
+ * repository, and `make e2e` step 9 (nothing in the tree newer than its marker)
+ * failed on it. Exported for `src/viteConfig.test.ts`.
  */
-function keepDistPlaceholder(): Plugin {
+export function keepDistPlaceholder(): Plugin {
+  let gitkeep: string | null = null
   return {
     name: 'shelf:keep-dist-placeholder',
     apply: 'build',
+    configResolved(config) {
+      gitkeep = resolve(config.root, config.build.outDir, '.gitkeep')
+    },
     closeBundle() {
-      writeFileSync(distGitkeep, '')
+      if (gitkeep !== null) writeFileSync(gitkeep, '')
     },
   }
 }
