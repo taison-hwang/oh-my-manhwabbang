@@ -31,7 +31,9 @@ import { LoginScreen } from './features/auth/LoginScreen'
  *
  * Onboarding replaces the entire shell when no roots are registered (ui-spec
  * §4.6) — so this component decides whether there is chrome, and the route
- * decides what goes inside it.
+ * decides what goes inside it. The viewer is the exception: it covers the
+ * chrome, so it renders beside it and the chrome is kept but not displayed
+ * (E-61).
  */
 export function App() {
   const shell = useShellData()
@@ -149,7 +151,20 @@ export function App() {
           <Outlet />
         </div>
       ) : (
-        <div className="shell">
+        // E-61. The viewer (fixed, inset 0, opaque) covers the shell edge to
+        // edge, so the shell stays mounted — not replaced ("renders over the
+        // shell, not instead of it", ui-spec §3) — but is not displayed, and
+        // the viewer's route element renders beside it rather than inside.
+        // Displayed, the shell was there only for things nobody could see: Tab
+        // walked into the sidebar and top bar behind the viewer (26 of 40
+        // presses at 1440), and the top bar — laid out with its 라이브러리
+        // button on every `/series/...` path, the viewer's included — stood a
+        // row taller than the library's at 1024 and 400, so coming back out of
+        // a book moved it and the body under it by 48–56px (CLS 0.110 /
+        // 0.062). The Layout Instability API does not discount a move under an
+        // opaque layer; a box that was not displayed only appears. An inline
+        // style rather than a class, so the jsdom tests can see it.
+        <div className="shell" style={inViewer ? { display: 'none' } : undefined}>
           {/* Below 768 the sidebar is not merely hidden — it is not rendered.
               CSS alone would leave a second copy of every nav row in the
               accessibility tree once the drawer opens. */}
@@ -173,14 +188,24 @@ export function App() {
               }}
             />
             <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
-              <Outlet />
+              {inViewer ? null : <Outlet />}
             </div>
           </main>
         </div>
       )}
+      {/* The viewer's route element, outside the undisplayed shell (E-61). The
+          shell's <main> is not displayed, so this wrapper is the viewer's main
+          landmark — a `role="main"` div, as HTML allows one <main> without
+          `hidden`. The viewer is fixed, so the wrapper adds no layout. */}
+      {!chromeless && inViewer ? (
+        <div role="main">
+          <Outlet />
+        </div>
+      ) : null}
 
-      {/* Portals: the viewer (z-60) is rendered by its own route element, so
-          only the drawer lives here. Dialogs (z-80) arrive with WP-10.
+      {/* Portals: the viewer (z-60) is its own route element, rendered just
+          above, beside the shell rather than inside it, so only the drawer
+          lives here. Dialogs (z-80) arrive with WP-10.
 
           The drawer serves *both* sub-1024 tiers (ui-spec §7): below 768 it is
           the only sidebar there is, and at 768–1023 it is the overlay that makes

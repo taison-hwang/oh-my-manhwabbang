@@ -828,7 +828,7 @@ Routing (the prototype uses a `route` enum; use React Router with the same shape
 |---|---|
 | `/` | Home / Library |
 | `/series/:sid` | Series detail |
-| `/series/:sid/books/:bid?page=n` | Viewer (renders over the shell, not instead of it) |
+| `/series/:sid/books/:bid?page=n` | Viewer (renders over the shell, not instead of it — the shell stays mounted but is not displayed while the viewer is up, so nothing under it takes focus or moves on the way out; **E-61**) |
 
 `settings` / `palette` / `shortcuts` are **state, not routes** — they are overlays over whatever is beneath.
 

@@ -2,7 +2,7 @@ import '@testing-library/jest-dom/vitest'
 
 import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import type { ReactElement } from 'react'
+import { useEffect, type ReactElement } from 'react'
 import { RouterProvider, createMemoryRouter } from 'react-router-dom'
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
@@ -38,7 +38,11 @@ function stubViewport(width: number): void {
   Object.defineProperty(window, 'matchMedia', { writable: true, configurable: true, value: impl })
 }
 
-function renderShell(data: Partial<ShellData> = {}, initialPath = '/'): void {
+function renderShell(
+  data: Partial<ShellData> = {},
+  initialPath = '/',
+  viewer: ReactElement = <p>viewer</p>,
+): ReturnType<typeof createMemoryRouter> {
   const value: ShellData = { ...DEFAULT_SHELL_DATA, ...data }
   const memory = createMemoryRouter(
     [
@@ -52,7 +56,7 @@ function renderShell(data: Partial<ShellData> = {}, initialPath = '/'): void {
         children: [
           { index: true, element: <p>library</p> },
           { path: 'series/:sid', element: <p>series</p> },
-          { path: 'series/:sid/books/:bid', element: <p>viewer</p> },
+          { path: 'series/:sid/books/:bid', element: viewer },
         ],
       },
     ],
@@ -60,6 +64,18 @@ function renderShell(data: Partial<ShellData> = {}, initialPath = '/'): void {
   )
   const tree: ReactElement = <RouterProvider router={memory} />
   render(tree)
+  return memory
+}
+
+/** How many times {@link ViewerMountProbe} has mounted; reset by the test that reads it. */
+let viewerMounts = 0
+
+/** The viewer route element, counting its mounts. */
+function ViewerMountProbe() {
+  useEffect(() => {
+    viewerMounts += 1
+  }, [])
+  return <p>viewer</p>
 }
 
 /**
@@ -219,10 +235,74 @@ describe('routing (ui-spec §3)', () => {
     expect(useUiStore.getState().query).toBe('군계')
   })
 
-  it('renders the viewer route over the shell rather than instead of it', () => {
+  /**
+   * **E-61.** The viewer covers the shell edge to edge, so the shell under it
+   * stays mounted — not replaced — but is not displayed. Displayed, it served
+   * only things nobody could see: Tab walked into the sidebar and the top bar
+   * behind the viewer (26 of 40 presses at 1440), and the top bar, laid out
+   * with its 라이브러리 button, stood a row taller than the library's at 1024
+   * and 400 — so coming back out of a book moved it and the body under it by
+   * 48–56px (CLS 0.110 / 0.062). The Layout Instability API does not care that
+   * an opaque layer hid the move; a box that was not displayed only appears.
+   * Rendered beside the shell, the viewer is outside the shell's <main>, so it
+   * needs a main landmark of its own — `ViewerPage` declares none.
+   */
+  it('renders the viewer route over the shell rather than instead of it, with the shell not displayed (E-61)', () => {
     renderShell(LOADED_ROOTS, '/series/abc/books/def')
-    expect(screen.getByText('viewer')).toBeInTheDocument()
-    expect(screen.getByRole('complementary', { name: '라이브러리 탐색' })).toBeInTheDocument()
+    const viewer = screen.getByText('viewer')
+    expect(viewer).toBeVisible()
+    // Beside the shell, not inside it …
+    expect(viewer.closest('.shell')).toBeNull()
+    // … and still in the main landmark, which the undisplayed shell's is not.
+    expect(screen.getByRole('main')).toContainElement(viewer)
+    // The shell: mounted …
+    const nav = screen.getByRole('complementary', { name: '라이브러리 탐색', hidden: true })
+    expect(nav).toBeInTheDocument()
+    // … not displayed — `aria-hidden` alone would leave it laid out and focusable …
+    expect(nav).not.toBeVisible()
+    // … and out of reach: neither the sidebar nor the top bar is in the tree.
+    expect(screen.queryByRole('complementary', { name: '라이브러리 탐색' })).toBeNull()
+    expect(screen.queryByRole('searchbox')).toBeNull()
+    expect(screen.queryByRole('button', { name: '라이브러리' })).toBeNull()
+  })
+
+  /**
+   * The whole trip, library → book → next volume → page → library. Each node
+   * survives it: the shell is not rebuilt on the way in or out, and the viewer
+   * is mounted once, not again per volume or page.
+   */
+  it('keeps the same shell and the same viewer from the library through the viewer and back (E-61)', async () => {
+    viewerMounts = 0
+    const memory = renderShell(LOADED_ROOTS, '/', <ViewerMountProbe />)
+    const nav = screen.getByRole('complementary', { name: '라이브러리 탐색' })
+    const search = screen.getByRole('searchbox')
+
+    await act(async () => {
+      await memory.navigate('/series/abc/books/def')
+    })
+    expect(screen.getByText('viewer')).toBeVisible()
+    expect(screen.getByRole('complementary', { name: '라이브러리 탐색', hidden: true })).toBe(nav)
+    expect(screen.getByRole('searchbox', { hidden: true })).toBe(search)
+    expect(nav).not.toBeVisible()
+    expect(search).not.toBeVisible()
+
+    await act(async () => {
+      await memory.navigate('/series/abc/books/ghi')
+    })
+    await act(async () => {
+      await memory.navigate('/series/abc/books/ghi?page=3')
+    })
+    expect(screen.getByText('viewer')).toBeVisible()
+    expect(viewerMounts).toBe(1)
+
+    await act(async () => {
+      await memory.navigate('/')
+    })
+    expect(await screen.findByText('library')).toBeVisible()
+    expect(screen.getByRole('complementary', { name: '라이브러리 탐색' })).toBe(nav)
+    expect(screen.getByRole('searchbox')).toBe(search)
+    expect(nav).toBeVisible()
+    expect(search).toBeVisible()
   })
 })
 
