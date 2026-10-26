@@ -4158,3 +4158,32 @@ arch §7.11은 가져오기를 한 문장으로 정했다. "`book_id`로 합치�
 
 - `docs/arch-backend.md` §7 머리말(A-1…A-17, A-17 요약)과 §7.11의 A-17 문단.
 - `docs/impl-plan.md` §0.3 A-17 행과 각주, §0.3 참조 범위(A-1 … A-17).
+
+## E-65 — **페이지 끝점은 서빙 시점에 드러난 암호화·손상·미지원 압축에 `422 unprocessable`을 준다 (AMENDMENT A-18)** (20 발견, 메인 판단 2026-10-26 — E-64와 같은 원칙 "서버가 이미 하는 일을 명세에 적는다", 코드·골든 변화 없음) — BINDING
+
+### 1. 문제
+
+암호화된 책의 페이지 요청에 상태 코드가 두 개 있다. `internal/httpapi/pages.go:68`은 `404 not_found`, `sourceError`(`pages.go:393`)의 `archive.ErrEncrypted`는 `422 unprocessable`이다.
+arch §7.6 `GET /api/books/{bid}/pages/{n}`의 오류 목록에는 404·409·501·503만 있고, 422는 §7.2 봉투의 일반 정의("understood but cannot be produced")로만 있다.
+
+### 2. 판정
+
+두 코드는 충돌이 아니다. 다른 상황이다. 이름으로 나눈다.
+
+- **`404`: 색인이 `encrypted`로 기록한 책.** 그 상태만으로 거부한다. 페이지 행이나 `page_count`와 무관하다(`pages.go:68`, E-54 §4 "`encrypted`는 자기 자격으로 거부"). `page_count`가 0이어서가 아니다.
+- **`404`: `n`이 `[1, page_count]` 안인데 색인에 그 페이지 행이 없는 경우**(`pages.go:85`). 이미 하던 동작이고, 같은 개정에서 목록에 적었다.
+- **`422 unprocessable`: 색인은 그 항목을 페이지로 올렸는데, 서빙 시점에 열어 보니 암호화(`ErrEncrypted`)·손상(`ErrCorrupt`)·이 빌드가 풀 수 없는 압축 방식(`ErrUnsupportedMethod`)으로 드러난 경우.** 스캔 뒤 파일이 바뀌었거나, nested 내부 아카이브처럼 스캔이 내용까지 열어 보지 않는 곳에서 생긴다(스캔은 중앙 디렉터리만 읽는다).
+  §7.6 목록에 이 한 줄을 넣었다. 404와 가르는 이유: 404는 "색인에 그런 페이지가 없다" 또는 "색인이 `encrypted`로 기록해 상태로 거부한다"이고, 422는 "색인은 페이지로 올렸고 거부 상태도 아닌데, 서빙 시점에 만들 수 없다"이다. 색인이 아직 모르는 손상을 404로 말하면 사용자를 엉뚱한 곳(이동·삭제)으로 보낸다.
+
+**개정이다(A-18).** A-16 스스로의 기준이다. 나열된 집합을 넓히면 옛 집합으로 분기하던 클라이언트의 망라성이 깨진다. 이 끝점의 오류 목록에 422를 더하는(그리고 페이지 행 없음의 404를 적는) 것이 그 모양이다. 서버가 이미 보내던 코드라 코드는 그대로다. impl-plan §0.3 표에 A-18 행을 먼저 넣었다(A-7).
+
+### 3. 검증
+
+- 코드 변화 없음. 이미 고정하는 테스트: `internal/httpapi/params_test.go:267-269`(`sourceError` 매핑 세 개), `internal/httpapi/pages_test.go:843-844`(봉투 코드, 원인 비노출). 색인상 `encrypted`의 404는 `pages_test.go:798` `TestPage_encryptedBookIsRefusedEvenWithPageRows`가 본다.
+- SPA: 페이지는 `<img>`로 받고 `PageFrame.tsx`의 `onError`가 상태 코드와 무관하게 같은 실패 상태를 그린다. `features/viewer/bookErrors.ts`는 `GET /api/books/{bid}`용이라 페이지 응답에 닿지 않는다. 어긋남 없음.
+- 골든 변화 없음. contractcheck 45 agree.
+
+### 4. 바뀐 것
+
+- `docs/arch-backend.md` §7.6 페이지 오류 목록(404의 `encrypted` 문장, `AMENDMENT A-18` 항목: 페이지 행 없음의 404와 422), §7 머리말(A-1…A-18, A-18 요약).
+- `docs/impl-plan.md` §0.3 A-18 행과 각주, §0.3 참조 범위(A-1 … A-18).

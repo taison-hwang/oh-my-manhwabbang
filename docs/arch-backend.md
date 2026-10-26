@@ -1591,7 +1591,7 @@ Measured contributions: base process + sqlite ≈ 33 MiB RSS; pdfium pool +43 Mi
 
 The frontend is built against this section in parallel with the backend. It is binding.
 
-> **Binding as amended.** The contract is this section **plus amendments A-1…A-17** in `impl-plan.md` §0.3
+> **Binding as amended.** The contract is this section **plus amendments A-1…A-18** in `impl-plan.md` §0.3
 > (D-47). Amendments in force: **A-4** `GET /api/series?progress=any|reading|done|unread`; **A-5**
 > `Settings.library_scope: string`; **A-6** default `w` on `/cover` and `/thumbs/{n}` is **120**
 > (`widths[0]` under A-1's `[120, 240, 400, 640]`); **A-8** `GET /api/series?scope=all|added` backed by
@@ -1607,9 +1607,10 @@ The frontend is built against this section in parallel with the backend. It is b
 > unacknowledged write preserves (§7.6, ruling **E-45**); **A-15** `verbose.thumbs.{cover_depth,page_depth,
 > active,inflight}` of `GET /api/health?verbose=1` (§7.4, ruling **E-57**); **A-16** `SeriesDetail.encoding:
 > NameEncoding | null`, kenc's five labels, `mixed` gone (§7.5, ruling **E-56**). **A-17** import never moves `started_at` later, and a
-> `prefs` row, which carries no `updated_at`, loses to a local override under merge (§7.11, ruling **E-64**). **A-7** freezes everything
+> `prefs` row, which carries no `updated_at`, loses to a local override under merge (§7.11, ruling **E-64**). **A-18**
+> `GET /api/books/{bid}/pages/{n}` lists `422 unprocessable` and the missing-page-row `404` (§7.6, ruling **E-65**). **A-7** freezes everything
 > else verbatim, and requires this table to be updated before anything else moves — which is what A-8
-> through A-17 did.
+> through A-18 did.
 > Rulings **E-14** (the `series.status` fold, §3.5/§7.3) and **E-15** (`Settings.library_sort` is the closed
 > FR-LIB-004 set, §7.8) are *sharpenings*, not amendments: they narrow a type to the values the server
 > already produced and accepted, so no client that was correct becomes incorrect.
@@ -2391,7 +2392,10 @@ A 1,071-page book returns 1,071 `PageInfo` objects ≈ 110 KB of JSON — well i
 * `200` with the **original bytes** for zip/dir (FR-SRV-008), or `image/jpeg` for PDF.
 * Headers: `Content-Type` from the extension, `Content-Length`, strong `ETag`, `Cache-Control` per §5.3, `X-Content-Type-Options: nosniff`, and `Accept-Ranges: bytes` only for stored entries and `dir` pages.
 * `304` on a matching `If-None-Match`. `206` on `Range` where supported.
-* `404` unknown book, or `n` outside `[1, page_count]`.
+* `404` unknown book, or `n` outside `[1, page_count]`. A book the index records as `encrypted` gets `404` by that status alone, whatever its page rows or `page_count` (E-54 §4).
+* **AMENDMENT A-18 (ruling E-65).** Two statuses the server already sent:
+  * `404` also when `n` is inside `[1, page_count]` but the index holds no page row for it.
+  * `422 unprocessable` when the entry turns out at serving time to be encrypted, corrupt, or packed with a method this build cannot decode, although the index listed it as a page.
 * `409 stale_version` when `v` is present and no longer current, with `detail: {cv: "<current>"}`.
 * `501 unsupported` for a PDF page in a `nopdf` build or with `pdf.enabled: false`.
 * `503 unavailable` when the media volume cannot be opened.
