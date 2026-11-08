@@ -187,6 +187,7 @@ const (
 	pageRestart
 	pageRateLimited
 	pageLoggedOut
+	pageRetryLater
 )
 
 type oidcPage struct {
@@ -248,6 +249,8 @@ func (s *Server) writeOIDCPage(w http.ResponseWriter, r *http.Request, status in
 		d.Message, d.Error, d.LoginLabel = "로그인이 만료되었거나 다른 창에서 시작되었습니다. 처음부터 다시 로그인하세요.", true, "다시 로그인"
 	case pageRateLimited:
 		d.Message, d.Error = "로그인 시도가 너무 많습니다. 잠시 후 다시 시도하세요.", true
+	case pageRetryLater:
+		d.Message, d.Error = "로그인을 마치지 못했습니다. 잠시 후 다시 시도하세요.", true
 	case pageLoggedOut:
 		d.Message, d.LoginLabel = "로그아웃했습니다. 다른 서비스에는 계속 로그인되어 있습니다.", "다시 로그인"
 		if pg.EndSession {

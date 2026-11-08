@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +23,8 @@ const (
 	jwksTTL         = 30 * time.Minute
 	jwksRefetchGap  = time.Minute
 	maxProviderBody = 1 << 20
+	// maxProviderHeader is net/http's server default (DefaultMaxHeaderBytes).
+	maxProviderHeader = 1 << 20
 )
 
 var errProviderUnavailable = errors.New("oidc: the identity provider could not be reached")
@@ -46,12 +49,15 @@ type provider struct {
 	failAt  time.Time
 	failErr error
 
+	keysMu     sync.Mutex
+	lastKeyTry time.Time
+	keysErr    error
+
 	mu          sync.Mutex
 	meta        *metadata
 	metaAt      time.Time
 	keys        map[string]ed25519.PublicKey
 	keysAt      time.Time
-	lastKeyTry  time.Time
 	keysFetched bool
 }
 
@@ -60,25 +66,44 @@ func newProvider(issuer string, client Doer, now func() time.Time) *provider {
 }
 
 func (p *provider) getJSON(ctx context.Context, url string, into any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	return call(ctx, p.client, http.MethodGet, url, "", into)
+}
+
+// call sends one request to uni-auth and decodes its JSON answer. The request
+// is built by hand: http.NewRequestWithContext costs binary the NFR-OPS-001
+// budget does not have.
+func call(ctx context.Context, c Doer, method, rawURL, form string, into any) error {
+	u, err := url.Parse(rawURL)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Accept", "application/json")
-	resp, err := p.client.Do(req)
+	req := (&http.Request{Method: method, URL: u, Host: u.Host, Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1,
+		Header: http.Header{"Accept": {"application/json"}}}).WithContext(ctx)
+	if form != "" {
+		req.Header["Content-Type"] = []string{"application/x-www-form-urlencoded"}
+		req.Body, req.ContentLength = io.NopCloser(strings.NewReader(form)), int64(len(form))
+	}
+	resp, err := c.Do(req)
 	if err != nil {
 		return fmt.Errorf("%w: %v", errProviderUnavailable, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%w: GET %s answered %d", errProviderUnavailable, url, resp.StatusCode)
-	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxProviderBody))
 	if err != nil {
 		return fmt.Errorf("%w: %v", errProviderUnavailable, err)
 	}
+	if resp.StatusCode != http.StatusOK {
+		if form != "" {
+			var perr struct {
+				Error string `json:"error"`
+			}
+			_ = json.Unmarshal(body, &perr)
+			return fmt.Errorf("oidc: token exchange answered %d %s", resp.StatusCode, errorCode(perr.Error))
+		}
+		return fmt.Errorf("%w: GET %s answered %d", errProviderUnavailable, rawURL, resp.StatusCode)
+	}
 	if err := json.Unmarshal(body, into); err != nil {
-		return fmt.Errorf("oidc: decoding %s: %w", url, err)
+		return fmt.Errorf("oidc: decoding %s: %w", rawURL, err)
 	}
 	return nil
 }
@@ -151,25 +176,51 @@ type jwk struct {
 }
 
 func (p *provider) key(ctx context.Context, kid string) (ed25519.PublicKey, error) {
-	p.mu.Lock()
-	fresh := p.keysFetched && p.now().Sub(p.keysAt) < jwksTTL
-	k, ok := p.keys[kid]
-	canRetry := p.now().Sub(p.lastKeyTry) >= jwksRefetchGap
-	p.mu.Unlock()
-	if ok && fresh {
+	if k, ok := p.cachedKey(kid); ok {
 		return k, nil
 	}
-	if fresh && !canRetry {
+	// keysMu keeps one JWKS fetch in flight; lastKeyTry is set before the
+	// fetch and counts failures too, so neither concurrent unknown kids nor a
+	// failing uni-auth get more than one fetch a minute (E-74 §2.6).
+	p.keysMu.Lock()
+	defer p.keysMu.Unlock()
+	if k, ok := p.cachedKey(kid); ok {
+		return k, nil
+	}
+	now := p.now()
+	if !p.lastKeyTry.IsZero() && now.Sub(p.lastKeyTry) < jwksRefetchGap {
+		if p.keysErr != nil {
+			return nil, p.keysErr
+		}
 		return nil, fmt.Errorf("oidc: unknown key id %q", kid)
 	}
-
-	m, err := p.metadata(ctx)
+	p.lastKeyTry = now
+	keys, err := p.fetchKeys(ctx)
+	p.keysErr = err
 	if err != nil {
 		return nil, err
 	}
 	p.mu.Lock()
-	p.lastKeyTry = p.now()
+	p.keys, p.keysAt, p.keysFetched = keys, p.now(), true
 	p.mu.Unlock()
+	if k, ok := keys[kid]; ok {
+		return k, nil
+	}
+	return nil, fmt.Errorf("oidc: unknown key id %q", kid)
+}
+
+func (p *provider) cachedKey(kid string) (ed25519.PublicKey, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	k, ok := p.keys[kid]
+	return k, ok && p.keysFetched && p.now().Sub(p.keysAt) < jwksTTL
+}
+
+func (p *provider) fetchKeys(ctx context.Context) (map[string]ed25519.PublicKey, error) {
+	m, err := p.metadata(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var set struct {
 		Keys []jwk `json:"keys"`
 	}
@@ -187,11 +238,5 @@ func (p *provider) key(ctx context.Context, kid string) (ed25519.PublicKey, erro
 		}
 		keys[j.Kid] = ed25519.PublicKey(raw)
 	}
-	p.mu.Lock()
-	p.keys, p.keysAt, p.keysFetched = keys, p.now(), true
-	p.mu.Unlock()
-	if k, ok := keys[kid]; ok {
-		return k, nil
-	}
-	return nil, fmt.Errorf("oidc: unknown key id %q", kid)
+	return keys, nil
 }

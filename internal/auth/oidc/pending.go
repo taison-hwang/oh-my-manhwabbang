@@ -76,11 +76,28 @@ func (p *pendingStore) admit(ip string) (wait time.Duration, ok bool) {
 	return 0, true
 }
 
-func (p *pendingStore) put(state string, e *pending) {
+// put stores e unless the store is full; admit's check runs before the
+// discovery fetch, so concurrent starts can all pass it and the cap is
+// enforced again here, under the same lock as the insert.
+func (p *pendingStore) put(state string, e *pending) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	e.expires = p.now().Add(pendingTTL)
+	now := p.now()
+	if len(p.entries) >= pendingMax {
+		p.sweepLocked(now)
+		if len(p.entries) >= pendingMax {
+			return false
+		}
+	}
+	e.expires = now.Add(pendingTTL)
 	p.entries[state] = e
+	return true
+}
+
+func (p *pendingStore) sweep() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.sweepLocked(p.now())
 }
 
 // take returns and removes the entry for state only when loginID is the

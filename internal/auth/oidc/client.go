@@ -50,7 +50,9 @@ func (c directClient) Do(req *http.Request) (*http.Response, error) {
 		release()
 		return nil, err
 	}
-	resp, err := http.ReadResponse(bufio.NewReader(conn), out)
+	// The cap bounds the status line and headers, which ReadResponse would
+	// otherwise read without limit; callers cap the body at maxProviderBody.
+	resp, err := http.ReadResponse(bufio.NewReader(io.LimitReader(conn, maxProviderBody+maxProviderHeader)), out)
 	if err != nil {
 		release()
 		return nil, err

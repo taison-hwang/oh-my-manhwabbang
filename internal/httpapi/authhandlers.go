@@ -238,6 +238,8 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) erro
 		s.writeOIDCPage(w, r, http.StatusForbidden, oidcPage{Kind: pageReauthFailed})
 	case oidc.OutcomeUnavailable:
 		s.writeOIDCPage(w, r, http.StatusServiceUnavailable, oidcPage{Kind: pageUnavailable})
+	case oidc.OutcomeRetryLater:
+		s.writeOIDCPage(w, r, http.StatusServiceUnavailable, oidcPage{Kind: pageRetryLater})
 	case oidc.OutcomeLoginFailed:
 		s.writeOIDCPage(w, r, http.StatusBadGateway, oidcPage{Kind: pageLoginFailed})
 	default:

@@ -955,20 +955,25 @@ func TestOIDC_twoUsersKeepTheirOwnProgress(t *testing.T) {
 }
 
 // Ruling E-74 §2.14: only legacy_owner_sub receives the single-user data, at
-// its login; a failed copy does not refuse the login and runs again next time.
+// its login. A failed copy ends that login without a session, so nothing the
+// owner changes can be undone by the retry (U-B verification UB-4).
 func TestOIDC_legacyOwnerCopy(t *testing.T) {
 	f := newOIDCFixture(t)
 	f.legacyOwner = subAdmin
 	e := newEnv(t, withStatic(), withOIDC(f))
 	bid := e.bookZipID
-	seeded := func(b *browser) bool {
+	page := func(b *browser) int {
+		t.Helper()
 		d := decodeBody[BookDetail](t, b.get(e, "/api/books/"+bid), http.StatusOK)
-		return d.Progress != nil && d.Progress.LastPage == 2
+		if d.Progress == nil {
+			return 0
+		}
+		return d.Progress.LastPage
 	}
 
 	reader := newBrowser()
 	f.login(e, reader, subReader)
-	if _, migrated := f.hook.calls(); len(migrated) != 0 || seeded(reader) {
+	if _, migrated := f.hook.calls(); len(migrated) != 0 || page(reader) != 0 {
 		t.Fatalf("a user other than the legacy owner got the copy (calls %v)", migrated)
 	}
 
@@ -976,26 +981,54 @@ func TestOIDC_legacyOwnerCopy(t *testing.T) {
 	f.hook.failMigrate = errors.New("user.db is busy")
 	f.hook.mu.Unlock()
 	admin := newBrowser()
-	if loc := f.login(e, admin, subAdmin); loc != "/" {
-		t.Fatalf("login with a failing copy went to %q", loc)
+	w := admin.get(e, f.prov.Authorize(t, f.start(e, admin, ""), subAdmin))
+	if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "잠시 후 다시 시도") {
+		t.Fatalf("login with a failing copy = %d, want 503 and the try-again page: %s", w.Code, w.Body.String())
 	}
-	if st := authStatusOf(t, e, admin); !st.Authenticated || seeded(admin) {
-		t.Fatalf("after a failed copy: authenticated %t, seeded %t; want signed in without the data", st.Authenticated, seeded(admin))
+	if st := authStatusOf(t, e, admin); st.Authenticated {
+		t.Fatal("a failed copy still made a session")
+	}
+	if w := admin.get(e, "/api/books/"+bid); w.Code != http.StatusUnauthorized {
+		t.Fatalf("after a failed copy the owner reads books: %d", w.Code)
 	}
 
 	f.hook.mu.Lock()
 	f.hook.failMigrate = nil
 	f.hook.mu.Unlock()
-	again := newBrowser()
-	f.login(e, again, subAdmin)
-	if !seeded(again) {
+	f.login(e, admin, subAdmin)
+	if page(admin) != 2 {
 		t.Fatal("the copy was not retried at the owner's next login")
 	}
-	if seeded(reader) {
+	if page(reader) != 0 {
 		t.Fatal("the reader sees the owner's copied progress")
 	}
-	if _, migrated := f.hook.calls(); !slices.Equal(migrated, []string{subAdmin, subAdmin}) {
-		t.Fatalf("copy calls = %v, want two for the owner", migrated)
+
+	// UB-4: what the owner deletes after the copy stays deleted.
+	del := e.do(http.MethodDelete, "/api/books/"+bid+"/progress", nil, admin.send, sameSite)
+	if del.Code != http.StatusNoContent {
+		t.Fatalf("DELETE progress = %d: %s", del.Code, del.Body.String())
+	}
+	f.login(e, admin, subAdmin)
+	if p := page(admin); p != 0 {
+		t.Fatalf("deleted progress came back at the next login: page %d", p)
+	}
+	if _, migrated := f.hook.calls(); len(migrated) != 3 {
+		t.Fatalf("copy calls = %v, want one per owner login", migrated)
+	}
+}
+
+// E-74 §2.5 (U-B verification UB-3): an encoded or dot-segment return does not
+// survive a real login.
+func TestOIDC_returnIsCheckedAfterDecoding(t *testing.T) {
+	for _, base := range []string{"", "/shelf"} {
+		e, f := newOIDCEnv(t, withBasePath(base))
+		for _, ret := range []string{base + "/%61pi/settings", base + "/x/../api/settings", base + "/../api/settings"} {
+			b := newBrowser()
+			w := b.get(e, f.prov.Authorize(t, f.start(e, b, "?return="+url.QueryEscape(ret)), subReader))
+			if loc := w.Header().Get("Location"); w.Code != http.StatusFound || loc != base+"/" {
+				t.Errorf("return %q: callback %d to %q, want 302 to %s/", ret, w.Code, loc, base)
+			}
+		}
 	}
 }
 
@@ -1004,5 +1037,19 @@ func TestOIDC_needsPerUserData(t *testing.T) {
 	opts := Options{Config: e.cfg, Index: e.idx, UserData: hookedUser{UserData: e.user, real: e.user, spy: &loginHookSpy{}}, Logger: discard()}
 	if _, err := New(opts); err == nil {
 		t.Fatal("httpapi.New accepted oidc mode without per-user data")
+	}
+}
+
+// A forged callback cannot write its own text into the log through the
+// provider's error parameter (U-B verification follow-up).
+func TestOIDC_providerErrorIsLoggedAsACode(t *testing.T) {
+	e, f := newOIDCEnv(t)
+	var buf bytes.Buffer
+	e.srv.log = slog.New(slog.NewJSONHandler(&buf, nil))
+	b := newBrowser()
+	state := f.prov.AuthorizeQuery(t, f.start(e, b, "")).Get("state")
+	b.get(e, "/api/auth/oidc/callback?state="+url.QueryEscape(state)+"&error="+url.QueryEscape(state))
+	if strings.Contains(buf.String(), state) || !strings.Contains(buf.String(), "unrecognized") {
+		t.Fatalf("the error parameter reached the log as sent: %s", buf.String())
 	}
 }

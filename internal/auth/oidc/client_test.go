@@ -58,3 +58,38 @@ func TestDirectClient_timesOut(t *testing.T) {
 		t.Fatalf("the timeout took %s", d)
 	}
 }
+
+// The response head is bounded too, not only the body (U-B verification
+// follow-up): a provider that streams one endless header line is cut off at
+// the cap instead of being read until the timeout.
+func TestDirectClient_boundsTheResponseHead(t *testing.T) {
+	ln := httptest.NewUnstartedServer(nil).Listener
+	defer func() { _ = ln.Close() }()
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = c.Close() }()
+		_, _ = io.WriteString(c, "HTTP/1.1 200 OK\r\nX-Pad: ")
+		pad := strings.Repeat("a", 64<<10)
+		for range 64 { // 4 MiB of one header line, never finished
+			if _, err := io.WriteString(c, pad); err != nil {
+				return
+			}
+		}
+		<-done
+	}()
+	req, _ := http.NewRequest(http.MethodGet, "http://"+ln.Addr().String()+"/", nil)
+	start := time.Now()
+	resp, err := (directClient{timeout: 5 * time.Second}).Do(req)
+	if err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("an unbounded response head was accepted")
+	}
+	if took := time.Since(start); took > 2*time.Second {
+		t.Fatalf("the head was read until the timeout (%s): %v", took, err)
+	}
+}

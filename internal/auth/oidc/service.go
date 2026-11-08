@@ -9,13 +9,12 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"path"
 	"slices"
 	"strings"
 	"sync"
@@ -28,7 +27,11 @@ const (
 	ReauthWindow  = 15 * time.Minute
 	touchInterval = time.Minute
 	sweepInterval = 24 * time.Hour
-	httpTimeout   = 10 * time.Second
+	// graceSweep keeps a logged-out row's id_token from outliving its ten
+	// minutes by more than this (E-74 §2.12), and clears expired pre-auth
+	// entries (§2.5).
+	graceSweep  = time.Minute
+	httpTimeout = 10 * time.Second
 )
 
 // LoginHook is told about every successful login. userdata implements it
@@ -134,17 +137,27 @@ func (s *Service) Close() error {
 
 func (s *Service) sweepLoop() {
 	defer close(s.done)
-	t := time.NewTicker(sweepInterval)
-	defer t.Stop()
+	day, minute := time.NewTicker(sweepInterval), time.NewTicker(graceSweep)
+	defer day.Stop()
+	defer minute.Stop()
 	for {
 		select {
 		case <-s.stop:
 			return
-		case <-t.C:
+		case <-day.C:
 			if err := s.store.sweep(context.Background(), s.now()); err != nil {
 				s.log.Warn("sweeping auth.db", "err", err)
 			}
+		case <-minute.C:
+			s.sweepGrace()
 		}
+	}
+}
+
+func (s *Service) sweepGrace() {
+	s.pending.sweep()
+	if err := s.store.dropLoggedOut(context.Background(), s.now()); err != nil {
+		s.log.Warn("sweeping logged-out sessions", "err", err)
 	}
 }
 
@@ -209,10 +222,16 @@ func (s *Service) lookup(ctx context.Context, r *http.Request) (sessionRow, bool
 func (s *Service) Authenticate(r *http.Request) (Session, Status, error) {
 	ctx := r.Context()
 	row, ok, err := s.lookup(ctx, r)
-	if err != nil || !ok || !row.loggedOutAt.IsZero() {
+	if err != nil || !ok {
 		return Session{}, StatusNone, err
 	}
 	now := s.now()
+	if !row.loggedOutAt.IsZero() {
+		if now.Sub(row.loggedOutAt) >= loggedOutGrace {
+			err = s.store.delete(ctx, row.idHash)
+		}
+		return Session{}, StatusNone, err
+	}
 	if !now.Before(row.expiresAt) {
 		return Session{}, StatusExpired, nil
 	}
@@ -297,7 +316,9 @@ func (s *Service) authorize(m *metadata, e *pending) (Redirect, error) {
 	case e.promptNone:
 		q.Set("prompt", "none")
 	}
-	s.pending.put(state, e)
+	if !s.pending.put(state, e) {
+		return Redirect{}, &RateLimitError{RetryAfter: pendingTTL / 10}
+	}
 	loc := m.AuthorizationEndpoint
 	if strings.Contains(loc, "?") {
 		loc += "&" + q.Encode()
@@ -308,21 +329,36 @@ func (s *Service) authorize(m *metadata, e *pending) (Redirect, error) {
 }
 
 // SafeReturn keeps only a same-site path under the base path, and never an
-// API path (ruling E-74 §2.5).
+// API path (ruling E-74 §2.5). The checks run on the decoded, cleaned path
+// the router will see; a path that cleaning changes is refused rather than
+// rewritten, since browsers and http.Redirect resolve dot segments too.
 func (s *Service) SafeReturn(p string) string {
 	home := s.cfg.BasePath + "/"
-	if p == "" || !strings.HasPrefix(p, home) || strings.HasPrefix(p, s.cfg.BasePath+"/api/") ||
-		strings.HasPrefix(p, "//") || strings.Contains(p, `\`) {
+	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.Contains(p, `\`) {
+		return home
+	}
+	u, err := url.Parse(p)
+	if err != nil || u.Scheme != "" || u.Host != "" || u.User != nil || u.Opaque != "" {
+		return home
+	}
+	d := u.Path
+	for _, c := range d {
+		if c < 0x20 || c == 0x7f || c == '\\' {
+			return home
+		}
+	}
+	clean := path.Clean(d)
+	if strings.HasSuffix(d, "/") && clean != "/" {
+		clean += "/"
+	}
+	if clean != d || strings.HasPrefix(d, "//") || !strings.HasPrefix(d, home) ||
+		strings.HasPrefix(d, s.cfg.BasePath+"/api/") || d == s.cfg.BasePath+"/api" {
 		return home
 	}
 	for _, c := range p {
 		if c < 0x20 || c == 0x7f {
 			return home
 		}
-	}
-	u, err := url.Parse(p)
-	if err != nil || u.Scheme != "" || u.Host != "" || u.User != nil {
-		return home
 	}
 	return p
 }
@@ -337,6 +373,7 @@ const (
 	OutcomeReauthFailed                // re-authentication did not complete for this session
 	OutcomeLoginFailed                 // the provider refused or answered nonsense
 	OutcomeUnavailable                 // the provider could not be reached
+	OutcomeRetryLater                  // the legacy owner's data copy failed; no session was made
 )
 
 // Result is the callback's outcome.
@@ -348,6 +385,21 @@ type Result struct {
 }
 
 var fallbackErrors = []string{"login_required", "consent_required", "interaction_required"}
+
+// oauthErrors are the error codes of RFC 6749 §4.1.2.1, §5.2 and OIDC Core
+// §3.1.2.6. Anything else the provider (or a forged callback) sends is logged
+// as "unrecognized", so a request cannot write its own text into the log.
+var oauthErrors = append([]string{"access_denied", "invalid_request", "unauthorized_client", "unsupported_response_type",
+	"invalid_scope", "server_error", "temporarily_unavailable", "invalid_client", "invalid_grant",
+	"unsupported_grant_type", "account_selection_required", "invalid_request_uri", "invalid_request_object",
+	"request_not_supported", "request_uri_not_supported", "registration_not_supported"}, fallbackErrors...)
+
+func errorCode(s string) string {
+	if slices.Contains(oauthErrors, s) {
+		return s
+	}
+	return "unrecognized"
+}
 
 // Callback finishes a login (ruling E-74 §2.6). Nothing changes unless state
 // and the pre-auth cookie name the same entry.
@@ -362,8 +414,9 @@ func (s *Service) Callback(r *http.Request) Result {
 		return Result{Outcome: OutcomeRestart}
 	}
 	clear := s.loginCookie("", -1)
+	failed := Redirect{Cookies: []*http.Cookie{clear}}
 	fail := func(o Outcome, sub string, err error) Result {
-		return Result{Outcome: o, Sub: sub, Err: err, Redirect: Redirect{Cookies: []*http.Cookie{clear}}}
+		return Result{Outcome: o, Sub: sub, Err: err, Redirect: failed}
 	}
 
 	if perr := q.Get("error"); perr != "" {
@@ -380,9 +433,9 @@ func (s *Service) Callback(r *http.Request) Result {
 			return Result{Outcome: OutcomeRedirect, Redirect: red}
 		}
 		if e.reauth {
-			return fail(OutcomeReauthFailed, "", fmt.Errorf("oidc: provider answered %q", perr))
+			return fail(OutcomeReauthFailed, "", errors.New("oidc: provider answered "+errorCode(perr)))
 		}
-		return fail(OutcomeLoginFailed, "", fmt.Errorf("oidc: provider answered %q", perr))
+		return fail(OutcomeLoginFailed, "", errors.New("oidc: provider answered "+errorCode(perr)))
 	}
 	code := q.Get("code")
 	if code == "" {
@@ -438,6 +491,22 @@ func (s *Service) Callback(r *http.Request) Result {
 		}}
 	}
 
+	if s.cfg.Hook != nil {
+		if err := s.cfg.Hook.RecordLogin(ctx, sub); err != nil {
+			s.log.Error("recording login", "err", err)
+		}
+		// E-74 §2.14: a failed copy refuses the owner's login. A session would
+		// let the owner change progress that the retried copy then brings back.
+		if s.cfg.LegacyOwnerSub != "" && sub == s.cfg.LegacyOwnerSub {
+			migrated, err := s.cfg.Hook.MigrateLegacyOwner(ctx, sub)
+			if err != nil {
+				return fail(OutcomeRetryLater, "", fmt.Errorf("copying the single-user data to the legacy owner: %w", err))
+			}
+			if migrated {
+				s.log.Info("copied the single-user data to the legacy owner", "sub", sub)
+			}
+		}
+	}
 	if old, ok, err := s.lookup(ctx, r); err == nil && ok {
 		if err := s.store.delete(ctx, old.idHash); err != nil {
 			return fail(OutcomeLoginFailed, "", err)
@@ -449,22 +518,6 @@ func (s *Service) Callback(r *http.Request) Result {
 		createdAt: now, lastSeenAt: now, expiresAt: now.Add(s.cfg.SessionTTL),
 	}); err != nil {
 		return fail(OutcomeLoginFailed, "", err)
-	}
-	// A failure here does not refuse the login: E-74 §2.14 names none, a
-	// user locked out by a user.db write is worse than one whose old data
-	// arrives later, and the copy runs again at the owner's next login because
-	// only a finished copy is recorded.
-	if s.cfg.Hook != nil {
-		if err := s.cfg.Hook.RecordLogin(ctx, sub); err != nil {
-			s.log.Error("recording login", "err", err)
-		}
-		if s.cfg.LegacyOwnerSub != "" && sub == s.cfg.LegacyOwnerSub {
-			if migrated, err := s.cfg.Hook.MigrateLegacyOwner(ctx, sub); err != nil {
-				s.log.Error("copying the single-user data to the legacy owner; it is retried at the next login", "err", err)
-			} else if migrated {
-				s.log.Info("copied the single-user data to the legacy owner", "sub", sub)
-			}
-		}
 	}
 	s.log.Info("login succeeded", "sub", sub)
 	return Result{Outcome: OutcomeRedirect, Redirect: Redirect{
@@ -487,34 +540,12 @@ func (s *Service) exchange(ctx context.Context, m *metadata, code, verifier stri
 	form.Set("redirect_uri", s.cfg.RedirectURL)
 	form.Set("client_id", s.cfg.ClientID)
 	form.Set("code_verifier", verifier)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.TokenEndpoint, strings.NewReader(form.Encode()))
-	if err != nil {
-		return "", "", err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return "", "", fmt.Errorf("%w: %v", errProviderUnavailable, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxProviderBody))
-	if err != nil {
-		return "", "", fmt.Errorf("%w: %v", errProviderUnavailable, err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		var perr struct {
-			Error string `json:"error"`
-		}
-		_ = json.Unmarshal(body, &perr)
-		return "", "", fmt.Errorf("oidc: token exchange answered %d %s", resp.StatusCode, perr.Error)
-	}
 	var tok struct {
 		IDToken     string `json:"id_token"`
 		AccessToken string `json:"access_token"`
 	}
-	if err := json.Unmarshal(body, &tok); err != nil {
-		return "", "", fmt.Errorf("oidc: decoding the token response: %w", err)
+	if err := call(ctx, s.client, http.MethodPost, m.TokenEndpoint, form.Encode(), &tok); err != nil {
+		return "", "", err
 	}
 	if tok.IDToken == "" || tok.AccessToken == "" {
 		return "", "", errors.New("oidc: the token response lacks an id_token or access_token")

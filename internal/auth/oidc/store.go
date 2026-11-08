@@ -161,6 +161,13 @@ func (s *store) sweep(ctx context.Context, now time.Time) error {
 	return err
 }
 
+// dropLoggedOut deletes logged-out rows past their grace (E-74 §2.12).
+func (s *store) dropLoggedOut(ctx context.Context, now time.Time) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM oidc_sessions WHERE logged_out_at > 0 AND logged_out_at <= ?`,
+		now.Add(-loggedOutGrace).Unix())
+	return err
+}
+
 func unixOrZero(t time.Time) int64 {
 	if t.IsZero() {
 		return 0

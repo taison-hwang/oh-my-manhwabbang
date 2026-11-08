@@ -350,27 +350,33 @@ func (s *Server) methods(m map[string]handlerFunc) http.Handler {
 // adminOnly refuses a non-admin in oidc mode with `403 admin_only`; in the
 // other modes it is fn (ruling E-74 §2.10).
 func (s *Server) adminOnly(fn handlerFunc) handlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) error {
-		if s.oidc != nil {
-			if p, ok := principal.From(r.Context()); !ok || !p.Admin {
-				return forbidden("admin_only", "only an administrator may do this")
-			}
-		}
-		return fn(w, r)
-	}
+	return adminGate{s: s, fn: fn}.serve
 }
 
-// adminReauth is adminOnly plus a re-authentication within the last 15
-// minutes, `403 reauth_required` otherwise (ruling E-74 §2.9).
 func (s *Server) adminReauth(fn handlerFunc) handlerFunc {
-	return s.adminOnly(func(w http.ResponseWriter, r *http.Request) error {
-		if s.oidc != nil {
-			if sess, ok := oidcSession(r); !ok || !s.oidc.ReauthFresh(sess) {
+	return adminGate{s: s, fn: fn, reauth: true}.serve
+}
+
+// adminGate is one method rather than a closure per route, which the
+// binary budget (NFR-OPS-001) prefers.
+type adminGate struct {
+	s      *Server
+	fn     handlerFunc
+	reauth bool
+}
+
+func (g adminGate) serve(w http.ResponseWriter, r *http.Request) error {
+	if o := g.s.oidc; o != nil {
+		if p, ok := principal.From(r.Context()); !ok || !p.Admin {
+			return forbidden("admin_only", "only an administrator may do this")
+		}
+		if g.reauth {
+			if sess, ok := oidcSession(r); !ok || !o.ReauthFresh(sess) {
 				return forbidden("reauth_required", "sign in again to confirm this action")
 			}
 		}
-		return fn(w, r)
-	})
+	}
+	return g.fn(w, r)
 }
 
 func (s *Server) get(fn handlerFunc) http.Handler {
