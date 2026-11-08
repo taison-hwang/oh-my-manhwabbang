@@ -7,19 +7,19 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
-} from 'react'
-import { useQueryClient } from '@tanstack/react-query'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+} from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
-import { queryKeys, useBook, useSeries, useSettings } from '../../api/queries'
-import type { BookSummary } from '../../api/types'
-import { EmptyState } from '../../components/ds/EmptyState'
-import { cn } from '../../lib/cn'
-import { formatViewerCounter } from '../../lib/format'
-import { toggleFullscreen } from '../../lib/fullscreen'
-import { DARK_MEDIA_QUERY, resolveTheme } from '../../lib/theme'
-import { useMediaQuery } from '../../lib/useMediaQuery'
-import { useUiStore } from '../../store/ui'
+import { queryKeys, useBook, useSeries, useSettings } from "../../api/queries";
+import type { BookSummary } from "../../api/types";
+import { EmptyState } from "../../components/ds/EmptyState";
+import { cn } from "../../lib/cn";
+import { formatViewerCounter } from "../../lib/format";
+import { toggleFullscreen } from "../../lib/fullscreen";
+import { DARK_MEDIA_QUERY, resolveTheme } from "../../lib/theme";
+import { useMediaQuery } from "../../lib/useMediaQuery";
+import { useUiStore } from "../../store/ui";
 import {
   registerChromeFocusHold,
   selectStaleAckOwed,
@@ -27,30 +27,30 @@ import {
   type DisplayMode,
   type FitMode,
   type ReadingDirection,
-} from '../../store/viewer'
-import { NextVolumeCard } from './NextVolumeCard'
+} from "../../store/viewer";
+import { NextVolumeCard } from "./NextVolumeCard";
 import {
   PAGE_LOADING_LABEL,
   PageLoadingIndicator,
-} from './PageLoadingIndicator'
-import { PageStage } from './PageStage'
-import { ViewerBottomBar } from './ViewerBottomBar'
-import { ViewerTopBar } from './ViewerTopBar'
-import { CoverDialog } from './CoverDialog'
-import { bookErrorMessage } from './bookErrors'
+} from "./PageLoadingIndicator";
+import { PageStage } from "./PageStage";
+import { ViewerBottomBar } from "./ViewerBottomBar";
+import { ViewerTopBar } from "./ViewerTopBar";
+import { CoverDialog } from "./CoverDialog";
+import { bookErrorMessage } from "./bookErrors";
 import {
   makeDimsLookup,
   nextPage,
   prevPage,
   stagePages,
   type PageDims,
-} from './fit'
-import { usePrefsWriter } from './prefsWriter'
-import { useDelayedFlag } from './useDelayedFlag'
-import { DEFAULT_PREFETCH, usePrefetch } from './usePrefetch'
-import { useProgressSync } from './useProgressSync'
-import { useTouchZones, zoneAt, type StageZone } from './useTouchZones'
-import { useViewerKeys } from './useViewerKeys'
+} from "./fit";
+import { usePrefsWriter } from "./prefsWriter";
+import { useDelayedFlag } from "./useDelayedFlag";
+import { DEFAULT_PREFETCH, usePrefetch } from "./usePrefetch";
+import { useProgressSync } from "./useProgressSync";
+import { useTouchZones, zoneAt, type StageZone } from "./useTouchZones";
+import { useViewerKeys } from "./useViewerKeys";
 
 /**
  * Screen 3 — the viewer (prd UI-003, FR-VWR-001..012, ui-spec §6).
@@ -94,18 +94,18 @@ import { useViewerKeys } from './useViewerKeys'
 /** What `PageFrame` has told us about a page: decoded size, and that it settled. */
 interface DecodeState {
   /** `bookId:cv` — a new content version invalidates every measurement. */
-  key: string
-  measured: Map<number, PageDims>
+  key: string;
+  measured: Map<number, PageDims>;
   /** Pages whose image has loaded *or* failed; either way it is no longer pending. */
-  settled: Set<number>
+  settled: Set<number>;
 }
 
 function emptyDecodeState(key: string): DecodeState {
-  return { key, measured: new Map(), settled: new Set() }
+  return { key, measured: new Map(), settled: new Set() };
 }
 
 /** The cursor goes this long after the pointer stops moving (E-27). */
-export const POINTER_IDLE_MS = 1600
+export const POINTER_IDLE_MS = 1600;
 
 /**
  * How deep the screen-edge strips reach (E-27).
@@ -118,10 +118,10 @@ export const POINTER_IDLE_MS = 1600
  * strip to count as entered (E-31, `edgeBandAt` below), which is a rule the unit
  * tier has to be able to state in the same numbers the screen uses.
  */
-export const EDGE_STRIP_PX = 44
+export const EDGE_STRIP_PX = 44;
 
 /** Which end of the screen a strip is at — and which band belongs to it. */
-type EdgeBand = 'top' | 'bottom'
+type EdgeBand = "top" | "bottom";
 
 /**
  * Which of the two screen-edge bands a pointer at `clientY` is in, if either.
@@ -145,33 +145,33 @@ type EdgeBand = 'top' | 'bottom'
  * strip appeared underneath it".
  */
 function edgeBandAt(clientY: number): EdgeBand | null {
-  if (clientY < EDGE_STRIP_PX) return 'top'
-  if (clientY > window.innerHeight - EDGE_STRIP_PX) return 'bottom'
-  return null
+  if (clientY < EDGE_STRIP_PX) return "top";
+  if (clientY > window.innerHeight - EDGE_STRIP_PX) return "bottom";
+  return null;
 }
 
 /** The one sentence that explains a viewer which opens with nothing on it. */
 export const CHROME_HINT =
-  '좌·우 클릭으로 페이지 · 중앙 클릭 또는 상하 가장자리로 컨트롤'
+  "좌·우 클릭으로 페이지 · 중앙 클릭 또는 상하 가장자리로 컨트롤";
 
 /** FR-VWR-009's one line. */
-const STALE_NOTICE = '파일이 변경되었습니다'
+const STALE_NOTICE = "파일이 변경되었습니다";
 
 /**
  * The two surfaces the chrome can be held open from — by a pointer resting on
  * one (E-30), or by the keyboard's focus inside one (E-62).
  */
 const CHROME_BARS =
-  '[data-role="viewer-top-bar"],[data-role="viewer-bottom-bar"]'
+  '[data-role="viewer-top-bar"],[data-role="viewer-bottom-bar"]';
 
 /** Whether a node — under the pointer, or holding the focus — belongs to one of the two bars. */
 function inChrome(node: EventTarget | null): boolean {
-  return node instanceof Element && node.closest(CHROME_BARS) !== null
+  return node instanceof Element && node.closest(CHROME_BARS) !== null;
 }
 
 /** Whether the focus is in the thumbnail strip — on a thumbnail, or on the scroller itself. */
 function inStrip(node: Element | null): boolean {
-  return node?.closest('[data-role="thumbnail-strip"]') != null
+  return node?.closest('[data-role="thumbnail-strip"]') != null;
 }
 
 /**
@@ -180,44 +180,44 @@ function inStrip(node: Element | null): boolean {
  * nothing, so they are not the keyboard taking over a bar (E-62 §2.4).
  */
 const MODIFIER_KEYS: ReadonlySet<string> = new Set([
-  'Alt',
-  'AltGraph',
-  'CapsLock',
-  'Control',
-  'Fn',
-  'FnLock',
-  'Hyper',
-  'Meta',
-  'NumLock',
-  'OS',
-  'ScrollLock',
-  'Shift',
-  'Super',
-  'Symbol',
-  'SymbolLock',
-])
+  "Alt",
+  "AltGraph",
+  "CapsLock",
+  "Control",
+  "Fn",
+  "FnLock",
+  "Hyper",
+  "Meta",
+  "NumLock",
+  "OS",
+  "ScrollLock",
+  "Shift",
+  "Super",
+  "Symbol",
+  "SymbolLock",
+]);
 
 export function ViewerPage() {
   // Kept whole, not only destructured: the object itself is the open effect's
   // "a navigation landed here" token — see `openedRef`.
-  const params = useParams()
-  const seriesId = params.sid ?? ''
-  const bookId = params.bid ?? ''
-  const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const params = useParams();
+  const seriesId = params.sid ?? "";
+  const bookId = params.bid ?? "";
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
-  const rootRef = useRef<HTMLDivElement | null>(null)
-  const stageZonesRef = useRef<HTMLDivElement | null>(null)
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const stageZonesRef = useRef<HTMLDivElement | null>(null);
 
-  const book = useBook(bookId, { enabled: bookId !== '' })
-  const coverOpen = useUiStore((s) => s.overlays.includes('cover'))
+  const book = useBook(bookId, { enabled: bookId !== "" });
+  const coverOpen = useUiStore((s) => s.overlays.includes("cover"));
   useEffect(
     () => () => {
-      useUiStore.getState().closeOverlay('cover')
+      useUiStore.getState().closeOverlay("cover");
     },
     [bookId],
-  )
-  const queryClient = useQueryClient()
+  );
+  const queryClient = useQueryClient();
   /**
    * The cached detail is known to be out of date and its re-read is on the wire.
    * E-69 §2.3 moved the direction a book opens with to the server's ladder, so a
@@ -231,108 +231,108 @@ export function ViewerPage() {
   const reReading =
     book.isFetching &&
     queryClient.getQueryState(queryKeys.books.detail(bookId))?.isInvalidated ===
-      true
-  const settings = useSettings()
+      true;
+  const settings = useSettings();
   // Only for the next-volume card's title/meta; the series detail is almost
   // always already in the cache because that is the screen the reader came from.
-  const series = useSeries(seriesId, { enabled: seriesId !== '' })
-  const { save: savePrefs, saveNow: savePrefsNow } = usePrefsWriter(bookId)
+  const series = useSeries(seriesId, { enabled: seriesId !== "" });
+  const { save: savePrefs, saveNow: savePrefsNow } = usePrefsWriter(bookId);
 
-  const themeSetting = useUiStore((s) => s.theme)
-  const systemDark = useMediaQuery(DARK_MEDIA_QUERY)
-  const appTheme = resolveTheme(themeSetting, systemDark)
-  const setRevealSeries = useUiStore((s) => s.setRevealSeries)
+  const themeSetting = useUiStore((s) => s.theme);
+  const systemDark = useMediaQuery(DARK_MEDIA_QUERY);
+  const appTheme = resolveTheme(themeSetting, systemDark);
+  const setRevealSeries = useUiStore((s) => s.setRevealSeries);
 
-  const page = useViewerStore((s) => s.page)
-  const pageCount = useViewerStore((s) => s.pageCount)
-  const mode = useViewerStore((s) => s.mode)
-  const dir = useViewerStore((s) => s.dir)
-  const fit = useViewerStore((s) => s.fit)
-  const chromeVisible = useViewerStore((s) => s.chromeVisible)
-  const stripOpen = useViewerStore((s) => s.stripOpen)
-  const dragging = useViewerStore((s) => s.dragging)
-  const dragPage = useViewerStore((s) => s.dragPage)
-  const open = useViewerStore((s) => s.open)
-  const goTo = useViewerStore((s) => s.goTo)
-  const turnTo = useViewerStore((s) => s.turnTo)
-  const setMode = useViewerStore((s) => s.setMode)
-  const setDirection = useViewerStore((s) => s.setDirection)
-  const setFit = useViewerStore((s) => s.setFit)
-  const setDragging = useViewerStore((s) => s.setDragging)
-  const setLoading = useViewerStore((s) => s.setLoading)
-  const toggleChrome = useViewerStore((s) => s.toggleChrome)
-  const toggleStrip = useViewerStore((s) => s.toggleStrip)
-  const wake = useViewerStore((s) => s.wake)
-  const holdChrome = useViewerStore((s) => s.holdChrome)
-  const releaseChrome = useViewerStore((s) => s.releaseChrome)
-  const syncPage = useViewerStore((s) => s.syncPage)
-  const hintVisible = useViewerStore((s) => s.hintVisible)
+  const page = useViewerStore((s) => s.page);
+  const pageCount = useViewerStore((s) => s.pageCount);
+  const mode = useViewerStore((s) => s.mode);
+  const dir = useViewerStore((s) => s.dir);
+  const fit = useViewerStore((s) => s.fit);
+  const chromeVisible = useViewerStore((s) => s.chromeVisible);
+  const stripOpen = useViewerStore((s) => s.stripOpen);
+  const dragging = useViewerStore((s) => s.dragging);
+  const dragPage = useViewerStore((s) => s.dragPage);
+  const open = useViewerStore((s) => s.open);
+  const goTo = useViewerStore((s) => s.goTo);
+  const turnTo = useViewerStore((s) => s.turnTo);
+  const setMode = useViewerStore((s) => s.setMode);
+  const setDirection = useViewerStore((s) => s.setDirection);
+  const setFit = useViewerStore((s) => s.setFit);
+  const setDragging = useViewerStore((s) => s.setDragging);
+  const setLoading = useViewerStore((s) => s.setLoading);
+  const toggleChrome = useViewerStore((s) => s.toggleChrome);
+  const toggleStrip = useViewerStore((s) => s.toggleStrip);
+  const wake = useViewerStore((s) => s.wake);
+  const holdChrome = useViewerStore((s) => s.holdChrome);
+  const releaseChrome = useViewerStore((s) => s.releaseChrome);
+  const syncPage = useViewerStore((s) => s.syncPage);
+  const hintVisible = useViewerStore((s) => s.hintVisible);
   // E-45 §1: latched when the book was opened, not re-derived from the query
   // cache per render.
-  const staleVisible = useViewerStore((s) => s.staleVisible)
+  const staleVisible = useViewerStore((s) => s.staleVisible);
   // Not `s.staleSeen`. The latch and this screen's writer can be looking at two
   // different books for the length of a volume change (E-45 §1 REVISION), and
   // `selectStaleAckOwed` is where that is decided — see the effect below.
-  const staleAckOwed = useViewerStore((s) => selectStaleAckOwed(s, bookId))
-  const dismissStale = useViewerStore((s) => s.dismissStale)
+  const staleAckOwed = useViewerStore((s) => selectStaleAckOwed(s, bookId));
+  const dismissStale = useViewerStore((s) => s.dismissStale);
 
-  const detail = book.data
-  const cv = detail?.cv ?? null
-  const pages = useMemo(() => detail?.pages ?? [], [detail])
-  const decodeKey = `${bookId}:${cv ?? ''}`
+  const detail = book.data;
+  const cv = detail?.cv ?? null;
+  const pages = useMemo(() => detail?.pages ?? [], [detail]);
+  const decodeKey = `${bookId}:${cv ?? ""}`;
 
   const [decoded, setDecoded] = useState<DecodeState>(() =>
     emptyDecodeState(decodeKey),
-  )
+  );
   // Derived during render rather than in an effect: an effect would let one
   // frame paint with the previous book's measurements still in force.
-  if (decoded.key !== decodeKey) setDecoded(emptyDecodeState(decodeKey))
+  if (decoded.key !== decodeKey) setDecoded(emptyDecodeState(decodeKey));
 
   const dims = useMemo(
-    () => makeDimsLookup(pages, decoded.measured, book.data?.kind === 'pdf'),
+    () => makeDimsLookup(pages, decoded.measured, book.data?.kind === "pdf"),
     [pages, decoded.measured, book.data?.kind],
-  )
+  );
   const shown = useMemo(
     () => stagePages(page, pageCount, mode, dims),
     [dims, mode, page, pageCount],
-  )
+  );
 
   // 세로 scrolls through the whole book, so only the page the reader is on can
   // meaningfully be "the page being waited for".
-  const watched = mode === 'vertical' ? [page] : shown
-  const pending = pageCount > 0 && watched.some((n) => !decoded.settled.has(n))
-  const showIndicator = useDelayedFlag(pending)
+  const watched = mode === "vertical" ? [page] : shown;
+  const pending = pageCount > 0 && watched.some((n) => !decoded.settled.has(n));
+  const showIndicator = useDelayedFlag(pending);
 
   useEffect(() => {
-    setLoading(pending)
-  }, [pending, setLoading])
+    setLoading(pending);
+  }, [pending, setLoading]);
 
   const onPageLoaded = useCallback(
     (n: number, width: number, height: number) => {
       setDecoded((previous) => {
-        const measured = new Map(previous.measured)
-        measured.set(n, { w: width, h: height })
-        const settled = new Set(previous.settled)
-        settled.add(n)
-        return { ...previous, measured, settled }
-      })
+        const measured = new Map(previous.measured);
+        measured.set(n, { w: width, h: height });
+        const settled = new Set(previous.settled);
+        settled.add(n);
+        return { ...previous, measured, settled };
+      });
     },
     [],
-  )
+  );
 
   const onPageFailed = useCallback((n: number) => {
     setDecoded((previous) => {
-      const settled = new Set(previous.settled)
-      settled.add(n)
-      return { ...previous, settled }
-    })
-  }, [])
+      const settled = new Set(previous.settled);
+      settled.add(n);
+      return { ...previous, settled };
+    });
+  }, []);
 
   // -------------------------------------------------------------------------
   // Opening and closing
   // -------------------------------------------------------------------------
 
-  const requestedPage = Number(searchParams.get('page'))
+  const requestedPage = Number(searchParams.get("page"));
 
   /**
    * The book this instance opened, and the route render it last saw it under.
@@ -391,7 +391,7 @@ export function ViewerPage() {
    * only to land a navigation. True while no route has a `loader` (a pending
    * leave would publish a `loading` state first) — see `router.tsx`.
    */
-  const openedRef = useRef<{ bookId: string; route: object } | null>(null)
+  const openedRef = useRef<{ bookId: string; route: object } | null>(null);
 
   /**
    * The `params` of the last route render this instance **committed** — what a
@@ -401,34 +401,34 @@ export function ViewerPage() {
    * `keydown` listener, not a React event, so it can run between a commit and
    * that commit's passive effects — and would latch the route before it.
    */
-  const routeRef = useRef(params)
+  const routeRef = useRef(params);
   useLayoutEffect(() => {
-    routeRef.current = params
-  }, [params])
+    routeRef.current = params;
+  }, [params]);
 
   /** Latch the book the last committed route names, under that route — see `openedRef`. */
   const latchLeave = useCallback(() => {
-    const route = routeRef.current
-    openedRef.current = { bookId: route.bid ?? '', route }
-  }, [])
+    const route = routeRef.current;
+    openedRef.current = { bookId: route.bid ?? "", route };
+  }, []);
 
   useEffect(() => {
-    if (detail === undefined || bookId === '' || reReading) return
-    const opened = openedRef.current
+    if (detail === undefined || bookId === "" || reReading) return;
+    const opened = openedRef.current;
     if (opened?.bookId === bookId) {
-      const routedHere = opened.route !== params
-      opened.route = params
+      const routedHere = opened.route !== params;
+      opened.route = params;
       // Still open: a refetch, a `PUT`'s answer, a prefs write — and re-running
       // `open()` would throw the reader back to where they resumed.
-      if (useViewerStore.getState().bookId === bookId) return
+      if (useViewerStore.getState().bookId === bookId) return;
       // Closed, and nothing has navigated here since: our own leave, in flight.
-      if (!routedHere) return
+      if (!routedHere) return;
     }
-    openedRef.current = { bookId, route: params }
+    openedRef.current = { bookId, route: params };
     const resume =
       Number.isFinite(requestedPage) && requestedPage >= 1
         ? Math.trunc(requestedPage)
-        : (detail.progress?.last_page ?? 1)
+        : (detail.progress?.last_page ?? 1);
     open(bookId, {
       pageCount: detail.page_count,
       page: resume,
@@ -442,8 +442,8 @@ export function ViewerPage() {
       // E-45 §1. This is the one moment `progress.stale` is trustworthy: the
       // detail has just been fetched and no `PUT` has answered over it yet.
       stale: detail.progress?.stale === true,
-    })
-  }, [bookId, detail, open, params, reReading, requestedPage])
+    });
+  }, [bookId, detail, open, params, reReading, requestedPage]);
 
   // Leaving the screen must not leave a viewer open in the store — the global
   // `Esc` ladder and the shell both key off `bookId !== null`. The latch goes
@@ -453,11 +453,11 @@ export function ViewerPage() {
   // left over the remount (same instance, same `params`) never opens again.
   useEffect(
     () => () => {
-      useViewerStore.getState().close()
-      openedRef.current = null
+      useViewerStore.getState().close();
+      openedRef.current = null;
     },
     [],
-  )
+  );
 
   // Any close of an open store under this screen is a leave, whoever makes it.
   // The global `Esc` ladder (`useHotkeys.ts`) closes the store itself before it
@@ -467,10 +467,10 @@ export function ViewerPage() {
   useEffect(
     () =>
       useViewerStore.subscribe((state, previous) => {
-        if (previous.bookId !== null && state.bookId === null) latchLeave()
+        if (previous.bookId !== null && state.bookId === null) latchLeave();
       }),
     [latchLeave],
-  )
+  );
 
   /**
    * The close 뒤로 / 라이브러리 / `Esc` make before navigating away, latching
@@ -484,14 +484,14 @@ export function ViewerPage() {
    * was never open, so there is no close for it to see.
    */
   const closeForLeave = useCallback(() => {
-    latchLeave()
-    useViewerStore.getState().close()
-  }, [latchLeave])
+    latchLeave();
+    useViewerStore.getState().close();
+  }, [latchLeave]);
 
   const exit = useCallback(() => {
-    closeForLeave()
-    void navigate(seriesId === '' ? '/' : `/series/${seriesId}`)
-  }, [closeForLeave, navigate, seriesId])
+    closeForLeave();
+    void navigate(seriesId === "" ? "/" : `/series/${seriesId}`);
+  }, [closeForLeave, navigate, seriesId]);
 
   /**
    * 라이브러리 — the whole shelf, not this book's volume list (**E-34**).
@@ -509,10 +509,10 @@ export function ViewerPage() {
    * prototype was reaching for when it reset the filters.
    */
   const goLibrary = useCallback(() => {
-    closeForLeave()
-    if (seriesId !== '') setRevealSeries(seriesId)
-    void navigate('/')
-  }, [closeForLeave, navigate, seriesId, setRevealSeries])
+    closeForLeave();
+    if (seriesId !== "") setRevealSeries(seriesId);
+    void navigate("/");
+  }, [closeForLeave, navigate, seriesId, setRevealSeries]);
 
   // -------------------------------------------------------------------------
   // Progress (FR-VWR-009 / FR-VWR-012)
@@ -536,10 +536,10 @@ export function ViewerPage() {
    * record, and it is also what keeps the acknowledgement below from being
    * consumed for a book the writer would refuse.
    */
-  const progressReady = detail !== undefined && pageCount > 0
+  const progressReady = detail !== undefined && pageCount > 0;
   const progress = useProgressSync(bookId, page, pageCount, {
     enabled: progressReady,
-  })
+  });
 
   /**
    * The acknowledgement (**E-45 §2**).
@@ -566,12 +566,12 @@ export function ViewerPage() {
    * whether the latch belongs to *this* `bookId`, so the mismatch simply never
    * produces a write.
    */
-  const { acknowledgeStale } = progress
+  const { acknowledgeStale } = progress;
   useEffect(() => {
-    if (!staleAckOwed || !progressReady) return
-    acknowledgeStale()
-    dismissStale()
-  }, [staleAckOwed, progressReady, acknowledgeStale, dismissStale])
+    if (!staleAckOwed || !progressReady) return;
+    acknowledgeStale();
+    dismissStale();
+  }, [staleAckOwed, progressReady, acknowledgeStale, dismissStale]);
 
   // -------------------------------------------------------------------------
   // Per-book preferences (FR-VWR-002 / D-35)
@@ -581,25 +581,25 @@ export function ViewerPage() {
   // burst — native radio ←/→ fire one `change` per step — is one PUT of where the reader stopped.
   const applyMode = useCallback(
     (next: DisplayMode) => {
-      setMode(next)
-      if (detail !== undefined) savePrefs({ display_mode: next })
+      setMode(next);
+      if (detail !== undefined) savePrefs({ display_mode: next });
     },
     [detail, savePrefs, setMode],
-  )
+  );
   const applyDir = useCallback(
     (next: ReadingDirection) => {
-      setDirection(next)
-      if (detail !== undefined) savePrefs({ reading_direction: next })
+      setDirection(next);
+      if (detail !== undefined) savePrefs({ reading_direction: next });
     },
     [detail, savePrefs, setDirection],
-  )
+  );
   const applyFit = useCallback(
     (next: FitMode) => {
-      setFit(next)
-      if (detail !== undefined) savePrefs({ fit_mode: next })
+      setFit(next);
+      if (detail !== undefined) savePrefs({ fit_mode: next });
     },
     [detail, savePrefs, setFit],
-  )
+  );
 
   /**
    * Clearing the per-book override (**E-33 §3**).
@@ -627,20 +627,20 @@ export function ViewerPage() {
    * to coerce either.
    */
   const resetPrefs = useCallback(() => {
-    if (detail === undefined) return
+    if (detail === undefined) return;
     savePrefsNow(
       { reading_direction: null, display_mode: null, fit_mode: null },
       (prefs, untouched) => {
         // The answer can land after the reader has left or moved to 다음 권, and
         // a seg chosen while it was on the wire is newer than it.
-        if (useViewerStore.getState().bookId !== bookId) return
-        if (untouched.has('display_mode')) setMode(prefs.display_mode)
-        if (untouched.has('reading_direction'))
-          setDirection(prefs.reading_direction)
-        if (untouched.has('fit_mode')) setFit(prefs.fit_mode)
+        if (useViewerStore.getState().bookId !== bookId) return;
+        if (untouched.has("display_mode")) setMode(prefs.display_mode);
+        if (untouched.has("reading_direction"))
+          setDirection(prefs.reading_direction);
+        if (untouched.has("fit_mode")) setFit(prefs.fit_mode);
       },
-    )
-  }, [bookId, detail, savePrefsNow, setDirection, setFit, setMode])
+    );
+  }, [bookId, detail, savePrefsNow, setDirection, setFit, setMode]);
 
   // -------------------------------------------------------------------------
   // Page turns, keys, taps, prefetch
@@ -655,7 +655,7 @@ export function ViewerPage() {
    * raises the card, and so does opening the next volume, which reaches page 1
    * through the same route.
    */
-  const [endCardDismissed, setEndCardDismissed] = useState(false)
+  const [endCardDismissed, setEndCardDismissed] = useState(false);
 
   // `turnTo`, not `goTo`: these two are the *reading* path — the arrow keys,
   // `Space`, the side tap zones and a swipe all land here — and E-27 says
@@ -663,23 +663,23 @@ export function ViewerPage() {
   // every turn, which also took the quiet page counter below off the screen for
   // the rest of the volume.
   const goNext = useCallback(() => {
-    const target = nextPage(page, pageCount, mode, dims)
+    const target = nextPage(page, pageCount, mode, dims);
     // A forward turn with nowhere to go is the reader asking for what comes
     // after this volume, which is the card. It is the only way back to it once
     // the scrim has been dismissed, and it is deliberately the *same* gesture
     // that raised it in the first place — 다음 페이지 — rather than a new one to
     // learn. `nextPage` clamps at the end, so `target === page` is that case.
-    if (target === page) setEndCardDismissed(false)
-    turnTo(target)
-  }, [dims, turnTo, mode, page, pageCount])
+    if (target === page) setEndCardDismissed(false);
+    turnTo(target);
+  }, [dims, turnTo, mode, page, pageCount]);
 
   const goPrev = useCallback(() => {
-    turnTo(prevPage(page, pageCount, mode, dims))
-  }, [dims, turnTo, mode, page, pageCount])
+    turnTo(prevPage(page, pageCount, mode, dims));
+  }, [dims, turnTo, mode, page, pageCount]);
 
   const onToggleFullscreen = useCallback(() => {
-    void toggleFullscreen(rootRef.current ?? undefined)
-  }, [])
+    void toggleFullscreen(rootRef.current ?? undefined);
+  }, []);
 
   // -------------------------------------------------------------------------
   // The keyboard-focus hold (E-62 §2.3–2.4)
@@ -731,43 +731,43 @@ export function ViewerPage() {
    *    slider, so the hold engaged. `pointerup` ends the gesture the key was
    *    pressed inside of, and the pointer is the input that acted last.
    */
-  const lastInput = useRef<'keyboard' | 'pointer' | 'reading' | null>(null)
+  const lastInput = useRef<"keyboard" | "pointer" | "reading" | null>(null);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      if (MODIFIER_KEYS.has(event.key)) return
-      lastInput.current = 'keyboard'
-    }
+      if (MODIFIER_KEYS.has(event.key)) return;
+      lastInput.current = "keyboard";
+    };
     const onPointer = (): void => {
-      lastInput.current = 'pointer'
-    }
-    window.addEventListener('keydown', onKey, true)
-    window.addEventListener('pointerdown', onPointer, true)
-    window.addEventListener('pointerup', onPointer, true)
+      lastInput.current = "pointer";
+    };
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("pointerdown", onPointer, true);
+    window.addEventListener("pointerup", onPointer, true);
     return () => {
-      window.removeEventListener('keydown', onKey, true)
-      window.removeEventListener('pointerdown', onPointer, true)
-      window.removeEventListener('pointerup', onPointer, true)
-    }
-  }, [])
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("pointerdown", onPointer, true);
+      window.removeEventListener("pointerup", onPointer, true);
+    };
+  }, []);
 
   useEffect(
     () =>
       registerChromeFocusHold(
         () =>
-          lastInput.current === 'keyboard' && inChrome(document.activeElement),
+          lastInput.current === "keyboard" && inChrome(document.activeElement),
       ),
     [],
-  )
+  );
 
   const readNext = useCallback(() => {
-    lastInput.current = 'reading'
-    goNext()
-  }, [goNext])
+    lastInput.current = "reading";
+    goNext();
+  }, [goNext]);
   const readPrev = useCallback(() => {
-    lastInput.current = 'reading'
-    goPrev()
-  }, [goPrev])
+    lastInput.current = "reading";
+    goPrev();
+  }, [goPrev]);
 
   /**
    * `T` and 썸네일 · T — the E-62 §2.5 landing, for the strip.
@@ -783,10 +783,10 @@ export function ViewerPage() {
       useViewerStore.getState().stripOpen &&
       inStrip(document.activeElement)
     ) {
-      rootRef.current?.focus({ preventScroll: true })
+      rootRef.current?.focus({ preventScroll: true });
     }
-    toggleStrip()
-  }, [toggleStrip])
+    toggleStrip();
+  }, [toggleStrip]);
 
   useViewerKeys({
     dir,
@@ -798,7 +798,7 @@ export function ViewerPage() {
     onExit: exit,
     onSetMode: applyMode,
     enabled: detail !== undefined,
-  })
+  });
 
   // -------------------------------------------------------------------------
   // The pointer (E-27)
@@ -813,8 +813,8 @@ export function ViewerPage() {
   // after it stops — and the chrome answers to the screen edges, the centre tap
   // and `H`.
 
-  const [pointerAwake, setPointerAwake] = useState(true)
-  const pointerTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [pointerAwake, setPointerAwake] = useState(true);
+  const pointerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /**
    * Which tap zone the pointer is over, for the cursor alone.
@@ -827,7 +827,7 @@ export function ViewerPage() {
    * pointer is actually over the stage — over a bar, or an edge strip, the
    * cursor stays the plain arrow.
    */
-  const [hoverZone, setHoverZone] = useState<StageZone>('centre')
+  const [hoverZone, setHoverZone] = useState<StageZone>("centre");
 
   /**
    * Which screen-edge band the pointer's last **movement** left it in, if either
@@ -847,7 +847,7 @@ export function ViewerPage() {
    * the top band vouch for the bottom strip and vice versa, which refuses a real
    * entry (see `edgeBandAt`).
    */
-  const pointerRestingBand = useRef<EdgeBand | null>(null)
+  const pointerRestingBand = useRef<EdgeBand | null>(null);
 
   const nudgePointer = useCallback(
     (event: ReactMouseEvent<HTMLDivElement>) => {
@@ -855,18 +855,18 @@ export function ViewerPage() {
       // only event family that reports *movement*, and the strips' wake is a
       // function of movement (E-31). It has to be recorded wherever the pointer
       // moved — over a bar and over a strip just as much as over the stage.
-      pointerRestingBand.current = edgeBandAt(event.clientY)
-      setPointerAwake(true)
-      if (pointerTimer.current !== null) clearTimeout(pointerTimer.current)
+      pointerRestingBand.current = edgeBandAt(event.clientY);
+      setPointerAwake(true);
+      if (pointerTimer.current !== null) clearTimeout(pointerTimer.current);
       pointerTimer.current = setTimeout(() => {
-        pointerTimer.current = null
-        setPointerAwake(false)
-      }, POINTER_IDLE_MS)
+        pointerTimer.current = null;
+        setPointerAwake(false);
+      }, POINTER_IDLE_MS);
 
-      const stage = stageZonesRef.current
+      const stage = stageZonesRef.current;
       if (stage?.contains(event.target as Node) !== true) {
-        setHoverZone('centre')
-        return
+        setHoverZone("centre");
+        return;
       }
       // Release guarantee #3 (see `trackChromeHover`). A move over the *stage*
       // is the pointer saying, in a different event family entirely, that it is
@@ -876,19 +876,19 @@ export function ViewerPage() {
       // the 2 600 ms deadline is not pushed back by moving the mouse (E-27).
       // The **pointer's** hold only: a mouse move says nothing about where the
       // keyboard focus is, and E-62's hold is asked, not released.
-      releaseChrome()
-      const rect = stage.getBoundingClientRect()
-      setHoverZone(zoneAt(event.clientX - rect.left, rect.width))
+      releaseChrome();
+      const rect = stage.getBoundingClientRect();
+      setHoverZone(zoneAt(event.clientX - rect.left, rect.width));
     },
     [releaseChrome],
-  )
+  );
 
   useEffect(
     () => () => {
-      if (pointerTimer.current !== null) clearTimeout(pointerTimer.current)
+      if (pointerTimer.current !== null) clearTimeout(pointerTimer.current);
     },
     [],
-  )
+  );
 
   // A click on the top or bottom strip both wakes the chrome and must not reach
   // the tap zones underneath, where the same click is a page turn.
@@ -900,11 +900,11 @@ export function ViewerPage() {
   // chrome back without moving the mouse away first.
   const wakeFromEdge = useCallback(
     (event: ReactMouseEvent) => {
-      event.stopPropagation()
-      wake()
+      event.stopPropagation();
+      wake();
     },
     [wake],
-  )
+  );
 
   /**
    * The strips' *hover* half — **an entry, not a position** (**E-31**).
@@ -946,11 +946,11 @@ export function ViewerPage() {
    */
   const wakeFromEdgeEntry = useMemo(() => {
     const gate = (band: EdgeBand) => () => {
-      if (pointerRestingBand.current === band) return
-      wake()
-    }
-    return { top: gate('top'), bottom: gate('bottom') }
-  }, [wake])
+      if (pointerRestingBand.current === band) return;
+      wake();
+    };
+    return { top: gate("top"), bottom: gate("bottom") };
+  }, [wake]);
 
   // -------------------------------------------------------------------------
   // The hover-hold (E-27), and why it lives here rather than on the bars
@@ -1010,16 +1010,16 @@ export function ViewerPage() {
   // bar at mobile widths (measured). `pointerType` says.
   const trackChromeHover = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (event.pointerType === 'touch') return
+      if (event.pointerType === "touch") return;
       // Where the pointer is *now*: `pointerover` names it as the target,
       // `pointerout` as the thing it is leaving for.
       const under =
-        event.type === 'pointerout' ? event.relatedTarget : event.target
-      if (inChrome(under)) holdChrome()
-      else releaseChrome()
+        event.type === "pointerout" ? event.relatedTarget : event.target;
+      if (inChrome(under)) holdChrome();
+      else releaseChrome();
     },
     [holdChrome, releaseChrome],
-  )
+  );
 
   const releaseChromeHold = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1030,12 +1030,12 @@ export function ViewerPage() {
       // answer, because the last move it recorded was inside the band.
       // Unconditional: this half is not about the hold, so it is not about
       // `pointerType` either.
-      pointerRestingBand.current = null
-      if (event.pointerType === 'touch') return
-      releaseChrome()
+      pointerRestingBand.current = null;
+      if (event.pointerType === "touch") return;
+      releaseChrome();
     },
     [releaseChrome],
-  )
+  );
 
   // -------------------------------------------------------------------------
   // The focus landing (E-62 §2.5)
@@ -1053,10 +1053,10 @@ export function ViewerPage() {
   // painted; the bars' own layout effects (children first) have made them inert
   // by now, and `activeElement` still names the control the focus was on.
   useLayoutEffect(() => {
-    if (chromeVisible) return
-    if (!inChrome(document.activeElement)) return
-    rootRef.current?.focus({ preventScroll: true })
-  }, [chromeVisible])
+    if (chromeVisible) return;
+    if (!inChrome(document.activeElement)) return;
+    rootRef.current?.focus({ preventScroll: true });
+  }, [chromeVisible]);
 
   const touch = useTouchZones({
     dir,
@@ -1065,7 +1065,9 @@ export function ViewerPage() {
     onPrev: goPrev,
     onToggleChrome: toggleChrome,
     enabled: detail !== undefined,
-  })
+    resetKey: `${String(bookId)}:${String(page)}`,
+  });
+  const zoomed = touch.zoom.scale > 1;
 
   usePrefetch({
     bookId: detail === undefined ? null : bookId,
@@ -1074,7 +1076,7 @@ export function ViewerPage() {
     pageCount,
     shownCount: Math.max(1, shown.length),
     count: settings.data?.prefetch ?? DEFAULT_PREFETCH,
-  })
+  });
 
   // -------------------------------------------------------------------------
   // Render
@@ -1083,41 +1085,41 @@ export function ViewerPage() {
   const nextBook: BookSummary | null =
     detail?.next_book_id == null
       ? null
-      : (series.data?.books.find((b) => b.id === detail.next_book_id) ?? null)
+      : (series.data?.books.find((b) => b.id === detail.next_book_id) ?? null);
 
   const atVolumeEnd =
     detail !== undefined &&
     pageCount > 0 &&
     page >= pageCount &&
-    mode !== 'vertical'
+    mode !== "vertical";
 
   // Leaving the end forgets the dismissal — see `endCardDismissed`. Keyed on the
   // derived flag rather than on `page`/`bookId` so every way out is covered by
   // one rule: a page turn back, a slider commit, a thumbnail, 세로 mode, and the
   // next volume (whose page 1 makes this false before its own end can be reached).
   useEffect(() => {
-    if (!atVolumeEnd) setEndCardDismissed(false)
-  }, [atVolumeEnd])
+    if (!atVolumeEnd) setEndCardDismissed(false);
+  }, [atVolumeEnd]);
 
   /** The opening hint is up — shown and announced on the same condition. */
-  const hintShown = hintVisible && !chromeVisible && detail !== undefined
+  const hintShown = hintVisible && !chromeVisible && detail !== undefined;
 
   return (
     <div
       ref={rootRef}
       data-theme="dark"
       data-role="viewer"
-      data-chrome={chromeVisible ? 'visible' : 'hidden'}
+      data-chrome={chromeVisible ? "visible" : "hidden"}
       // E-62: where the focus lands when the chrome hides from under it. Not a
       // Tab stop, and no ring — the same reasoning as `ds/Dialog`'s panel.
       tabIndex={-1}
       className="fixed inset-0 z-viewer flex flex-col overflow-hidden bg-bg text-ink focus:outline-none focus-visible:outline-none"
       style={{
         cursor: pointerAwake
-          ? hoverZone === 'centre'
-            ? 'default'
-            : 'pointer'
-          : 'none',
+          ? hoverZone === "centre"
+            ? "default"
+            : "pointer"
+          : "none",
       }}
       onMouseMove={nudgePointer}
       onPointerOver={trackChromeHover}
@@ -1156,7 +1158,7 @@ export function ViewerPage() {
             headingLevel={2}
             title="책을 열 수 없습니다"
             body={bookErrorMessage(book.error)}
-            action={{ label: '시리즈로', onClick: exit }}
+            action={{ label: "시리즈로", onClick: exit }}
           />
         </div>
       ) : detail === undefined ? (
@@ -1169,37 +1171,61 @@ export function ViewerPage() {
             headingLevel={2}
             title="열 수 없는 파일"
             {...(detail.error === null ? {} : { body: detail.error })}
-            action={{ label: '시리즈로', onClick: exit }}
+            action={{ label: "시리즈로", onClick: exit }}
           />
         </div>
       ) : (
         <div
           ref={stageZonesRef}
           data-role="stage-zones"
-          className="flex min-h-0 flex-1 flex-col"
+          className={`flex min-h-0 flex-1 flex-col${zoomed ? " overflow-hidden" : ""}`}
+          // The browser must not take the pinch or a sideways drag: pan-y keeps
+          // the native vertical scroll of a tall 너비-fitted page, none hands a
+          // zoomed page entirely to the pan (E-70). 세로 keeps the default.
+          style={
+            mode === "vertical"
+              ? undefined
+              : { touchAction: zoomed ? "none" : "pan-y" }
+          }
           onMouseDown={touch.onMouseDown}
           onMouseUp={touch.onMouseUp}
           onTouchStart={touch.onTouchStart}
+          onTouchMove={touch.onTouchMove}
           onTouchEnd={touch.onTouchEnd}
+          onTouchCancel={touch.onTouchCancel}
         >
-          <PageStage
-            preferRecordedDims={detail.kind === 'pdf'}
-            bookId={bookId}
-            cv={cv}
-            pages={pages}
-            page={page}
-            pageCount={pageCount}
-            mode={mode}
-            fit={fit}
-            dir={dir}
-            measured={decoded.measured}
-            cause={detail.error}
-            onPageLoaded={onPageLoaded}
-            onPageFailed={onPageFailed}
-            // Not `goTo`: a webtoon scroll is reading, and reading does not
-            // summon the chrome any more (E-27).
-            onScrollToPage={syncPage}
-          />
+          <div
+            data-role="zoom-layer"
+            data-zoom={touch.zoom.scale.toFixed(2)}
+            className="flex min-h-0 flex-1 flex-col"
+            style={
+              zoomed
+                ? {
+                    transformOrigin: "0 0",
+                    transform: `translate(${String(touch.zoom.x)}px, ${String(touch.zoom.y)}px) scale(${String(touch.zoom.scale)})`,
+                  }
+                : undefined
+            }
+          >
+            <PageStage
+              preferRecordedDims={detail.kind === "pdf"}
+              bookId={bookId}
+              cv={cv}
+              pages={pages}
+              page={page}
+              pageCount={pageCount}
+              mode={mode}
+              fit={fit}
+              dir={dir}
+              measured={decoded.measured}
+              cause={detail.error}
+              onPageLoaded={onPageLoaded}
+              onPageFailed={onPageFailed}
+              // Not `goTo`: a webtoon scroll is reading, and reading does not
+              // summon the chrome any more (E-27).
+              onScrollToPage={syncPage}
+            />
+          </div>
         </div>
       )}
 
@@ -1211,8 +1237,8 @@ export function ViewerPage() {
           than the viewport. */}
       {!chromeVisible &&
         !showIndicator &&
-        mode !== 'vertical' &&
-        fit !== 'width' &&
+        mode !== "vertical" &&
+        fit !== "width" &&
         pageCount > 0 && (
           <span
             data-role="quiet-page-counter"
@@ -1236,16 +1262,16 @@ export function ViewerPage() {
         <CoverDialog
           key={detail.id}
           book={detail}
-          pages={mode === 'vertical' ? [page] : shown}
+          pages={mode === "vertical" ? [page] : shown}
           onClose={() => {
-            useUiStore.getState().closeOverlay('cover')
+            useUiStore.getState().closeOverlay("cover");
           }}
         />
       )}
       <ViewerTopBar
         visible={chromeVisible}
-        seriesName={detail?.series_name ?? ''}
-        bookName={detail?.name ?? ''}
+        seriesName={detail?.series_name ?? ""}
+        bookName={detail?.name ?? ""}
         mode={mode}
         dir={dir}
         fit={fit}
@@ -1258,9 +1284,9 @@ export function ViewerPage() {
         onFitChange={applyFit}
         onCover={
           detail !== undefined &&
-          ((detail.status === 'ok' && pageCount > 0) || detail.cover !== null)
+          ((detail.status === "ok" && pageCount > 0) || detail.cover !== null)
             ? () => {
-                useUiStore.getState().openOverlay('cover')
+                useUiStore.getState().openOverlay("cover");
               }
             : undefined
         }
@@ -1312,10 +1338,10 @@ export function ViewerPage() {
           data-role="stale-progress"
           aria-hidden="true"
           className={cn(
-            'pointer-events-none flex justify-center',
+            "pointer-events-none flex justify-center",
             chromeVisible
-              ? 'relative order-first w-full flex-none'
-              : 'absolute inset-x-0 top-14',
+              ? "relative order-first w-full flex-none"
+              : "absolute inset-x-0 top-14",
           )}
         >
           {/* `text-on-accent`: the dark theme's `--ink` is 4.33 washed on this
@@ -1353,14 +1379,14 @@ export function ViewerPage() {
         dragPage={dragPage}
         onToggleStrip={toggleStripLandingFocus}
         onDragStart={(n) => {
-          setDragging(true, n)
+          setDragging(true, n);
         }}
         onDrag={(n) => {
-          setDragging(true, n)
+          setDragging(true, n);
         }}
         onCommit={(n) => {
-          setDragging(false)
-          goTo(n)
+          setDragging(false);
+          goTo(n);
         }}
         onJump={goTo}
       />
@@ -1378,19 +1404,19 @@ export function ViewerPage() {
           completed={detail.progress?.completed ?? false}
           appTheme={appTheme}
           onNext={() => {
-            if (detail.next_book_id === null) return
-            progress.flush()
+            if (detail.next_book_id === null) return;
+            progress.flush();
             void navigate(
               `/series/${seriesId}/books/${detail.next_book_id}?page=1`,
-            )
+            );
           }}
           onBackToSeries={exit}
           onToggleCompleted={progress.setCompleted}
           onDismiss={() => {
-            setEndCardDismissed(true)
+            setEndCardDismissed(true);
           }}
         />
       )}
     </div>
-  )
+  );
 }
