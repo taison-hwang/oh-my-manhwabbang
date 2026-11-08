@@ -4,7 +4,7 @@
 
 | 작업 ID | 묶음 | 담당(role·터미널) | 상태 | 의존 | 근거 |
 | --- | --- | --- | --- | --- | --- |
-| U-C | U-BC | verifier-1(t20) | 검증 | 없음 | dd5fb31 검사 PASS, 독립 검증 배정 2026-11-09T03:36:18+09:00 |
+| U-C | U-BC | worker-1(t1k) | 보완 | 없음 | ISSUES UC-1·UC-2(dd5fb31), 보완 배정 |
 | U-R2a | U-R | worker-1(t1k) | 진행 | 없음 | 공개 적용 스크립트·런북 준비, 배정 2026-11-09T03:36:18+09:00 |
 | U-B | U-BC | worker-2(t1m) | 진행 | 없음 | 배정 2026-11-09T02:58:04+09:00, 이음매 internal/principal·router Options.PerUser |
 
