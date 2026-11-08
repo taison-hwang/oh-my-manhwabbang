@@ -169,12 +169,12 @@ func withBasePath(p string) envOption { return func(c *envConfig) { c.basePath =
 func withPassword(p string) envOption { return func(c *envConfig) { c.password = p } }
 
 // withPerUser builds the server as auth.mode "oidc" would (ruling E-74 §2.13).
-func withPerUser() envOption { return func(c *envConfig) { c.perUser = true } }
-func withStatic() envOption           { return func(c *envConfig) { c.static = true } }
-func withPDF() envOption              { return func(c *envConfig) { c.pdf = true } }
-func withoutAVIFConfig() envOption    { return func(c *envConfig) { c.noAVIFConfig = true } }
-func withRootEditing() envOption      { return func(c *envConfig) { c.rootEditing = true } }
-func withSecondRoot() envOption       { return func(c *envConfig) { c.secondRoot = true } }
+func withPerUser() envOption       { return func(c *envConfig) { c.perUser = true } }
+func withStatic() envOption        { return func(c *envConfig) { c.static = true } }
+func withPDF() envOption           { return func(c *envConfig) { c.pdf = true } }
+func withoutAVIFConfig() envOption { return func(c *envConfig) { c.noAVIFConfig = true } }
+func withRootEditing() envOption   { return func(c *envConfig) { c.rootEditing = true } }
+func withSecondRoot() envOption    { return func(c *envConfig) { c.secondRoot = true } }
 func withConfigInsideRoot() envOption {
 	return func(c *envConfig) { c.rootEditing, c.configInsideRoot = true, true }
 }
