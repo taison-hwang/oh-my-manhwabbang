@@ -4502,14 +4502,14 @@ impl-plan §1.3도 같은 내용을 적었다. 그래서 백업을 만들려면 
 
 ### 4. 검증
 
-단위별로 적는다(분할 `handoffs/e69-split.md`). 아직 오지 않은 단위는 "(작성 예정)"이다.
+단위별로 적는다(분할 `handoffs/e69-split.md`). U3 이후는 단위마다 따로 남긴 검증 기록이 없고, 다섯 작업 트리를 합친 통합 검증(`docs/progress/2026-11-08T19-34-48+0900--e69-integration.md`, 커밋 b3468ab)과 독립 검증(2026-11-08, 아래 마감)으로 대신했다. 단위별 뮤테이션·codex 사이클 수는 기록이 없어 적지 않는다.
 
 - **U2 표지 생성(45, 2026-10-29).**
   - TDD: `ids`의 기지 답 벡터는 §2.7의 해시 입력을 python hashlib로 따로 계산했다. `thumbs`는 합성 가로 이미지의 왼쪽·오른쪽·가운데 색으로 rtl은 오른쪽, ltr은 왼쪽임을 단언한다. 가운데를 자르거나 자르지 않으면 실패한다.
     홀수 폭(401→201, 1203 JPEG의 rtl 오프셋 601), 세로·정사각(`w > h`만 가로), 지정 영역, §2.4 경계값(w=0.05 통과·0.0499 거절, x+w=1 통과, NaN·Inf 거절)을 다룬다.
     잘라도 기록되는 쪽 크기는 전체 크기다(FR-VWR-004). 띠 키(`shelf-thumb/1`)는 그대로이고 표지와 다른 파일이다. PDF는 렌더 폭을 넓혀 요청 폭을 내고, 상한에 걸려도 생성된다.
   - 뮤테이션 22종이 모두 빨강이었다: 자르지 않음, 방향 뒤바꿈, 홀수 여분 반대쪽, `w >= h`, 잘린 크기 기록, 키에서 영역 뺌, cv에 width, PDF 미확대, 픽셀 상한 제거, 폭 맞춤 올림 생략 등.
-  - codex 2사이클: 1사이클 MAJOR 2·MINOR 2 수용. 2사이클 차단 0, MAJOR 1·MINOR 1 보류. 보류한 MAJOR(거의 정사각인 가로 PDF 쪽)는 §2.2 끝 문장대로 기록된 고유 크기로 판정하도록 고친다(새 사이클, 결과 작성 예정).
+  - codex 2사이클: 1사이클 MAJOR 2·MINOR 2 수용. 2사이클 차단 0, MAJOR 1·MINOR 1 보류. 보류한 MAJOR(거의 정사각인 가로 PDF 쪽)는 §2.2 끝 문장대로 기록된 고유 크기로 판정하도록 고친다. 그 새 사이클의 단위 기록은 없다(통합 검증으로 대신함: `docs/progress/2026-11-08T19-34-48+0900--e69-integration.md`). 통합에서 PDF는 기록된 고유 크기를 먼저 쓰도록 들어갔고(`internal/bookcover/resolve.go`, 뷰어 `fit.ts`), 독립 검증이 PDF 기록 크기와 렌더 반올림 경계를 Go 테스트로 확인했다.
   - 게이트: worktree에서 `make lint`, `make test`(0/3~3/3) 통과.
 - **U1 user.db v3(ea, 2026-10-29).**
   - TDD: 먼저 쓴 테스트가 RED인 것을 확인했다(`TestOpen_schemaV3_*`, `TestValidateCoverRegion_boundariesOfE69`, `TestImport_v1RefusesTheV2KeysWhateverTheyHold`, `TestImport_aCoverRowMissingARegionFieldIsRefused` 등).
@@ -4520,12 +4520,28 @@ impl-plan §1.3도 같은 내용을 적었다. 그래서 백업을 만들려면 
     2차: 차단 3건 가운데 2건 수용(표지 행 필드 누락·null은 400, 삭제 전 progress·표지 출처 교차 확인), 1건 반박(/2 문서에 배열이 없는 경우 — §7.1은 모르는 필드만 거른다). 수정은 구현자가 아닌 에이전트가 했다.
   - 게이트(worktree): 테스트 세 벌 `-race`에서 U1 패키지 다섯 개 ok, 레이스 0. 남은 실패는 다른 단위를 기다리는 것뿐이다: `make lint`의 contractcheck 2건(types.ts, U4a 대기), httpapi 골든 `progress_export`·`TestProgressExportImport`(U3 대기).
   - §2.12 출하 결함을 지키는 테스트: `TestAfterScan_prefsFollowAMovedBookThatWasNeverRead`, `TestAfterScan_prefsFollowAMovedBookAlongWithItsProgress`, `TestApp_startup_reattachesAnOrphanedCoverAndPrefs`(`internal/app/cleanup_test.go`).
-- **U3 HTTP·앱 배선(20).** (작성 예정)
-- **U4a SPA 데이터(25).** (작성 예정)
-- **U4b 편집기 화면(45).** (작성 예정)
-- **U5 e2e·픽스처(54).** (작성 예정)
-- **마감(U6): 크기, `make gates`, 실브라우저.** (작성 예정)
+- **U3 HTTP·앱 배선(20).** 기록 없음(통합 검증으로 대신함: `docs/progress/2026-11-08T19-34-48+0900--e69-integration.md`).
+  - 코드: `internal/httpapi/bookcover.go`(새), `series.go`, `books.go`, `dto.go`, `router.go`, `internal/app/app.go`·`covers.go`. 골든 `book_cover`·`book_detail_cover`·`series_prefs`가 새로 생겼고 `progress_export` 등이 바뀌었다.
+  - 통합 기록: 저장·정리 독립 리뷰가 이동 실패 재시도·분할 출처·제거 root 보존·이동 표지 네 폭 선생성 200을 확인했다. 독립 검증은 202+`Retry-After`→200 JPEG, 409, 404/400/422, 엄격 디코딩(필드 누락·null·미지 필드), 무인증 PUT/DELETE 401·무변경을 직접 실행했다.
+- **U4a SPA 데이터(25).** 기록 없음(통합 검증으로 대신함: 같은 진행 기록).
+  - 코드: `web/src/api/`(`types.ts`·`client.ts`·`queries.ts`·`urls.ts`·`settingsWriter.ts`), `web/src/store/seriesDir.ts`(서버 값 사다리·씨앗 한 번 올리기), 테스트 서버 `web/src/test/msw.ts`.
+  - 통합 기록: `make lint`의 계약 검사 48개와 `make web-gates`(타입·eslint·Vitest 59파일/1598개·빌드)가 통과했다.
+- **U4b 편집기 화면(45).** 기록 없음(통합 검증으로 대신함: 같은 진행 기록).
+  - 코드: `web/src/features/viewer/CoverDialog.tsx`·`coverGeometry.ts`(새), `ViewerPage.tsx`·`ViewerTopBar.tsx`·`fit.ts`, `features/overlays/CommandPalette.tsx`, 시리즈 상세 `SeriesHeader.tsx`·`VolumeTile.tsx`·`VolumeRow.tsx`.
+  - 통합 기록: UI 독립 리뷰가 Chrome에서 EXIF JPEG의 미리보기와 서버 픽셀 일치(blue, 267×400), 최소 크기 저장, 손상책의 상단·팔레트 초기화(204, `cover=null`, 불필요 이미지 요청 0)를 재현했다. 독립 검증은 키보드·포인터 이동과 크기 변경, 저장 뒤 권 카드 픽셀 비교를 실제 Chrome에서 확인했다.
+- **U5 e2e·픽스처(54).** 기록 없음(통합 검증으로 대신함: 같은 진행 기록).
+  - 코드: `web/e2e/12-cover.spec.ts`(새), `scripts/mkfixture/`(합성 픽스처 19→20), `scripts/e2e-assert.py`·`e2e-config.sh`, `integration/`의 I-6 확장.
+  - 통합 기록: 실 컬렉션 첫 실행이 낡은 테스트 대상(책 이름의 `.zip`, 손상책 시리즈)과 `cover_cv=null`을 문자열로 보내는 테스트 오류, 카드/bitmap 축소 입력 차이로 실패했다. 제품 코드가 아니라 테스트를 고쳤고 서버 표지의 원본 크롭을 독립 확인했다. I-6은 표지 준비의 409 반환값을 검사하지 않던 것을 고쳐, 인덱스·캐시 삭제와 재시작 뒤에도 지정 표지와 시리즈 방향이 남는지 검사한다.
+- **마감(U6): 크기, `make gates`, 실브라우저.**
+  - 통합(b3468ab 작업 트리): `make lint` 0, `make test` 세 구성 `-race` 통과, `make web-gates` 0, `make e2e-synthetic` 브라우저 266 통과·6 건너뜀(115개 watched 픽셀 byte-exact), `make e2e` 실 컬렉션 258 통과·14 건너뜀, `make test-int TEST_INT_REQUIRE_ROOT=1` 최상위 232개 통과. 정규 빌드는 33 411 234 B(32 MiB 이내, noavif, CGO=0)였다.
+  - 전체 `make gates`와 `make test-int-full`(전량 ZIP 비교)은 통합 기록에서 실행하지 않았다. 구성 명령을 따로 돌렸을 뿐이다.
+  - 독립 검증(2026-11-08, head b3468ab): `make gates` 5/5 RAN/PASS, `herdr-check` PASS b3468ab. 제품 파일 변경 없는 overlay 테스트 6개와 뮤테이션 2개(예상대로 RED)를 더했다. 차단 결함 없음. 기록은 `/tmp/verify-e69/2026-11-08T20-58-01+0900--verify-e69.md`이며 /tmp라 재부팅하면 사라진다. 실제 컬렉션 검증은 선별 e2e와 500개 표본이고 전수가 아니다.
+  - 합성 픽셀 기준선: 115개 watched·10개 제외는 그대로 두고 106개 digest와 썸네일만 갱신했다(허용오차·제외 목록·console guard 불변). `docs/ui-shots/built/`는 다시 만들지 않았다.
+  - 병행 수정: `Makefile`의 media-root 읽기를 GNU Make 4.4.1의 `$(file <)` 공백 절단에 맞춰 `cat --`로 바꿨다(`TestMediaRootFoundNextToTheMakefile`이 main에서도 실패하던 것).
 
 ### 5. 바뀐 것
 
-(작성 예정.)
+- 코드: 권 표지 생성·캐시 키(`shelf-cover/1`)·`GET/PUT/DELETE /api/books/{bid}/cover`·`PUT /api/series/{sid}/prefs`, user.db v3(`book_covers`·`series_prefs`·`pending_relocations`), 내보내기 `shelf-progress/2`, 스캔 뒤 이동 이관·분할 재부착·삭제 규칙의 표지·prefs 확장(§2.11~14), 뷰어 표지 편집 대화상자, 시리즈 상세 `기본`/`L→R`/`R→L`.
+- 문서: arch(A-19), prd(FR-THM-002·003), ui-spec, impl-plan, HANDOFF가 같은 커밋에서 고쳐졌다.
+- 호환: E-69 이전 서버는 `/2` 내보내기 파일을 거절한다. 되돌려 설치할 때 주의한다.
+- 남은 일: `make test-int-full` 미실행, 옛 작업 트리 정리와 푸시는 사용자 승인 대기(HANDOFF 맨 앞).
