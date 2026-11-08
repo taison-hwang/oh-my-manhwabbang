@@ -49,6 +49,7 @@ type Writer struct {
 	pending     int
 	afterCommit []func()
 	openedAt    time.Time
+	now         func() time.Time
 
 	insertPageChunk *sql.Stmt
 	insertPageOne   *sql.Stmt
@@ -63,7 +64,7 @@ type WriterOptions struct {
 
 // Writer returns a new single-writer handle.
 func (db *DB) Writer(opts WriterOptions) *Writer {
-	w := &Writer{db: db, batchBooks: opts.BatchBooks, batchAge: opts.BatchAge}
+	w := &Writer{db: db, batchBooks: opts.BatchBooks, batchAge: opts.BatchAge, now: time.Now}
 	if w.batchBooks <= 0 {
 		w.batchBooks = defaultBatchBooks
 	}
@@ -90,7 +91,7 @@ func (w *Writer) begin(ctx context.Context) error {
 		rel()
 		return fmt.Errorf("beginning scan transaction: %w", err)
 	}
-	w.tx, w.rel, w.openedAt, w.pending = tx, rel, time.Now(), 0
+	w.tx, w.rel, w.openedAt, w.pending = tx, rel, w.now(), 0
 	return nil
 }
 
@@ -99,7 +100,7 @@ func (w *Writer) maybeCommit(ctx context.Context) error {
 	if w.tx == nil {
 		return nil
 	}
-	if w.pending >= w.batchBooks || time.Since(w.openedAt) >= w.batchAge {
+	if w.pending >= w.batchBooks || w.now().Sub(w.openedAt) >= w.batchAge {
 		return w.Flush(ctx)
 	}
 	return nil
