@@ -161,6 +161,11 @@ func (s *store) sweep(ctx context.Context, now time.Time) error {
 	return err
 }
 
+func (s *store) deleteSub(ctx context.Context, sub string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM oidc_sessions WHERE user_sub = ?`, sub)
+	return err
+}
+
 // dropLoggedOut deletes logged-out rows past their grace (E-74 §2.12).
 func (s *store) dropLoggedOut(ctx context.Context, now time.Time) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM oidc_sessions WHERE logged_out_at > 0 AND logged_out_at <= ?`,

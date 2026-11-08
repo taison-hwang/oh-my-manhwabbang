@@ -126,6 +126,10 @@ func (u hookedUser) RecordLogin(ctx context.Context, sub string) error {
 	return u.real.RecordLogin(ctx, sub)
 }
 
+func (u hookedUser) Meta(ctx context.Context, key string) (string, bool, error) {
+	return u.real.Meta(ctx, key)
+}
+
 func (u hookedUser) MigrateLegacyOwner(ctx context.Context, sub string) (bool, error) {
 	u.spy.mu.Lock()
 	u.spy.migrated = append(u.spy.migrated, sub)

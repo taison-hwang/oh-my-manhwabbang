@@ -154,7 +154,8 @@ func TestProvider_failedJWKSFetchIsLimited(t *testing.T) {
 func TestSafeReturn_decodedAndCleaned(t *testing.T) {
 	s := &Service{}
 	for _, ret := range []string{"/%61pi/settings", "/api%2fsettings", "/x/../api/settings", "/x/%2e%2e/api/settings",
-		"/%0d%0aLocation:evil", "/%5cevil.test", "/%2fevil.test", "/api", "/./api/settings"} {
+		"/%0d%0aLocation:evil", "/%5cevil.test", "/%2fevil.test", "/api", "/./api/settings",
+		"/%2561pi/settings", "/x/%252e%252e/api/settings"} {
 		if got := s.SafeReturn(ret); got != "/" {
 			t.Errorf("SafeReturn(%q) = %q, want /", ret, got)
 		}

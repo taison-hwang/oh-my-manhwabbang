@@ -1053,3 +1053,63 @@ func TestOIDC_providerErrorIsLoggedAsACode(t *testing.T) {
 		t.Fatalf("the error parameter reached the log as sent: %s", buf.String())
 	}
 }
+
+// Ruling E-74 §2.14: legacy_owner_sub set after the owner already has a
+// session. The restart drops that session, so the owner logs in, receives the
+// copy and only then can change anything; after the copy a restart keeps it.
+func TestOIDC_legacyOwnerNamedLater(t *testing.T) {
+	e, f := newOIDCEnv(t)
+	restart := func() {
+		t.Helper()
+		if err := e.srv.oidc.Close(); err != nil {
+			t.Fatal(err)
+		}
+		user, now := f.attach(e)
+		svc, err := buildOIDC(e.cfg, user, discard(), now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.srv.oidc = svc
+	}
+	owner, reader := newBrowser(), newBrowser()
+	f.login(e, owner, subAdmin)
+	f.login(e, reader, subReader)
+
+	e.cfg.Auth.OIDC.LegacyOwnerSub = subAdmin
+	restart()
+	if w := owner.get(e, "/api/books/"+e.bookZipID); w.Code != http.StatusUnauthorized {
+		t.Fatalf("the owner's session from before legacy_owner_sub = %d, want 401", w.Code)
+	}
+	if !authStatusOf(t, e, reader).Authenticated {
+		t.Fatal("another user's session was dropped too")
+	}
+	f.login(e, owner, subAdmin)
+	d := decodeBody[BookDetail](t, owner.get(e, "/api/books/"+e.bookZipID), http.StatusOK)
+	if d.Progress == nil || d.Progress.LastPage != 2 {
+		t.Fatalf("the owner did not receive the copy at the new login: %+v", d.Progress)
+	}
+
+	restart()
+	if !authStatusOf(t, e, owner).Authenticated {
+		t.Fatal("a restart after the copy dropped the owner's session")
+	}
+}
+
+// E-74 §2.5 (U-B re-verification UB-3): a twice-encoded return lands on the
+// default path, while a Korean path survives.
+func TestOIDC_returnRefusesDoubleEncoding(t *testing.T) {
+	for _, base := range []string{"", "/shelf"} {
+		e, f := newOIDCEnv(t, withBasePath(base))
+		for ret, want := range map[string]string{
+			base + "/%2561pi/settings":          base + "/",
+			base + "/x/%252e%252e/api/settings": base + "/",
+			base + "/series/%ED%95%9C%EA%B8%80": base + "/series/%ED%95%9C%EA%B8%80",
+		} {
+			b := newBrowser()
+			w := b.get(e, f.prov.Authorize(t, f.start(e, b, "?return="+url.QueryEscape(ret)), subReader))
+			if loc := w.Header().Get("Location"); w.Code != http.StatusFound || loc != want {
+				t.Errorf("return %q: callback %d to %q, want 302 to %q", ret, w.Code, loc, want)
+			}
+		}
+	}
+}

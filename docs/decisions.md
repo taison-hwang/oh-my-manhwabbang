@@ -4640,6 +4640,7 @@ impl-plan §1.3도 같은 내용을 적었다. 그래서 백업을 만들려면 
 14. **기존 데이터 이관과 되돌리기.**
     - `auth.oidc.legacy_owner_sub`에 적힌 `sub`가 **처음 로그인할 때 한 번** 기존 `progress`·`book_prefs`·`settings`·`view_state`를 `user_*`로 복사한다. 완료는 user.db `meta.legacy_migrated_to = <sub>`로 적는다(다시 돌지 않는다). 기존 테이블은 지우지 않는다. `legacy_owner_sub`가 비어 있으면 이관하지 않는다.
     - 이관이 실패하면 그 로그인은 세션을 만들지 않고 `잠시 후 다시 시도` 화면(`503`)으로 끝난다. 다음 로그인에 다시 시도한다(2026-11-09 Orchestrator 결정, U-B 검증 UB-4: 세션을 주면 재시도가 그 사이 사용자가 지운 진행률을 되살린다).
+    - 기동 때 `legacy_owner_sub`가 있고 `meta.legacy_migrated_to`가 없으면 auth.db에서 그 `sub`의 세션을 모두 지운다. 이관 전에 만든 세션으로 바꾼 것이 이관으로 되살아나지 않도록, 소유자는 다시 로그인해 이관을 받은 뒤에야 새 세션을 얻는다(2026-11-09 Orchestrator 결정, U-B 재검증).
     - 되돌리기용 일회성 명령 `shelf auth restore-owner --sub <sub>`를 둔다. 그 사용자의 `user_*` 행을 기존 테이블로 복사한다. 같은 키는 `updated_at`이 새 쪽이 이긴다(`updated_at`이 없는 행은 사용자 행이 이긴다). 서버가 멈춘 상태에서 돌린다.
 15. **내보내기·가져오기**(FR-STT-004). 형식은 `shelf-progress/2` 그대로다. 모양이 같으므로 버전을 올리지 않는다.
     - oidc 모드에서 `items`·`prefs`는 호출한 사용자의 행만 내보내고, 가져오기도 그 사용자의 행에 쓴다. 파일에는 사용자 키를 넣지 않는다. 그래서 다른 사용자에게 옮겨 넣을 수 있다.

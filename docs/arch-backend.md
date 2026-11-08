@@ -972,7 +972,8 @@ CREATE TABLE IF NOT EXISTS user_view_state (user_sub TEXT NOT NULL, /* view_stat
 * **Legacy owner (E-74 §2.14).** When `auth.oidc.legacy_owner_sub` first logs in, `progress`, `book_prefs`,
   `settings` and `view_state` are copied into that user's `user_*` rows once, and
   `meta.legacy_migrated_to = <sub>` records it. A failed copy ends that login without a session (`503`, "try
-  again later"); the next login retries. The old tables are not deleted. `shelf auth restore-owner
+  again later"); the next login retries. While no copy is recorded, start-up deletes the owner's auth.db sessions, so a session
+  made before the owner was named cannot change data the copy would bring back. The old tables are not deleted. `shelf auth restore-owner
   --sub <sub>` (server stopped) copies one user's rows back; on a shared key the newer `updated_at` wins and a
   row without one loses to the user's.
 * **`<data_dir>/auth.db`** (mode `0600`, oidc mode only) holds `oidc_sessions(id_hash PRIMARY KEY, user_sub,

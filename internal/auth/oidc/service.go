@@ -39,7 +39,12 @@ const (
 type LoginHook interface {
 	RecordLogin(ctx context.Context, sub string) error
 	MigrateLegacyOwner(ctx context.Context, sub string) (bool, error)
+	Meta(ctx context.Context, key string) (string, bool, error)
 }
+
+// legacyMigratedKey is user.db's record of a finished owner copy
+// (userdata.metaLegacyMigratedTo).
+const legacyMigratedKey = "legacy_migrated_to"
 
 // Config is what the service needs from `auth:` and `server:`.
 type Config struct {
@@ -99,6 +104,18 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	st, err := openStore(ctx, cfg.DBPath)
 	if err != nil {
 		return nil, err
+	}
+	// E-74 §2.14: an owner named after sessions were made logs in again, so
+	// nothing changed through an old session is brought back by the copy.
+	if cfg.LegacyOwnerSub != "" && cfg.Hook != nil {
+		_, done, err := cfg.Hook.Meta(ctx, legacyMigratedKey)
+		if err == nil && !done {
+			err = st.deleteSub(ctx, cfg.LegacyOwnerSub)
+		}
+		if err != nil {
+			_ = st.close()
+			return nil, err
+		}
 	}
 	s := &Service{
 		cfg:     cfg,
@@ -343,7 +360,8 @@ func (s *Service) SafeReturn(p string) string {
 	}
 	d := u.Path
 	for _, c := range d {
-		if c < 0x20 || c == 0x7f || c == '\\' {
+		// A '%' left after decoding was encoded twice; the SPA has no such route.
+		if c < 0x20 || c == 0x7f || c == '\\' || c == '%' {
 			return home
 		}
 	}
