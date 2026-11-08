@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+# herdr 세션 실행기: role·project 라벨, 모델·effort, 컨텍스트 설정을 맞춰 Codex·Claude 세션을 띄운다.
+# 값은 .agents/harness.env에서 읽는다. 세션의 모델 표는 이 파일이 원본이다.
+set -euo pipefail
+
+SELF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# worktree에서 실행해도 프로젝트 이름과 시작 위치는 메인 체크아웃으로 맞춘다.
+if common="$(git -C "$SELF_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; then
+  ROOT="$(dirname "$common")"
+else
+  ROOT="$SELF_ROOT"
+fi
+PROJECT="$(basename "$ROOT")"
+
+HERDR_AUTONOMOUS=1
+HERDR_MAX_WORKERS=3
+HERDR_SOFT_SIGNAL_TOKENS=300000
+HERDR_COMPACT_TOKENS=400000
+# 역할별 에이전트·모델·effort. 비어 있으면 띄울 때 준 인자와 아래 기본 표를 쓴다.
+HERDR_COMMANDER_TOOL="" HERDR_COMMANDER_MODEL="" HERDR_COMMANDER_EFFORT=""
+HERDR_ORCHESTRATOR_TOOL="" HERDR_ORCHESTRATOR_MODEL="" HERDR_ORCHESTRATOR_EFFORT=""
+HERDR_WORKER_TOOL="" HERDR_WORKER_MODEL="" HERDR_WORKER_EFFORT=""
+# verifier-*는 검증자 설정을 쓰고, 검증자 도구가 비어 있으면 워커 설정을 쓴다.
+HERDR_VERIFIER_TOOL="" HERDR_VERIFIER_MODEL="" HERDR_VERIFIER_EFFORT=""
+# 1이면 Orchestrator·워커를 띄울 때 Commander 패널 옆에 herdr 패널을 나눠 보기 전용으로 붙인다.
+HERDR_VIEW_PANES=1
+# shellcheck disable=SC1091
+[[ -f "$SELF_ROOT/.agents/harness.env" ]] && . "$SELF_ROOT/.agents/harness.env"
+
+usage() {
+  cat >&2 <<'EOF'
+사용법: herdr-session [옵션] <role> [codex|claude] [effort]
+
+  role     commander | orchestrator | 워커 이름(예: worker-1) | verifier-<n>
+  도구     생략하면 .agents/harness.env의 HERDR_<역할>_TOOL을 쓴다. 둘 다 없으면 실패한다
+           (역할: COMMANDER, ORCHESTRATOR, WORKER, VERIFIER. VERIFIER_TOOL이 비면 WORKER 설정)
+  effort   기본값 대신 쓸 effort(low, medium, high, xhigh)
+
+  모델·effort는 인자 > harness.env(HERDR_<역할>_MODEL·_EFFORT) > 기본 표 순으로 정한다.
+  harness.env의 모델·effort는 도구가 HERDR_<역할>_TOOL과 같을 때만 쓴다.
+
+  --task <내용>      첫 임무. 부팅 중인 세션에 hc send로 보내면 유실될 수 있으니 이것으로 넘긴다
+  --model <모델>     기본 모델 대신 쓸 모델(예: 명세가 정해진 구현은 sonnet)
+  --here             사용자가 herdr 화면에서 연 패널에서 그 자리에 실행한다. hc 터미널이 아니면 hc 터미널을 열어 실행한다
+  --outlive-parent   부모 세션이 끝나도 살아 있게 한다
+  --full             Claude의 기본 맥락 축소(claude.ai 커넥터·Chrome·플러그인 끔)를 하지 않는다
+  --dry-run          실행하지 않고 명령만 출력한다
+EOF
+  exit 2
+}
+
+HERE=0 DRY=0 OUTLIVE=0 FULL=0 TASK="" MODEL_OVERRIDE=""
+while [[ $# -gt 0 && "$1" == --* ]]; do
+  case "$1" in
+    --here) HERE=1 ;;
+    --dry-run) DRY=1 ;;
+    --outlive-parent) OUTLIVE=1 ;;
+    --full) FULL=1 ;;
+    --task) [[ $# -ge 2 ]] || usage; TASK="$2"; shift ;;
+    --model) [[ $# -ge 2 ]] || usage; MODEL_OVERRIDE="$2"; shift ;;
+    *) usage ;;
+  esac
+  shift
+done
+[[ $# -ge 1 && $# -le 3 ]] || usage
+ROLE="$1"; shift
+[[ "$ROLE" =~ ^[a-z0-9_-]+$ ]] || { echo "role은 소문자·숫자·-·_ 만 쓴다: $ROLE" >&2; exit 2; }
+TOOL="" EFFORT_OVERRIDE=""
+if [[ $# -gt 0 && ( "$1" == codex || "$1" == claude ) ]]; then TOOL="$1"; shift; fi
+if [[ $# -gt 0 ]]; then EFFORT_OVERRIDE="$1"; shift; fi
+[[ $# -eq 0 ]] || usage
+
+case "$ROLE" in commander | orchestrator) KIND=$ROLE ;; *) KIND=worker ;; esac
+# 설정 이름: 검증자는 따로 둔다. 기본 표와 워커 수 상한은 워커와 같다.
+SETTING="$KIND"
+[[ "$ROLE" == verifier* && -n "$HERDR_VERIFIER_TOOL" ]] && SETTING=verifier
+KIND_UPPER="$(printf '%s' "$SETTING" | tr '[:lower:]' '[:upper:]')"
+ENV_TOOL_VAR="HERDR_${KIND_UPPER}_TOOL" ENV_MODEL_VAR="HERDR_${KIND_UPPER}_MODEL" ENV_EFFORT_VAR="HERDR_${KIND_UPPER}_EFFORT"
+ENV_TOOL="${!ENV_TOOL_VAR:-}"
+if [[ -z "$TOOL" ]]; then
+  [[ -n "$ENV_TOOL" ]] || { echo "도구를 정하지 못했다. 인자로 codex|claude를 주거나 .agents/harness.env에 $ENV_TOOL_VAR를 둔다" >&2; exit 2; }
+  TOOL="$ENV_TOOL"
+fi
+ENV_MODEL="" ENV_EFFORT=""
+if [[ -n "$ENV_TOOL" && "$TOOL" == "$ENV_TOOL" ]]; then
+  ENV_MODEL="${!ENV_MODEL_VAR:-}" ENV_EFFORT="${!ENV_EFFORT_VAR:-}"
+fi
+case "$TOOL:$KIND" in
+  codex:commander | codex:orchestrator) MODEL=gpt-6.1-terra EFFORT=medium ;;
+  codex:worker) MODEL=gpt-6.1-sol EFFORT=high ;;
+  claude:commander) MODEL=sonnet EFFORT=medium ;;
+  claude:orchestrator) MODEL=opus EFFORT=high ;;
+  claude:worker) MODEL=opus EFFORT=medium ;;
+  *) echo "알 수 없는 도구: $TOOL" >&2; usage ;;
+esac
+MODEL="${MODEL_OVERRIDE:-${ENV_MODEL:-$MODEL}}"
+EFFORT="${EFFORT_OVERRIDE:-${ENV_EFFORT:-$EFFORT}}"
+
+# 전역 herdr-context-guard는 비율 기준의 정리 알림을 보내므로 끄고, 프로젝트 hook의 소프트 신호만 쓴다.
+ENVS=(
+  "HERDR_ROLE=$ROLE"
+  "HERDR_PROJECT=$PROJECT"
+  "HERDR_HOME=$ROOT"
+  "PATH=$ROOT/.agents/bin:$PATH"
+  "HERDR_SOFT_SIGNAL_TOKENS=$HERDR_SOFT_SIGNAL_TOKENS"
+  "HERDR_CTX_GUARD_OFF=1"
+)
+# 보기 패널의 기준(Commander를 띄운 herdr 패널). hc 세션은 hc 서버의 환경을 물려받아
+# HERDR_PANE_ID가 엉뚱한 패널일 수 있으므로, --here 때 사용자 셸에서 받은 값을 이 이름으로 넘긴다.
+VIEW_ANCHOR="${HERDR_VIEW_ANCHOR:-}"
+if [[ $HERE -eq 1 && -z "${HC_TERMINAL_ID:-}" ]]; then VIEW_ANCHOR="${HERDR_PANE_ID:-}"; fi
+[[ -n "$VIEW_ANCHOR" ]] && ENVS+=("HERDR_VIEW_ANCHOR=$VIEW_ANCHOR")
+
+if [[ "$TOOL" == codex ]]; then
+  # hc는 herdr 서버에 연결해야 하므로 Codex는 어느 쪽이든 샌드박스 없이 띄운다.
+  if [[ "$HERDR_AUTONOMOUS" == 1 ]]; then
+    # 신뢰 승인 전의 hook은 조용히 건너뛰므로 자율 모드에서는 승인 절차를 생략한다.
+    PERM=(--yolo --dangerously-bypass-hook-trust)
+  else
+    PERM=(--sandbox danger-full-access --ask-for-approval on-request)
+  fi
+  # --no-daemon이 없으면 공유 백그라운드 서버가 명령을 실행해 hc 터미널 밖에서 돈다(hc --skill).
+  AGENT=(codex --no-daemon "${PERM[@]}" -m "$MODEL" -c "model_reasoning_effort=\"$EFFORT\"" -c "model_auto_compact_token_limit=$HERDR_COMPACT_TOKENS")
+else
+  ENVS+=("CLAUDE_CODE_AUTO_COMPACT_WINDOW=$HERDR_COMPACT_TOKENS")
+  AGENT=(claude)
+  [[ "$HERDR_AUTONOMOUS" == 1 ]] && AGENT+=(--dangerously-skip-permissions)
+  AGENT+=(--model "$MODEL" --effort "$EFFORT")
+  # Commander는 사용자 대화용이라 축소하지 않는다.
+  if [[ $FULL -eq 0 && "$KIND" != commander ]]; then
+    ENVS+=("ENABLE_CLAUDEAI_MCP_SERVERS=false")
+    AGENT+=(--no-chrome --settings "$SELF_ROOT/.agents/config/claude-slim-settings.json")
+  fi
+fi
+[[ -n "$TASK" ]] && AGENT+=("$TASK")
+CMD=(env "${ENVS[@]}" "${AGENT[@]}")
+
+if [[ $HERE -eq 1 ]]; then
+  # hc 터미널 안이면 그 터미널에 라벨을 붙인다. herdr 패널의 일반 셸처럼 hc 터미널이 아니면
+  # hc 터미널을 백그라운드로 열고 이 패널을 거기에 붙인다. --bg 없는 hc run은 끝날 때까지 기다렸다가
+  # 출력만 보여 주므로 대화형 화면이 나오지 않는다. 패널을 닫거나 ctrl+\로 떨어져도 세션은 남는다.
+  HERE_RUN=(hc run --bg --json --label "role=$ROLE" --label "project=$PROJECT" --cwd "$ROOT" --)
+  if [[ $DRY -eq 1 ]]; then
+    if [[ -n "${HC_TERMINAL_ID:-}" ]]; then
+      echo "hc label $HC_TERMINAL_ID role=$ROLE project=$PROJECT && ${CMD[*]}"
+    else
+      echo "${HERE_RUN[*]} ${CMD[*]} && hc attach <새 터미널>"
+    fi
+    exit 0
+  fi
+  command -v hc >/dev/null || { echo "hc(herdr-core)가 없다. 설치: curl -fsSL https://releases.herdr.dev/core/install.sh | sh" >&2; exit 1; }
+  if [[ -z "${HC_TERMINAL_ID:-}" ]]; then
+    addr="$("${HERE_RUN[@]}" "${CMD[@]}" | jq -r '.address // empty')"
+    [[ -n "$addr" ]] || { echo "hc 터미널을 열지 못했다" >&2; exit 1; }
+    # 기준 패널에 역할 이름을 붙인다. 실패해도 진행한다.
+    [[ -n "$VIEW_ANCHOR" ]] && command -v herdr >/dev/null && herdr pane rename "$VIEW_ANCHOR" "$ROLE" >/dev/null 2>&1 || true
+    exec hc attach "$addr"
+  fi
+  hc label "$HC_TERMINAL_ID" "role=$ROLE" "project=$PROJECT" >/dev/null
+  cd "$ROOT"
+  exec "${CMD[@]}"
+fi
+
+RUN=(hc run --bg --json --label "role=$ROLE" --label "project=$PROJECT" --cwd "$ROOT")
+[[ $OUTLIVE -eq 1 ]] && RUN+=(--outlive-parent)
+if [[ $DRY -eq 1 ]]; then
+  echo "${RUN[*]} -- ${CMD[*]}"
+  exit 0
+fi
+
+if [[ "$KIND" == worker ]]; then
+  # hc ls 출력에는 라벨이 없으므로 라벨 필터로 세어 뺀다.
+  count_terminals() { hc ls --json --label "project=$PROJECT" "$@" | jq '.terminals | length'; }
+  count=$(($(count_terminals) - $(count_terminals --label role=commander) - $(count_terminals --label role=orchestrator)))
+  if [[ "$count" -ge "$HERDR_MAX_WORKERS" ]]; then
+    echo "워커가 이미 ${count}개다(HERDR_MAX_WORKERS=$HERDR_MAX_WORKERS). 쉬는 세션을 정리해 재사용한다." >&2
+    exit 1
+  fi
+fi
+addr="$("${RUN[@]}" -- "${CMD[@]}" | jq -r '.address // empty')"
+[[ -n "$addr" ]] || { echo "hc 터미널을 열지 못했다" >&2; exit 1; }
+echo "$addr"
+# 보기 패널은 부가 기능이라 실패해도 세션 띄우기를 실패로 만들지 않는다.
+if [[ "$HERDR_VIEW_PANES" == 1 && -n "$VIEW_ANCHOR" ]]; then
+  "$(dirname "${BASH_SOURCE[0]}")/herdr-view" "$VIEW_ANCHOR" "$addr" "$ROLE" >&2 || true
+fi

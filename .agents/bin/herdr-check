@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# 프로젝트 검사 실행기. 검사 명령은 .agents/harness.env에서 읽는다(하네스는 언어별 설정을 담지 않는다).
+#   herdr-check                전체 검사(HERDR_CHECK_CMD)를 지금 폴더의 git 작업 트리 최상위에서 돌리고 결과를 기록한다
+#   herdr-check --files <파일…>  빠른 파일 검사(HERDR_CHECK_FILE_CMD). 기록하지 않는다. 편집 hook이 쓴다
+#   herdr-check --status       지금 HEAD의 기록을 출력한다: PASS <sha> | FAIL <sha> | NONE | UNSET
+# 끝 코드: 0 통과, 1 실패, 3 검사 명령 미설정. 기록은 HEAD SHA와 커밋 안 된 변경 유무에 묶인다.
+set -uo pipefail
+
+SELF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+HERDR_CHECK_CMD="" HERDR_CHECK_FILE_CMD="" HERDR_CHECK_TIMEOUT=900
+# shellcheck disable=SC1091
+[[ -f "$SELF_ROOT/.agents/harness.env" ]] && . "$SELF_ROOT/.agents/harness.env"
+
+project="${HERDR_PROJECT:-$(basename "$SELF_ROOT")}"
+role="${HERDR_ROLE:-solo}"
+dir="$HOME/.claude/herdr/handoff/$project"
+record="$dir/.$role.check"
+log="$dir/.$role.check.log"
+
+run_limited() { # 명령 문자열을 시간 제한 안에서 돌린다
+  if command -v timeout >/dev/null; then timeout "$HERDR_CHECK_TIMEOUT" bash -c "$1"; else bash -c "$1"; fi
+}
+
+tree_key() { # HEAD SHA. 커밋 안 된 변경이 있으면 +dirty
+  local sha
+  sha="$(git rev-parse HEAD 2>/dev/null)" || return 1
+  [[ -z "$(git status --porcelain 2>/dev/null)" ]] || sha="$sha+dirty"
+  printf '%s' "$sha"
+}
+
+case "${1:-}" in
+  --status)
+    [[ -n "$HERDR_CHECK_CMD" ]] || { echo UNSET; exit 0; }
+    key="$(tree_key)" || { echo NONE; exit 0; }
+    read -r status rkey _ <"$record" 2>/dev/null || { echo NONE; exit 0; }
+    if [[ "$rkey" == "$key" ]]; then echo "$status $key"; else echo NONE; fi
+    exit 0
+    ;;
+  --files)
+    shift
+    [[ -n "$HERDR_CHECK_FILE_CMD" ]] || exit 3
+    files=()
+    for f in "$@"; do [[ -f "$f" ]] && files+=("$f"); done
+    [[ ${#files[@]} -gt 0 ]] || exit 0
+    top="$(git -C "$(dirname "${files[0]}")" rev-parse --show-toplevel 2>/dev/null)" || top="$(dirname "${files[0]}")"
+    quoted="$(printf '%q ' "${files[@]}")"
+    if [[ "$HERDR_CHECK_FILE_CMD" == *"{files}"* ]]; then cmd="${HERDR_CHECK_FILE_CMD//\{files\}/$quoted}"; else cmd="$HERDR_CHECK_FILE_CMD $quoted"; fi
+    out="$(cd "$top" && run_limited "$cmd" 2>&1)"; rc=$?
+    [[ $rc -eq 0 ]] && exit 0
+    printf '빠른 검사 실패: %s\n%s\n' "$cmd" "$(printf '%s\n' "$out" | tail -n 40)" >&2
+    exit 1
+    ;;
+  '') ;;
+  *) sed -n '2,6p' "${BASH_SOURCE[0]}" | sed 's/^# *//' >&2; exit 2 ;;
+esac
+
+[[ -n "$HERDR_CHECK_CMD" ]] || { echo "검사 명령이 없다. .agents/harness.env에 HERDR_CHECK_CMD를 둔다" >&2; exit 3; }
+top="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "git 작업 트리 안에서 실행한다" >&2; exit 1; }
+cd "$top" || exit 1
+key="$(tree_key)"
+mkdir -p "$dir"
+echo "검사: $HERDR_CHECK_CMD ($top)" >&2
+run_limited "$HERDR_CHECK_CMD" >"$log" 2>&1; rc=$?
+if [[ $rc -eq 0 ]]; then status=PASS; else status=FAIL; fi
+printf '%s %s %s\n' "$status" "$key" "$(date +%s)" >"$record"
+if [[ $status == PASS ]]; then
+  echo "검사 PASS ${key:0:12}" >&2
+  exit 0
+fi
+[[ $rc -eq 124 ]] && echo "시간 초과(HERDR_CHECK_TIMEOUT=${HERDR_CHECK_TIMEOUT}s)" >&2
+echo "검사 FAIL (끝 코드 $rc). 출력 끝부분, 전체는 $log" >&2
+tail -n 60 "$log" >&2
+exit 1

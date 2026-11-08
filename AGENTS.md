@@ -1,39 +1,36 @@
-# AGENTS.md — SHELF 작업 지침 (Codex)
+# 에이전트 지침 — zip-viewer (Codex·Claude 공통)
 
-SHELF(제품명 Oh My Manhwa-bbang)입니다. 디스크에 쌓인 ZIP·RAR·폴더·PDF 만화/도서를 **압축 해제 없이** 읽는 웹 리더이며,
-Go 단일 정적 바이너리(`dist/shelf`)에 React/Vite SPA를 embed 합니다. 개요는 `README.md`를 봅니다.
+Codex는 이 파일을 직접 읽고, Claude Code는 `CLAUDE.md`의 `@AGENTS.md`로 같은 내용을 읽는다. 표시 사이의 내용은 `harness sync`가 덮어쓰므로 고치지 않는다.
 
-**기본 지침: 주업무는 시스템 구현·개발입니다. 데이터(개별 만화 파일) 복구는 과제가 아닙니다** (`.claude/rules/05-development-first.md`).
-**절차는 작업 크기를 따릅니다. 시작할 때 티어(T0~T3)를 한 줄로 말합니다** (`.claude/rules/00-orchestration.md`).
+<!-- harness:begin -->
+## 하네스 기본 규칙
 
-세션을 시작하면 `docs/HANDOFF.md`부터 읽습니다. 문서가 충돌하면 `docs/prd.md`가 이기고, 전체 우선순위는 HANDOFF §3에 있습니다.
+- 역할: role이 있는 세션은 `.agents/skills/running-herdr-autopilot/SKILL.md`로 그 역할을 맡는다. 전역 지침이 `~/.agents/skills/operating-herdr-sessions`를 가리켜도 이 저장소에서는 읽지 않는다. role이 없으면 단일 작업 세션으로 일하며 herdr 스킬은 쓰지 않는다.
+- 시작: 프로젝트의 목적·경계·승인 원칙은 `intent.md`로 먼저 확인한다.
+- 직접 처리: 작업은 본 세션에서 직접 한다. 서브에이전트는 의존성 없는 검색과 구현에 대한 독립 리뷰에만 쓴다.
+- 상태: 다음 세션에 필요한 것은 커밋, 상태판, 작업 상태 파일에 남긴다. 대화에만 있는 내용은 사라진다고 가정한다.
+- 승인: 외부에 보이거나 되돌리기 어려운 변경, 파괴적 작업, 범위 확대는 사용자 승인 없이 하지 않는다.
+- 확인: 주석, 문서, 보고, 요약은 단서다. 동작을 판단할 때는 코드를 읽거나 실행해 확인한다.
+- 완료: 검증 근거 없이 완료를 선언하지 않는다. 보고의 검증은 실행 확인(명령과 결과), 추론, 미확인으로 구분한다. 추론과 미확인은 통과가 아니다.
+- 변경: 수용 기준을 채우는 가장 작은 변경을 한다. 범위 안의 불필요한 코드는 추가하기 전에 지운다. 증거가 뒷받침하지 않는 변경은 되돌린다.
+- 주석: 코드로 표현할 수 없는 이유, 외부 제약, 공개 API 계약, 라이선스만 쓴다. 코드 동작 설명, 작업 경과, 주석 처리한 코드는 남기지 않는다. 강제할 수 있는 제약은 타입, 테스트, 검사로 옮긴다. 이번 변경에 닿는 코드에만 적용하고, 틀린 기존 주석은 고친다.
+- 타입: 타입 검사가 가능한 프로젝트는 불가능한 상태를 타입으로 막고, 외부 입력은 경계에서 파싱하고, 스키마가 있으면 타입을 거기서 만든다. 타입 검사는 검사 명령에 넣는다. 검사하지 않는 타입 힌트는 주석과 같다.
+- 언어: 보고·인계·사용자 응답·세션 간 메시지·커밋 메시지·PR 본문은 한국어로 쓴다.
 
-규칙의 원본은 `.claude/rules/` 하나입니다(Claude와 공용). Codex는 `CLAUDE.md`의 `@` import를 자동 로드하지 않으므로,
-실질적인 작업을 시작하기 전에 아래 파일을 **번호 순서대로 모두 읽고** 저장소 작업 지침으로 적용합니다.
+## 스킬: 필요할 때만 읽는다
 
-## 지침 목록 (번호 순으로 읽기)
+아래 작업을 시작하기 직전에 프로젝트의 `.agents/skills/<스킬>/SKILL.md`를 읽고 따른다. 그 밖의 시점에는 읽지 않는다.
 
-| 파일 | 다루는 사안 |
+| 작업 | 스킬 |
 | --- | --- |
-| `.claude/rules/00-orchestration.md` | 작업 크기 티어(T0~T3), 오케스트레이터 컨텍스트 보호, 위임·병렬 실행, 비상 정지 |
-| `.claude/rules/05-development-first.md` | **기본 지침** — 시스템 개발 우선, 데이터 복구는 범위 밖, 명세 변경은 판정으로 |
-| `.claude/rules/10-model-routing.md` | 작업 성격별 서브에이전트 모델 지정 |
-| `.claude/rules/15-tdd.md` | 상세 구현은 TDD — 실패 테스트 먼저, 기대값은 명세에서, 뮤테이션 자가검증 |
-| `.claude/rules/20-review-cycle.md` | 구현·리뷰·개선 사이클, 게이트 선택, 리뷰 실행자 선택 |
-| `.claude/rules/30-workflow.md` | 멀티에이전트 오케스트레이션 적용 기준과 검증 원칙 |
-| `.claude/rules/40-reporting.md` | 사용자 보고 원칙 |
-| `.claude/rules/50-environment.md` | 환경 제약과 안전 수칙 |
+| role이 있는 세션의 역할 수행, 세션 띄우기, 배정·보고, 서브에이전트 사용 판단 | `running-herdr-autopilot` |
+| 컨텍스트 알림 대응, `/clear`, compact 복구, 재개 | `managing-session-context` |
+| `docs/` 문서를 읽거나 쓰기, 결정 기록, 작업 계획·상태판 | `writing-project-docs` |
+<!-- harness:end -->
 
-## Codex에서 읽을 때
+## 프로젝트 규칙
 
-- 규칙의 서브에이전트, 모델 지정(opus/haiku), `Agent`·`Workflow` 도구는 Claude Code 기준입니다.
-  Codex에서는 같은 원칙(분석·구현·실행 분리, 오케스트레이터는 결론만 보유)을 쓸 수 있는 수단으로 따르고, 수단이 없으면 직접 수행합니다.
-- `20-review-cycle.md`의 codex 리뷰 명령은 Claude가 구현했을 때의 외부 리뷰 경로입니다.
-  Codex가 구현한 변경은 같은 세션이 리뷰하지 않습니다. 구현 맥락이 없는 새 Codex 세션으로 리뷰하고, 보고에 외부 관점 리뷰가 아님을 밝힙니다.
-
-## 지침을 추가·수정할 때
-
-- 규칙은 `.claude/rules/`에서만 고칩니다. 새 파일을 만들면 이 파일의 표와 `CLAUDE.md`의 표·`@` import를 함께 갱신합니다.
-- 한 파일에는 한 사안만 둡니다. 파일명은 `<번호>-<사안>.md`, 번호는 10 단위로 띄웁니다.
-- 규칙 간 참조는 섹션 번호가 아니라 파일명으로 합니다.
-- 이 파일은 얇은 인덱스로 유지합니다.
+- 주업무: <이 프로젝트에서 가장 먼저 동작해야 하는 것. 상세는 docs/service-plan/index.md>
+- 검사 명령: 전체 `make lint && make test && make web-gates`(web/node_modules가 없으면 먼저 `cd web && pnpm install --frozen-lockfile`). 모든 게이트는 `make gates`(실제 미디어가 없으면 `GATES_E2E=0`). 편집 직후 빠른 검사는 `scripts/quick-check.sh <파일>`(gofmt, eslint). 하네스 관문은 `.agents/harness.env`의 `HERDR_CHECK_CMD`·`HERDR_CHECK_FILE_CMD`가 같은 명령을 쓴다
+- 실제 동작 확인: <앱을 띄워 사용자 경로를 실행하는 방법과 증거. 없으면 "없음">
+- 코드 위치 찾기: <심볼 인덱스가 있으면 도구 이름>

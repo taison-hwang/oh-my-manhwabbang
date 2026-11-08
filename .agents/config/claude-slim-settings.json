@@ -1,0 +1,7 @@
+{
+  "enabledPlugins": {
+    "ponytail@ponytail": false,
+    "rust-analyzer-lsp@claude-plugins-official": false,
+    "cc-plugin-you-should-know@builtin": false
+  }
+}
