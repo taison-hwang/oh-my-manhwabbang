@@ -155,10 +155,11 @@ func readSignature(r io.ReaderAt, size int64) error {
 	}
 	if sig[0] == 0x52 && sig[1] == 0x61 && sig[2] == 0x72 && sig[3] == 0x21 &&
 		sig[4] == 0x1A && sig[5] == 0x07 && sig[6] == 0x01 && sig[7] == 0x00 {
-		// A real format, deliberately declined: RAR 5 replaces the whole block
-		// layout and the unpack algorithm. Nothing in the reference collection
-		// uses it (0 of 14), and guessing would be worse than saying so.
-		return unsupported("RAR 5 archive; this build reads RAR 4")
+		// RAR 5 replaces the whole block layout. The product reads it with
+		// internal/archive/rar5 (E-71), whose Any routes it there before this
+		// reader is asked; this branch answers only a caller that asked rar4
+		// directly.
+		return unsupported("RAR 5 archive; this reader reads RAR 4")
 	}
 	if [7]byte(sig[:7]) != signature {
 		return fmt.Errorf("rar: %w", ErrNoSignature)

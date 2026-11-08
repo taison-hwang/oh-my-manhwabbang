@@ -2,7 +2,9 @@ package rar5
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
+	"hash/crc32"
 	"io"
 	"strings"
 	"sync"
@@ -57,7 +59,7 @@ func TestRealSample_indexesAndDecodes(t *testing.T) {
 var pages = []testutil.RAR5Entry{
 	{Name: []byte("vol/001.jpg"), Data: bytes.Repeat([]byte{0xFF, 0xD8, 1}, 300)},
 	{Name: []byte("vol"), Dir: true},
-	{Name: []byte("vol/002.jpg"), Data: bytes.Repeat([]byte{0xFF, 0xD8, 2}, 500)},
+	{Name: []byte("vol/002.jpg"), Data: bytes.Repeat([]byte{0xFF, 0xD8, 2}, 500), TimeAndHash: true},
 	{Name: []byte("vol/한글 003.jpg"), Data: bytes.Repeat([]byte{0xFF, 0xD8, 3}, 200)},
 }
 
@@ -207,7 +209,7 @@ func TestRefusals_nameTheReason(t *testing.T) {
 		{"split before", with(func(e *testutil.RAR5Entry) { e.HeadFlags = testutil.RAR5HeadSplitBefore }), archive.StatusUnsupported, "split"},
 		{"solid entry", with(func(e *testutil.RAR5Entry) { e.CompInfo = testutil.RAR5CompSolid }), archive.StatusUnsupported, "solid entry"},
 		{"no CRC-32", with(func(e *testutil.RAR5Entry) { e.NoCRC = true }), archive.StatusUnsupported, "no CRC-32"},
-		{"version 2", with(func(e *testutil.RAR5Entry) { e.CompInfo = 2 | 3<<7 }), archive.StatusUnsupported, "compression version 2"},
+		{"version 2 packed", with(func(e *testutil.RAR5Entry) { e.CompInfo = 2 | 3<<7 }), archive.StatusUnsupported, "compression version 2"},
 		{"dictionary", testutil.RAR5Spec{Entries: []testutil.RAR5Entry{big}}, archive.StatusUnsupported, "dictionary"},
 	}
 	for _, c := range cases {
@@ -236,6 +238,55 @@ func TestLargeDictionaryOnASmallEntry_isAdmitted(t *testing.T) {
 	}
 	if got := readEntry(t, New(), bytes.NewReader(raw), ix.Entries[0]); string(got) != testutil.RAR5PackedSampleText {
 		t.Fatalf("decoded %q", got)
+	}
+}
+
+// E-71 §3.4: OpenEntry holds the container, not the index, to the window
+// limit. Both archives have the same layout; only the dictionary bits differ.
+func TestOpenEntry_rechecksTheWindowAgainstTheContainer(t *testing.T) {
+	small := testutil.RAR5PackedSampleEntry("p.txt")
+	small.UnpSize = 200 << 20
+	big := small
+	big.CompInfo |= 10 << 10
+	indexed := testutil.BuildRAR5(t, testutil.RAR5Spec{Entries: []testutil.RAR5Entry{small}})
+	onDisk := testutil.BuildRAR5(t, testutil.RAR5Spec{Entries: []testutil.RAR5Entry{big}})
+	if len(indexed) != len(onDisk) {
+		t.Fatalf("layouts differ: %d vs %d bytes", len(indexed), len(onDisk))
+	}
+	ix, err := readIndex(t, New(), indexed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = New().OpenEntry(t.Context(), bytes.NewReader(onDisk), ix.Entries[0].Ref())
+	if archive.StatusOf(err) != archive.StatusUnsupported || !strings.Contains(err.Error(), "dictionary") {
+		t.Fatalf("err = %v, want the dictionary refusal", err)
+	}
+}
+
+// An unknown header before the main header: ReadIndex would accept the file,
+// and OpenEntry would splice the unknown header as the main one.
+func TestReadIndex_requiresTheMainHeaderFirst(t *testing.T) {
+	raw := testutil.BuildRAR5(t, testutil.RAR5Spec{Entries: pages[:1]})
+	unknown := []byte{0x02, 0x09, 0x00} // size 2, type 9, flags 0
+	hdr := binary.LittleEndian.AppendUint32(nil, crc32.ChecksumIEEE(unknown))
+	hdr = append(hdr, unknown...)
+	odd := append(append(append([]byte(nil), raw[:8]...), hdr...), raw[8:]...)
+	if _, err := readIndex(t, New(), odd); !errors.Is(err, ErrNoMainHeader) {
+		t.Fatalf("err = %v, want ErrNoMainHeader", err)
+	}
+}
+
+// Stored entries do not consult the compression version (as in rardecode).
+func TestStoredEntry_ignoresTheVersionBits(t *testing.T) {
+	e := pages[0]
+	e.CompInfo = 2
+	raw := testutil.BuildRAR5(t, testutil.RAR5Spec{Entries: []testutil.RAR5Entry{e}})
+	ix, err := readIndex(t, New(), raw)
+	if err != nil {
+		t.Fatalf("ReadIndex: %v", err)
+	}
+	if got := readEntry(t, New(), bytes.NewReader(raw), ix.Entries[0]); !bytes.Equal(got, e.Data) {
+		t.Fatal("stored bytes differ")
 	}
 }
 

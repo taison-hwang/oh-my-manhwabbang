@@ -64,6 +64,10 @@ func (*Reader) ReadIndex(ctx context.Context, r io.ReaderAt, size int64) (*archi
 		if err != nil {
 			return ix, err
 		}
+		// OpenEntry splices the header at offset 8 as the main header.
+		if n == 0 && h.typ != typeMain && h.typ != typeCrypt {
+			return ix, fmt.Errorf("rar: %w (header type %d at %d)", ErrNoMainHeader, h.typ, h.off)
+		}
 		switch h.typ {
 		case typeCrypt:
 			return ix, fmt.Errorf("rar: %w (headers are encrypted)", ErrEncrypted)
@@ -120,7 +124,7 @@ func admit(f fileHeader) error {
 	case f.fileFlags&fileCRC == 0:
 		// shelf verify (arch §6.4) holds every archive entry to a CRC-32.
 		return unsupported("entry records a BLAKE2 hash and no CRC-32")
-	case f.version() > 1 || f.method() > 5:
+	case f.method() > 5 || f.method() != 0 && f.version() > 1:
 		return unsupported(fmt.Sprintf("compression version %d method %d", f.version(), f.method()))
 	case f.method() != 0 && f.window() > maxWindow:
 		return unsupported(fmt.Sprintf("dictionary of %d bytes exceeds %d", f.window(), maxWindow))
@@ -240,8 +244,9 @@ func guard(f func() error) (err error) {
 }
 
 // readMainHeader returns the container's main header verbatim: its flags are
-// the archive's, and ReadIndex has already refused the ones this package
-// cannot honour.
+// the archive's. ReadIndex refused solid and volume archives when it indexed;
+// a container changed since then to set them is caught by the size and mtime
+// checks above the reader, not here.
 func readMainHeader(r io.ReaderAt) ([]byte, error) {
 	off := int64(len(signature))
 	h, err := readHeader(r, off, math.MaxInt64)

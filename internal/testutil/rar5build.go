@@ -132,6 +132,9 @@ type RAR5Entry struct {
 	NoCRC bool
 	// Encrypted adds a file-encryption extra record (type 1).
 	Encrypted bool
+	// TimeAndHash adds the file-time (type 3) and BLAKE2sp hash (type 2)
+	// extra records WinRAR commonly writes, which a reader must step over.
+	TimeAndHash bool
 }
 
 // RAR5Spec describes a whole synthetic RAR 5.0 archive.
@@ -209,6 +212,18 @@ func RAR5Bytes(spec RAR5Spec) ([]byte, error) {
 		body = append(body, e.Name...)
 
 		var extra []byte
+		if e.TimeAndHash {
+			rec := rar5Vint(nil, 3)
+			rec = rar5Vint(rec, 0x0001|0x0002) // Unix time format, mtime present
+			rec = binary.LittleEndian.AppendUint32(rec, 1_700_000_000)
+			extra = append(extra, rar5Vint(nil, uint64(len(rec)))...)
+			extra = append(extra, rec...)
+			rec = rar5Vint(nil, 2)
+			rec = rar5Vint(rec, 0) // BLAKE2sp
+			rec = append(rec, make([]byte, 32)...)
+			extra = append(extra, rar5Vint(nil, uint64(len(rec)))...)
+			extra = append(extra, rec...)
+		}
 		if e.Encrypted {
 			// version 0, flags 0, KDF count 15, salt 16, IV 16
 			rec := rar5Vint(nil, 1)
@@ -216,7 +231,8 @@ func RAR5Bytes(spec RAR5Spec) ([]byte, error) {
 			rec = rar5Vint(rec, 0)
 			rec = append(rec, 15)
 			rec = append(rec, make([]byte, 32)...)
-			extra = append(rar5Vint(nil, uint64(len(rec))), rec...)
+			extra = append(extra, rar5Vint(nil, uint64(len(rec)))...)
+			extra = append(extra, rec...)
 		}
 		dataSize := int64(len(e.Data))
 		if e.DataSize != 0 {
