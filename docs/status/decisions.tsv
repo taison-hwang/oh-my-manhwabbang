@@ -1,2 +1,19 @@
 ts	작업	결정	이유	증거	결과
 2026-11-08T21:00:01+09:00	E69-2	독립 검증 PASS	수용 기준 및 전체 게이트 직접 검증	/tmp/verify-e69/2026-11-08T20-58-01+0900--verify-e69.md; b3468ab	병합 지시
+2026-11-08T22:36:32+09:00	계획	남은 단계를 R-D(문서)·R-V(전량 검사)·R-R(3차 결정)로 나눔	prd §9 1·2차와 3차 내보내기는 완료, 3차 나머지는 intent 경계 밖이거나 판정 선행	docs/status/work-plan.md; prd.md:352; intent.md	R-D 먼저 배정
+2026-11-08T22:38:26+09:00	R-R2	3차 판정 초안을 decisions.md가 아닌 docs/progress 별도 문서로, 첫 묶음 병합 전에 병렬 배정	Commander 지시(사용자 요청). decisions.md는 R-D1이 수정 중이고 contractcheck가 A-n을 파싱해 미확정 개정이 검사를 깨뜨림. 문서만·파일 겹침 없음	scripts/contractcheck/main_test.go:974; work-plan.md	worker-2 opus high로 배정(판단 비중이 커서 기본 sonnet에서 올림)
+2026-11-08T22:42:49+09:00	R-V1	R-D 병합 전 worker-3에 배정(첫 묶음 선통과 규칙 예외)	사용자 마감 11-09 01:00, R-V1은 실행만이라 R-D(문서)와 의존 없음, 직렬 대기 시 마감 초과	0461718 제품 코드=b3468ab; heavy.lock으로 무거운 작업 직렬	worker-3 t1q
+2026-11-08T22:45:16+09:00	R-V1	전량 test-int-full 취소, 실행 중 중단 지시(완료 조건 2 변경)	사용자 결정(Commander t1h 경유): 기능 확인·마감 우선. 전량은 E-66상 게이트 아님, E-69 이후 파서 무변경	E-66 §2.3; git diff --stat c2e1dfd b3468ab -- internal/(파서 무변경, scanner.go afterScan 순서만); progress e69-integration	worker-3에 중단·정리 배정
+2026-11-08T22:46:33+09:00	R-V3	전량 대신 과거 문제 파일 대상 격리 읽기 검증을 worker-3에 이어서 배정	사용자 지시. worker-3은 test-int·실 컬렉션 맥락 보유(연관 높음)	HANDOFF §0.B; memory damaged-zip-census; internal/testutil/sample.go	worker-3 t1q
+2026-11-08T22:46:53+09:00	R-V3	유형별 대표 1건(최대 2건)으로 범위 축소	사용자 추가 지시: 중복 전량 금지	Commander t1h 메시지	worker-3에 보정 배정
+2026-11-08T22:55:00+09:00	관찰	TestWriter_batching_commitsOnceTheBatchAges 1회 실패(1.05s>1s)를 결함이 아닌 관찰로 기록	worker-3 herdr-check(main, 동시 부하 추정)에서 1회. 재현 근거 없음. 다른 herdr-check에서 다시 나오면 결정적 테스트로 고치는 작업을 배정	internal/index/writer_age_test.go:27; worker-3 [진행] 보고	추적
+2026-11-08T22:55:30+09:00	R-D	[완료] 수용, ff 병합 지시(병합 뒤 herdr-check 생략)	문서만, 독립 검증 대상 아님. ff라 병합 트리 = 검사한 1faa020	검사 PASS 1faa020; git diff --stat 0461718 work/r-d-docs(3파일)	병합 대기
+2026-11-08T23:06:01+09:00	R-D	ff 불가 → 84ed3b9 위로 rebase, 재검증 없이 ff	main에 하네스 갱신 84ed3b9(.agents/ 3파일)가 들어와 분기. 겹침 없음, rebase에 충돌 해결·코드 수정 없음 → 판정 유효(orchestrator §5)	git show --stat 84ed3b9	worker-1 재지시
+2026-11-08T23:10:50+09:00	R-V3	salvage 유령 쪽(잘린 마지막 엔트리가 쪽으로 잡히고 요청 시 본문 도중 연결 끊김)을 차단이 아닌 후속 후보로 분류	E-52부터 있던 문제(이번 변경 무관), 현 컬렉션에는 해당 파일 없음(원본은 보관함, 루트는 교체본), 0-채움 꼬리는 페이로드를 읽지 않고는 판별 불가(FR-IDX-002)라 수정에 판정 필요	work/r-v3 80a3725 docs/progress/2026-11-08T22-59-30+0900--targeted-read-verification.md; internal/archive/zipidx/salvage.go	사용자 결정 요청
+2026-11-08T23:17:49+09:00	R-R2	[완료] 수용, rebase·ff 병합 지시(재검증 없음)	문서 1파일, 검사 PASS 3c351b2, 독립 리뷰 16건 처리 기록	work/r-r2-drafts 3c351b2; git diff --stat 0461718 work/r-r2-drafts	병합 대기
+2026-11-08T23:17:49+09:00	정정	R-R2 배정의 'contractcheck가 decisions.md의 A-n을 파싱한다'는 틀렸다. 실제로는 arch·impl-plan §0.3의 AMENDMENT A-n을 읽는다	worker-2 확인. Orchestrator가 테스트 이름(main_test.go:974)만 보고 추론한 사례. 초안을 별도 문서로 둔 결정 자체는 decisions.md 동시 수정 회피로 여전히 유효	scripts/contractcheck/main.go:1075-1079	기록
+2026-11-08T23:17:49+09:00	후속	impl-plan.md:277 '.rar files are logged and ignored'가 D-71 이후 틀린 문장 — 후속 문서 수정 후보	worker-2 부수 발견. 구현을 막지 않음	docs/impl-plan.md:277	후속
+2026-11-08T23:19:49+09:00	R-R1	사용자 결정: 계정 시스템은 이 기계에서 실행 중인 uni-auth를 쓴다(E-74). 다른 기능 추천은 승인 아님	Commander t1h 메시지	사용자 결정	R-R3 배정(worker-2 이어서, E-74 초안 맥락)
+2026-11-08T23:34:13+09:00	관찰	문서만 바뀐 커밋에서 make test 실패 두 번째(worker-3 환경). 실패 테스트 이름을 먼저 확인하게 함	같은 테스트면 플레이크가 두 번 → 결정적 테스트로 고치는 작업을 배정(orchestrator §4: 같은 문제 두 번은 구조·테스트로)	worker-3 [차단]; Makefile:291	R-V3 재실행 지시
+2026-11-08T23:36:31+09:00	R-D	병합 [완료] 수용	검사 PASS 22af509는 ac210f6을 포함한 main	git merge-base --is-ancestor ac210f6 22af509	완료
+2026-11-08T23:36:31+09:00	R-F1	플레이크 테스트 수정을 worker-1에 정리 후 배정	같은 테스트 2회 실패(1.056s·1.117s), 동시 부하에서 벽시계 증명 실패. 원인 중 하나: herdr-report가 herdr-check(make test)를 돌리는데 잠금 없이 부른 경우가 있었음	handoffs/r-v3-check-fail1.log; internal/index/writer_age_test.go:59	배정
