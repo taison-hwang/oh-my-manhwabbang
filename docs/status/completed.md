@@ -5,4 +5,8 @@
 | E69-1 | 표지 편집 | b3468ab main 병합. 병합 후 herdr-check PASS. [구현·검증 기록](../progress/2026-11-08T19-34-48+0900--e69-integration.md) |
 | E69-2 | 표지 편집 | b3468ab 독립 검증 PASS, make gates 5/5. /tmp/verify-e69/2026-11-08T20-58-01+0900--verify-e69.md |
 | R-D1~3 | R-D | main ac210f6(42b4ee4·ac210f6) 병합, 검사 PASS 1faa020(브랜치)·22af509(병합 뒤 main). E-69 §4·§5 빈칸, HANDOFF §00, AGENTS 규칙 3칸 |
-| R-R2 | R-R | main 22af509 병합, 검사 PASS 3c351b2. 3차 8기능 판정 초안 docs/progress/2026-11-08T22-43-17+0900--phase3-decision-drafts.md (proposed, 정식 병합 [완료] 대기) |
+| R-R2 | R-R | main 22af509 병합, 검사 PASS 3c351b2. 3차 8기능 판정 초안 docs/progress/2026-11-08T22-43-17+0900--phase3-decision-drafts.md (proposed). 병합 [완료] 검사 PASS b128aa8 |
+| R-V1 | R-V | 사용자 결정으로 취소. test-int-full 중단·정리(잔여 프로세스 0, .worktrees/r-v1 제거) |
+| R-V3 | R-V | main f452721. 유형별 대표 15건 격리 읽기 검증: 통과 13·약한 통과 3·구조만 1·불일치 후보 2(기존 salvage 문제). 검사 PASS c892418 |
+| R-F1 | R-F | main bdc919e. Writer 시계 주입으로 플레이크 테스트 결정화. 검사 PASS bdc919e, 독립 검증 PASS bdc919e(/tmp/verify-rf1/2026-11-09T00-30-10+0900--verify-rf1.md) |
+| R-R3 | R-R | main c892418. E-74 uni-auth 연동 계약 초안(proposed) docs/progress/2026-11-08T23-31-21+0900--e74-uni-auth-contract-draft.md. 검사 PASS 2842af9·c892418 |

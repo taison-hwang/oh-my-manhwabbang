@@ -1,21 +1,16 @@
 # 상태판
 
-갱신: 2026-11-08T23:36:31+09:00
+갱신: 2026-11-09T01:35:17+09:00
 
 | 작업 ID | 묶음 | 담당(role·터미널) | 상태 | 의존 | 근거 |
 | --- | --- | --- | --- | --- | --- |
-| R-V1 | R-V | worker-3(t1q) | 진행 | 없음 | 사용자 결정으로 전량 검사 취소, 중단·정리 지시 2026-11-08T22:45:16+09:00 |
-| R-F1 | R-F | worker-1(t1k) | 진행 | 없음 | 배정 2026-11-08T23:36:31+09:00, 플레이크 테스트 2회 실패 |
-| R-V3 | R-V | worker-3(t1q) | 리뷰 | R-V1 중단 | 80a3725 기록, 통과13·약함3·구조1·불일치 후보2(기존), 정식 보고 대기 |
-| R-R3 | R-R | worker-2(t1m) | 진행 | R-R2 | 배정 2026-11-08T23:19:49+09:00, 사용자 결정(uni-auth) 반영 |
-| R-R1 | R-R | 사용자 | 차단 | 사용자 결정 | 3차 착수는 판정 선행(E-67 §2.2, intent 승인) |
+| R-R1 | R-R | 사용자 | 차단 | 사용자 결정 | 3차 8기능 판정 초안(E-70~77, 22af509)·E-74 uni-auth 계약 초안(c892418) Q1~Q12 결정 대기. 결정 전 구현 없음 |
 
 ## 미확정 사항
 
-- 진행 대기 사유(23:1x): 문서 브랜치마다 herdr-check(make test -race 약 13분)가 heavy.lock으로 한 줄로 돈다. 순서: R-R2 검사 → R-V3 [완료] 검사. 사용자 결정 대기와는 무관.
-- 후속 후보: impl-plan.md:277 RAR 문장이 D-71 이후 틀림(문서 수정).
-- 후속 후보(판정 전, 다른 작업 막지 않음): salvage가 잘린 마지막 엔트리를 쪽으로 잡아 요청 시 본문 도중 연결이 끊김(국수집 10권·유레카26 원본, 보관함). 기록 docs/progress/2026-11-08T22-59-30+0900--targeted-read-verification.md(work/r-v3).
-
-- 전량 test-int-full 미실행(사용자 결정으로 생략). 파서(zipidx·rar·hv3·source)는 c2e1dfd 이후 무변경, 표본 505 ZIP·HV3 501·RAR 14 일치(E-69 기록). 전체 ZIP의 약 95%는 파서 대조를 받은 적이 없다.
-
-- 승인 대기(사용자): main 3커밋 push, 옛 worktree 5개 정리(원본 사본 /tmp/zip-viewer-e69-originals는 재부팅 시 소실), `.backup-harness/` 처리, `damaged-zip-salvage` 삭제.
+- 사용자 결정 대기: 3차 기능 착수 범위(E-74는 uni-auth 사용으로 결정, Q1~Q12와 intent 변경 승인 대기, 나머지 7기능은 결정 없음).
+- 승인 대기: main 미push(origin/main c2e1dfd 대비 다수 커밋), 옛 worktree 5개(.worktrees/e2e-54·e69-20/25/45/ea, 원본 사본 /tmp/zip-viewer-e69-originals는 재부팅 시 소실), `.backup-harness/`, `damaged-zip-salvage` 삭제.
+- 전량 test-int-full 미실행(사용자 결정으로 생략). 대신 유형별 대표 15건 격리 읽기 검증(f452721).
+- 후속 후보(판정 전): salvage가 잘린 마지막 엔트리를 쪽으로 잡아 요청 시 본문 도중 연결이 끊김(국수집 10권·유레카26 원본, 보관함에만 있음). docs/progress/2026-11-08T22-59-30+0900--targeted-read-verification.md.
+- 후속 후보: docs/impl-plan.md:277 RAR 문장이 D-71 이후 틀림.
+- 운영 메모: herdr-report는 herdr-check(약 13분)를 돌리는 무거운 명령이라 heavy.lock 아래서만 부른다. 보고 프로세스를 죽이면 자식 검사가 고아로 남으니 프로세스 묶음째 정리한다.

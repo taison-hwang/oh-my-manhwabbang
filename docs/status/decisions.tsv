@@ -17,3 +17,13 @@ ts	작업	결정	이유	증거	결과
 2026-11-08T23:34:13+09:00	관찰	문서만 바뀐 커밋에서 make test 실패 두 번째(worker-3 환경). 실패 테스트 이름을 먼저 확인하게 함	같은 테스트면 플레이크가 두 번 → 결정적 테스트로 고치는 작업을 배정(orchestrator §4: 같은 문제 두 번은 구조·테스트로)	worker-3 [차단]; Makefile:291	R-V3 재실행 지시
 2026-11-08T23:36:31+09:00	R-D	병합 [완료] 수용	검사 PASS 22af509는 ac210f6을 포함한 main	git merge-base --is-ancestor ac210f6 22af509	완료
 2026-11-08T23:36:31+09:00	R-F1	플레이크 테스트 수정을 worker-1에 정리 후 배정	같은 테스트 2회 실패(1.056s·1.117s), 동시 부하에서 벽시계 증명 실패. 원인 중 하나: herdr-report가 herdr-check(make test)를 돌리는데 잠금 없이 부른 경우가 있었음	handoffs/r-v3-check-fail1.log; internal/index/writer_age_test.go:59	배정
+2026-11-08T23:51:17+09:00	R-R2	병합 [완료] 수용	검사 PASS b128aa8(22af509 포함 main), 링크 대상 phase3-roadmap-decision.md는 b128aa8에서 커밋됨	git log b128aa8	완료
+2026-11-08T23:56:43+09:00	순서	heavy.lock 대기열에서 R-V3 재보고를 빼고 R-F1을 먼저 통과시킴	R-V3 검사는 고치기 전 플레이크 테스트로 다시 실패할 수 있고 R-F1이 마감 경로. R-F1 병합 뒤 R-V3를 rebase해 검사	pgrep flock heavy.lock(23:56 대기 2·실행 1)	worker-3 대기
+2026-11-08T23:57:40+09:00	정리	R-V3 재보고 취소 뒤 잠금 없이 고아로 남은 herdr-check 프로세스 묶음(.worktrees/r-v3, make test -race)을 Orchestrator가 종료	flock 부모만 죽어 잠금은 풀렸는데 자식 검사가 계속 돌아, 다음 잠금 보유자와 겹쳐 플레이크를 재발시킬 상태였음. 취소를 지시한 작업의 잔여물이라 직접 정리	cwd=/proc/1390908 → .worktrees/r-v3; pgid 1242033	잠금은 R-F1 테스트가 잡음
+2026-11-09T00:28:23+09:00	R-F1	독립 검증을 bdc919e에 배정(작성자 [완료] 전, 검사 대기 중 병행). 워커 상한 때문에 쉬던 worker-3(커밋 완료·트리 깨끗)을 종료하고 codex verifier-1을 띄움	마감 01:00. 작성자와 다른 도구(codex)로 독립성 유지. R-V3 병합은 R-F1 병합 뒤 다른 워커가 이어 받음(기록 커밋 80a3725 보존)	launcher: 워커 3개 상한; git -C .worktrees/r-v3 status 0	verifier-1 t20
+2026-11-09T00:30:00+09:00	R-R3·R-F1	메모리 압박으로 하네스가 [완료] 보고 명령을 강제 종료 → 잠금·가드 아래 재전송 지시, R-R3는 이어서 병합까지	MemAvailable 13 GB로 회복, 다른 프로젝트(ohmystock) herdr-check와 java 프로세스가 동시 부하. 작업 산출물은 커밋됨	free -g 00:29; pgrep ohmystock herdr-check	재시도
+2026-11-09T00:47:02+09:00	R-F1	[완료] 수용(검사 PASS bdc919e), 독립 검증 판정 대기	수용 기준 1~3 실행 근거 일치. 운영 시계 기본 time.Now 확인	git diff b128aa8 bdc919e -- internal/index/write.go	판정 뒤 병합
+2026-11-09T00:47:30+09:00	R-R3	[완료] 수용(검사 PASS 2842af9, 문서 1파일), 병합은 R-F1 병합 뒤	uni-auth 문서 6fc19d2·GET 확인, 인용 126건 대조, 독립 리뷰 20건 수용	work/r-r3-e74 2842af9	사용자 결정 Q1~Q12 요청
+2026-11-09T00:56:23+09:00	R-F1	독립 검증 PASS bdc919e	verifier-1(codex) 수용 기준 1~5 실행 통과, 차단 결함 없음	/tmp/verify-rf1/2026-11-09T00-30-10+0900--verify-rf1.md	병합 지시
+2026-11-09T00:56:23+09:00	병합	R-F1→R-V3→R-R3를 worker-1이 연속 ff 병합하고 최종 main에서 검사 1회로 묶음	13분 검사가 잠금으로 직렬이라 세 번→한 번. R-V3·R-R3는 문서 1파일, 충돌 없는 rebase는 재검증 불요	orchestrator §5 rebase 규칙	worker-1 진행
+2026-11-09T01:35:17+09:00	병합	R-F1·R-V3·R-R3 병합 [완료] 수용	검사 PASS c892418 = 최종 main, 세 단계 diff 확인	git log b128aa8..c892418	승인 범위 완료, 3차는 결정 대기
