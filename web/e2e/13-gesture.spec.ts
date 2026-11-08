@@ -70,6 +70,20 @@ async function drag(cdp: CDPSession, a: Pt, b: Pt): Promise<void> {
   await fingers(cdp, "touchEnd", []);
 }
 
+/**
+ * shelf.ts rule 2 for a viewer that has been open: `useSaveProgress` writes
+ * after a 1 s debounce and flushes on unmount, so a DELETE issued while the
+ * viewer is still mounted can be undone by the write that follows it. The
+ * viewer is left first, the debounce is waited out, and only then is the row
+ * deleted — otherwise the row survives into the 이어보기 shelf of the library
+ * shots the next viewport project takes.
+ */
+async function leaveBook(page: Page, bookId: string): Promise<void> {
+  await page.goto("/");
+  await page.waitForTimeout(1_500);
+  await clearProgress(page, bookId);
+}
+
 const layer = (page: Page) => page.locator('[data-role="zoom-layer"]');
 const scaleOf = async (page: Page): Promise<number> =>
   Number((await layer(page).getAttribute("data-zoom")) ?? "1");
@@ -134,7 +148,7 @@ test.describe("E-70 · touch gestures", () => {
       await page.waitForTimeout(400);
       expect(await currentPage(page)).toBe(before);
     } finally {
-      await clearProgress(page, bid);
+      await leaveBook(page, bid);
     }
   });
 
@@ -149,7 +163,7 @@ test.describe("E-70 · touch gestures", () => {
       await expect.poll(() => scaleOf(page)).toBe(1);
       expect(await currentPage(page)).toBe(3);
     } finally {
-      await clearProgress(page, bid);
+      await leaveBook(page, bid);
     }
   });
 
@@ -166,7 +180,7 @@ test.describe("E-70 · touch gestures", () => {
       await page.touchscreen.tap(mid.x, mid.y);
       await expect.poll(() => scaleOf(page)).toBe(1);
     } finally {
-      await clearProgress(page, bid);
+      await leaveBook(page, bid);
     }
   });
 
@@ -184,7 +198,7 @@ test.describe("E-70 · touch gestures", () => {
       await expect.poll(() => currentPage(page)).not.toBe(turned);
       expect(await scaleOf(page)).toBe(1);
     } finally {
-      await clearProgress(page, bid);
+      await leaveBook(page, bid);
     }
   });
 });
@@ -212,6 +226,6 @@ test("a double click with the mouse never zooms (desktop input is unchanged)", a
     await page.waitForTimeout(400);
     expect(await scaleOf(page)).toBe(1);
   } finally {
-    await clearProgress(page, bid);
+    await leaveBook(page, bid);
   }
 });
