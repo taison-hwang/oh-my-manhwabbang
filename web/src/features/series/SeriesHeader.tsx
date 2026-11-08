@@ -16,6 +16,7 @@ import {
   formatPercent,
   formatSourcePath,
 } from '../../lib/format'
+import { useIsAdmin } from '../auth/useIsAdmin'
 import { textLang } from '../../lib/textLang'
 import { seriesDirectionErrorMessage } from './seriesErrors'
 import { hasStarted, seriesProgressRatio } from './volume'
@@ -123,6 +124,7 @@ export function SeriesHeader({
     v: series.cover_cv,
     enabled: series.has_cover,
   })
+  const isAdmin = useIsAdmin()
   const roots = useRoots()
   const rootPath =
     roots.data?.items.find((candidate) => candidate.name === series.root_name)?.path ?? null
@@ -228,10 +230,12 @@ export function SeriesHeader({
             <BookOpen size={13} aria-hidden={true} />
             처음부터 읽기
           </Button>
-          <Button variant="secondary" className="gap-2" onClick={onRescan} disabled={scanning}>
-            <RefreshCw size={13} aria-hidden={true} />
-            이 시리즈 재스캔
-          </Button>
+          {isAdmin && (
+            <Button variant="secondary" className="gap-2" onClick={onRescan} disabled={scanning}>
+              <RefreshCw size={13} aria-hidden={true} />
+              이 시리즈 재스캔
+            </Button>
+          )}
           {scanning && <span className="text-xs text-accent-text">스캔 중</span>}
           <div className="flex-1" />
           {/* The label and its `.seg` wrap as one: three values (E-69) no longer fit

@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { useCacheUsage, usePurgeCache } from '../../api/queries'
 import type { CacheUsageEntry } from '../../api/types'
 import { Button } from '../../components/ds/Button'
+import { useIsAdmin } from '../auth/useIsAdmin'
 import { formatBytes, formatItemCount } from '../../lib/format'
 
 /**
@@ -22,6 +23,7 @@ import { formatBytes, formatItemCount } from '../../lib/format'
 export function CachePanel() {
   const usage = useCacheUsage()
   const purge = usePurgeCache()
+  const isAdmin = useIsAdmin()
   const [confirming, setConfirming] = useState(false)
 
   const total = usage.data?.total_bytes ?? 0
@@ -71,7 +73,7 @@ export function CachePanel() {
         ))}
       </ul>
 
-      {confirming ? (
+      {!isAdmin ? null : confirming ? (
         <div className="flex flex-col items-start gap-2">
           <p role="alert" className="text-xs text-accent-text">
             캐시를 모두 삭제할까요?

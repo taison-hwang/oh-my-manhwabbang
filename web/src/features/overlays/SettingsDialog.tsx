@@ -1,3 +1,5 @@
+import { AccountPanel } from '../auth/AccountPanel'
+import { useIsAdmin } from '../auth/useIsAdmin'
 import { Button } from '../../components/ds/Button'
 import { Dialog } from '../../components/ds/Dialog'
 import { CachePanel } from './CachePanel'
@@ -23,6 +25,7 @@ export interface SettingsDialogProps {
 }
 
 export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
+  const isAdmin = useIsAdmin()
   return (
     <Dialog
       open={open}
@@ -48,10 +51,13 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
         <ReadDefaultsPanel />
       </div>
 
-      <ScanLogPanel />
+      {/* GET /api/scan/log is refused to everyone but an admin (E-74 §2.10). */}
+      {isAdmin && <ScanLogPanel />}
 
       {/* Last by ruling E-68 §2.2. It reads nothing until a button is pressed. */}
       <ProgressPanel />
+
+      <AccountPanel />
     </Dialog>
   )
 }

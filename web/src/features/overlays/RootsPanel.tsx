@@ -12,6 +12,7 @@ import type { Root, ScanStatus } from '../../api/types'
 import { Button } from '../../components/ds/Button'
 import { ProgressBar } from '../../components/ds/ProgressBar'
 import { formatBytes, formatCount, formatScanLabel, scanPercent } from '../../lib/format'
+import { useIsAdmin } from '../auth/useIsAdmin'
 import { AddRootForm } from '../roots/AddRootForm'
 import { rootErrorMessage } from '../roots/rootErrors'
 import { scanStartErrorMessage } from '../roots/scanErrors'
@@ -75,6 +76,7 @@ interface RootRowProps {
 
 function RootRow({ root, onRescan, scanDisabled, editable }: RootRowProps) {
   const remove = useDeleteRoot()
+  const isAdmin = useIsAdmin()
   const [confirming, setConfirming] = useState(false)
 
   return (
@@ -82,10 +84,13 @@ function RootRow({ root, onRescan, scanDisabled, editable }: RootRowProps) {
       <div className="flex items-center gap-3">
         <div className="flex min-w-0 flex-1 flex-col gap-[2px]">
           <span className="text-base">{root.label}</span>
-          <span className="truncate whitespace-nowrap text-xs text-ink-dim" title={root.path}>
-            {root.path}
-          </span>
-          {root.last_scan_error !== null && (
+          {/* '' is how a non-admin session receives a path (E-74 §2.10). */}
+          {root.path !== '' && (
+            <span className="truncate whitespace-nowrap text-xs text-ink-dim" title={root.path}>
+              {root.path}
+            </span>
+          )}
+          {root.last_scan_error !== null && root.last_scan_error !== '' && (
             <span className="truncate whitespace-nowrap text-xs text-accent-text">
               {root.last_scan_error}
             </span>
@@ -105,7 +110,7 @@ function RootRow({ root, onRescan, scanDisabled, editable }: RootRowProps) {
 
         {/* No 재스캔 for a pending root — there is nothing open to scan, and
             `POST /api/scan` for it would be a request the server cannot honour. */}
-        {!root.pending && (
+        {!root.pending && isAdmin && (
           <Button
             variant="secondary"
             disabled={scanDisabled || !root.available || !root.enabled}
@@ -258,7 +263,8 @@ export function RootsPanel() {
   // Both default to `false` while the payload is in flight, and that is the
   // safe direction for each: no controls rather than controls that vanish, and
   // no notice rather than one that flashes.
-  const editable = settings.data?.server.root_editing_enabled === true
+  const isAdmin = useIsAdmin()
+  const editable = isAdmin && settings.data?.server.root_editing_enabled === true
   const configChanged = settings.data?.server.config_changed_on_disk === true
 
   // arch §7.10 has no `"done"` state: a finished run is `idle` with

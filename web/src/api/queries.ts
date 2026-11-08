@@ -1032,6 +1032,20 @@ export function useAuthStatus(options: EnabledOption = {}): UseQueryResult<AuthS
   })
 }
 
+/**
+ * The auth status as the shell last read it, **without fetching it**. Panels that only
+ * hide an admin control use this: the shell owns the request, and a panel that fetched
+ * on its own would add a request to every screen that merely mentions a button.
+ * `undefined` until the shell has the answer — callers treat that as "allowed".
+ */
+export function useCachedAuthStatus(): AuthStatus | undefined {
+  return useQuery({
+    queryKey: queryKeys.auth.status,
+    queryFn: ({ signal }) => getAuthStatus({ signal }),
+    enabled: false,
+  }).data
+}
+
 export function useLogin(): UseMutationResult<void, Error, string> {
   const queryClient = useQueryClient()
   return useMutation({

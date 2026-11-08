@@ -129,6 +129,22 @@ function emitUnauthorized(): void {
   for (const listener of unauthorizedListeners) listener()
 }
 
+type AuthFailureListener = (error: ApiError) => void
+
+const authFailureListeners = new Set<AuthFailureListener>()
+
+/**
+ * Called with the `ApiError` of every `401` and `403`. The oidc flow (E-74 §2.7, §2.9)
+ * decides from `detail.reason` whether to re-authorize, refresh or explain; this module
+ * only reports, because it has no router, no auth status and no UI.
+ */
+export function subscribeAuthFailure(listener: AuthFailureListener): () => void {
+  authFailureListeners.add(listener)
+  return () => {
+    authFailureListeners.delete(listener)
+  }
+}
+
 /** `Retry-After` in milliseconds. Accepts delta-seconds and HTTP-dates (RFC 9110). */
 export function parseRetryAfter(header: string | null): number | null {
   if (header === null) return null
@@ -168,6 +184,9 @@ async function toApiError(response: Response): Promise<ApiError> {
     rawCode: envelope?.rawCode ?? null,
   })
   if (error.status === 401) emitUnauthorized()
+  if (error.status === 401 || error.status === 403) {
+    for (const listener of authFailureListeners) listener(error)
+  }
   return error
 }
 

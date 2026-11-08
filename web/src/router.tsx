@@ -23,6 +23,7 @@ import { LibraryPage } from './features/library/LibraryPage'
 import { useLibrarySettingsSync, useThemeSettingsSync } from './features/library/useLibrary'
 import { Overlays } from './features/overlays/Overlays'
 import { SeriesDetailPage } from './features/series/SeriesDetailPage'
+import { AuthFlowHost } from './features/auth/AuthFlowHost'
 import { ViewerPage } from './features/viewer/ViewerPage'
 import { ROUTER_BASENAME } from './lib/basePath'
 import { DEFAULT_SHELL_DATA, ShellDataContext, type ShellData } from './lib/shellData'
@@ -175,6 +176,7 @@ function RootLayout() {
     <ShellDataProvider>
       <App />
       <Overlays />
+      <AuthFlowHost />
     </ShellDataProvider>
   )
 }

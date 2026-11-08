@@ -52,6 +52,8 @@ export interface ShellScan {
 export interface ShellAuth {
   auth_required: boolean
   authenticated: boolean
+  /** Absent only in the default value and in tests that predate A-20. */
+  mode?: 'none' | 'password' | 'oidc'
 }
 
 /** Counts behind the sidebar's three smart lists (A-4 `progress=` queries). */

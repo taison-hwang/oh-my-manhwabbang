@@ -362,3 +362,16 @@ export function authLoginUrl(): string {
 export function authLogoutUrl(): string {
   return apiUrl('/auth/logout')
 }
+
+/** `POST /api/auth/oidc/end-session` — logout from every uni-auth service (E-74 §2.12). */
+export function authEndSessionUrl(): string {
+  return apiUrl('/auth/oidc/end-session')
+}
+
+/**
+ * `GET /api/auth/oidc/start?return=…[&reauth=1]` (E-74 §2.5, §2.9). A top-level
+ * navigation target, never a `fetch` URL: it answers with a 302 to uni-auth.
+ */
+export function authOidcStartUrl(returnTo: string, reauth = false): string {
+  return apiUrl('/auth/oidc/start', reauth ? { reauth: 1, return: returnTo } : { return: returnTo })
+}

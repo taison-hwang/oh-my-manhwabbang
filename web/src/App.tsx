@@ -11,6 +11,7 @@ import { useGlobalHotkeys } from './lib/useHotkeys'
 import { useIsMobile, useIsRail } from './lib/useMediaQuery'
 import { useUiStore } from './store/ui'
 import { LoginScreen } from './features/auth/LoginScreen'
+import { OidcSignIn } from './features/auth/OidcSignIn'
 
 /**
  * The application shell (ui-spec §3).
@@ -80,7 +81,11 @@ export function App() {
   if (shell.auth.auth_required && !shell.auth.authenticated) {
     return (
       <div className="app">
-        <LoginScreen onSubmit={shell.login} pending={shell.loginPending} />
+        {shell.auth.mode === 'oidc' ? (
+          <OidcSignIn />
+        ) : (
+          <LoginScreen onSubmit={shell.login} pending={shell.loginPending} />
+        )}
       </div>
     )
   }
