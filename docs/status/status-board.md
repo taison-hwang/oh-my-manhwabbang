@@ -1,12 +1,11 @@
 # 상태판
 
-갱신: 2026-11-09T02:58:04+09:00
+갱신: 2026-11-09T02:58:41+09:00
 
 | 작업 ID | 묶음 | 담당(role·터미널) | 상태 | 의존 | 근거 |
 | --- | --- | --- | --- | --- | --- |
-| U-C | U-BC | worker-1(t1k) | 진행 | U-A | a3a0ed6 WIP, 뮤테이션 4종 RED 확인, 전체 검사·독립 리뷰 대기 |
-| U-A | U-A | worker-2(t1m) | 병합 지시 | 없음 | 5c81e4a 검사 PASS, 문서만 |
-| U-B | U-BC | worker-2(t1m) | 진행 | U-A 병합 | 배정 2026-11-09T02:58:04+09:00, 이음매 internal/principal·router Options.PerUser |
+| U-C | U-BC | worker-1(t1k) | 진행 | 없음 | a3a0ed6 WIP, 뮤테이션 4종 RED 확인, 전체 검사·독립 리뷰 대기 |
+| U-B | U-BC | worker-2(t1m) | 진행 | 없음 | 배정 2026-11-09T02:58:04+09:00, 이음매 internal/principal·router Options.PerUser |
 
 ## 미확정 사항
 

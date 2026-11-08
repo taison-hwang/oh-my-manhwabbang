@@ -11,3 +11,4 @@
 | R-F1 | R-F | main bdc919e. Writer 시계 주입으로 플레이크 테스트 결정화. 검사 PASS bdc919e, 독립 검증 PASS bdc919e(/tmp/verify-rf1/2026-11-09T00-30-10+0900--verify-rf1.md) |
 | R-R3 | R-R | main c892418. E-74 uni-auth 연동 계약 초안(proposed) docs/progress/2026-11-08T23-31-21+0900--e74-uni-auth-contract-draft.md. 검사 PASS 2842af9·c892418 |
 | U-R1 | U-R | main 528d61d. uni-auth 환경 확인(cloudflared·Hydra·:9909)과 클라이언트 zip-viewer 등록(201·projection ok·Hydra 대조), 기록 docs/progress/2026-11-09T02-17-19+0900--e74-uni-auth-tunnel-env.md. post_logout_redirect_uris Hydra 미투영(uni-auth 결함). 검사 PASS c2fe475 |
+| U-A | U-A | main 7486524. E-74 BINDING·A-20 확정, intent·prd·arch·impl-plan 개정(uni-auth 위임 다중 사용자, library.betterax.net 공개 터널, 배치 기준). 검사 PASS 5c81e4a(rebase 내용 동일) |
