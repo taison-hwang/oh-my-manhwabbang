@@ -49,3 +49,4 @@ ts	작업	결정	이유	증거	결과
 2026-11-09T05:50:59+09:00	운영	U-C 보완 [완료] 검사 1회를 heavy.lock 밖에서 허용(MemAvailable ≥ 10 GB·load < 20 조건). 임계 경로(U-C 재검증→병합→U-B rebase)가 대기열 4건 뒤에서 3600초 만료로 한 번 실패	load 8.8, 대기열 P-70 e2e·F-1 e2e·U-B 검사·P-72 docker	/proc/locks 확인	1회 예외
 2026-11-09T06:02:00+09:00	P-72	독립 검증 PASS 059dead → [병합] 지시	검증자 실행: scratch·정적·UID 65532·CA·.dockerignore 컨텍스트 1파일·원격 이름 거부·release dry-run diff 0·health/스캔/ZIP·PDF 쪽	/tmp/verify-p72/2026-11-09T06-01-37+0900--verify-p72.md	worker-3 병합
 2026-11-09T06:08:32+09:00	U-C	보완 f0972f7 검사 PASS → 지적 항목(UC-1·UC-2)만 재검증 배정. 공유 행 마지막 삭제 순서 미고정은 검증자 판단 항목으로	worker-1 [완료] RED/GREEN·뮤테이션	f0972f78fc5a0dacddf33052a85f38c7218f5fc9	verifier-1 재검증
+2026-11-09T06:09:13+09:00	U-D	worker-1(/clear 후)에 배정, U-B 병합 전이라 work/u-b-auth b87d02a에서 분기하고 병합 뒤 rebase. 파일 범위 web/src/features/auth·api 클라이언트, viewer는 P-70 몫	U-B 게이트 통과로 types.ts 안정, worker-1 유휴	b87d02a	worker-1 진행
