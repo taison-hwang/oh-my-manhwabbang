@@ -1,11 +1,11 @@
 # 상태판
 
-갱신: 2026-11-09T02:34:40+09:00
+갱신: 2026-11-09T02:37:20+09:00
 
 | 작업 ID | 묶음 | 담당(role·터미널) | 상태 | 의존 | 근거 |
 | --- | --- | --- | --- | --- | --- |
+| U-C | U-BC | worker-1(t1k) | 진행 | U-A(5c81e4a 기준 분기) | 배정 2026-11-09T02:37:20+09:00, 이음매 internal/principal |
 | U-A | U-A | worker-2(t1m) | 보고 대기 | 없음 | 5c81e4a, herdr-check 진행 |
-| U-R1 | U-R | worker-1(t1k) | 병합 지시 | 없음 | c2fe475 검사 PASS, 등록 완료(zip-viewer), post_logout 투영 누락은 uni-auth 결함 |
 
 ## 미확정 사항
 
