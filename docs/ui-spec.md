@@ -1912,8 +1912,11 @@ tap zone, `H`, and operating a control. Keyboard focus inside a bar *holds* it (
 | **Left 32%** of the stage — tap/click | Previous page in reading order (i.e. *next* page when RTL). `cursor:pointer` while the pointer is awake (E-28) |
 | **Right 32%** of the stage — tap/click | Next page in reading order |
 | **Centre 36%** — tap/click | Toggle chrome (FR-VWR-011, design.md 화면 3 모바일). **E-28** narrowed the centre from 40%: the two zones a reader aims at a hundred times a volume are the page turns |
-| Horizontal swipe | Page turn, direction-aware; disabled in 세로 mode. **E-28**: ≥44px, `|dy| ≤ |dx|`, and thrown within 600ms |
+| Horizontal swipe | Page turn, direction-aware; disabled in 세로 mode. **E-28**: ≥44px, `|dy| ≤ |dx|`, and thrown within 600ms. Only at scale 1 (**E-70**) |
 | Vertical drag in 세로 mode | Native scroll |
+| **Pinch** (two touches), single/double-page mode | Zoom the page about the pinch midpoint; scale 1 = the current fit, capped at a constant (**E-70**). Not in 세로 mode. `pointerType === 'touch'` only |
+| One-finger drag while zoomed (scale > 1) | Pan the page. A horizontal swipe is a pan, never a page turn, and the tap zones do not turn pages either (**E-70**) |
+| **Double-tap**, single/double-page mode, touch only | Scale 1: zoom in, **centre 36% only** (double taps in the side zones still turn two pages); scale > 1: back to 1 anywhere. The first tap of a double-tap does not toggle the chrome (**E-70**) |
 | Slider `mousedown`/`touchstart` | `dragging = true` → show the drag preview |
 | Slider `mouseup`/`touchend` | `dragging = false`, commit the page |
 | Top / bottom **44px screen edge** — `mouseenter` or click | Wake the chrome (**E-27**). Rendered only while the chrome is away, and the click does not propagate to the tap zone underneath |

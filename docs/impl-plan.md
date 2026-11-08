@@ -265,16 +265,16 @@ Every FR marked **필수** in stages 1–2 is in scope. Explicit per-FR list:
 
 ### 1.2 IN — non-functional
 
-NFR-PRF-001…006, NFR-OPS-001/002/003/005/006, NFR-DAT-001…004, NFR-CMP-001/002/003,
+NFR-PRF-001…006, NFR-OPS-001/002/003/005/006 (+004 local image, E-72), NFR-DAT-001…004, NFR-CMP-001/002/003,
 NFR-SEC-001/002/003, CON-001…004. All in scope. Gates in §7.
 
 ### 1.3 OUT of scope
 
 | Item | Why |
 |---|---|
-| **NFR-OPS-004 Docker image** | prd §9 stage 3, "부가적". `make release` cross-compilation (NFR-OPS-003) **is** in scope. |
 | ~~**FR-STT-004 export/import *UI***~~ | ~~stage 3. API only (above).~~ **Moved IN by ruling E-68** (사용자 지시 2026-10-26) — see §1.1. |
-| **Mobile gesture *optimisation*** (pinch-zoom, momentum, edge-swipe tuning) | stage 3. Basic tap zones + horizontal swipe are in (FR-VWR-011). |
+| **Mobile gesture *tuning*** (momentum scrolling, edge-swipe, sensitivity setting) | stage 3. Basic tap zones + horizontal swipe are in (FR-VWR-011); pinch-zoom, pan and double-tap are **moved IN by ruling E-70** (`docs/decisions.md`). |
+| **Docker image *publishing*** (registry push, multi-arch, compose) | stage 3, needs separate user approval. The local `Dockerfile` + `make docker` are **moved IN by ruling E-72** (`docs/decisions.md`). `make release` cross-compilation (NFR-OPS-003) is in scope. |
 | **Archive format expansion** (7z, RAR 5, solid/multi-volume/encrypted RAR) | prd §7.2 + stage 3. ~~RAR/CBR, nested ZIP~~: non-solid RAR 4 is IN by ruling **D-71** (and HV3 by **E-51**); nested ZIP is IN by **D-70**. What remains out is reported as `unsupported` with its reason (D-72), not logged and ignored. |
 | **`duplicate_of` hints, manual volume reordering** | prd §10 stage 3. |
 | **SSE `/api/scan/stream`** | C-11. |

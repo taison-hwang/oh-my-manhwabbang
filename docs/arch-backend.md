@@ -3428,7 +3428,7 @@ This is asserted, not assumed: `internal/buildinfo/staticlink_test.go` reads the
 
 The defect it guards survived four review passes because every earlier check looked at build flags. `make test` runs the whole suite **twice** — untagged, then `-tags "$(TAGS)"` — because nothing else executes the tests in the configuration that ships; `make lint` runs `go vet -tags "$(TAGS)"` for the same reason, but vet does not run tests.
 
-Docker (NFR-OPS-004, phase 3): `FROM scratch`, copy the **default** (static) binary plus `/etc/ssl/certs/ca-certificates.crt`, `VOLUME /config /data /cache`, `EXPOSE 8080` — the `-avif` variant cannot run on `scratch`.
+Docker (NFR-OPS-004, ruling **E-72**; local build only, nothing is published): `FROM scratch`, copy the **default** (static) binary plus `/etc/ssl/certs/ca-certificates.crt` (the `oidc` mode of E-74 dials out over HTTPS), `VOLUME /config /data /cache`, `EXPOSE 8080`, `ENV SHELF_CONFIG=/config/shelf.yaml` (§3.1 lookup, no code change), `ENTRYPOINT ["/shelf"]` — the `-avif` variant cannot run on `scratch`. `/config` holds `shelf.yaml` and `storage.data_dir`, `/data` is the media mounted `:ro` (FR-CFG-005), `/cache` is `storage.cache_dir`. No `USER`: bind-mount ownership differs per host, so run with `--user` instead. `make docker` tags the local name `shelf:local`.
 
 ---
 
