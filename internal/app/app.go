@@ -92,7 +92,7 @@ type Options struct {
 
 	// PerUser is true for auth.mode "oidc": progress, preferences and settings
 	// are kept per user, and the cover rule ignores both (ruling E-74 §2.13).
-	// cmd/shelf sets it from the configuration.
+	// cmd/shelf does not set it yet; the account wiring (U-B) will.
 	PerUser bool
 
 	// StartedAt is the process start, reported by GET /api/health. Zero selects
@@ -238,8 +238,8 @@ func New(ctx context.Context, opts Options) (a *App, err error) {
 	// unopenable root: a library that serves with 20 series reading 0 % is worth
 	// more than one that refuses to start. The repair is idempotent, so the next
 	// start tries again.
-	a.repairSplitProgress(ctx, log)
-	a.refileMisfiledProgress(ctx, log)
+	a.forEachScope(ctx, log, func(c context.Context) bool { a.repairSplitProgress(c, log); return true })
+	a.forEachScope(ctx, log, func(c context.Context) bool { a.refileMisfiledProgress(c, log); return true })
 
 	// ---- step 6: pools, sources, thumbnails, scanner, HTTP ---------------
 	if a.roots, err = source.OpenRoots(ctx, a.cfg.Roots, log); err != nil {
@@ -419,6 +419,31 @@ func (a *App) reconcileRoots(ctx context.Context) error {
 	return nil
 }
 
+// forEachScope runs one cleanup step against the single-user tables and then
+// against each user's rows (ruling E-74 §2.13). The index and userdata read the
+// scope from the context's principal, so a user's pass is the same code under
+// that user's identity. The first pass runs with the principal cleared: a scan
+// started by a request carries that request's context, and without clearing it
+// the single-user tables would be skipped and the caller's rows cleaned twice. It reports whether every pass succeeded.
+//
+// Listing the users can fail; that counts as a failed step, which stops the
+// purge for this run, so a user's rows are never judged by a scan that could
+// not look at them.
+func (a *App) forEachScope(ctx context.Context, log *slog.Logger, step func(context.Context) bool) bool {
+	ctx = principal.With(ctx, principal.Principal{})
+	ok := step(ctx)
+	subs, err := a.user.UserSubs(ctx)
+	if err != nil {
+		log.Warn("could not list users to clean up their reading progress; the next scan will try again",
+			"error", err)
+		return false
+	}
+	for _, sub := range subs {
+		ok = step(principal.With(ctx, principal.Principal{Sub: sub})) && ok
+	}
+	return ok
+}
+
 // carryProgressAcrossRelocations moves reading progress onto the new id of every
 // book this scan proved had merely moved — and, since ruling E-69 §2.11(a)(e)
 // and §2.12, the book's chosen cover, its viewer preferences and (for a
@@ -439,29 +464,6 @@ func (a *App) reconcileRoots(ctx context.Context) error {
 // It reports false when a lookup or the write failed, so the purge of the same
 // run can stand down (see the AfterScan hook). A pairing it declined is not a
 // failure.
-// forEachScope runs one cleanup step against the single-user tables and then
-// against each user's rows (ruling E-74 §2.13). The index and userdata read the
-// scope from the context's principal, so a user's pass is the same code under
-// that user's identity; the first pass has no principal and is the old
-// behaviour unchanged. It reports whether every pass succeeded.
-//
-// Listing the users can fail; that counts as a failed step, which stops the
-// purge for this run, so a user's rows are never judged by a scan that could
-// not look at them.
-func (a *App) forEachScope(ctx context.Context, log *slog.Logger, step func(context.Context) bool) bool {
-	ok := step(ctx)
-	subs, err := a.user.UserSubs(ctx)
-	if err != nil {
-		log.Warn("could not list users to clean up their reading progress; the next scan will try again",
-			"error", err)
-		return false
-	}
-	for _, sub := range subs {
-		ok = step(principal.With(ctx, principal.Principal{Sub: sub})) && ok
-	}
-	return ok
-}
-
 func (a *App) carryProgressAcrossRelocations(ctx context.Context, res *scanner.Result, log *slog.Logger) (success bool) {
 	if res == nil {
 		return true

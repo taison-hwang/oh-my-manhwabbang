@@ -12,6 +12,7 @@ import (
 
 	"shelf/internal/index"
 	"shelf/internal/principal"
+	"shelf/internal/scanner"
 	"shelf/internal/userdata"
 )
 
@@ -200,5 +201,32 @@ func TestCoverBridge_pageRequest_perUserIgnoresBookAndSettingsDirections(t *test
 		if req.Cover == nil || req.Cover.Dir != c.want {
 			t.Errorf("perUser=%v: cover direction = %+v, want %q", c.perUser, req.Cover, c.want)
 		}
+	}
+}
+
+// A scan started by a request keeps that request's principal in its context.
+// The cleanup must still treat the single-user tables as its first scope, or a
+// rename carried under the admin's identity would clear the move evidence while
+// leaving the single-user rows behind.
+func TestAfterScan_perUser_scanStartedUnderAPrincipalStillCleansTheSingleUserTables(t *testing.T) {
+	media := cleanupLibrary(t)
+	a := newTestApp(t, testConfig(t, media), false)
+	scanNow(t, a, false)
+
+	old := bookAt(t, a, "낱권.zip")
+	readTo(t, a, old, "낱권.zip", 2)
+	userReadTo(t, a, "admin", old, "낱권.zip", 4)
+
+	mustRename(t, media, "낱권.zip", "낱권 (완).zip")
+	if _, err := a.scan.Run(asUser("admin"), scanner.Request{}); err != nil {
+		t.Fatal(err)
+	}
+	moved := bookAt(t, a, "낱권 (완).zip")
+
+	if p, ok := progressRow(t, a, moved.BookID); !ok || p.LastPage != 2 {
+		t.Errorf("single-user progress on the moved book = (%+v, %v), want page 2", p, ok)
+	}
+	if p, ok := userProgress(t, a, "admin", moved.BookID); !ok || p.LastPage != 4 {
+		t.Errorf("admin's progress on the moved book = (%+v, %v), want page 4", p, ok)
 	}
 }

@@ -108,16 +108,6 @@ func (c *coverBridge) enqueueCover(ctx context.Context, req scanner.CoverRequest
 	}
 }
 
-// CoverProgress implements scanner.CoverProgressReporter so the `covers` phase
-// of arch §4.12 reports real numbers.
-//
-// done is derived from the queue depth rather than from a completion counter:
-// the service deduplicates by cache key and skips covers that are already on
-// disk, so counting generations would make `done` permanently short of `total`
-// on an incremental scan and the phase would spin until its two-minute limit.
-// The one inaccuracy is that jobs currently being decoded — at most
-// `thumbnails.workers` of them — are counted as done, so the phase can end a
-// few hundred milliseconds early. That is the right way round: it never hangs.
 // pageRequest is the cover image a page-cover series is shown with: the rule
 // GET /api/books/{bid}/cover applies, so what the scan caches is what a request
 // finds. On a per-user server that rule ignores every user's preferences
@@ -133,6 +123,16 @@ func (c *coverBridge) pageRequest(ctx context.Context, book index.BookRow) (thum
 	return req, err
 }
 
+// CoverProgress implements scanner.CoverProgressReporter so the `covers` phase
+// of arch §4.12 reports real numbers.
+//
+// done is derived from the queue depth rather than from a completion counter:
+// the service deduplicates by cache key and skips covers that are already on
+// disk, so counting generations would make `done` permanently short of `total`
+// on an incremental scan and the phase would spin until its two-minute limit.
+// The one inaccuracy is that jobs currently being decoded — at most
+// `thumbnails.workers` of them — are counted as done, so the phase can end a
+// few hundred milliseconds early. That is the right way round: it never hangs.
 func (c *coverBridge) CoverProgress() (done, total int64) {
 	total = c.accepted.Load()
 	depth := int64(c.svc.Stats().CoverDepth)
