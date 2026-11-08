@@ -54,3 +54,4 @@ ts	작업	결정	이유	증거	결과
 2026-11-09T06:12:51+09:00	U-B	독립 검증은 U-C 병합 위 rebase+연결(Close·RecordLogin·MigrateLegacyOwner·PerUser) 뒤 최종 SHA에서 1회. 이관 실패 시 로그+로그인 진행을 기본으로	rebase가 코드 수정을 포함하므로 b87d02a 검증은 무효가 됨	work-plan 이음매	worker-2에 안내
 2026-11-09T06:24:54+09:00	U-D·E-74	§2.7 보정: session_expired 401만 /start 자동 이동, 이유 없는 401은 base_path/ 새로고침으로 서버 로그인 화면(수동 로그인). 문서·테스트 같은 브랜치	U-D 독립 리뷰 M2: 로컬 로그아웃 뒤 다른 탭 자동 재인가가 SSO로 조용히 재로그인(추론)	worker-1 [진행]	계약 안전 쪽 해석
 2026-11-09T06:25:18+09:00	운영	worker-3(t3f) exit 143(SIGTERM, 원인 미상, OOM 로그 없음) → 같은 역할로 새 세션 t5h(w6:pJ) 띄워 P-70 이어 하기. 작업은 42a3d36에 커밋돼 손실 없음	hc 알림 exited 143, worktree 깨끗	hc read t3f	worker-3 재기동
+2026-11-09T06:42:55+09:00	U-B	cf15599 검사 PASS → 보안 독립 검증 배정. 후속: make release 측정 크기(MEASURED_*·README) 재측정은 모든 코드 병합 뒤 마감 작업(U-E)에서, 계약보다 엄격한 동작 4건은 검증 결과를 보고 E-74에 기록	worker-2 [완료] 위험 (2)(4)	cf1559930bb238371639ca7528669f737f1a9346	verifier-1 U-B

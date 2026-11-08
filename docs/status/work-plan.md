@@ -49,7 +49,7 @@
 | U-B | U-BC | oidc 인증 코어 | 완료 조건 2 | U-A | internal/auth/**, internal/httpapi/(auth·router·loginpage), internal/config |
 | U-C | U-BC | user.db v4·사용자별 저장소 | 완료 조건 3 | U-B | internal/userdata/**, internal/repair, internal/httpapi(progress·prefs·settings·export) |
 | U-D | U-D | SPA 인증 흐름 | 완료 조건 4(화면) | U-A | web/src/** |
-| U-E | U-E | 합성 e2e·gates·크기 | 완료 조건 4(e2e)·5 | U-BC, U-D | web/e2e, scripts/e2e*, scripts/mkfixture |
+| U-E | U-E | 합성 e2e(가짜 공급자)·gates·크기, make release 측정 크기(MEASURED_*·README) 재측정 | 완료 조건 4(e2e)·5 | U-BC, U-D, P-70, P-71b | web/e2e, scripts/e2e*, scripts/mkfixture, Makefile MEASURED_* |
 | U-R1 | U-R | 환경 확인(cloudflared·Hydra admin·:9909 설정), 클라이언트 등록 1건, 터널 적용 계획 | 기록 문서, 등록 GET 대조 | 없음 | docs/progress/ 새 파일 |
 | U-R2 | U-R | (배치 기준: oidc 단일 인스턴스 127.0.0.1) 사용자가 실행할 백업·적용·검증·복구 스크립트와 절차 준비 → 사용자 실행 뒤 공개 전 우회 경로 검증, 실제 로그인. sudo·재시작·공개는 사용자 | 비인증 요청이 모든 데이터 경로에서 401/로그인, 허용 목록 밖 403, 실제 로그인 성공 | U-BC, U-D, U-R1 | cloudflared 설정(백업 후) |
 | P-D | P-D | E-70·E-71·E-72 판정 확정, intent 경계·impl-plan·prd·arch 개정 | 시작 계약 2 완료 조건 1 | 없음(E-71 범위는 P-71a 측정 뒤 보정) | docs/decisions.md, intent.md, docs/impl-plan.md, docs/prd.md, docs/arch-backend.md, docs/ui-spec.md |
