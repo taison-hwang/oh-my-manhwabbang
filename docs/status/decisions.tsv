@@ -28,3 +28,4 @@ ts	작업	결정	이유	증거	결과
 2026-11-09T00:56:23+09:00	병합	R-F1→R-V3→R-R3를 worker-1이 연속 ff 병합하고 최종 main에서 검사 1회로 묶음	13분 검사가 잠금으로 직렬이라 세 번→한 번. R-V3·R-R3는 문서 1파일, 충돌 없는 rebase는 재검증 불요	orchestrator §5 rebase 규칙	worker-1 진행
 2026-11-09T01:35:17+09:00	병합	R-F1·R-V3·R-R3 병합 [완료] 수용	검사 PASS c892418 = 최종 main, 세 단계 diff 확인	git log b128aa8..c892418	승인 범위 완료, 3차는 결정 대기
 2026-11-09T02:10:21+09:00	E-74	사용자 승인: uni-auth 추천안(Q1~Q12 초안 추천)과 intent 경계 변경을 승인, 확정·구현·검증·병합 자율 진행. 다른 3차 기능은 미승인	Commander t1h 01:4x 메시지	docs/progress/2026-11-08T23-31-21+0900--e74-uni-auth-contract-draft.md	U-A 배정
+2026-11-09T02:15:42+09:00	E-74·U-R	사용자 결정: 운영 주소 https://library.betterax.net, Cloudflare 터널 공개(Q9 LAN→공개 터널 변경 승인), 클라이언트 등록 승인. 터널 공개는 인증·우회 경로 검증 뒤	Commander t1h 01:5x	work-plan 완료 조건 6	U-R1 worker-1, U-A 보정 전달
