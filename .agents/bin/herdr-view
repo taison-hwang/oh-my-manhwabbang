@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# 보기 패널: Commander 패널이 있는 herdr 탭을 나눠 hc 세션에 보기 전용으로 붙인다.
+# 보기 패널: Commander 패널이 있는 herdr 탭을 나눠 hc 세션에 붙인다.
+# 보기 전용(--observe)은 크기를 바꾸지 않아 hc 기본 크기(200x120)로 그린 화면이 작은 패널에서 겹쳐 깨진다.
+# 그래서 일반 접속으로 붙어 세션 크기를 패널에 맞춘다. 패널은 포커스 없이 만들어 입력이 새지 않는다.
 # 첫 패널은 기준 패널 오른쪽에, 다음부터는 보기 패널 중 가장 높은 것을 아래로 나눈다.
 # 세션이 끝나면 hc attach가 끝나고 패널의 셸도 exit로 닫힌다.
 # 사용: herdr-view <기준 패널 ID> <hc 주소> <role>
@@ -33,5 +35,5 @@ fi
 new="$(herdr pane split "$target" --direction "$direction" --no-focus | jq -r '.result.pane.pane_id // empty')"
 [[ -n "$new" ]] || { echo "보기 패널: 패널을 나누지 못했다" >&2; exit 1; }
 herdr pane rename "$new" "$label" >/dev/null
-herdr pane run "$new" "hc attach --observe $ADDR; exit" >/dev/null
+herdr pane run "$new" "hc attach $ADDR; exit" >/dev/null
 echo "보기 패널: $new ($label → $ADDR)" >&2

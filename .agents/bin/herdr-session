@@ -133,7 +133,14 @@ else
   fi
 fi
 [[ -n "$TASK" ]] && AGENT+=("$TASK")
-CMD=(env "${ENVS[@]}" "${AGENT[@]}")
+# hc 세션은 hc 서버의 환경을 물려받는다. 서버를 Claude Code 안에서 띄웠으면 그 세션의 표지가 따라와
+# claude가 자신을 하위 세션으로 알고 대화 기록을 저장하지 않는다("Transcript saving is off"). 다른 세션의
+# 메시지 소켓과 낡은 HERDR_PANE_ID도 함께 오므로 띄우기 전에 지운다.
+UNSETS=()
+for v in CLAUDECODE CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_SESSION_ID CLAUDE_CODE_SESSION_ATTENDED \
+  CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH CLAUDE_CODE_MESSAGING_SOCKET CLAUDE_CODE_MESSAGING_TOKEN \
+  CLAUDE_CODE_SSE_PORT CLAUDE_PID CLAUDE_EFFORT HERDR_PANE_ID; do UNSETS+=(-u "$v"); done
+CMD=(env "${UNSETS[@]}" "${ENVS[@]}" "${AGENT[@]}")
 
 if [[ $HERE -eq 1 ]]; then
   # hc 터미널 안이면 그 터미널에 라벨을 붙인다. herdr 패널의 일반 셸처럼 hc 터미널이 아니면
