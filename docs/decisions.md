@@ -4545,3 +4545,184 @@ impl-plan §1.3도 같은 내용을 적었다. 그래서 백업을 만들려면 
 - 문서: arch(A-19), prd(FR-THM-002·003), ui-spec, impl-plan, HANDOFF가 같은 커밋에서 고쳐졌다.
 - 호환: E-69 이전 서버는 `/2` 내보내기 파일을 거절한다. 되돌려 설치할 때 주의한다.
 - 남은 일: `make test-int-full` 미실행, 옛 작업 트리 정리와 푸시는 사용자 승인 대기(HANDOFF 맨 앞).
+
+## E-74 — **계정은 uni-auth에 맡긴다. `auth.mode: oidc`는 허용 목록에 든 소수 사용자가 각자 진행률을 갖게 하고, 컬렉션 전체에 닿는 쓰기는 관리자만 재인증 뒤에 한다** (사용자 결정 "계정 시스템은 이 기계에서 돌고 있는 uni-auth를 쓴다" 2026-11-08 23:2x, 추천안 Q1~Q12와 프로젝트 경계 변경 승인 2026-11-09 01:4x, Q9 보정 "운영 주소 https://library.betterax.net, Cloudflare 터널로 공개" 2026-11-09 01:5x, 모두 Commander t1h 경유 · worker-2 초안 — 인증·HTTP 계약·user.db 스키마가 바뀐다, 개정 A-20) — BINDING
+
+### 1. 문제
+
+- 인증은 단일 비밀번호 하나뿐이다(NFR-SEC-002, arch §8.2). 누가 읽었는지 구별하지 않으므로, 가족이 함께 쓰면 진행률·이어보기·책별 설정이 한 사람 것처럼 섞인다.
+- prd §9 3차의 "다중 사용자 계정 및 권한 관리"는 착수 전에 기존 요구사항과의 양립을 판정해야 한다(E-67). 부딪히는 문구는 NFR-SEC-002("단일 사용자"), NFR-OPS-002("런타임 외부 의존성 없음"), intent 핵심 가치 5와 경계 표다.
+- 계정 저장·가입·비밀번호 재설정을 직접 만들면 보안 검토 범위가 크게 는다. 같은 기계에 OIDC 공급자 uni-auth(issuer `https://auth.betterax.net`)가 이미 돌고 있다.
+- uni-auth는 누구나 가입하는 B2C 공급자이고, 서비스별 역할을 부여하는 API가 아직 없다. "uni-auth에 로그인했다"를 "이 서재를 볼 수 있다"로 치면 가입자 누구나 컬렉션 전체를 본다.
+- 조사와 계약 초안: `docs/progress/2026-11-08T23-31-21+0900--e74-uni-auth-contract-draft.md`(uni-auth 커밋 6fc19d2 문서 인용, 디스커버리·JWKS GET 결과, 독립 리뷰 20건 반영). 이 판정은 그 초안의 e절 추천안을 승인한 결과다.
+
+### 2. 판정
+
+1. **사용자 결정.** 계정은 uni-auth를 쓴다(2026-11-08). 초안 e절 Q1~Q12의 추천안과 프로젝트 경계 변경을 승인한다(2026-11-09). 승인안: Q1 비밀번호 모드와 배타 선택, Q2 설정 허용 목록, Q3 짧은 TTL과 `prompt=none` 재인가, Q4 관리자는 설정 목록만, Q5 관리자 쓰기 전 재인증, Q6 별도 파일 `auth.db`의 서버 측 세션, Q7 `sub` 축약 표시와 `scope=openid`, Q8 표지·시리즈 방향은 공유하고 누구나 고치며 스캔 로그·설정 경로는 관리자만, Q9 LAN 전용 https(아래 보정으로 바뀜), Q10 uni-auth 클라이언트 등록은 별도 작업(2026-11-09 등록됨, §2.19), Q11 계정 삭제는 허용 목록에서 빼서 처리, Q12 역복사 명령을 둔다.
+   **Q9 보정(2026-11-09 01:5x).** 운영 주소는 `https://library.betterax.net`이고 Cloudflare 터널로 인터넷에 공개한다. LAN 전용 가안을 공개 터널로 바꾸는 명시적 승인이다. 나머지 승인안은 그대로다(§2.18). **3차 로드맵의 다른 기능(E-70~E-73, E-75~E-77 초안)은 이 승인에 들지 않는다.**
+2. **모드는 셋이고 설정으로 하나를 고른다.** `auth` 블록이 없으면 인증 없음(지금과 같다). `auth.mode: "password"`(생략하면 `password`)는 지금의 단일 비밀번호다. `auth.mode: "oidc"`는 uni-auth 로그인이다. 두 방식을 함께 켜지 않는다. 로그인 경로가 둘이 되고, 비밀번호 사용자에게 줄 `sub`가 없기 때문이다. uni-auth 장애 때의 비상 경로는 운영자가 `mode: password`로 바꿔 재시작하는 것이다. **단, 공개 터널은 oidc 모드 서버에만 잇는다.** password 모드나 인증 없음으로 바꾸려면 먼저 터널을 끊고 LAN에서만 쓴다(§2.18 공개 금지 조건). password 모드에는 같은 출처 검사가 없고, 터널 뒤에서는 비밀번호 시도 제한이 전체 버킷 하나가 되며, `Secure`도 빠지기 때문이다.
+3. **zip-viewer 서버가 BFF가 된다.** 인가 코드와 PKCE(S256)로 로그인하고, 토큰은 서버만 본다. 브라우저에는 세션 ID 쿠키만 간다. uni-auth 연동 클라이언트는 `client_secret`이 없는 public 클라이언트다.
+4. **oidc 모드는 서버 측 세션을 쓴다.** 세션 표는 새 파일 `<data_dir>/auth.db`(모드 `0600`)의 `oidc_sessions`다. 열은 `id_hash`(쿠키 값의 SHA-256, 원문은 저장하지 않는다)·`user_sub`·`uni_sid`·`id_token`·`created_at`·`last_seen_at`·`reauth_at`·`expires_at`·`logged_out_at`이다.
+   - 쿠키는 모드마다 다르다. oidc 모드는 세션 쿠키(무작위 32바이트, base64url)만 읽고 `shelf_session`을 거부한다.
+   - oidc 모드 쿠키 이름: `server.base_path`가 빈 값이면 `__Host-shelf_sid`·`__Host-shelf_login`(`Path=/`, `Domain` 없음)이다. 같은 등록 도메인의 이웃 하위 도메인이 `Domain=betterax.net` 쿠키로 덮어쓰는 것을 브라우저가 막는다. `base_path`가 있으면 `__Host-` 접두사를 쓸 수 없으므로(`Path=/`가 조건) `shelf_sid`·`shelf_login`이고, 이웃 하위 도메인의 쿠키 주입 위험이 남는다. 이 판정에서 `shelf_sid`·`shelf_login`은 두 이름을 함께 가리킨다. 운영 배포는 `base_path`가 빈 값이다. password 모드는 지금의 `shelf_session`(HMAC, `v:1`)만 읽는다. 그래서 모드를 바꿔 재시작해도 다른 모드의 쿠키가 통과하지 못한다.
+   - `shelf_sid` 속성: `Path={base_path}/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`(30일, 아래 만료 행 보관 기간). oidc 모드는 https가 전제이므로 `Secure`를 늘 붙인다(루프백 http 예외에서도 붙인다. 브라우저는 `localhost`·`127.0.0.1`을 안전한 출처로 본다).
+   - 허용 여부와 관리자 여부는 쿠키에도 세션 행에도 싣지 않는다. **매 요청 현재 설정으로 판정한다.**
+   - `auth.db`는 user.db와 다른 파일이다. user.db는 잃으면 안 되는 사용자 데이터이고(NFR-DAT-004), 세션은 지워도 모두 로그아웃될 뿐이다. 두 파일에 걸친 트랜잭션은 두지 않는다.
+5. **로그인 시작** `GET {base_path}/api/auth/oidc/start?return=<경로>[&reauth=1]`.
+   - 무작위 `state`·`nonce`·`code_verifier`와 사전 인증 ID를 만든다. 사전 인증 ID는 쿠키 `shelf_login`으로 준다: `HttpOnly; Secure; SameSite=Lax; Max-Age=600`, `Path`는 `__Host-` 이름이면 `/`, 아니면 `{base_path}/api/auth/oidc/`.
+   - 서버 메모리에 사전 인증 항목 `{state, 사전 인증 ID의 해시, code_verifier, nonce, return, reauth, prompt 폴백 플래그, 만료}`를 둔다. 기본 상한: 항목 10분 만료와 주기 정리, 전체 1 000개, 클라이언트 IP별 분당 20회(비밀번호 로그인 버킷과 별도). 상한에 닿으면 `429 rate_limited` + `Retry-After`다. 재기동하면 진행 중이던 로그인만 실패한다.
+   - 클라이언트 IP는 `RemoteAddr`다. `server.trusted_proxy_headers`는 **끈 채로 둔다.** 이 키는 출처를 가리지 않고 `X-Forwarded-*`를 믿으므로, 공개된 서버에서 켜면 아무나 IP를 꾸며 IP별 제한을 피한다.
+     Cloudflare 터널을 거치면 모든 요청이 터널 커넥터라는 같은 출발지로 보일 수 있다. 그때 IP별 버킷은 사실상 전체 버킷 하나다(비밀번호 로그인 버킷도 같다). 소수 사용자에게는 받아들이고, 상한에 닿은 공격은 로그인만 막을 뿐 메모리를 늘리지 않는다.
+     `CF-Connecting-IP`는 믿지 않는다. 믿으려면 그 헤더를 붙일 수 있는 출발지를 신뢰 프록시 CIDR로 제한하는 설정 키가 있어야 하고, 그 키는 이 판정에 없다(필요하면 따로 판정한다).
+   - `return`은 `{base_path}/`로 시작하는 경로만 받는다. `//`·`/\`·스킴·제어 문자가 있거나, 비어 있거나, `{base_path}/api/`로 시작하면 `{base_path}/`로 바꾼다. 값은 사전 인증 항목에 묶어 서버에 둔다.
+   - `reauth=1`은 유효한(만료 전, 로그아웃 표시 없는) 세션이 있을 때만 받는다. 없으면 `401 unauthorized`다. 받으면 사전 인증 항목에 그 세션의 `id_hash`를 묶고, `prompt=login`만 붙인다(`prompt=none`보다 우선).
+   - 디스커버리의 `authorization_endpoint`로 302한다. 파라미터는 `response_type=code`, `client_id`, `redirect_uri`(설정값 문자열 그대로), `scope=openid`, `state`, `nonce`, `code_challenge`, `code_challenge_method=S256`이다. `reauth=1`이면 `prompt=login`, 만료된 세션 행에서 온 재인가면 `prompt=none`을 붙인다(§2.7). 첫 진입에는 `prompt=none`을 붙이지 않는다.
+6. **콜백** `GET {base_path}/api/auth/oidc/callback?code&state`. 순서대로 검사하고, 하나라도 실패하면 세션을 만들지 않는다.
+   1. `state`와 `shelf_login` 쿠키가 같은 사전 인증 항목을 가리켜야 한다. 다른 브라우저가 시작한 로그인을 이 브라우저에서 끝내는 login CSRF를 막는다. 맞지 않으면 아무 상태도 바꾸지 않는다. 그때 이 브라우저에 유효한 세션이 있으면 `{base_path}/`로 302하고(이미 끝난 로그인의 재시도·프리페치), 없으면 처음부터 다시 시작하는 화면을 보인다.
+   2. 그다음에 `error` 파라미터를 처리한다(§2.7의 폴백, §2.9의 재인증 실패). 묶음이 확인된 항목에만 적용하므로 위조한 `?error=`는 흐름을 바꾸지 못한다.
+   3. 항목을 1회용으로 표시한다. 같은 항목으로 다시 온 콜백은 1의 "맞지 않음"과 같이 처리한다.
+   4. `/token` 교환: `grant_type=authorization_code`, `code`, `client_id`(본문), `code_verifier`, `redirect_uri`(5의 문자열과 같다).
+   5. ID 토큰 검증: 서명(EdDSA/Ed25519만, JWKS의 `kid`), `iss`가 설정 `issuer`와 같음, `aud`에 `client_id`, `exp`·`nbf`·`iat`(허용 오차 ±60초), `nonce`, `tid == "default"`.
+   6. 액세스 토큰 검증: 서명·`iss`·시각·`tid`는 같고, `aud`에 설정 `audience`가 있어야 한다. **ID 토큰과 액세스 토큰의 `sub`가 같아야 한다.** 액세스 토큰은 이 검증에만 쓰고 저장하지 않는다.
+   7. `sub`가 `allowed_subs`에 있어야 한다(§2.8). 없으면 세션을 만들지 않고, 서버가 그린 403 안내 화면에 그 `sub`를 보인다. 운영자가 설정에 넣을 수 있게 하려는 것이다.
+   8. 세션 행을 만들고 `shelf_sid`를 발급한다. `shelf_login`을 지우고 `return`으로 302한다. 이미 `shelf_sid`가 있었으면 옛 행을 지운다(세션 ID 회전).
+   - 디스커버리 문서의 `issuer`가 설정 `issuer`와 문자열로 같지 않으면 로그인을 거부하고 로그를 남긴다.
+   - 디스커버리는 1시간, JWKS는 30분 메모리에 캐시한다. 모르는 `kid`가 오면 JWKS를 다시 받되, 다시 받기는 60초에 한 번으로 묶는다.
+   - 콜백 URL의 `code`·`state`, 모든 토큰, 쿠키 값은 로그에 남기지 않는다. 요청 로그(`log.http_requests`)는 `/api/auth/oidc/` 경로의 쿼리를 지우고 남긴다.
+   - 서버 시계가 ±60초 안에 맞아야 토큰 검증이 된다(NTP). 운영 문서에 적는다.
+7. **세션 만료와 재확인.** oidc 모드의 `auth.session_ttl` 기본값은 `12h`다(password 모드는 지금처럼 `720h`). 세션은 마지막 인가 시각부터 `session_ttl`이 지나면 만료된다.
+   - 매 요청: `shelf_sid` 행이 있는가 → 만료 전인가 → `user_sub`가 현재 `allowed_subs`에 있는가. 행이 없으면 `401 unauthorized`다. 만료됐으면 `401 unauthorized` + `detail.reason: "session_expired"`이고 행은 남긴다. 허용 목록에 없으면 행을 지우고 `403 forbidden` + `detail.reason: "not_allowed"`다. `last_seen_at`은 1분에 한 번만 쓴다.
+   - SPA는 401을 받으면 `start?return=<현재 경로>`로 top-level 이동한다. 서버는 쿠키가 가리키는 만료 행이 있을 때만 `prompt=none`을 붙인다.
+   - `login_required`·`consent_required`·`interaction_required`가 오면 `prompt` 없는 요청으로 **한 번만** 폴백한다. 폴백했다는 표시는 사전 인증 항목에 둔다. 폴백 뒤의 오류는 로그인 화면에 보인다.
+   - `prompt=none`이 성공하면 새 세션 행을 만들고 옛 행을 지운다. `reauth_at`은 옮기지 않는다.
+   - 만료된 행은 만료 30일 뒤 지운다(정리는 기동 때와 하루 한 번). 쿠키 `Max-Age` 30일이 이 기간과 같다.
+   - refresh token은 받지 않는다(`offline_access`를 요청하지 않는다). uni-auth 쪽 차단은 세션 TTL 안에 반영된다. 허용 목록에서 빼는 차단은 매 요청 판정이라 TTL과 무관하다.
+8. **접근 허용과 관리자.**
+   - `auth.oidc.allowed_subs`에 든 `sub`만 들어온다. 기본값은 빈 목록이고, 빈 목록이면 아무도 들어오지 못한다.
+   - `auth.oidc.admin_subs`에 든 `sub`가 관리자다. uni-auth의 전역 `platform_admin`은 관리자로 치지 않는다. `admin_subs`는 `allowed_subs`의 부분집합이어야 하고, 아니면 기동 실패(exit 2)다.
+   - 설정은 지금처럼 기동 때 읽는다. 그래서 허용 목록 변경은 재시작 뒤에 반영된다. 반영된 뒤에는 기존 세션도 다음 요청부터 거부된다.
+   - intent "쓰지 않을 사람: 여러 사용자에게 계정을 나눠 서비스하려는 운영자"와 양립한다. 대상은 여전히 본인 또는 소수 가족이고, 허용 목록이 그 크기를 지킨다. 가입자 누구나에게 서비스하는 배치는 이 판정이 막는다.
+   - 사용자에게 알릴 것: 가족 구성원은 각자 uni-auth에 가입해야 한다. 가입은 이메일 검증까지 끝나야 완료된다. 자신의 `sub`는 첫 로그인의 403 화면에서 보고 운영자에게 알린다.
+9. **관리자 쓰기 전 재인증.** 아래 표의 "관리자 + 재인증" 끝점은 세션 행의 `reauth_at`이 15분 안일 때만 통과한다. 아니면 `403 forbidden` + `detail.reason: "reauth_required"`다.
+   - 클라이언트는 `start?reauth=1&return=<현재 경로>`로 top-level 이동하고, 서버는 `prompt=login`을 붙인다.
+   - **오류 없이 돌아오고, 돌아온 `sub`가 세션의 `sub`와 같고, 사전 인증 항목에 묶인 `id_hash`가 지금 쿠키의 세션일 때만** 그 세션 행의 `reauth_at`을 지금으로 쓰고 `expires_at`도 지금 + `session_ttl`로 늘린다(새 인가이므로). `sub`가 다르면 세션을 바꾸지 않고 403 화면을 보인다. `prompt=none` 재인가와 첫 로그인은 `reauth_at`을 쓰지 않는다.
+   - `auth_time`·`max_age`에는 기대지 않는다. `auth_time`은 uni-auth 클레임 계약에 없다.
+   - 오류로 돌아오거나 콜백이 오지 않으면 보류 중이던 동작은 버린다. 사용자가 다시 누른다.
+10. **인가 표**(oidc 모드. 인증 없음·password 모드는 지금과 같다). 403의 `detail.reason`은 `admin_only`다.
+
+    | 끝점 | 일반 사용자 | 관리자 |
+    | --- | --- | --- |
+    | `GET` 목록·상세·쪽·썸네일·표지, `/api/continue`, `/api/scan/status`, `/api/roots`, `/api/cache/usage`, `/api/health` | 허용(경로 필드는 아래) | 허용 |
+    | `PUT/DELETE /api/books/{bid}/progress`, `GET/PUT /api/books/{bid}/prefs`, `GET/PUT /api/settings`의 사용자 값 | 자기 데이터 | 자기 데이터 |
+    | `PUT/DELETE /api/books/{bid}/cover`, `PUT /api/series/{sid}/prefs` | 허용(공유 데이터) | 허용 |
+    | `GET /api/progress/export`, `POST /api/progress/import` | 자기 데이터 + 공유 절(§2.15) | 같다 |
+    | `GET /api/scan/log` | 거부 | 허용 |
+    | `POST /api/scan`, `POST /api/scan/cancel`, `POST /api/series/{sid}/rescan`, `DELETE /api/cache` | 거부 | 관리자 + 재인증 |
+    | `POST /api/roots`, `DELETE /api/roots/{name}`, `GET /api/browse` | 거부 | 관리자 + 재인증(기존 `allow_root_editing` 관문도 그대로) |
+
+    서버의 절대 경로는 관리 정보다(Q8 (가)의 이유). 일반 사용자에게는 `Settings.server.config_path`·`Root.path`·`CacheUsage.cache_dir`를 빈 문자열로, 경로를 담을 수 있는 `Root.last_scan_error`를 `null`로 준다. 관리자에게는 지금처럼 채운다. 모양은 바뀌지 않는다.
+11. **같은 출처 검사.** oidc 모드에서는 상태를 바꾸는 모든 요청(`POST`·`PUT`·`DELETE`)에 `Origin`이 서버 자신의 출처(설정 `redirect_url`의 스킴·호스트·포트)와 같아야 한다. `Origin`이 없으면 `Sec-Fetch-Site`가 `same-origin`이어야 한다. 둘 다 없으면 거부한다. 거부는 `403 forbidden` + `detail.reason: "cross_origin"`이다. 같은 등록 도메인 아래 이웃 서비스가 보내는 요청은 `SameSite=Lax`로 막을 수 없기 때문이다. 이 검사는 인증보다 먼저 한다.
+12. **로그아웃은 버튼 둘이다**(uni-auth 로그아웃 UI 계약). 둘 다 SPA에서 **top-level 폼 POST**(`application/x-www-form-urlencoded`)로 보낸다. `모든 서비스에서 로그아웃`은 다른 출처로 302하므로 `fetch`로는 동작하지 않는다.
+    - `로그아웃` = `POST {base_path}/api/auth/logout`(지금 경로). 세션 행에 `logged_out_at`을 쓰고 쿠키 `Max-Age`를 600으로 줄인다. 그 행은 더는 인증에 쓰이지 않는다(그 쿠키의 요청은 reason 없는 `401`이고, `/start`는 그 행에 `prompt=none`을 붙이지 않는다). 행은 완료 화면의 `모든 서비스에서 로그아웃`이 `id_token`을 쓸 수 있게 10분 동안만 남은 뒤 지워진다.
+      응답은 지금 로그인 폼과 같은 규칙이다: 폼 POST에는 `200`과 서버가 그린 완료 화면(`다른 서비스에는 계속 로그인되어 있습니다.`와 `모든 서비스에서 로그아웃` 폼 버튼), JSON·`fetch`에는 `204`.
+    - `모든 서비스에서 로그아웃` = `POST {base_path}/api/auth/oidc/end-session`. 쿠키가 가리키는 행(로그아웃 표시가 있어도 된다)의 `id_token`을 꺼내고, 행과 쿠키를 지운 뒤, 그 `id_token`을 `id_token_hint`로 실어 디스커버리의 `end_session_endpoint`로 302한다. ID 토큰은 만료돼도 된다. 행이 없으면 `id_token_hint`를 만들 수 없으므로 로컬 완료 화면만 보인다.
+      `auth.oidc.post_logout_redirect_url`이 있을 때만 `post_logout_redirect_uri`를 붙이고, 없으면 uni-auth 완료 화면에서 끝난다. 기본값은 빈 값이다.
+      **운영 주의:** uni-auth는 등록된 `post_logout_redirect_uris`와 문자열이 완전히 같은 값만 받는다. 2026-11-09 등록에서는 이 값이 게이트웨이 레코드에는 있지만 Hydra에 투영되지 않아(uni-auth 쪽 결함 추정) 값을 넣으면 end-session이 거절될 수 있다. 값을 넣기 전에 uni-auth에서 투영을 확인하고, 거절되면 빈 값으로 되돌린다.
+    - 두 버튼은 디스커버리에 `end_session_endpoint`가 있으면 늘 보인다. 상태를 바꾸는 GET은 두지 않는다.
+    - back-channel logout은 없다(uni-auth P1). 다른 서비스에서 로그아웃해도 이 서버의 세션은 TTL까지 남는다.
+13. **데이터 분리 — user.db v4.** 스키마 `'3'` → `'4'` 단계는 기존 규칙대로 `CREATE TABLE/INDEX IF NOT EXISTS`만 한다. 기존 테이블은 고치지 않는다.
+    - 사용자별(새 테이블): `user_progress(user_sub, book_id, …progress의 열…, PRIMARY KEY(user_sub, book_id))`와 이어보기 인덱스, `user_book_prefs(user_sub, book_id, …)`, `user_settings(user_sub, …settings의 열…)`, `user_view_state(user_sub, …view_state의 열…)`(옛 테이블의 열을 그대로 따르고 `user_sub`만 앞에 더한다. `updated_at`도 그대로 있다), `users(user_sub PRIMARY KEY, first_seen_at, last_login_at)`. 이름·이메일은 저장하지 않는다.
+    - 공유(그대로): `series_seen`, `book_covers`, `series_prefs`, `pending_relocations`.
+    - **공유 권 표지의 방향(oidc 모드).** 사용자 지정 없는 권 표지의 절반 규칙(E-69 §2.2(b))은 유효 방향을 쓰는데, oidc 모드에서 `book_prefs`·`settings`는 사용자별이다. 공유 표지가 요청자마다 달라지지 않도록 oidc 모드의 권 표지와 그 캐시 키·`cover_cv`·선생성은 `series_prefs.reading_dir` → 설정 파일 `reader.reading_direction` 순서만 본다. 사용자별 책 방향과 사용자별 기본값은 표지에 쓰지 않는다(뷰어의 읽기 방향에는 그대로 쓴다). 선생성과 `GET /api/books/{bid}/cover`가 같은 규칙을 쓴다.
+    - 인증 없음·password 모드는 지금 테이블을 그대로 쓴다. oidc 모드만 `user_*` 테이블을 쓴다. 진행률을 읽는 질의(시리즈 목록의 `progress`·정렬·`scope`, `/api/continue`, `BookSummary.progress`)는 oidc 모드에서 요청한 사용자의 행만 본다.
+    - 스캔 뒤 정리(이동 이관·분할 재부착·series_id 교정·삭제, E-48~E-50·E-69 §2.11~§2.14)는 `user_progress`·`user_book_prefs`에도 같은 규칙을 사용자마다 적용한다.
+    - v4 파일은 옛 빌드가 열지 않는다(`ErrSchemaTooNew`).
+14. **기존 데이터 이관과 되돌리기.**
+    - `auth.oidc.legacy_owner_sub`에 적힌 `sub`가 **처음 로그인할 때 한 번** 기존 `progress`·`book_prefs`·`settings`·`view_state`를 `user_*`로 복사한다. 완료는 user.db `meta.legacy_migrated_to = <sub>`로 적는다(다시 돌지 않는다). 기존 테이블은 지우지 않는다. `legacy_owner_sub`가 비어 있으면 이관하지 않는다.
+    - 되돌리기용 일회성 명령 `shelf auth restore-owner --sub <sub>`를 둔다. 그 사용자의 `user_*` 행을 기존 테이블로 복사한다. 같은 키는 `updated_at`이 새 쪽이 이긴다(`updated_at`이 없는 행은 사용자 행이 이긴다). 서버가 멈춘 상태에서 돌린다.
+15. **내보내기·가져오기**(FR-STT-004). 형식은 `shelf-progress/2` 그대로다. 모양이 같으므로 버전을 올리지 않는다.
+    - oidc 모드에서 `items`·`prefs`는 호출한 사용자의 행만 내보내고, 가져오기도 그 사용자의 행에 쓴다. 파일에는 사용자 키를 넣지 않는다. 그래서 다른 사용자에게 옮겨 넣을 수 있다.
+    - `covers`·`series_prefs`는 공유 데이터다. Q8 (가)에 따라 누구나 고칠 수 있으므로 지금 규칙(A-19) 그대로 내보내고 병합한다.
+16. **장애 동작.**
+    - 이미 만든 세션은 `auth.db`로 확인하므로 uni-auth가 멈춰도 계속 동작한다. 세션이 만료되면 재인가가 실패한다. 새 로그인은 실패하고, 로그인 화면은 `인증 서버에 연결할 수 없습니다`와 다시 시도를 보인다.
+    - 기동 때 디스커버리를 받지 못해도 서버는 뜬다(AC-007). 디스커버리는 첫 로그인 때 다시 받는다.
+    - `/api/health`는 uni-auth 상태와 무관하다.
+    - 계정 삭제(uni-auth의 `user.deleted` webhook)는 받지 않는다. 운영자가 `allowed_subs`에서 빼면 접근이 끊긴다. 그 사용자의 `user_*` 행은 남는다.
+17. **세션 없이 보이는 화면은 서버가 그린다.** 인증 관문이 정적 자산까지 막으므로(§8.2 all-or-nothing) SPA는 세션 없이 뜨지 않는다. 로그인 화면(`uni-auth로 로그인` 버튼), 403 안내(`sub` 표시), 로그아웃 완료 화면은 지금의 비밀번호 로그인 화면처럼 서버가 렌더하는 HTML이다(`internal/httpapi/loginpage.go`). 문구는 한국어다.
+18. **노출 — 공개 터널.** 운영 주소는 `https://library.betterax.net`이고, Cloudflare 터널이 TLS를 끝내고 zip-viewer로 넘긴다(zip-viewer는 TLS를 내장하지 않는다, impl-plan §1.3). uni-auth는 `https://` 콜백만 받으므로 이 주소가 콜백 호스트다. oidc 모드에서 `http://NAS:포트`로 직접 쓰는 길은 없다(`Secure` 쿠키, https 콜백).
+    - **터널은 검증 뒤에만 켠다.** oidc 모드 서버에서 인증, 허용 목록 403, 관리자·재인증 403, 같은 출처 403, 아래 "세션 없이 닿는 표면" 밖으로 새는 길이 없음(정적 자산·`/api/*` 우회, `/api/auth/../` 같은 경로 조작, password 모드 쿠키, 만료·로그아웃 세션)을 확인하기 전에는 `library.betterax.net`을 이 서버에 잇지 않는다. 공개 URL을 거쳐서도 확인한다: 인증된 상태로 받은 정적 자산·쪽·썸네일 URL을 세션 없이 다시 요청하면 `401`이어야 하고 응답의 `cf-cache-status`가 `HIT`가 아니어야 한다. 이 확인은 마감 작업(U-E)의 수용 기준이고, 터널을 잇는 일 자체는 외부에 보이는 작업이라 사용자 승인을 받는다.
+    - **세션 없이 닿는 표면**(oidc 모드, 이것이 전부다). 인증 예외는 정확한 경로 일치로만 정한다(접두어 일치는 우회가 된다).
+      - `GET /api/health`: `ok`·`version`·`commit`·`started_at`·`uptime_ms`·`pdf_enabled`·`avif_enabled`. oidc 모드에서 세션 없는 `?verbose=1`은 `verbose`를 빼고 답한다(풀·큐 카운터는 내부 상태다).
+      - `GET /api/auth/status`: `auth_required`·`authenticated`·`mode`·`end_session_available`. 세션이 없으면 `user`가 없다.
+      - `POST /api/auth/login`: `400 bad_request`(`detail.reason: "oidc_mode"`). `POST /api/auth/logout`: `204`, 세션이 없으면 아무것도 바꾸지 않는다.
+      - `GET /api/auth/oidc/start`: 302(속도 제한 §2.5). `GET /api/auth/oidc/callback`: 302 또는 서버 렌더 오류·403 화면. `POST /api/auth/oidc/end-session`: 같은 출처 검사 뒤 302 또는 완료 화면.
+      - 그 밖의 모든 경로: `/api/*`는 `401` JSON(§7.2), 브라우저 탐색(`Accept: text/html`)은 서버가 그린 로그인 화면(`401`, 자산 없음, SPA 경로를 드러내지 않음), 나머지는 `401` JSON이다. `index.html`·해시된 JS·CSS·폰트·이미지 같은 정적 자산은 하나도 세션 없이 나가지 않는다.
+      - **공유 캐시에 남기지 않는다.** 지금 해시된 자산은 `public, max-age=31536000, immutable`, 쪽·썸네일·표지는 `public, …`로 나간다(arch §5.3). Cloudflare 같은 공유 캐시는 쿠키를 캐시 키에 넣지 않으므로, 한 사용자가 받은 응답을 세션 없는 방문자에게 줄 수 있다. 그래서 oidc 모드에서는 세션이 필요한 응답의 `public`을 `private`로 바꾼다(`private, max-age=31536000, immutable`, `private, max-age=60, must-revalidate` 등, 나머지 지시어는 그대로). 인증 없음·password 모드는 지금 그대로다.
+      - `POST /api/auth/logout`의 폼 POST 응답은 서버가 그린 완료 화면이다(§2.12).
+      - 서버 렌더 화면(로그인·403·로그아웃 완료·오류)은 인라인 스타일만 쓰고 SPA 자산을 참조하지 않는다. 403 화면은 그 브라우저가 방금 로그인한 `sub` 하나만 보인다.
+    - **NFR-PRF-001("로컬 네트워크 기준 100ms")은 로컬 측정 그대로다.** 공개 터널을 거친 응답 시간은 따로 재는 대상이다. 기준값은 정하지 않고, 마감 작업에서 재어 기록한다.
+    - 로그인 때 브라우저와 zip-viewer 서버는 `auth.betterax.net`에 닿아야 한다.
+    - **운영 배치 잠정 기준**(Commander 지시, 2026-11-09): oidc 모드 인스턴스 **하나**만 둔다. `server.listen: "127.0.0.1"`로 루프백에만 바인드해 터널 커넥터만 닿게 한다. LAN용 무인증 인스턴스는 두지 않는다. 같은 데이터 디렉터리·컬렉션을 무인증으로 내주는 두 번째 서버는 이 판정의 접근 제한을 통째로 우회한다.
+    - **공개 금지 조건.** 다음 중 하나라도 참이면 터널을 잇지 않는다(이미 이어져 있으면 끊는다): oidc 모드 서버가 `0.0.0.0`이나 LAN 주소에 바인드되어 있다 · 같은 미디어·데이터를 내주는 무인증 또는 password 모드 인스턴스가 있다 · `server.trusted_proxy_headers`가 켜져 있다. 공개 전 점검(U-E)은 이 셋을 실제 프로세스·설정에서 확인한다(`ss -ltnp`의 바인드 주소, 실행 중인 `shelf` 프로세스와 설정 파일).
+    - **설정 검사는 경고만 한다.** `mode: oidc`인데 `server.listen`이 루프백(`127.0.0.0/8`, `::1`, `localhost`)이 아니면 기동 때 `warn` 로그를 한 줄 남긴다. `mode: oidc`인데 `trusted_proxy_headers: true`이면 같은 방식으로 경고한다(이것은 공개 금지 조건이므로 점검에서 걸린다). 기동 실패로 막지는 않는다. LAN 리버스 프록시 뒤에 두는 배치(프록시가 다른 기계에 있는 경우)를 막지 않기 위해서다. 다른 인스턴스의 존재는 서버가 알 수 없으므로 점검 절차로만 확인한다.
+19. **설정**(arch §3.2 `auth:` 블록).
+
+    ```yaml
+    auth:
+      mode: "oidc"                 # "password"(생략 시) | "oidc"
+      session_ttl: "12h"           # oidc 기본 12h, password 기본 720h
+      oidc:
+        issuer: "https://auth.betterax.net"
+        client_id: "zip-viewer"    # 필수. uni-auth 등록값
+        audience: "https://library.betterax.net/api"   # 필수. 등록값
+        redirect_url: "https://library.betterax.net/api/auth/oidc/callback"   # 필수. 등록값(base_path ""일 때)
+        post_logout_redirect_url: ""   # 선택. 기본값 빈 값(§2.12 운영 주의)
+        allowed_subs: []
+        admin_subs: []             # allowed_subs의 부분집합
+        legacy_owner_sub: ""       # 선택. §2.14
+    ```
+
+    기동 실패(exit 2): `mode: oidc`인데 `issuer`·`client_id`·`audience`·`redirect_url` 중 하나가 비었을 때, `issuer`나 `redirect_url`이 `https://`가 아닐 때, `post_logout_redirect_url`이 있는데 `https://`가 아닐 때, `redirect_url`의 경로가 `{base_path}/api/auth/oidc/callback`이 아닐 때, `password`·`password_hash`와 `mode: oidc`를 함께 줬을 때, `admin_subs`가 `allowed_subs` 밖일 때, `legacy_owner_sub`가 있는데 `allowed_subs` 밖일 때, oidc 모드의 `session_ttl`이 `24h`보다 길 때(짧은 TTL이 Q3의 전제다), 모르는 `mode` 값일 때.
+    **루프백 http 예외.** `issuer`·`redirect_url`·`post_logout_redirect_url`은 호스트가 `127.0.0.1`·`::1`·`localhost`일 때만 `http://`를 받는다(uni-auth의 `dev_mode` 루프백 예외와 같은 모양). 테스트와 합성 e2e가 TLS 없이 가짜 공급자로 실제 바이너리를 돌리기 위한 것이다. 같은 출처 검사는 이때도 `redirect_url`의 출처로 한다. 운영 설정은 https다. `password`·`password_hash`·`session_key_file`은 password 모드만 쓴다.
+    **세 키는 코드 기본값이 없다(설정 파일에 적어야 한다).** 운영 값은 uni-auth 등록(2026-11-09, uni-auth 커밋 c2fe475, 기록 `docs/progress/2026-11-09T02-17-19+0900--e74-uni-auth-tunnel-env.md`)으로 확정됐다: `client_id = zip-viewer`, `redirect_url = https://library.betterax.net/api/auth/oidc/callback`(운영 `base_path`는 빈 값), `audience = https://library.betterax.net/api`. 클라이언트는 public·PKCE다. 등록된 scope는 `openid`·`offline_access`지만 요청은 `scope=openid`만 한다(§2.5, §2.7: refresh token을 받지 않는다). `base_path`를 바꾸면 `redirect_url`도 바뀌므로 uni-auth 등록을 고쳐야 한다. 등록 항목은 `client_id`·`name`·`redirect_uris`·`post_logout_redirect_uris`(쓸 때)·`audiences`·`scopes`(`openid`)다. 등록은 uni-auth에 쓰는 일이라 따로 승인받는다.
+20. **HTTP 계약 — 개정 A-20.** 새 끝점: `GET /api/auth/oidc/start`, `GET /api/auth/oidc/callback`(302 또는 서버 렌더 HTML), `POST /api/auth/oidc/end-session`(302). 셋 다 `/api/auth/*` 인증 예외에 든다.
+    바뀌는 것:
+    - `GET /api/auth/status`에 `mode: "none" | "password" | "oidc"`, `user?: {sub: string, is_admin: boolean}`(oidc 모드에서 인증됐을 때), `end_session_available: boolean`을 더한다.
+    - oidc 모드의 `POST /api/auth/login`은 `400 bad_request` + `detail.reason: "oidc_mode"`다. 경로를 지우면 405·404가 되어 "기능 꺼짐"과 "옛 서버"를 구별할 수 없다.
+    - `403 forbidden`의 `detail.reason`에 `not_allowed`·`admin_only`·`reauth_required`·`cross_origin`, `401 unauthorized`의 `detail.reason`에 `session_expired`를 더한다. 새 에러 코드는 없다.
+    - `Settings.server`에 `auth_mode`를 더한다. 서버 경로 필드(`server.config_path`·`Root.path`·`CacheUsage.cache_dir`·`Root.last_scan_error`)는 §2.10대로 채운다.
+    - 세션이 필요한 응답의 `Cache-Control`은 `public` 대신 `private`다(§2.18). 세션 없는 `/api/health?verbose=1`은 `verbose`가 없다.
+    - `POST /api/auth/logout`은 폼 POST에 `200` 완료 화면, 그 밖에는 `204`다(§2.12).
+    - 진행률을 담는 응답은 oidc 모드에서 요청한 사용자의 값이다. 모양은 같다.
+    - 쿠키 `shelf_sid`·`shelf_login`(oidc 모드).
+    - **arch §7.8의 `Settings` TS 블록과 `web/src/api/types.ts`의 `Settings`·`AuthStatus`는 Go 구조체를 고치는 커밋(U-B)에서 함께 고친다.** contractcheck가 arch 블록·types.ts·Go 태그를 서로 대조하므로(`scripts/contractcheck/fields.go`), 어느 한쪽만 먼저 고치면 게이트가 빨개진다. U-B가 types.ts의 이 두 타입을 고치고, U-D는 그 타입을 쓴다. 그때까지 정본은 arch §7.8·§7.12의 A-20 절이다.
+21. **구현 제약.** 새 Go 모듈을 들이지 않는다. EdDSA 검증은 `crypto/ed25519`, JWT·JWKS 파싱은 `encoding/json`으로 한다(EdDSA 하나만 받으므로 범용 JOSE 라이브러리가 필요 없다). `auth.db`는 이미 쓰는 `modernc.org/sqlite`다. CGO 없음, 릴리스 크기 예산은 그대로다. 테스트는 테스트용 Ed25519 키로 토큰을 발급하는 가짜 OIDC 공급자(`httptest`)로 하고, 실제 uni-auth를 쓰지 않는다.
+
+### 3. 기각한 대안
+
+- **로그인한 uni-auth 사용자 누구나 허용.** 공개 가입이라 가입자 누구나 컬렉션 전체를 본다.
+- **uni-auth 서비스 역할(`<client_id>:reader`)로 허용.** 문서상 정석이지만 역할을 부여하는 API가 아직 없다. 생기면 허용 목록의 대안으로 다시 판정한다.
+- **전역 `platform_admin`을 관리자로 인정.** 플랫폼 관리자가 서재 관리자일 이유가 없고, 설정만 보고 관리자를 알 수 없게 된다.
+- **비밀번호와 OIDC 병행.** 로그인 경로가 둘이고, 비밀번호 사용자에게 사용자 키가 없다.
+- **무상태 HMAC 쿠키에 `sub`·관리자 여부를 싣기.** 즉시 차단·서버 측 로그아웃·ID 토큰 보관이 안 된다. 같은 키로 서명한 다른 모드의 쿠키가 통과할 수 있다.
+- **세션을 user.db에 두기.** 지워도 되는 데이터와 잃으면 안 되는 데이터가 한 파일에 섞인다.
+- **refresh token 보관(15분마다 갱신).** 회전과 재사용 탐지(재사용하면 토큰 패밀리 전체 폐기) 때문에 동시 갱신을 직렬화해야 하고, 토큰을 저장해야 한다.
+- **표지·시리즈 방향을 사용자별로.** 컬렉션의 성질이고 가족이 함께 고친다(Q8). 서버 선생성과 캐시 키(E-69 §2.7)도 사용자 수만큼 는다.
+- **내보내기 형식을 `/3`으로 올리기.** 모양이 그대로이므로 옛 서버가 새 파일을 거절하게 만들 이유가 없다.
+- **LAN 전용 https(01:4x 승인안의 Q9).** 사용자가 01:5x에 공개 터널(`library.betterax.net`)로 바꿨다. 그래서 공개 노출의 대가(터널 활성화 관문, 세션 없는 표면의 명시, 터널 경유 응답 시간 측정)를 §2.18에 둔다.
+- **`CF-Connecting-IP`로 IP별 제한.** 그 헤더를 붙일 수 있는 출발지를 제한하는 키가 없으면 누구나 꾸밀 수 있다.
+- **계정 삭제 webhook 처리.** 수신 끝점과 서명 검증이 새로 필요하고 uni-auth 쪽도 P1 기능이다. 허용 목록 제거로 충분하다.
+
+### 4. 검증
+
+- 문서 판정이다. 코드는 바뀌지 않았다.
+- 초안 인용 126건을 uni-auth 6fc19d2와 zip-viewer 22af509에 대조했다(초안 b절). 초안 독립 리뷰 1회(20건 수용)가 초안 끝 "리뷰" 절에 있다.
+- 판정·개정 문서 독립 리뷰 1회(서브에이전트 opus, effort high, 2026-11-09): 높음 2(공유 캐시의 `public` 응답, 비상 경로와 터널), 중간 7, 낮음 12. 반영: 높음 둘(§2.18 `private`·공개 URL 확인, §2.2 터널 먼저 끊기), 중간 여섯(§2.12 로그아웃, §2.10 경로 필드, §2.13 공유 표지 방향, §2.4 `__Host-` 쿠키, §2.19 루프백 http 예외, §2.20 types.ts는 U-B), 낮음 열둘(콜백 순서·재시도, `reauth=1` 경계, 참조 오류, 없는 `/api/roots/browse`, v4 열, `return`의 `/api/`, intent 해석, prd §7.1, `legacy_owner_sub`·`session_ttl` 검사, arch §7.4, impl-plan RAR 행 기록). 반영하지 않음: `trusted_proxy_headers`를 기동 실패로 막자는 지적 — Commander 지시(2026-11-09, LAN 리버스 프록시 배치를 막지 않는다)에 따라 경고와 공개 금지 조건으로 둔다.
+- `make lint` 0(contractcheck 48 agree). impl-plan §0.3의 A-20 행을 지우면 contractcheck가 `AMENDMENT A-20 has no row`로 실패하는 것을 확인했다.
+- 구현 검증(가짜 공급자 테스트, 보안 회귀, 합성 e2e, 크기)은 U-B~U-E가 이 절에 더한다.
+
+### 5. 바뀐 것
+
+- 문서: intent.md(핵심 가치 5의 예외, 사용자 승인, 경계 표), prd(NFR-SEC-002, NFR-OPS-002, §7.1·§7.2, §9 3차), arch(A-20: §3.2, §3.6, §5.3, §7.2, §7.4, §7.8, §7.11, §7.12, §7.13, §8.2), impl-plan(§0.3 A-20, §1.3). 같은 커밋에서 impl-plan §1.3의 RAR 행을 D-70·D-71·D-72에 맞게 고쳤다(배정 지시, E-74와는 무관한 낡은 문장).
+- 코드: 아직 없다. 작업 U-B(인증 코어), U-C(user.db v4·사용자별 저장소), U-D(SPA), U-E(e2e·마감), U-R(uni-auth 클라이언트 등록)이 `docs/status/work-plan.md`에 있다.
+- 호환: 설정에 `mode`가 없으면 지금과 같다. v4 user.db는 옛 빌드가 열지 못한다. oidc 모드에서 쌓인 진행률은 `shelf auth restore-owner` 없이는 password 모드에서 보이지 않는다.

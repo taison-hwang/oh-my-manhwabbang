@@ -304,6 +304,11 @@ server:
   shutdown_grace: "10s"      # duration.                default 10s
   trusted_proxy_headers: false  # honour X-Forwarded-Proto / -For when behind a
                                 #   reverse proxy.      default false
+                                #   AMENDMENT A-20 (ruling E-74 §2.5): keep it false in
+                                #   oidc mode. It trusts the headers from any source, so a
+                                #   public server that enables it lets anyone forge the
+                                #   per-IP limit's key. Behind the Cloudflare tunnel every
+                                #   request may share one source address; that is accepted.
   allow_root_editing: false  # AMENDMENT A-11 (ruling E-26).  default false.
                              #   Lets POST /api/roots and DELETE /api/roots/{name}
                              #   (§7.4) add and remove entries in the `roots:` list
@@ -417,12 +422,28 @@ reader:                      # server-side DEFAULTS; the user can override them
   theme: "system"            # "light" | "dark" | "system"
 
 auth:                        # NFR-SEC-002. Omit the whole block to disable auth.
-  password: ""               # plaintext; hashed with bcrypt at startup, never
-                             #   stored. Prefer password_hash.
-  password_hash: ""          # bcrypt hash, e.g. from `shelf hash-password`
-  session_ttl: "720h"        # 30 days
-  session_key_file: ""       # default <data_dir>/session.key, 32 random bytes,
-                             #   created 0600 on first boot
+  mode: "password"           # AMENDMENT A-20 (ruling E-74). "password" (default when
+                             #   omitted) | "oidc". One or the other, never both.
+  password: ""               # password mode only. plaintext; hashed with bcrypt at
+                             #   startup, never stored. Prefer password_hash.
+  password_hash: ""          # password mode only. bcrypt hash, e.g. from `shelf hash-password`
+  session_ttl: "720h"        # 30 days in password mode; default "12h" in oidc mode (E-74 §2.7)
+  session_key_file: ""       # password mode only. default <data_dir>/session.key,
+                             #   32 random bytes, created 0600 on first boot
+  oidc:                      # AMENDMENT A-20 (ruling E-74 §2.19). oidc mode only.
+    issuer: "https://auth.betterax.net"    # uni-auth. Discovery = issuer + /.well-known/openid-configuration
+    client_id: ""            # required. Production: "zip-viewer" (registered with uni-auth, E-74 §2.19)
+    audience: ""             # required. Production: "https://library.betterax.net/api"
+    redirect_url: ""         # required, https (http only for a loopback host, E-74 §2.19),
+                             #   path {base_path}/api/auth/oidc/callback.
+                             #   Production: "https://library.betterax.net/api/auth/oidc/callback"
+                             #   Never built from the Host header.
+    post_logout_redirect_url: ""   # optional, https. Default empty: end-session stops at uni-auth's own page.
+                             #   Set it only once uni-auth honours it (E-74 §2.12 operating note).
+    allowed_subs: []         # uni-auth `sub`s allowed in. Empty = nobody.
+    admin_subs: []           # must be a subset of allowed_subs
+    legacy_owner_sub: ""     # optional. Inherits the single-user data once (E-74 §2.14)
+                             # Startup fails (exit 2) on any rule of E-74 §2.19.
 
 log:
   level: "info"              # debug | info | warn | error       NFR-OPS-005
@@ -920,6 +941,43 @@ CREATE TABLE IF NOT EXISTS pending_relocations (
    correct and is why the rung is additive.
    **AMENDMENT A-19 (ruling E-69):** `book_covers` and `series_prefs` are the next rung, `'2'` → `'3'`
    (`{to: 3, sql: schemaV3}`), under the same rule: creates only.
+   **AMENDMENT A-20 (ruling E-74 §2.13):** the per-user tables below are the next rung, `'3'` → `'4'`
+   (`{to: 4, sql: schemaV4}`), under the same rule: creates only.
+
+#### Per-user data and `auth.db` — AMENDMENT A-20 (ruling E-74)
+
+Only `auth.mode: oidc` uses the per-user tables. With no auth or in password mode the tables above are
+read and written exactly as before. In oidc mode every read and write of progress, book prefs, settings and
+view state is keyed by the caller's `sub`, including the series list's `progress` join, its sort and
+`scope`, `/api/continue` and `BookSummary.progress`. `series_seen`, `book_covers`, `series_prefs` and
+`pending_relocations` stay shared. Post-scan cleanup (E-48–E-50, E-69 §2.11–§2.14) applies its rules to
+`user_progress` and `user_book_prefs` for every user.
+
+```sql
+-- schema_version '4' (A-20). The column lists follow progress / book_prefs above, with user_sub
+-- leading the primary key. Exact DDL lives in internal/userdata/schema.go.
+CREATE TABLE IF NOT EXISTS users (user_sub TEXT PRIMARY KEY, first_seen_at INTEGER NOT NULL,
+                                  last_login_at INTEGER NOT NULL);   -- no name, no email
+CREATE TABLE IF NOT EXISTS user_progress   (user_sub TEXT NOT NULL, book_id TEXT NOT NULL, /* progress columns */
+                                            PRIMARY KEY (user_sub, book_id));
+CREATE TABLE IF NOT EXISTS user_book_prefs (user_sub TEXT NOT NULL, book_id TEXT NOT NULL, /* book_prefs columns */
+                                            PRIMARY KEY (user_sub, book_id));
+CREATE TABLE IF NOT EXISTS user_settings   (user_sub TEXT NOT NULL, /* settings columns, updated_at included */
+                                            PRIMARY KEY (user_sub, key));
+CREATE TABLE IF NOT EXISTS user_view_state (user_sub TEXT NOT NULL, /* view_state columns, updated_at included */
+                                            PRIMARY KEY (user_sub, key));
+-- plus the continue-reading index of progress, with user_sub leading
+```
+
+* **Legacy owner (E-74 §2.14).** When `auth.oidc.legacy_owner_sub` first logs in, `progress`, `book_prefs`,
+  `settings` and `view_state` are copied into that user's `user_*` rows once, and
+  `meta.legacy_migrated_to = <sub>` records it. The old tables are not deleted. `shelf auth restore-owner
+  --sub <sub>` (server stopped) copies one user's rows back; on a shared key the newer `updated_at` wins and a
+  row without one loses to the user's.
+* **`<data_dir>/auth.db`** (mode `0600`, oidc mode only) holds `oidc_sessions(id_hash PRIMARY KEY, user_sub,
+  uni_sid, id_token, created_at, last_seen_at, reauth_at, expires_at, logged_out_at)`. It is not authored
+  data: deleting it logs everybody out and loses nothing else, so it is a separate file from `user.db` and no
+  transaction spans the two. Rules: E-74 §2.4, §2.7, §2.12.
 
 ### 3.7 Connecting the two databases
 
@@ -1546,6 +1604,13 @@ thumbnail  "t1-<thumb hash>"                                        // the hash 
 
 **FR-SRV-008**: original bytes only. There is no resize, re-encode or EXIF stripping on `/pages/{n}` — the response body is byte-identical to the archive member, proven by the CRC-32 check above.
 
+**AMENDMENT A-20 (ruling E-74 §2.18).** In `auth.mode: oidc` every response that needs a session says `private`
+where this section and §2 say `public` — `private, max-age=31536000, immutable` for versioned pages, thumbnails,
+covers and hashed assets, `private, max-age=60, must-revalidate` for the unversioned forms — and keeps every
+other directive. The server is published through a Cloudflare tunnel, and a shared cache does not key on the
+cookie: a `public` response one user fetched could be served to a visitor with no session. No auth and password
+mode are unchanged.
+
 ### 5.4 Thumbnail generation (FR-THM-001..008)
 
 Pipeline per thumbnail: acquire handle → open entry → `io.ReadAll` capped at `thumbnails.max_source_bytes` → `image.Decode` → `imaging.Resize(img, w, 0, imaging.Lanczos)` (skipped when the source is already narrower than `w`) → `jpeg.Encode` at `thumbnails.quality` → write `<path>.tmp` → `os.Rename` (atomic publish; concurrent readers never see a partial file).
@@ -1778,8 +1843,12 @@ interface ErrorResponse {
 type ErrorCode =
   | "bad_request"        // 400  malformed input
   | "unauthorized"       // 401  auth enabled and the session is missing/expired
+                         //        -- AMENDMENT A-20: detail.reason "session_expired" when an
+                         //        oidc session row exists but has expired (E-74 §2.7)
   | "forbidden"          // 403  understood, well-formed, and refused by configuration
-                         //        -- AMENDMENT A-11
+                         //        -- AMENDMENT A-11. AMENDMENT A-20 (ruling E-74): in oidc
+                         //        mode also refused by identity; detail.reason is one of
+                         //        "not_allowed", "admin_only", "reauth_required", "cross_origin"
   | "not_found"          // 404  unknown id, or page out of range
   | "conflict"           // 409  e.g. a scan is already running
   | "stale_version"      // 409  ?v= does not match the book's current cv
@@ -1983,7 +2052,7 @@ interface PageInfo {
 
 | | |
 |---|---|
-| `GET /api/health` | `200 {ok: true, version: string, commit: string, started_at: Unix, uptime_ms: number, pdf_enabled: boolean, avif_enabled: boolean}`. Add `?verbose=1` for pool counters. Never requires auth. **AMENDMENT A-15 (ruling E-57):** of the `verbose` block, `verbose.thumbs.{cover_depth,page_depth,active,inflight}` is contract — four non-negative integers read as **one snapshot**, and **all four zero means that, at the snapshot, no thumbnail job is queued, being decoded, or still being written** — every job the service was handed has finished, successfully or not. Whether a given thumbnail file exists is for the caller to check (the E2E gate does). The E2E gate waits on exactly this; the names are checked across this line, `ThumbCounter` and `scripts/e2e-assert.py` by `scripts/contractcheck`. Everything else under `verbose` stays diagnostics and may change without an amendment, and the plain body never carries `verbose`. |
+| `GET /api/health` | `200 {ok: true, version: string, commit: string, started_at: Unix, uptime_ms: number, pdf_enabled: boolean, avif_enabled: boolean}`. Add `?verbose=1` for pool counters. Never requires auth. **AMENDMENT A-15 (ruling E-57):** of the `verbose` block, `verbose.thumbs.{cover_depth,page_depth,active,inflight}` is contract — four non-negative integers read as **one snapshot**, and **all four zero means that, at the snapshot, no thumbnail job is queued, being decoded, or still being written** — every job the service was handed has finished, successfully or not. Whether a given thumbnail file exists is for the caller to check (the E2E gate does). The E2E gate waits on exactly this; the names are checked across this line, `ThumbCounter` and `scripts/e2e-assert.py` by `scripts/contractcheck`. Everything else under `verbose` stays diagnostics and may change without an amendment, and the plain body never carries `verbose`. | **AMENDMENT A-20 (ruling E-74 §2.18):** in `auth.mode: oidc` a request without a session gets no `verbose` even with `?verbose=1`; the other fields are unchanged.
 | `GET /api/roots` | `200 {items: Root[]}` — from the **index**, so it also lists a root that has left the configuration (`available: false`), minus any root removed by `DELETE` in this process's lifetime. **AMENDMENT A-11 / R2**: plus one `pending: true` row per root that is in the configuration **file on disk** with no index row yet — including one whose name this process removed, if something has since put an entry back (see §7.4). |
 | `POST /api/roots` | `201 RootEntry` — **AMENDMENT A-11** (ruling E-26). Adds an entry to the `roots:` list of the configuration file, and — **AMENDMENT A-12** (ruling E-40) — opens it into the running server and scans it. |
 | `DELETE /api/roots/{name}` | `204` — **AMENDMENT A-11**. Removes one entry from that list, purges its index rows (R1), and — **AMENDMENT A-13** (ruling E-41) — drops it from A-12's added set and moves the adopted digest back. It still closes no handle. |
@@ -2804,6 +2873,12 @@ interface Settings {
 ```
 `PUT` accepts only the user-mutable keys; sending a `server.*` key is `400 bad_request`. Every closed-set key above — `reading_direction`, `display_mode`, `fit_mode`, `theme`, `library_view`, `library_sort`, `library_order` — rejects an out-of-set value with `400 bad_request` and `detail.field`. None of them is coerced, and none is stored and then silently ignored on the way out (ruling E-15). `library_scope` is the one deliberate exception: it may be a root name, so it is validated as non-empty, ≤128 bytes and free of control characters instead. Roots are **not** editable *here* — this endpoint never touches `roots[]`, and both new `server.*` booleans are rejected on `PUT` by the same whole-block rule as every other key in the mirror. **Amendment A-11 (ruling E-26) changed where roots are editable, not whether this endpoint edits them**: `POST /api/roots` and `DELETE /api/roots/{name}` (§7.4) write the configuration file, gated by `server.allow_root_editing`, and OQ-3 in §12 records the 2026-07-30 reversal alongside the read-only answer it replaced. `server.config_path` (A-10) remains what makes the file findable, and is now also what the client joins to a `500` from §7.4, whose message deliberately names no path (§8.4).
 
+**AMENDMENT A-20 (ruling E-74).** `Settings.server` gains `auth_mode: "none" | "password" | "oidc"`. In oidc mode
+the user-mutable keys are the caller's own (`user_settings`, §3.6). Server paths are filled for an admin only:
+a non-admin gets `""` for `server.config_path`, `Root.path` (§7.4) and `CacheUsage.cache_dir` (§7.9), and `null`
+for `Root.last_scan_error` (E-74 §2.10). The shapes do not change. The TypeScript block above gains the field in the implementing commit, together
+with `web/src/api/types.ts` and the Go struct, because contractcheck compares the three (E-74 §2.20).
+
 ### 7.9 Cache (FR-THM-008)
 
 ```
@@ -2965,6 +3040,12 @@ Export writes an empty array as `[]`, never `null`. A server from before A-19 re
   region rules of `PUT /api/books/{bid}/cover` (§7.6), with the same no-tolerance comparison. One row that fails
   is `400 bad_request` for the whole file, and nothing is written: the import is one transaction.
 
+**AMENDMENT A-20 (ruling E-74 §2.15) — scope in oidc mode.** The format stays `shelf-progress/2`; the shape does
+not change, so neither does the literal. In oidc mode `items` and `prefs` are the caller's rows, and import
+writes the caller's rows; the file carries no user key, so it can be moved to another user. `covers` and
+`series_prefs` are shared and anyone allowed in may change them (E-74 Q8), so they are exported and merged by
+the A-19 rules above unchanged.
+
 ### 7.12 Auth (NFR-SEC-002)
 
 ```
@@ -2973,6 +3054,36 @@ POST /api/auth/login   body {password: string}  -> 204 + Set-Cookie   |  401 una
 POST /api/auth/logout  -> 204
 ```
 When auth is enabled, every other `/api/*` route and every static asset requires the session cookie and returns `401 unauthorized` without it. The SPA calls `/api/auth/status` first and renders a login screen when `auth_required && !authenticated`.
+
+**AMENDMENT A-20 (ruling E-74) — `auth.mode: oidc` (uni-auth).** Normative text is E-74 §2; this is the wire.
+
+```
+GET  /api/auth/status              -> 200 {auth_required, authenticated, mode, end_session_available, user?}  // never 401
+POST /api/auth/login               -> 400 bad_request, detail.reason "oidc_mode"      (oidc mode only)
+POST /api/auth/logout              -> 204 | 200 server-rendered page for a form POST (oidc: marks the row logged out, E-74 §2.12)
+GET  /api/auth/oidc/start?return=<path>[&reauth=1]   -> 302 to uni-auth  |  429 rate_limited
+GET  /api/auth/oidc/callback?code&state              -> 302 to return   |  server-rendered error / 403 page
+POST /api/auth/oidc/end-session                      -> 302 to uni-auth end_session_endpoint | completion page
+```
+* `GET /api/auth/status` gains `mode: "none" | "password" | "oidc"`, `end_session_available: boolean` (oidc mode
+  and the discovery document has `end_session_endpoint`) and, in oidc mode with a session,
+  `user: {sub: string, is_admin: boolean}`. The two existing fields keep their meaning. The TypeScript type in
+  `web/src/api/types.ts` changes in the implementing commit (E-74 §2.20).
+* Login is the authorization code flow with PKCE (S256) and `scope=openid`; the server is the BFF and keeps the
+  tokens. `state` is bound to the starting browser by the `shelf_login` cookie. Token checks, the `prompt=none`
+  re-authorization, the 15-minute re-authentication for admin writes, the allow list and the admin list are
+  E-74 §2.5–§2.9; the authorization table is E-74 §2.10.
+* Cookies in oidc mode: the session id (`HttpOnly; Secure; SameSite=Lax`) and the 10-minute pre-auth cookie.
+  With an empty `base_path` they are `__Host-shelf_sid` and `__Host-shelf_login` (`Path=/`, no `Domain`); with a
+  `base_path` they are `shelf_sid` (`Path={base_path}/`) and `shelf_login` (`Path={base_path}/api/auth/oidc/`).
+  Password mode keeps `shelf_session`. Neither mode accepts the other's cookie. Both logout buttons are
+  top-level form POSTs, because end-session redirects to another origin.
+* Errors: `403 forbidden` with `detail.reason` `not_allowed` | `admin_only` | `reauth_required` | `cross_origin`;
+  `401 unauthorized` with `detail.reason` `session_expired`. No new error code.
+* What answers without a session in oidc mode is closed and listed in E-74 §2.18: `/api/health` (no `verbose`
+  without a session), `/api/auth/status`, `/api/auth/login`, `/api/auth/logout`, and the three
+  `/api/auth/oidc/*` routes, matched exactly. Every static asset needs a session; a browser navigation gets the
+  server-rendered login page, which loads no asset.
 
 ### 7.13 Endpoint summary against prd 6.3
 
@@ -2992,6 +3103,7 @@ When auth is enabled, every other `/api/*` route and every static asset requires
 | `GET/PUT /api/settings` | §7.8 | as specified |
 | — | `/api/health`, `/api/continue`, `/api/books/{bid}/prefs`, `DELETE progress`, `/api/scan/cancel`, `/api/scan/log`, `/api/cache/*`, `/api/progress/*`, `/api/auth/*`, `POST /api/series/{sid}/rescan` | **added** — each required by an FR that prd 6.3's overview table did not enumerate |
 | — | `GET`/`PUT`/`DELETE /api/books/{bid}/cover`, `PUT /api/series/{sid}/prefs` | **added by amendment A-19** (ruling E-69) — the 권 표지 and the series reading direction, by the user's instruction of 2026-10-29; prd §9 has no such feature |
+| — | `GET /api/auth/oidc/start`, `GET /api/auth/oidc/callback`, `POST /api/auth/oidc/end-session` | **added by amendment A-20** (ruling E-74) — uni-auth login for prd §9's multi-user accounts, approved 2026-11-09 |
 
 ---
 
@@ -3033,6 +3145,25 @@ This also settles `scan.follow_symlinks: false` — a symlink out of the root is
 * Token = `base64url(payload) + "." + base64url(HMAC-SHA256(key, payload))`, `payload = {"iat":…,"exp":…,"v":1}` JSON. Verified with `hmac.Equal`. The key is 32 random bytes at `<data_dir>/session.key`, mode `0600`, generated on first boot. Deleting it invalidates every session.
 * `SameSite=Lax` plus the fact that **no state-changing endpoint is a `GET`** (all mutations are `POST`/`PUT`/`DELETE`, which `Lax` does not send cross-site) removes the need for CSRF tokens in v1.
 * Auth is **all-or-nothing**: with it enabled, static assets are protected too, so an unauthenticated visitor cannot even enumerate the SPA's routes. `/api/health` and `/api/auth/*` are the only exemptions.
+
+**AMENDMENT A-20 (ruling E-74) — oidc mode.** The bullets above are password mode. In oidc mode:
+* Sessions are **server-side** in `auth.db` (§3.6): the cookie `shelf_sid` holds a random id only, and allow-list
+  and admin membership are decided on **every request** from the current configuration, never carried in the
+  cookie. `Secure` is always set, because the mode requires https (the public address is
+  `https://library.betterax.net` through a Cloudflare tunnel, E-74 §2.18).
+* **Same-origin check.** Every `POST`/`PUT`/`DELETE` must carry an `Origin` equal to the origin of
+  `auth.oidc.redirect_url`, or, with no `Origin`, `Sec-Fetch-Site: same-origin`; otherwise `403 forbidden`,
+  `detail.reason: "cross_origin"`, before authentication. `SameSite=Lax` alone does not stop a neighbouring
+  service on the same registrable domain.
+* **One structural `GET` exception.** `GET /api/auth/oidc/callback` creates a session, because the identity
+  provider returns the browser with a top-level `GET`. It is bound to the `shelf_login` cookie and the one-time
+  `state` (E-74 §2.6), which is what the no-`GET`-mutation rule was protecting. `GET /api/auth/oidc/start` only
+  creates a short-lived in-memory pre-auth entry, rate-limited (E-74 §2.5). Logout and end-session are `POST`.
+* The exemption list grows by exactly the three `/api/auth/oidc/*` paths, still matched exactly, not by prefix.
+* The tunnel is connected only after the checks of E-74 §2.18 pass on the oidc-mode server. Deployment baseline:
+  one oidc-mode instance bound to `127.0.0.1`, no unauthenticated LAN instance. In oidc mode a non-loopback
+  `server.listen` or `trusted_proxy_headers: true` logs a `warn` at startup; neither fails startup, so a LAN
+  reverse proxy on another machine stays possible.
 
 ### 8.3 Base path (NFR-SEC-003)
 
