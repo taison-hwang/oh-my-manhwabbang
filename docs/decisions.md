@@ -4592,7 +4592,7 @@ impl-plan §1.3도 같은 내용을 적었다. 그래서 백업을 만들려면 
    - 서버 시계가 ±60초 안에 맞아야 토큰 검증이 된다(NTP). 운영 문서에 적는다.
 7. **세션 만료와 재확인.** oidc 모드의 `auth.session_ttl` 기본값은 `12h`다(password 모드는 지금처럼 `720h`). 세션은 마지막 인가 시각부터 `session_ttl`이 지나면 만료된다.
    - 매 요청: `shelf_sid` 행이 있는가 → 만료 전인가 → `user_sub`가 현재 `allowed_subs`에 있는가. 행이 없으면 `401 unauthorized`다. 만료됐으면 `401 unauthorized` + `detail.reason: "session_expired"`이고 행은 남긴다. 허용 목록에 없으면 행을 지우고 `403 forbidden` + `detail.reason: "not_allowed"`다. `last_seen_at`은 1분에 한 번만 쓴다.
-   - SPA는 401을 받으면 `start?return=<현재 경로>`로 top-level 이동한다. 서버는 쿠키가 가리키는 만료 행이 있을 때만 `prompt=none`을 붙인다.
+   - SPA는 `detail.reason`이 `session_expired`인 401을 받으면 `start?return=<현재 경로>`로 top-level 이동한다. 서버는 쿠키가 가리키는 만료 행이 있을 때만 `prompt=none`을 붙인다. reason 없는 401(로그아웃한 세션, 쿠키 없음, 다른 탭의 로그아웃)은 자동 재인가하지 않는다. `{base_path}/`로 top-level 새로고침해 서버가 그린 로그인 화면을 보이고, 사용자가 직접 로그인한다. 자동 재인가가 §2.12의 로컬 로그아웃("다른 서비스에는 계속 로그인되어 있습니다")을 조용히 되돌리지 않게 하기 위해서다(U-D 검증 지적, Commander 판정 2026-11-09).
    - `login_required`·`consent_required`·`interaction_required`가 오면 `prompt` 없는 요청으로 **한 번만** 폴백한다. 폴백했다는 표시는 사전 인증 항목에 둔다. 폴백 뒤의 오류는 로그인 화면에 보인다.
    - `prompt=none`이 성공하면 새 세션 행을 만들고 옛 행을 지운다. `reauth_at`은 옮기지 않는다.
    - 만료된 행은 만료 30일 뒤 지운다(정리는 기동 때와 하루 한 번). 쿠키 `Max-Age` 30일이 이 기간과 같다.

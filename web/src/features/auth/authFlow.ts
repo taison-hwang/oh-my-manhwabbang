@@ -1,6 +1,6 @@
 import type { ApiError } from '../../api/errors'
 import type { AuthStatus } from '../../api/types'
-import { authOidcStartUrl } from '../../api/urls'
+import { authOidcStartUrl, getBasePath } from '../../api/urls'
 
 /**
  * The browser side of E-74's oidc session handling (§2.7, §2.9).
@@ -18,6 +18,7 @@ export type AuthNotice =
 export type AuthAction =
   | { kind: 'none' }
   | { kind: 'redirect'; url: string }
+  | { kind: 'navigate'; url: string }
   | { kind: 'reload' }
   | { kind: 'notice'; notice: AuthNotice }
 
@@ -86,6 +87,10 @@ export interface AuthContext {
 export function decideAuthAction(error: ApiError, ctx: AuthContext): AuthAction {
   if (error.status === 401) {
     if (ctx.status?.mode !== 'oidc') return { kind: 'none' }
+    // Without a reason the session was ended (logged out, no cookie, another tab); signing
+    // in again unasked would undo a local logout (E-74 §2.7), so the server's sign-in page
+    // is shown instead and the user presses its button.
+    if (error.reason !== 'session_expired') return { kind: 'navigate', url: `${getBasePath()}/` }
     if (redirectWouldLoop(ctx.returnTo, ctx.now, ctx.loopStore)) {
       return { kind: 'notice', notice: { kind: 'loop' } }
     }

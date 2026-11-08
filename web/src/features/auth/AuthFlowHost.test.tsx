@@ -89,6 +89,16 @@ describe('AuthFlowHost', () => {
     expect(assign).toHaveBeenCalledWith('/api/auth/oidc/start?return=%2Fseries%2Fs1%3Fpage%3D3')
   })
 
+  it('oidc 401 without a reason reloads the base path, once', async () => {
+    fail(401, 'unauthorized')
+    const { assign } = mount(oidc)
+    await Promise.all([hit(), hit()])
+    await waitFor(() => {
+      expect(assign).toHaveBeenCalledTimes(1)
+    })
+    expect(assign).toHaveBeenCalledWith('/')
+  })
+
   it('password-mode 401 does not navigate', async () => {
     fail(401, 'unauthorized')
     const { assign } = mount({ ...authStatus, authenticated: true, mode: 'password' })

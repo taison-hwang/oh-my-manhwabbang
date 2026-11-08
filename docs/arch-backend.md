@@ -3088,7 +3088,9 @@ interface AuthUser {            // AMENDMENT A-20 (ruling E-74): AuthStatus.user
   Password mode keeps `shelf_session`. Neither mode accepts the other's cookie. Both logout buttons are
   top-level form POSTs, because end-session redirects to another origin.
 * Errors: `403 forbidden` with `detail.reason` `not_allowed` | `admin_only` | `reauth_required` | `cross_origin`;
-  `401 unauthorized` with `detail.reason` `session_expired`. No new error code.
+  `401 unauthorized` with `detail.reason` `session_expired`. No new error code. The SPA re-authorizes automatically
+  only on `session_expired`; a 401 without a reason reloads `{base_path}/` so the server-rendered sign-in page shows
+  (E-74 §2.7).
 * What answers without a session in oidc mode is closed and listed in E-74 §2.18: `/api/health` (no `verbose`
   without a session), `/api/auth/status`, `/api/auth/login`, `/api/auth/logout`, and the three
   `/api/auth/oidc/*` routes, matched exactly. Every static asset needs a session; a browser navigation gets the

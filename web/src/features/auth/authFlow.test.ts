@@ -43,7 +43,18 @@ function err(status: number, reason?: string): ApiError {
 }
 
 describe('401', () => {
-  it('oidc: top-level redirect to start with the encoded current path', () => {
+  it('oidc 401 without a reason goes to the server sign-in page, not to start', () => {
+    setBasePath('/reader')
+    const action = decideAuthAction(err(401), {
+      status: oidc,
+      returnTo: '/reader/series/x',
+      now: 1,
+      loopStore: memoryStore(),
+    })
+    expect(action).toEqual({ kind: 'navigate', url: '/reader/' })
+  })
+
+  it('oidc session_expired: top-level redirect to start with the encoded current path', () => {
     const action = decideAuthAction(err(401, 'session_expired'), {
       status: oidc,
       returnTo: '/series/a b?page=2&x=1',
@@ -58,7 +69,7 @@ describe('401', () => {
 
   it('keeps the base path in the start URL', () => {
     setBasePath('/reader')
-    const action = decideAuthAction(err(401), {
+    const action = decideAuthAction(err(401, 'session_expired'), {
       status: oidc,
       returnTo: '/reader/',
       now: 1,
@@ -78,14 +89,14 @@ describe('401', () => {
   it('stops a repeat redirect to the same path inside the window', () => {
     const store = memoryStore()
     const ctx = { status: oidc, returnTo: '/series/x', loopStore: store }
-    expect(decideAuthAction(err(401), { ...ctx, now: 1000 }).kind).toBe('redirect')
-    expect(decideAuthAction(err(401), { ...ctx, now: 5000 })).toEqual({
+    expect(decideAuthAction(err(401, 'session_expired'), { ...ctx, now: 1000 }).kind).toBe('redirect')
+    expect(decideAuthAction(err(401, 'session_expired'), { ...ctx, now: 5000 })).toEqual({
       kind: 'notice',
       notice: { kind: 'loop' },
     })
     // Each blocked 401 renews the window, so a steady poll stays blocked.
-    expect(decideAuthAction(err(401), { ...ctx, now: 14_000 }).kind).toBe('notice')
-    expect(decideAuthAction(err(401), { ...ctx, now: 30_000 }).kind).toBe('redirect')
+    expect(decideAuthAction(err(401, 'session_expired'), { ...ctx, now: 14_000 }).kind).toBe('notice')
+    expect(decideAuthAction(err(401, 'session_expired'), { ...ctx, now: 30_000 }).kind).toBe('redirect')
   })
 })
 

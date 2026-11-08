@@ -54,7 +54,7 @@ export function AuthFlowHost({
         if (leaving.current) return
         const status = queryClient.getQueryData<AuthStatus>(queryKeys.auth.status)
         const action = decideAuthAction(error, { status, returnTo: returnTo(), now: now() })
-        if (action.kind === 'redirect') {
+        if (action.kind === 'redirect' || action.kind === 'navigate') {
           leaving.current = true
           assign(action.url)
         } else if (action.kind === 'reload') {
