@@ -15,5 +15,4 @@
 - 후속 후보: docs/impl-plan.md:277 RAR 문장이 D-71 이후 틀림.
 - 운영 메모: herdr-report는 herdr-check(약 13분)를 돌리는 무거운 명령이라 heavy.lock 아래서만 부른다. 보고 프로세스를 죽이면 자식 검사가 고아로 남으니 프로세스 묶음째 정리한다.
 | P-70 | P-70 | worker-3(t5h) | 진행 | 없음 | web-gates PASS, 13-gesture 진행률 정리 수정 뒤 e2e 재실행 |
-| F-1 | F-1 | worker-4(t3g) | 보완 | 없음 | 독립 검증 ISSUES(서체 고지·개수) → 1c0f236 보완, 검사 중 |
-| P-71b | P-71 | worker-4(t3g) | 대기 | F-1 | dec313a, 픽셀 기준 (나) 결정 |
+| P-71b | P-71 | worker-4(t3g) | 진행 | 없음 | F-1 병합 뒤 rebase → e2e → 울프가이 2장만 기준 갱신 → 검사 |
