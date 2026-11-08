@@ -13,3 +13,4 @@
 | U-R1 | U-R | main 528d61d. uni-auth 환경 확인(cloudflared·Hydra·:9909)과 클라이언트 zip-viewer 등록(201·projection ok·Hydra 대조), 기록 docs/progress/2026-11-09T02-17-19+0900--e74-uni-auth-tunnel-env.md. post_logout_redirect_uris Hydra 미투영(uni-auth 결함). 검사 PASS c2fe475 |
 | U-A | U-A | main 7486524. E-74 BINDING·A-20 확정, intent·prd·arch·impl-plan 개정(uni-auth 위임 다중 사용자, library.betterax.net 공개 터널, 배치 기준). 검사 PASS 5c81e4a(rebase 내용 동일) |
 | P-D | P-D | main 35496ca. E-70(제스처 최소안)·E-72(Docker 로컬) BINDING, intent 경계·impl-plan·arch·ui-spec 개정. 검사 PASS e713db8(rebase는 양쪽 살리기·E-74 문구만) |
+| P-71a·E-71 문서 | P-71 | main d0d669a. 실컬렉션 26,970 파일 측정 기록, E-71 BINDING(RAR 5 비solid·단일·비암호화, 7z·분할 제외, solid·암호화 거부). 검사 PASS f206372(rebase는 양쪽 살리기) |
