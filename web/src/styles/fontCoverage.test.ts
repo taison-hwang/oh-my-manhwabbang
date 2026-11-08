@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { brotliDecompressSync } from 'node:zlib'
 
@@ -181,5 +181,151 @@ describe('vendored CJK faces', () => {
         `${String(missing.length)} requested characters have no glyph in ${url}'s ${label} cmap`,
       ).toEqual([])
     }
+  })
+})
+
+/**
+ * F-1: every arrow the interface writes is drawn by a face this repo ships.
+ *
+ * The arrows are not in 고운바탕, and Archivo has only ↑ ↓, so until F-1 they
+ * fell through every stack to the system — Liberation Serif in one e2e round,
+ * a different face in the round that recorded the E-69 pixel baseline. The
+ * baseline flipped between the two with no change to this repo.
+ *
+ * "The stack leads with a vendored face" (hygiene.test.ts) could not see that:
+ * the lead was vendored, it just had no glyph. So this walks each stack the way
+ * the browser does, per character and per weight — a family with no
+ * `@font-face` is a system face and fails; a declared family whose
+ * `unicode-range` or cmap lacks the character is skipped — and requires the
+ * walk to end on a vendored file whose cmap actually has the glyph.
+ *
+ * The characters are not a list kept here: they are read out of the source,
+ * so a new arrow in a label is checked the day it is written.
+ */
+describe('arrows (F-1)', () => {
+  const SRC = resolve(process.cwd(), 'src')
+  const WEIGHTS = [400, 700] as const
+
+  function walk(dir: string): string[] {
+    return readdirSync(dir).flatMap((entry) => {
+      const path = join(dir, entry)
+      return statSync(path).isDirectory() ? walk(path) : [path]
+    })
+  }
+
+  /** Arrows (U+2190–U+21FF) written in source, outside comments. */
+  function writtenArrows(): Set<number> {
+    const out = new Set<number>()
+    for (const path of walk(SRC)) {
+      if (!/\.tsx?$/.test(path) || /\.test\.tsx?$/.test(path)) continue
+      const code = readFileSync(path, 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, ' ')
+        .replace(/(^|[^:'"`\\])\/\/.*$/gm, '$1')
+      for (const m of code.matchAll(/[←-⇿]/g)) out.add(m[0].codePointAt(0) ?? 0)
+    }
+    return out
+  }
+
+  interface Face {
+    family: string
+    weight: number
+    ranges: [number, number][] | null
+    url: string
+  }
+
+  function faces(): Face[] {
+    const css = readFileSync(join(STYLES, 'fonts.css'), 'utf8')
+    return (css.match(/@font-face\s*\{[^}]*\}/g) ?? []).map((block) => {
+      const range = /unicode-range:\s*([^;]+);/.exec(block)?.[1]
+      return {
+        family: /font-family:\s*'([^']+)'/.exec(block)?.[1] ?? '',
+        weight: Number(/font-weight:\s*(\d+)/.exec(block)?.[1] ?? 400),
+        ranges:
+          range === undefined
+            ? null
+            : range.split(',').map((part): [number, number] => {
+                const m = /U\+([0-9A-F]+)(?:-([0-9A-F]+))?/i.exec(part.trim())
+                const lo = parseInt(m?.[1] ?? '', 16)
+                return [lo, m?.[2] ? parseInt(m[2], 16) : lo]
+              }),
+        url: /url\('\.\.\/([^']+)'\)/.exec(block)?.[1] ?? '',
+      }
+    })
+  }
+
+  function stacks(): Map<string, string[]> {
+    const css = readFileSync(join(STYLES, 'tokens.css'), 'utf8')
+    const out = new Map<string, string[]>()
+    for (const m of css.matchAll(/--font-(heading|ui|seal|ja|mono):\s*([^;]+);/g)) {
+      const name = m[1] ?? ''
+      if (out.has(name)) continue
+      out.set(
+        name,
+        (m[2] ?? '').split(',').map((f) => f.trim().replace(/^['"]|['"]$/g, '')),
+      )
+    }
+    return out
+  }
+
+  const cmapCache = new Map<string, Set<number>[]>()
+  function cmaps(url: string): Set<number>[] {
+    let hit = cmapCache.get(url)
+    if (!hit) {
+      hit = woff2Cmaps(readFileSync(join(STYLES, '..', url))).map((t) => t.cps)
+      cmapCache.set(url, hit)
+    }
+    return hit
+  }
+
+  /** Where the browser's per-glyph fallback ends for `cp` at `weight`. */
+  function drawnBy(stack: string[], cp: number, weight: number, all: Face[]): string {
+    for (const family of stack) {
+      const declared = all.filter((f) => f.family === family)
+      if (declared.length === 0) return `system:${family}`
+      const claiming = declared.filter(
+        (f) => f.ranges === null || f.ranges.some(([lo, hi]) => lo <= cp && cp <= hi),
+      )
+      if (claiming.length === 0) continue
+      const face = claiming.find((f) => f.weight === weight)
+      if (!face) return `synthetic:${family}`
+      if (cmaps(face.url).every((t) => t.has(cp))) return `vendored:${face.url}`
+    }
+    return 'system:(end of stack)'
+  }
+
+  it('reads the arrows the source writes, and the five stacks that can draw them', () => {
+    const arrows = writtenArrows()
+    // L→R / R→L are on three screens; if this stops finding them, the scan
+    // broke and the walk below would pass on an empty set.
+    expect(arrows.has(0x2192)).toBe(true)
+    expect([...stacks().keys()].sort()).toEqual(['heading', 'ja', 'mono', 'seal', 'ui'])
+    // `<kbd>` reaches `--font-mono` only through Tailwind's preflight, which
+    // reads `fontFamily.mono`.
+    expect(readFileSync(resolve(process.cwd(), 'tailwind.config.ts'), 'utf8')).toMatch(
+      /mono:\s*'var\(--font-mono\)'/,
+    )
+  })
+
+  it('draws every one of them from a vendored file in every stack, at 400 and 700', () => {
+    const all = faces()
+    const wrong: string[] = []
+    for (const [name, stack] of stacks()) {
+      for (const cp of writtenArrows()) {
+        for (const weight of WEIGHTS) {
+          const by = drawnBy(stack, cp, weight, all)
+          if (!by.startsWith('vendored:')) {
+            wrong.push(`--font-${name} ${String.fromCodePoint(cp)} @${String(weight)} → ${by}`)
+          }
+        }
+      }
+    }
+    expect(wrong).toEqual([])
+  })
+
+  it('fails the walk for a stack that reaches the system first (control)', () => {
+    const all = faces()
+    expect(drawnBy(['Gowun Batang', 'serif'], 0x2192, 400, all)).toBe('system:serif')
+    expect(drawnBy(['Archivo', 'sans-serif'], 0x2191, 700, all)).toMatch(/^vendored:.*archivo/)
+    expect(drawnBy(['Archivo', 'sans-serif'], 0x2190, 400, all)).toBe('system:sans-serif')
   })
 })

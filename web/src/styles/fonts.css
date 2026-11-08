@@ -261,3 +261,37 @@
   font-display: swap;
   src: url('../assets/fonts/archivo-latin-700.woff2') format('woff2');
 }
+
+/*
+ * `Shelf Arrows` — ← ↑ → ↓ and nothing else (F-1).
+ *
+ * The interface writes those four as text (`L→R`, a sorted column's `↑`, the
+ * shortcuts sheet's `← →`). 고운바탕 has none of them and Archivo only ↑ ↓, so
+ * every stack handed them to the system, and the system's choice changed under
+ * the e2e pixel baseline without this repo changing at all. Cut from the same
+ * Noto Serif CJK TC as the 한자 face (`scripts/mkfonts/subset.py --only arrows`),
+ * about a kilobyte per weight. The `unicode-range` is what lets it stand in
+ * every stack in tokens.css without answering for anything but the arrows;
+ * fontCoverage.test.ts fails if a stack reaches a system face for one of them.
+ *
+ * E-55 keeps hand-picked subsets out of the text stacks because the seal cut
+ * was pre-empting a full 한자 face behind it. Nothing vendored behind this one
+ * draws an arrow, so what it pre-empts is the system — which is the point.
+ */
+@font-face {
+  font-family: 'Shelf Arrows';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../assets/fonts/shelf-arrows-400.woff2') format('woff2');
+  unicode-range: U+2190-2193;
+}
+
+@font-face {
+  font-family: 'Shelf Arrows';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('../assets/fonts/shelf-arrows-700.woff2') format('woff2');
+  unicode-range: U+2190-2193;
+}

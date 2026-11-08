@@ -286,12 +286,13 @@
      leads that stack for the same reason 고운바탕 leads this one: the system
      faces behind it differ on every device. */
   --font-heading:
-    'Gowun Batang', 'Noto Serif TC', 'Noto Serif KR', 'Apple SD Gothic Neo', batang, serif;
+    'Gowun Batang', 'Shelf Arrows', 'Noto Serif TC', 'Noto Serif KR', 'Apple SD Gothic Neo', batang,
+    serif;
   /* 400 and 700 only. 명조 breaks up under synthetic weights and negative
      tracking — the prototype pins both, and 800 does not exist in this face. */
   --font-heading-weight: 700;
   --font-body: var(--font-heading);
-  --font-ui: 'Archivo', ui-sans-serif, 'Helvetica Neue', Arial, sans-serif;
+  --font-ui: 'Archivo', 'Shelf Arrows', ui-sans-serif, 'Helvetica Neue', Arial, sans-serif;
   /* Japanese names only, reached through `[lang='ja']` (base.css) — never by
      inheritance from the document (E-55, 사용자 요청).
 
@@ -306,13 +307,21 @@
      Korean title carrying a Japanese fragment, so the tag lands on a mostly
      -Hangul string and the Korean must stay 명조; 본고딕's `unicode-range`
      stops short of Hangul for the same reason. */
-  --font-ja: 'Gowun Batang', 'Noto Sans JP', 'Noto Sans CJK JP', 'Hiragino Sans', sans-serif;
+  --font-ja:
+    'Gowun Batang', 'Shelf Arrows', 'Noto Sans JP', 'Noto Sans CJK JP', 'Hiragino Sans', sans-serif;
   /* The 낙관 marks — the wordmark's 藏 and the grid card's 完讀 — and nothing
      else. `Shelf Seal` is the private family those three glyphs are vendored
      under (fonts.css); it leads here and is named nowhere else, which is what
      keeps a hand-picked subset from answering for a 한자 that happens to appear
      in a series title. 고운바탕 behind it draws the Hangul of the wordmark. */
-  --font-seal: 'Shelf Seal', 'Gowun Batang', 'Noto Serif TC', 'Noto Serif KR', serif;
+  --font-seal: 'Shelf Seal', 'Gowun Batang', 'Shelf Arrows', 'Noto Serif TC', 'Noto Serif KR', serif;
+  /* `<kbd>` only — Tailwind's preflight sets it from `fontFamily.mono`, and the
+     shortcuts sheet is the one place it appears. The key names are still the
+     system monospace (this stack is not held to a vendored lead); what is
+     vendored is the arrows, which `Shelf Arrows` claims ahead of it. */
+  --font-mono:
+    'Shelf Arrows', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
 
   /* ---- space + radius -------------------------------------------------- */
   --space-1: 4px;

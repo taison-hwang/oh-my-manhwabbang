@@ -69,6 +69,26 @@ It was `ui-sans-serif, 'Helvetica Neue', Arial` — every one of them a system
 font, so those labels were the last thing in the product still rendering
 differently on every device. Archivo is the face the skin before this one used
 and it is still a dependency, so its own latin subsets are vendored verbatim.
+
+Arrows (F-1)
+------------
+The interface writes four arrows as text — `L→R` / `R→L`, a sorted column's
+`↑` / `↓`, and the `← →` key in the shortcuts sheet. 고운바탕 has none of them
+and Archivo only the vertical two, so they fell through every stack to the
+system — Liberation Serif in the 2026-11-09 e2e round, a visibly different
+face in the one that recorded the E-69 baseline — and the pixel baseline
+flipped between them with no change to this repo.
+
+`shelf-arrows-*` is those four, cut from the Noto Serif CJK TC the 한자 face
+already comes from, and declared as the private family `Shelf Arrows` with a
+`unicode-range` of exactly `ARROWS`, so it can sit in every stack (tokens.css)
+and answer for nothing else. web/src/styles/fontCoverage.test.ts walks each
+stack and fails if any arrow the source writes reaches a system face first.
+
+These are cut on their own (`--only arrows`) because the CJK files are not
+reproducible byte for byte across fontTools releases: 4.68 cuts a different
+`noto-serif-tc-400.woff2` from the one committed, and a run that rewrote 6 MB
+to add 3 KB would bury the change it was made for.
 """
 
 import argparse
@@ -110,6 +130,12 @@ CJK_FACES = [
     ("NotoSerifCJK", "Noto Serif CJK TC", "noto-serif-tc"),
     ("NotoSansCJK", "Noto Sans CJK JP", "noto-sans-jp"),
 ]
+
+# The arrows the interface writes as text, and the only code points the
+# `Shelf Arrows` family claims. fontCoverage.test.ts holds the source to this
+# set: an arrow outside it would reach a system face again.
+ARROWS = "\u2190\u2191\u2192\u2193"  # ← ↑ → ↓
+ARROW_FACE = ("NotoSerifCJK", "Noto Serif CJK TC", "shelf-arrows")
 
 # Cut by an earlier revision of this rule and no longer referenced by
 # fonts.css. Listed so a rebuild says so out loud rather than leaving 3 MB of
@@ -234,11 +260,15 @@ def unicode_range_css() -> str:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true", help="verify only")
+    ap.add_argument("--only", choices=["arrows"], help="cut one group and nothing else")
     args = ap.parse_args()
 
     if shutil.which("pyftsubset") is None:
         print("pyftsubset not found: pip install --user fonttools brotli", file=sys.stderr)
         return 2
+
+    if args.only == "arrows":
+        return cut_arrows(args.check)
 
     chars = encodable_ideographs() | kana()
     print(f"CJK coverage: {len(chars)} codepoints")
@@ -309,7 +339,37 @@ def main() -> int:
         if args.check:
             return 1
 
+    if cut_arrows(args.check):
+        return 1
+
     print(f"total added: {total} B ({total / 1e6:.2f} MB)")
+    return 0
+
+
+def cut_arrows(check: bool) -> int:
+    collection, family, stem = ARROW_FACE
+    chars = set(ARROWS)
+    for weight, style in (("Regular", "400"), ("Bold", "700")):
+        src = NOTO / f"{collection}-{weight}.ttc"
+        if not src.exists():
+            print(f"missing source: {src}", file=sys.stderr)
+            return 2
+        dest = OUT / f"{stem}-{style}.woff2"
+        target = dest if not check else Path(str(dest) + ".check")
+        subset(src, face_number(src, family), chars, target)
+        gap = missing_glyphs(target, chars)
+        note = "" if not gap else f"  MISSING {''.join(sorted(gap))}"
+        if check:
+            same = dest.exists() and dest.read_bytes() == target.read_bytes()
+            size = target.stat().st_size
+            target.unlink()
+            print(f"  {dest.name}: {size} B {'ok' if same else 'DIFFERS'}{note}")
+            if not same or gap:
+                return 1
+        else:
+            print(f"  {dest.name}: {target.stat().st_size} B{note}")
+            if gap:
+                return 1
     return 0
 
 

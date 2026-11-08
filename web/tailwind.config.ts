@@ -179,6 +179,8 @@ export default {
            own (fonts.css), and naming it here keeps the one call site in
            Wordmark.tsx from reaching for a raw `style`. */
         seal: 'var(--font-seal)',
+        /* Read by the preflight for `<kbd>`; tokens.css says why it exists. */
+        mono: 'var(--font-mono)',
       },
 
       fontSize: {

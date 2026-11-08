@@ -279,6 +279,74 @@ test('6.5 (E-55) · a Japanese name is set in the Japanese face, and a Korean on
   await shot(page, info, 'step-06-5e-series-detail-japanese-name')
 })
 
+test('6.5 (F-1) · every arrow on the series screen and the list header is drawn by a shipped face', async ({
+  page,
+}) => {
+  // `fontCoverage.test.ts` walks the stacks against the woff2 cmaps; this asks
+  // the browser what it actually drew. Before F-1 the `→` of `L→R` came from
+  // whichever system face Chrome picked, and that choice changed between two
+  // e2e rounds with no change to this repo — the pixel baseline caught it, but
+  // only as "84 shots differ".
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('DOM.enable')
+  await cdp.send('CSS.enable')
+
+  /** For each element whose own text holds an arrow: its text and the faces that drew it. */
+  const drawn = async (): Promise<{ text: string; faces: { family: string; custom: boolean }[] }[]> => {
+    await page.evaluate(() => document.fonts.ready)
+    const count = await page.evaluate(() => {
+      let n = 0
+      for (const el of document.querySelectorAll('body *')) {
+        el.removeAttribute('data-f1-arrow')
+        const own = [...el.childNodes]
+          .filter((c) => c.nodeType === Node.TEXT_NODE)
+          .map((c) => c.textContent ?? '')
+          .join('')
+        if (/[\u2190-\u21FF]/.test(own)) el.setAttribute('data-f1-arrow', String(n++))
+      }
+      return n
+    })
+    const { root } = await cdp.send('DOM.getDocument', { depth: -1 })
+    const out = []
+    for (let i = 0; i < count; i++) {
+      const selector = `[data-f1-arrow="${String(i)}"]`
+      const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector })
+      const { fonts } = await cdp.send('CSS.getPlatformFontsForNode', { nodeId })
+      const text = await page.locator(selector).evaluate((el) => (el.textContent ?? '').trim())
+      out.push({ text, faces: fonts.map((f) => ({ family: f.familyName, custom: f.isCustomFont })) })
+    }
+    return out
+  }
+  const systemDrawn = (rows: Awaited<ReturnType<typeof drawn>>) =>
+    rows.filter((r) => r.faces.some((f) => !f.custom)).map((r) => `${r.text}: ${JSON.stringify(r.faces)}`)
+
+  // The control: an arrow set in a bare system stack must be reported as one,
+  // or the assertions below would pass on a probe that cannot see the system.
+  await gotoLibrary(page)
+  await page.evaluate(() => {
+    const probe = document.createElement('span')
+    probe.id = 'f1-control'
+    probe.style.fontFamily = 'serif'
+    probe.textContent = '→'
+    document.body.append(probe)
+  })
+  const control = await drawn()
+  expect(control.find((r) => r.text === '→')?.faces.every((f) => !f.custom), 'the control is drawn by the system').toBe(true)
+  await page.evaluate(() => document.getElementById('f1-control')?.remove())
+
+  await setView(page, 'list')
+  const list = await drawn()
+  expect(list.map((r) => r.text).join(' '), 'the sorted column carries its arrow').toMatch(/[↑↓]/)
+  expect(systemDrawn(list)).toEqual([])
+
+  await openSeries(page, SERIES.gungye)
+  const series = await drawn()
+  expect(series.map((r) => r.text), '읽기 방향 writes L→R and R→L').toEqual(
+    expect.arrayContaining(['L→R', 'R→L']),
+  )
+  expect(systemDrawn(series)).toEqual([])
+})
+
 test('6.5 (guard) · the 읽음 표시 toggle is a hit target only while it is visible', async ({
   page,
 }) => {
