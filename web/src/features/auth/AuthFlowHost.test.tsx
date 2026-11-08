@@ -13,6 +13,7 @@ import { queryKeys } from '../../api/queries'
 import type { AuthStatus } from '../../api/types'
 import { resetBasePath } from '../../api/urls'
 import { failUnhandled } from '../../test/msw'
+import { Dialog } from '../../components/ds/Dialog'
 import { AuthFlowHost } from './AuthFlowHost'
 
 const server = setupServer()
@@ -63,6 +64,21 @@ function mount(status: AuthStatus) {
 const hit = (): Promise<unknown> => getSettings().catch(() => undefined)
 
 describe('AuthFlowHost', () => {
+  it('stays reachable above an open dialog (the settings dialog)', async () => {
+    fail(403, 'forbidden', 'reauth_required')
+    const { assign } = mount(oidc)
+    render(
+      <Dialog open onClose={() => undefined} title="설정">
+        <button type="button">재스캔</button>
+      </Dialog>,
+    )
+    await hit()
+    const button = await screen.findByRole('button', { name: '다시 로그인' })
+    expect(button.closest('[inert]')).toBeNull()
+    await userEvent.click(button)
+    expect(assign).toHaveBeenCalledTimes(1)
+  })
+
   it('oidc 401 → one top-level redirect even with several requests failing', async () => {
     fail(401, 'unauthorized', 'session_expired')
     const { assign } = mount(oidc)

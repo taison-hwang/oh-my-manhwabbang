@@ -63,6 +63,8 @@ export function redirectWouldLoop(
     try {
       const last = JSON.parse(raw) as { to?: unknown; at?: unknown }
       if (last.to === returnTo && typeof last.at === 'number' && now - last.at < LOOP_WINDOW_MS) {
+        // Refreshed, so a poll that keeps getting 401 never outlasts the window.
+        store.set(JSON.stringify({ to: returnTo, at: now }))
         return true
       }
     } catch {

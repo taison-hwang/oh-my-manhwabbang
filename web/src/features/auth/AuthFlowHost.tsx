@@ -5,6 +5,7 @@ import { subscribeAuthFailure } from '../../api/client'
 import { queryKeys } from '../../api/queries'
 import type { AuthStatus } from '../../api/types'
 import { Button } from '../../components/ds/Button'
+import { Dialog } from '../../components/ds/Dialog'
 import {
   decideAuthAction,
   reauthUrl,
@@ -66,50 +67,54 @@ export function AuthFlowHost({
     [queryClient, assign, reload, now, returnTo],
   )
 
-  if (notice === null) return null
-
   const dismiss = (): void => {
     setNotice(null)
   }
 
+  // A dialog, not a banner: the notice must stand above the settings dialog, where four
+  // of the five admin writes are made, and `modalLayer` makes everything under the
+  // topmost layer inert — a banner in the page would be unreachable there.
   return (
-    <div
-      role="alert"
-      className="fixed inset-x-0 top-0 z-50 flex flex-wrap items-center gap-3 border-b border-rule bg-surface p-3 text-sm"
-      data-testid="auth-notice"
+    <Dialog
+      open={notice !== null}
+      onClose={dismiss}
+      title={notice?.kind === 'reauth' ? '다시 로그인' : '알림'}
+      width="min(440px, 100%)"
     >
-      {notice.kind === 'reauth' && (
-        <>
-          <span>관리자 작업은 다시 로그인해야 합니다. 로그인한 뒤 작업을 다시 눌러 주세요.</span>
-          <Button
-            variant="primary"
-            onClick={() => {
-              assign(reauthUrl(returnTo()))
-            }}
-          >
-            다시 로그인
-          </Button>
-        </>
-      )}
-      {notice.kind === 'loop' && (
-        <>
-          <span>로그인이 이어지지 않습니다. 잠시 뒤 다시 시도해 주세요.</span>
-          <Button
-            variant="primary"
-            onClick={() => {
-              assign(signInUrl(returnTo()))
-            }}
-          >
-            다시 로그인
-          </Button>
-        </>
-      )}
-      {(notice.kind === 'admin_only' || notice.kind === 'cross_origin') && (
-        <span>{NOTICE_TEXT[notice.kind]}</span>
-      )}
-      <Button variant="ghost" onClick={dismiss}>
-        닫기
-      </Button>
-    </div>
+      <div role="alert" className="flex flex-col items-start gap-3 text-sm" data-testid="auth-notice">
+        {notice?.kind === 'reauth' && (
+          <>
+            <span>관리자 작업은 다시 로그인해야 합니다. 로그인한 뒤 작업을 다시 눌러 주세요.</span>
+            <Button
+              variant="primary"
+              onClick={() => {
+                assign(reauthUrl(returnTo()))
+              }}
+            >
+              다시 로그인
+            </Button>
+          </>
+        )}
+        {notice?.kind === 'loop' && (
+          <>
+            <span>로그인이 이어지지 않습니다. 잠시 뒤 다시 시도해 주세요.</span>
+            <Button
+              variant="primary"
+              onClick={() => {
+                assign(signInUrl(returnTo()))
+              }}
+            >
+              다시 로그인
+            </Button>
+          </>
+        )}
+        {(notice?.kind === 'admin_only' || notice?.kind === 'cross_origin') && (
+          <span>{NOTICE_TEXT[notice.kind]}</span>
+        )}
+        <Button variant="ghost" onClick={dismiss}>
+          닫기
+        </Button>
+      </div>
+    </Dialog>
   )
 }

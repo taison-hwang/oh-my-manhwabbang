@@ -83,7 +83,9 @@ describe('401', () => {
       kind: 'notice',
       notice: { kind: 'loop' },
     })
-    expect(decideAuthAction(err(401), { ...ctx, now: 20_000 }).kind).toBe('redirect')
+    // Each blocked 401 renews the window, so a steady poll stays blocked.
+    expect(decideAuthAction(err(401), { ...ctx, now: 14_000 }).kind).toBe('notice')
+    expect(decideAuthAction(err(401), { ...ctx, now: 30_000 }).kind).toBe('redirect')
   })
 })
 

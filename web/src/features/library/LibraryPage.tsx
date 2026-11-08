@@ -8,6 +8,7 @@ import { EmptyState } from '../../components/ds/EmptyState'
 import { useUiStore } from '../../store/ui'
 import { ContinueRow } from './ContinueRow'
 import { GridSkeleton } from './GridSkeleton'
+import { useIsAdmin } from '../auth/useIsAdmin'
 import { Onboarding } from './Onboarding'
 import { SectionHeader } from './SectionHeader'
 import { SeriesGrid } from './SeriesGrid'
@@ -125,7 +126,8 @@ export function LibraryPage() {
   // `false` while the payload is in flight, which is the safe direction: the
   // C-5 screen is correct for every server, and one request later the screen
   // re-renders with the capability if there is one.
-  const rootEditingEnabled = settings.data?.server.root_editing_enabled === true
+  const isAdmin = useIsAdmin()
+  const rootEditingEnabled = isAdmin && settings.data?.server.root_editing_enabled === true
 
   const setQuery = useUiStore((s) => s.setQuery)
   const openOverlay = useUiStore((s) => s.openOverlay)

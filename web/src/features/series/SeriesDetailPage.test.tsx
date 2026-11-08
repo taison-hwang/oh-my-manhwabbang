@@ -427,6 +427,22 @@ describe('series header (prd UI-002, ui-spec §5.1)', () => {
     expect(screen.getByRole('button', { name: '이 시리즈 재스캔' })).toBeInTheDocument()
   })
 
+  it('hides 이 시리즈 재스캔 from a non-admin oidc session (E-74 §2.10)', async () => {
+    const recorded = newRecorded()
+    server.use(...baseHandlers(detailOf(), recorded, 202))
+    const client = newClient()
+    client.setQueryData(queryKeys.auth.status, {
+      auth_required: true,
+      authenticated: true,
+      mode: 'oidc',
+      end_session_available: false,
+      user: { sub: 'x', is_admin: false },
+    })
+    renderPage(client)
+    await screen.findByRole('button', { name: '처음부터 읽기' })
+    expect(screen.queryByRole('button', { name: '이 시리즈 재스캔' })).toBeNull()
+  })
+
   it('says 읽기 시작 instead of 이어 읽기 when nothing has been opened', async () => {
     await setup(
       detailOf({
