@@ -8,7 +8,7 @@
  * a user check, not something this file proves (decisions.md E-70 §4).
  */
 
-import type { CDPSession, Page } from "@playwright/test";
+import type { CDPSession, Page, Request } from "@playwright/test";
 
 import {
   booksOf,
@@ -22,6 +22,7 @@ import {
   test,
   viewer,
   waitForPage,
+  wakeChrome,
 } from "./shelf";
 
 interface Pt {
@@ -70,18 +71,46 @@ async function drag(cdp: CDPSession, a: Pt, b: Pt): Promise<void> {
   await fingers(cdp, "touchEnd", []);
 }
 
+const progressWrites = new WeakMap<Page, { sent: number; done: number }>();
+
+/** Counts every `PUT …/progress` the page sends and every one that has ended. */
+function watchProgressWrites(page: Page): void {
+  const tally = { sent: 0, done: 0 };
+  progressWrites.set(page, tally);
+  const isWrite = (r: Request): boolean =>
+    r.method() === "PUT" && /\/api\/books\/[^/]+\/progress/.test(r.url());
+  page.on("request", (r) => {
+    if (isWrite(r)) tally.sent++;
+  });
+  page.on("requestfinished", (r) => {
+    if (isWrite(r)) tally.done++;
+  });
+  page.on("requestfailed", (r) => {
+    if (isWrite(r)) tally.done++;
+  });
+}
+
 /**
  * shelf.ts rule 2 for a viewer that has been open: `useSaveProgress` writes
  * after a 1 s debounce and flushes on unmount, so a DELETE issued while the
- * viewer is still mounted can be undone by the write that follows it. The
- * viewer is left first, the debounce is waited out, and only then is the row
- * deleted — otherwise the row survives into the 이어보기 shelf of the library
- * shots the next viewport project takes.
+ * viewer is still mounted can be undone by the write that follows it, and the
+ * row then shows in the 이어보기 shelf of the library shots the next viewport
+ * project takes. The viewer is left through its own 라이브러리 button (its
+ * unmount flushes the pending write), and the DELETE waits until every
+ * progress write the page has sent has ended — no sleep.
  */
 async function leaveBook(page: Page, bookId: string): Promise<void> {
-  await page.goto("/");
-  await page.waitForTimeout(1_500);
+  await wakeChrome(page);
+  await page.locator('[data-role="viewer-library"]').click();
+  await expect(page.locator('[data-testid="library-scroller"]')).toBeVisible();
+  const tally = progressWrites.get(page);
+  expect(tally, "watchProgressWrites must run when the book is opened").toBeDefined();
+  await expect.poll(() => (tally?.sent ?? 0) - (tally?.done ?? 0)).toBe(0);
   await clearProgress(page, bookId);
+  const after = (await (await page.request.get(`/api/books/${bookId}`)).json()) as {
+    progress: unknown;
+  };
+  expect(after.progress, "no progress row left behind").toBeNull();
 }
 
 const layer = (page: Page) => page.locator('[data-role="zoom-layer"]');
@@ -100,6 +129,7 @@ async function open(
   expect(first, "군계 must have an openable volume").toBeDefined();
   const bid = first?.id ?? "";
   await resetBookPrefs(page, bid);
+  watchProgressWrites(page);
   await openViewerDirect(page, sid, bid, atPage);
   await waitForPage(page);
   const box = await page.locator('[data-role="stage-zones"]').boundingBox();
@@ -215,6 +245,7 @@ test("a double click with the mouse never zooms (desktop input is unchanged)", a
   const bid = first?.id ?? "";
   try {
     await resetBookPrefs(page, bid);
+    watchProgressWrites(page);
     await openViewerDirect(page, sid, bid, 3);
     await waitForPage(page);
     await expect(viewer(page)).toBeVisible();
