@@ -230,3 +230,52 @@ func TestAfterScan_perUser_scanStartedUnderAPrincipalStillCleansTheSingleUserTab
 		t.Errorf("admin's progress on the moved book = (%+v, %v), want page 4", p, ok)
 	}
 }
+func TestAfterScan_perUser_sharedCoverHonorsEveryUsersUnwalkedRoot(t *testing.T) {
+	media := cleanupLibrary(t)
+	a := newPerUserTestApp(t, media)
+	scanNow(t, a, false)
+	b := bookAt(t, a, "낱권.zip")
+	chooseCover(t, a, b, "낱권.zip", 2)
+	// A legacy/imported progress row names a root absent from this scan.
+	if _, err := a.user.Import(asUser("alice"), userdata.Export{Format: userdata.ExportFormat, Items: []userdata.ExportItem{{
+		BookID: b.BookID, SeriesID: b.SeriesID, RootName: "removed-root", BookPath: "old/낱권.zip",
+		LastPage: 2, PageCount: b.PageCount, StartedAt: 100, UpdatedAt: 100,
+	}}}, userdata.StrategyMerge); err != nil {
+		t.Fatal(err)
+	}
+	mustRemove(t, media, "낱권.zip")
+	scanNow(t, a, false)
+	if _, ok := userProgress(t, a, "alice", b.BookID); !ok {
+		t.Fatal("fixture: unwalked progress was removed")
+	}
+	if _, ok := coverRow(t, a, b.BookID); !ok {
+		t.Error("shared cover deleted while alice's row names an unwalked root")
+	}
+}
+
+func TestAfterScan_perUser_coverOnlyDeletionPurgesEveryUsersPrefs(t *testing.T) {
+	media := cleanupLibrary(t)
+	a := newPerUserTestApp(t, media)
+	scanNow(t, a, false)
+	b := bookAt(t, a, "낱권.zip")
+	chooseCover(t, a, b, "낱권.zip", 2)
+	for _, sub := range []string{"alice", "bob"} {
+		if _, err := a.user.PutPrefs(asUser(sub), b.BookID, userdata.PrefsPatch{ReadingDir: userdata.SetPatch("rtl")}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustRemove(t, media, "낱권.zip")
+	scanNow(t, a, false)
+	if _, ok := coverRow(t, a, b.BookID); ok {
+		t.Fatal("fixture: cover was not purged")
+	}
+	for _, sub := range []string{"alice", "bob"} {
+		p, err := a.user.GetPrefs(asUser(sub), b.BookID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.ReadingDir != nil {
+			t.Errorf("%s prefs survived deletion proved by shared cover", sub)
+		}
+	}
+}

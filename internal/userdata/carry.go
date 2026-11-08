@@ -261,6 +261,13 @@ func carrySeriesPrefs(ctx context.Context, tx *sql.Tx, moves []SeriesPrefsMove) 
 type PurgeSet struct {
 	Books  []string
 	Series []string
+
+	// KeepShared leaves the shared tables (book_covers, series_prefs) alone and
+	// deletes only the calling scope's own progress and preferences. A per-user
+	// server purges every user's rows first with this set and the shared rows
+	// last, so a shared cover keeps proving the deletion to every scope until
+	// the last one is done (ruling E-74 §2.13).
+	KeepShared bool
 }
 
 // PurgeResult counts the rows Purge deleted, per table.
@@ -310,11 +317,17 @@ func (db *DB) Purge(ctx context.Context, set PurgeSet) (PurgeResult, error) {
 			if err := del(`DELETE FROM `+sc.prefs()+sc.where(`book_id = ?`), "preferences", id, sc.args(id), &res.Prefs); err != nil {
 				return err
 			}
+			if set.KeepShared {
+				continue
+			}
 			if err := del(`DELETE FROM book_covers WHERE book_id = ?`, "the cover", id, []any{id}, &res.Covers); err != nil {
 				return err
 			}
 		}
 		for _, id := range set.Series {
+			if set.KeepShared {
+				break
+			}
 			if err := del(`DELETE FROM series_prefs WHERE series_id = ?`, "series preferences", id, []any{id}, &res.Series); err != nil {
 				return err
 			}

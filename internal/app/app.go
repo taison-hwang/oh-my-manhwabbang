@@ -316,10 +316,7 @@ func New(ctx context.Context, opts Options) (a *App, err error) {
 					"and a row it would have moved looks the same as a vanished one")
 				return
 			}
-			a.forEachScope(ctx, log, func(ctx context.Context) bool {
-				a.purgeVanishedProgress(ctx, res, log)
-				return true
-			})
+			a.purgeVanishedProgress(ctx, res, log)
 		},
 		Logger: log,
 	}); err != nil {
@@ -430,18 +427,33 @@ func (a *App) reconcileRoots(ctx context.Context) error {
 // purge for this run, so a user's rows are never judged by a scan that could
 // not look at them.
 func (a *App) forEachScope(ctx context.Context, log *slog.Logger, step func(context.Context) bool) bool {
-	ctx = principal.With(ctx, principal.Principal{})
-	ok := step(ctx)
-	subs, err := a.user.UserSubs(ctx)
+	scopes, err := a.scopes(ctx)
+	ok := true
+	for _, sc := range scopes {
+		ok = step(sc) && ok
+	}
 	if err != nil {
 		log.Warn("could not list users to clean up their reading progress; the next scan will try again",
 			"error", err)
 		return false
 	}
-	for _, sub := range subs {
-		ok = step(principal.With(ctx, principal.Principal{Sub: sub})) && ok
-	}
 	return ok
+}
+
+// scopes is the single-user scope (principal cleared) followed by one scope per
+// user. When the users cannot be listed it returns the single-user scope alone
+// with the error; a caller that must see every user stops on the error.
+func (a *App) scopes(ctx context.Context) ([]context.Context, error) {
+	ctx = principal.With(ctx, principal.Principal{})
+	out := []context.Context{ctx}
+	subs, err := a.user.UserSubs(ctx)
+	if err != nil {
+		return out, err
+	}
+	for _, sub := range subs {
+		out = append(out, principal.With(ctx, principal.Principal{Sub: sub}))
+	}
+	return out, nil
 }
 
 // carryProgressAcrossRelocations moves reading progress onto the new id of every
@@ -643,9 +655,16 @@ func (a *App) purgeVanishedProgress(ctx context.Context, res *scanner.Result, lo
 	// configuration and an index rebuilt leave the index not knowing that root
 	// at all, and A-11 promises adding it back reattaches everything. Such a
 	// row is harmless, and a book that returns at the same path picks it up.
-	gone, err := a.idx.VanishedProgress(ctx, swept)
+	// On a per-user server one book id has a progress row in the single-user
+	// table and in each user's table, and one shared cover. The decision to
+	// delete an id has to see all of them: a row in any scope that names a root
+	// this run did not walk holds the id for everyone, and the shared cover
+	// stays until every scope has been cleaned, because it is what proves the
+	// deletion to a scope whose own rows say nothing (ruling E-74 §2.13).
+	scopes, err := a.scopes(ctx)
 	if err != nil {
-		failed(err)
+		log.Warn("could not list users to check their reading progress; nothing was deleted and the next scan will try again",
+			"error", err)
 		return
 	}
 	goneCovers, err := a.idx.VanishedCovers(ctx, swept)
@@ -658,31 +677,39 @@ func (a *App) purgeVanishedProgress(ctx context.Context, res *scanner.Result, lo
 		failed(err)
 		return
 	}
+	goneBy := make([][]index.Vanished, len(scopes))
+	var candidates []string
+	candidate := map[string]bool{}
+	addCandidate := func(id string) {
+		if !candidate[id] {
+			candidate[id] = true
+			candidates = append(candidates, id)
+		}
+	}
+	for i, sc := range scopes {
+		if goneBy[i], err = a.idx.VanishedProgress(sc, swept); err != nil {
+			failed(err)
+			return
+		}
+		for _, g := range goneBy[i] {
+			addCandidate(g.BookID)
+		}
+	}
+	for _, g := range goneCovers {
+		addCandidate(g.BookID)
+	}
 
-	// One id can have two sources that disagree. A split reattachment across
-	// roots files the cover under the destination it chose and leaves the
-	// progress row naming the orphan's root (repair.row), so one table can say
-	// "gone from a root this run walked" while the other names a root nobody
-	// walked — one taken out of the configuration, or one whose sweep was
-	// refused. The purge deletes the id from every table, so it believes the
-	// id only when every row it has names a walked root, and otherwise keeps
-	// all of them (U1 codex cycle 2). Keeping is the safe error: a held row is
-	// harmless, a deleted one is gone.
+	// One id can have rows that disagree. A split reattachment across roots
+	// files the cover under the destination it chose and leaves the progress
+	// row naming the orphan's root (repair.row), so one table can say "gone from
+	// a root this run walked" while another names a root nobody walked — one
+	// taken out of the configuration, or one whose sweep was refused. The purge
+	// believes an id only when every row it has, in every scope, names a walked
+	// root, and otherwise keeps all of them (U1 codex cycle 2). Keeping is the
+	// safe error: a held row is harmless, a deleted one is gone.
 	walked := make(map[string]bool, len(swept))
 	for _, r := range swept {
 		walked[r] = true
-	}
-	candidates := make([]string, 0, len(gone)+len(goneCovers))
-	for _, g := range gone {
-		candidates = append(candidates, g.BookID)
-	}
-	for _, g := range goneCovers {
-		candidates = append(candidates, g.BookID)
-	}
-	progressOf, err := a.user.GetProgressMany(ctx, candidates)
-	if err != nil {
-		failed(err)
-		return
 	}
 	coverOf, err := a.user.GetCovers(ctx, candidates)
 	if err != nil {
@@ -690,34 +717,48 @@ func (a *App) purgeVanishedProgress(ctx context.Context, res *scanner.Result, lo
 		return
 	}
 	held := map[string]bool{}
-	for _, id := range candidates {
-		p, hasProgress := progressOf[id]
-		c, hasCover := coverOf[id]
-		if held[id] || (!hasProgress || walked[p.RootName]) && (!hasCover || walked[c.RootName]) {
-			continue
+	hold := func(id, scope string, p userdata.Progress, c userdata.Cover) {
+		if held[id] {
+			return
 		}
 		held[id] = true
 		log.Info("keeping a missing book's progress, cover and preferences: one of its rows names a root this run did not walk end to end",
-			"book_id", id,
+			"book_id", id, "scope", scope,
 			"progress_root", p.RootName, "progress_book_path", p.BookPath,
 			"cover_root", c.RootName, "cover_book_path", c.BookPath)
 	}
+	for _, sc := range scopes {
+		progressOf, err := a.user.GetProgressMany(sc, candidates)
+		if err != nil {
+			failed(err)
+			return
+		}
+		for _, id := range candidates {
+			p, hasProgress := progressOf[id]
+			c, hasCover := coverOf[id]
+			if hasProgress && !walked[p.RootName] || hasCover && !walked[c.RootName] {
+				hold(id, scopeName(sc), p, c)
+			}
+		}
+	}
 
-	var set userdata.PurgeSet
+	var books []string
 	seen := map[string]struct{}{}
 	add := func(id string) bool {
 		if _, dup := seen[id]; dup || held[id] {
 			return false
 		}
 		seen[id] = struct{}{}
-		set.Books = append(set.Books, id)
+		books = append(books, id)
 		return true
 	}
-	for _, g := range gone {
-		if add(g.BookID) {
-			log.Info("deleting reading progress: the file is not in a root this run walked end to end",
-				"root", g.RootName, "book_path", g.BookPath, "book_id", g.BookID,
-				"last_page", g.LastPage, "page_count", g.PageCount)
+	for i, rows := range goneBy {
+		for _, g := range rows {
+			if add(g.BookID) {
+				log.Info("deleting reading progress: the file is not in a root this run walked end to end",
+					"scope", scopeName(scopes[i]), "root", g.RootName, "book_path", g.BookPath, "book_id", g.BookID,
+					"last_page", g.LastPage, "page_count", g.PageCount)
+			}
 		}
 	}
 	for _, g := range goneCovers {
@@ -727,24 +768,44 @@ func (a *App) purgeVanishedProgress(ctx context.Context, res *scanner.Result, lo
 				"page", g.Page, "page_count", g.PageCount)
 		}
 	}
+	var series []string
 	for _, g := range goneSeries {
-		set.Series = append(set.Series, g.SeriesID)
+		series = append(series, g.SeriesID)
 		log.Info("deleting a series reading direction: the series is not in a root this run walked end to end",
 			"root", g.RootName, "series_path", g.SeriesPath, "series_id", g.SeriesID)
 	}
-	if len(set.Books) == 0 && len(set.Series) == 0 {
+	if len(books) == 0 && len(series) == 0 {
 		return
 	}
-	r, err := a.user.Purge(ctx, set)
-	if err != nil {
-		log.Warn("could not delete reading progress, covers or preferences for missing books; "+
-			"user.db is unchanged and the next scan will try again",
-			"error", err, "books", len(set.Books), "series", len(set.Series))
-		return
+
+	// Each user's rows first, the single-user table and the shared rows in the
+	// last call. A failure part-way leaves the shared cover in place, so the
+	// next scan reaches the same decision and finishes.
+	var total userdata.PurgeResult
+	for i := len(scopes) - 1; i >= 0; i-- {
+		last := i == 0
+		r, err := a.user.Purge(scopes[i], userdata.PurgeSet{Books: books, Series: series, KeepShared: !last})
+		if err != nil {
+			log.Warn("could not delete reading progress, covers or preferences for missing books; "+
+				"the next scan will try again",
+				"error", err, "books", len(books), "series", len(series))
+			return
+		}
+		total.Progress += r.Progress
+		total.Prefs += r.Prefs
+		total.Covers += r.Covers
+		total.Series += r.Series
 	}
 	log.Info("deleted reading progress, covers and preferences for books the filesystem no longer has",
-		"progress_rows", r.Progress, "pref_rows", r.Prefs, "cover_rows", r.Covers,
-		"series_pref_rows", r.Series, "roots_walked", len(swept))
+		"progress_rows", total.Progress, "pref_rows", total.Prefs, "cover_rows", total.Covers,
+		"series_pref_rows", total.Series, "roots_walked", len(swept))
+}
+
+func scopeName(ctx context.Context) string {
+	if p, ok := principal.From(ctx); ok {
+		return p.Sub
+	}
+	return "single-user"
 }
 
 // refileMisfiledProgress puts progress rows — and chosen covers (ruling E-69
