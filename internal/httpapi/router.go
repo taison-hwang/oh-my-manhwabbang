@@ -1,18 +1,22 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"shelf/internal/auth"
+	"shelf/internal/auth/oidc"
 	"shelf/internal/config"
+	"shelf/internal/principal"
 )
 
 // DefaultMaxConcurrentPages bounds how many page and thumbnail handlers may be
@@ -96,6 +100,7 @@ type Server struct {
 	pool       HandlePool
 	auth       *auth.Authenticator
 	perUser    bool
+	oidc       *oidc.Service
 	static     fs.FS
 	log        *slog.Logger
 	now        func() time.Time
@@ -189,6 +194,17 @@ func New(opts Options) (*Server, error) {
 			}
 		}
 	}
+	if s.cfg.Auth.IsOIDC() {
+		if !opts.PerUser {
+			// Every user would read and write the same rows.
+			return nil, errors.New("httpapi: auth.mode oidc needs per-user data (E-74 §2.13)")
+		}
+		svc, err := buildOIDC(s.cfg, opts.UserData, s.log, opts.Now)
+		if err != nil {
+			return nil, err
+		}
+		s.oidc = svc
+	}
 	if s.auth == nil {
 		a, err := auth.New(auth.Options{})
 		if err != nil {
@@ -207,6 +223,41 @@ func New(opts Options) (*Server, error) {
 }
 
 // ServeHTTP makes Server the whole application handler.
+// buildOIDC opens the uni-auth service of `auth.mode: oidc` (ruling E-74).
+// user.db must record logins and run the one-time owner copy, so a UserData
+// that cannot is a startup error rather than a silently skipped migration.
+func buildOIDC(cfg *config.Config, user UserData, log *slog.Logger, now func() time.Time) (*oidc.Service, error) {
+	hook, ok := user.(oidc.LoginHook)
+	if !ok {
+		return nil, errors.New("httpapi: auth.mode oidc needs a user database that records logins (E-74 §2.14)")
+	}
+	o := cfg.Auth.OIDC
+	return oidc.New(context.Background(), oidc.Config{
+		Issuer:                o.Issuer,
+		ClientID:              o.ClientID,
+		Audience:              o.Audience,
+		RedirectURL:           o.RedirectURL,
+		PostLogoutRedirectURL: o.PostLogoutRedirectURL,
+		AllowedSubs:           o.AllowedSubs,
+		AdminSubs:             o.AdminSubs,
+		LegacyOwnerSub:        o.LegacyOwnerSub,
+		SessionTTL:            cfg.Auth.SessionTTL,
+		BasePath:              cfg.Server.BasePath,
+		DBPath:                filepath.Join(cfg.Storage.DataDir, "auth.db"),
+		Hook:                  hook,
+		Now:                   now,
+		Logger:                log,
+	})
+}
+
+// Close releases what New opened: auth.db in oidc mode.
+func (s *Server) Close() error {
+	if s.oidc != nil {
+		return s.oidc.Close()
+	}
+	return nil
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.handler.ServeHTTP(w, r)
 }
@@ -296,6 +347,32 @@ func (s *Server) methods(m map[string]handlerFunc) http.Handler {
 }
 
 // get is the common case: one verb, one handler.
+// adminOnly refuses a non-admin in oidc mode with `403 admin_only`; in the
+// other modes it is fn (ruling E-74 §2.10).
+func (s *Server) adminOnly(fn handlerFunc) handlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) error {
+		if s.oidc != nil {
+			if p, ok := principal.From(r.Context()); !ok || !p.Admin {
+				return forbidden("admin_only", "only an administrator may do this")
+			}
+		}
+		return fn(w, r)
+	}
+}
+
+// adminReauth is adminOnly plus a re-authentication within the last 15
+// minutes, `403 reauth_required` otherwise (ruling E-74 §2.9).
+func (s *Server) adminReauth(fn handlerFunc) handlerFunc {
+	return s.adminOnly(func(w http.ResponseWriter, r *http.Request) error {
+		if s.oidc != nil {
+			if sess, ok := oidcSession(r); !ok || !s.oidc.ReauthFresh(sess) {
+				return forbidden("reauth_required", "sign in again to confirm this action")
+			}
+		}
+		return fn(w, r)
+	})
+}
+
 func (s *Server) get(fn handlerFunc) http.Handler {
 	return s.methods(map[string]handlerFunc{http.MethodGet: fn})
 }
@@ -318,17 +395,17 @@ func (s *Server) routes() http.Handler {
 	// switched off" from "this server is too old" out of either.
 	mux.Handle("/api/roots", s.methods(map[string]handlerFunc{
 		http.MethodGet:  s.handleRoots,
-		http.MethodPost: s.handleCreateRoot,
+		http.MethodPost: s.adminReauth(s.handleCreateRoot),
 	}))
 	mux.Handle("/api/roots/{name}", s.methods(map[string]handlerFunc{
-		http.MethodDelete: s.handleDeleteRoot,
+		http.MethodDelete: s.adminReauth(s.handleDeleteRoot),
 	}))
 	// The directory picker is amendment A-12 (ruling E-40). It is `/api/browse`
 	// and NOT `/api/roots/browse`, which would have read better: `browse` is a
 	// legal root name (§3.2's alphabet admits it), and the more specific literal
 	// pattern beats `/api/roots/{name}`, so a user with a root called `browse`
 	// would find it undeletable — a silent, data-dependent 405.
-	mux.Handle("/api/browse", s.get(s.handleBrowse))
+	mux.Handle("/api/browse", s.get(s.adminReauth(s.handleBrowse)))
 
 	mux.Handle("/api/series", s.get(s.handleSeriesList))
 	mux.Handle("/api/series/{sid}", s.get(s.handleSeriesDetail))
@@ -336,7 +413,7 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("/api/series/{sid}/prefs", s.methods(map[string]handlerFunc{http.MethodPut: s.handlePutSeriesPrefs}))
 	mux.Handle("/api/books/{bid}/cover", s.methods(map[string]handlerFunc{http.MethodGet: s.handleBookCover, http.MethodPut: s.handlePutBookCover, http.MethodDelete: s.handleDeleteBookCover}))
 	mux.Handle("/api/series/{sid}/rescan", s.methods(map[string]handlerFunc{
-		http.MethodPost: s.handleSeriesRescan,
+		http.MethodPost: s.adminReauth(s.handleSeriesRescan),
 	}))
 
 	mux.Handle("/api/books/{bid}", s.get(s.handleBookDetail))
@@ -360,17 +437,17 @@ func (s *Server) routes() http.Handler {
 
 	mux.Handle("/api/cache/usage", s.get(s.handleCacheUsage))
 	mux.Handle("/api/cache", s.methods(map[string]handlerFunc{
-		http.MethodDelete: s.handleCachePurge,
+		http.MethodDelete: s.adminReauth(s.handleCachePurge),
 	}))
 
 	mux.Handle("/api/scan", s.methods(map[string]handlerFunc{
-		http.MethodPost: s.handleStartScan,
+		http.MethodPost: s.adminReauth(s.handleStartScan),
 	}))
 	mux.Handle("/api/scan/status", s.get(s.handleScanStatus))
 	mux.Handle("/api/scan/cancel", s.methods(map[string]handlerFunc{
-		http.MethodPost: s.handleCancelScan,
+		http.MethodPost: s.adminReauth(s.handleCancelScan),
 	}))
-	mux.Handle("/api/scan/log", s.get(s.handleScanLog))
+	mux.Handle("/api/scan/log", s.get(s.adminOnly(s.handleScanLog)))
 
 	mux.Handle("/api/progress/export", s.get(s.handleProgressExport))
 	mux.Handle("/api/progress/import", s.methods(map[string]handlerFunc{
@@ -383,6 +460,11 @@ func (s *Server) routes() http.Handler {
 	}))
 	mux.Handle("/api/auth/logout", s.methods(map[string]handlerFunc{
 		http.MethodPost: s.handleLogout,
+	}))
+	mux.Handle("/api/auth/oidc/start", s.get(s.handleOIDCStart))
+	mux.Handle("/api/auth/oidc/callback", s.get(s.handleOIDCCallback))
+	mux.Handle("/api/auth/oidc/end-session", s.methods(map[string]handlerFunc{
+		http.MethodPost: s.handleOIDCEndSession,
 	}))
 
 	// Anything under /api/ that matched none of the above is an unknown

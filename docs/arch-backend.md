@@ -2816,6 +2816,7 @@ interface Settings {
     pdf_enabled: boolean;
     avif_enabled: boolean;
     auth_enabled: boolean;
+    auth_mode: "none" | "password" | "oidc";  // AMENDMENT A-20 (ruling E-74)
     base_path: string;
     version: string;
     recently_added_days: number;  // AMENDMENT A-8 — library.recently_added_days.
@@ -2876,7 +2877,7 @@ interface Settings {
 **AMENDMENT A-20 (ruling E-74).** `Settings.server` gains `auth_mode: "none" | "password" | "oidc"`. In oidc mode
 the user-mutable keys are the caller's own (`user_settings`, §3.6). Server paths are filled for an admin only:
 a non-admin gets `""` for `server.config_path`, `Root.path` (§7.4) and `CacheUsage.cache_dir` (§7.9), and `null`
-for `Root.last_scan_error` (E-74 §2.10). The shapes do not change. The TypeScript block above gains the field in the implementing commit, together
+for `Root.last_scan_error` and `ScanStatus.last_error` (§7.10; the scanner writes the same message to both) (E-74 §2.10). The shapes do not change. The TypeScript block above gains the field in the implementing commit, together
 with `web/src/api/types.ts` and the Go struct, because contractcheck compares the three (E-74 §2.20).
 
 ### 7.9 Cache (FR-THM-008)
@@ -2926,7 +2927,7 @@ interface ScanStatus {
   covers_done: number;
   elapsed_ms: number;
   eta_ms: number | null;        // null until a rate can be estimated
-  last_error: string | null;
+  last_error: string | null;    // AMENDMENT A-20: null for a non-admin in oidc mode (E-74 §2.10)
 }
 
 interface ScanLogEntry {
@@ -3065,9 +3066,15 @@ GET  /api/auth/oidc/start?return=<path>[&reauth=1]   -> 302 to uni-auth  |  429 
 GET  /api/auth/oidc/callback?code&state              -> 302 to return   |  server-rendered error / 403 page
 POST /api/auth/oidc/end-session                      -> 302 to uni-auth end_session_endpoint | completion page
 ```
+```ts
+interface AuthUser {            // AMENDMENT A-20 (ruling E-74): AuthStatus.user
+  sub: string;                  // uni-auth's opaque user id; shown shortened, never parsed
+  is_admin: boolean;            // in auth.oidc.admin_subs, decided on this request
+}
+```
 * `GET /api/auth/status` gains `mode: "none" | "password" | "oidc"`, `end_session_available: boolean` (oidc mode
   and the discovery document has `end_session_endpoint`) and, in oidc mode with a session,
-  `user: {sub: string, is_admin: boolean}`. The two existing fields keep their meaning. The TypeScript type in
+  `user: AuthUser` (above). The two existing fields keep their meaning. The TypeScript type in
   `web/src/api/types.ts` changes in the implementing commit (E-74 §2.20).
 * Login is the authorization code flow with PKCE (S256) and `scope=openid`; the server is the BFF and keeps the
   tokens. `state` is bound to the starting browser by the `shelf_login` cookie. Token checks, the `prompt=none`

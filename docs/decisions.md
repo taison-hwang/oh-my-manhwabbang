@@ -4620,7 +4620,7 @@ impl-plan §1.3도 같은 내용을 적었다. 그래서 백업을 만들려면 
     | `POST /api/scan`, `POST /api/scan/cancel`, `POST /api/series/{sid}/rescan`, `DELETE /api/cache` | 거부 | 관리자 + 재인증 |
     | `POST /api/roots`, `DELETE /api/roots/{name}`, `GET /api/browse` | 거부 | 관리자 + 재인증(기존 `allow_root_editing` 관문도 그대로) |
 
-    서버의 절대 경로는 관리 정보다(Q8 (가)의 이유). 일반 사용자에게는 `Settings.server.config_path`·`Root.path`·`CacheUsage.cache_dir`를 빈 문자열로, 경로를 담을 수 있는 `Root.last_scan_error`를 `null`로 준다. 관리자에게는 지금처럼 채운다. 모양은 바뀌지 않는다.
+    서버의 절대 경로는 관리 정보다(Q8 (가)의 이유). 일반 사용자에게는 `Settings.server.config_path`·`Root.path`·`CacheUsage.cache_dir`를 빈 문자열로, 경로를 담을 수 있는 `Root.last_scan_error`와 `ScanStatus.last_error`(같은 오류 문자열이 들어간다)를 `null`로 준다. 관리자에게는 지금처럼 채운다. 모양은 바뀌지 않는다.
 11. **같은 출처 검사.** oidc 모드에서는 상태를 바꾸는 모든 요청(`POST`·`PUT`·`DELETE`)에 `Origin`이 서버 자신의 출처(설정 `redirect_url`의 스킴·호스트·포트)와 같아야 한다. `Origin`이 없으면 `Sec-Fetch-Site`가 `same-origin`이어야 한다. 둘 다 없으면 거부한다. 거부는 `403 forbidden` + `detail.reason: "cross_origin"`이다. 같은 등록 도메인 아래 이웃 서비스가 보내는 요청은 `SameSite=Lax`로 막을 수 없기 때문이다. 이 검사는 인증보다 먼저 한다.
 12. **로그아웃은 버튼 둘이다**(uni-auth 로그아웃 UI 계약). 둘 다 SPA에서 **top-level 폼 POST**(`application/x-www-form-urlencoded`)로 보낸다. `모든 서비스에서 로그아웃`은 다른 출처로 302하므로 `fetch`로는 동작하지 않는다.
     - `로그아웃` = `POST {base_path}/api/auth/logout`(지금 경로). 세션 행에 `logged_out_at`을 쓰고 쿠키 `Max-Age`를 600으로 줄인다. 그 행은 더는 인증에 쓰이지 않는다(그 쿠키의 요청은 reason 없는 `401`이고, `/start`는 그 행에 `prompt=none`을 붙이지 않는다). 행은 완료 화면의 `모든 서비스에서 로그아웃`이 `id_token`을 쓸 수 있게 10분 동안만 남은 뒤 지워진다.
@@ -4690,7 +4690,7 @@ impl-plan §1.3도 같은 내용을 적었다. 그래서 백업을 만들려면 
     - `GET /api/auth/status`에 `mode: "none" | "password" | "oidc"`, `user?: {sub: string, is_admin: boolean}`(oidc 모드에서 인증됐을 때), `end_session_available: boolean`을 더한다.
     - oidc 모드의 `POST /api/auth/login`은 `400 bad_request` + `detail.reason: "oidc_mode"`다. 경로를 지우면 405·404가 되어 "기능 꺼짐"과 "옛 서버"를 구별할 수 없다.
     - `403 forbidden`의 `detail.reason`에 `not_allowed`·`admin_only`·`reauth_required`·`cross_origin`, `401 unauthorized`의 `detail.reason`에 `session_expired`를 더한다. 새 에러 코드는 없다.
-    - `Settings.server`에 `auth_mode`를 더한다. 서버 경로 필드(`server.config_path`·`Root.path`·`CacheUsage.cache_dir`·`Root.last_scan_error`)는 §2.10대로 채운다.
+    - `Settings.server`에 `auth_mode`를 더한다. 서버 경로 필드(`server.config_path`·`Root.path`·`CacheUsage.cache_dir`·`Root.last_scan_error`·`ScanStatus.last_error`)는 §2.10대로 채운다.
     - 세션이 필요한 응답의 `Cache-Control`은 `public` 대신 `private`다(§2.18). 세션 없는 `/api/health?verbose=1`은 `verbose`가 없다.
     - `POST /api/auth/logout`은 폼 POST에 `200` 완료 화면, 그 밖에는 `204`다(§2.12).
     - 진행률을 담는 응답은 oidc 모드에서 요청한 사용자의 값이다. 모양은 같다.

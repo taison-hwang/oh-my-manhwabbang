@@ -160,6 +160,8 @@ type envConfig struct {
 	// the one every other test in this package therefore exercises for free,
 	// exactly as `rootEditing` does for the write gate.
 	browseBases []string
+	// oidc turns on `auth.mode: oidc` against a fake uni-auth (ruling E-74).
+	oidc *oidcFixture
 }
 
 // secondRootName is the fixture's second configured root (see envConfig).
@@ -283,10 +285,15 @@ func newEnv(t *testing.T, opts ...envOption) *env {
 		static = os.DirFS(e.buildDist())
 	}
 
+	var userData UserData = e.user
+	now := func() time.Time { return fixedNow }
+	if ec.oidc != nil {
+		userData, now = ec.oidc.attach(e)
+	}
 	e.srv, err = New(Options{
 		Config:       e.cfg,
 		Index:        e.idx,
-		UserData:     e.user,
+		UserData:     userData,
 		Scanner:      e.scan,
 		Thumbs:       e.dims,
 		Sources:      factory,
@@ -296,13 +303,14 @@ func newEnv(t *testing.T, opts ...envOption) *env {
 		PerUser:      ec.perUser,
 		Static:       static,
 		Logger:       discard(),
-		Now:          func() time.Time { return fixedNow },
+		Now:          now,
 		StartedAt:    fixedStarted,
 		ConfigDigest: e.configDigest(),
 	})
 	if err != nil {
 		t.Fatalf("httpapi.New: %v", err)
 	}
+	t.Cleanup(func() { _ = e.srv.Close() })
 	return e
 }
 
@@ -521,6 +529,9 @@ func (e *env) loadConfig(ec envConfig) *config.Config {
 	fmt.Fprintf(&b, "log:\n  http_requests: true\n")
 	if ec.password != "" {
 		fmt.Fprintf(&b, "auth:\n  password: %q\n", ec.password)
+	}
+	if ec.oidc != nil {
+		b.WriteString(ec.oidc.yaml(ec.basePath))
 	}
 
 	// The configuration file is written to disk, not merely parsed from a

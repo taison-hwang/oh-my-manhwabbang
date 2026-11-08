@@ -1108,6 +1108,9 @@ func (a *App) Close() error {
 	if a.roots != nil {
 		add("closing the roots", a.roots.Close())
 	}
+	if a.api != nil {
+		add("closing the session store", a.api.Close())
+	}
 	if a.ln != nil && a.http == nil {
 		// Only when New failed before the server was built; otherwise
 		// http.Server.Serve owns the listener and has already closed it.

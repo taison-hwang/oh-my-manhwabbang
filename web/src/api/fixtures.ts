@@ -274,6 +274,7 @@ export const settings: Settings = {
     pdf_enabled: true,
     avif_enabled: true,
     auth_enabled: false,
+    auth_mode: 'none',
     base_path: '',
     version: '0.1.0',
     recently_added_days: 14,
@@ -344,7 +345,7 @@ export const scanLogResponse: ScanLogResponse = {
   ],
 }
 
-export const authStatus: AuthStatus = { auth_required: true, authenticated: false }
+export const authStatus: AuthStatus = { auth_required: true, authenticated: false, mode: 'password', end_session_available: false }
 
 export const health: Health = {
   ok: true,

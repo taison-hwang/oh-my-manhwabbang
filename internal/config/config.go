@@ -278,18 +278,59 @@ type Auth struct {
 	SessionTTL   time.Duration `yaml:"session_ttl"`
 	// SessionKeyFile defaults to <data_dir>/session.key.
 	SessionKeyFile string `yaml:"session_key_file"`
+	// Mode is "password" (also when empty) or "oidc" (ruling E-74 §2.2).
+	Mode string `yaml:"mode"`
+	// OIDC is read only when Mode is "oidc" (ruling E-74 §2.19).
+	OIDC OIDC `yaml:"oidc"`
 }
 
+// Auth modes (ruling E-74 §2.2).
+const (
+	AuthModePassword = "password"
+	AuthModeOIDC     = "oidc"
+)
+
+// OIDC is the `auth.oidc:` block: login through uni-auth (ruling E-74).
+type OIDC struct {
+	Issuer                string   `yaml:"issuer"`
+	ClientID              string   `yaml:"client_id"`
+	Audience              string   `yaml:"audience"`
+	RedirectURL           string   `yaml:"redirect_url"`
+	PostLogoutRedirectURL string   `yaml:"post_logout_redirect_url"`
+	AllowedSubs           []string `yaml:"allowed_subs"`
+	AdminSubs             []string `yaml:"admin_subs"`
+	LegacyOwnerSub        string   `yaml:"legacy_owner_sub"`
+}
+
+// IsOIDC reports whether the block selects uni-auth login.
+func (a *Auth) IsOIDC() bool { return a != nil && a.Mode == AuthModeOIDC }
+
 // UnmarshalYAML decodes the block over its defaults, so an `auth:` block that
-// only sets a password still gets the documented 720h session TTL.
+// only sets a password still gets the documented 720h session TTL, and an oidc
+// block without session_ttl gets 12h (ruling E-74 §2.7).
 func (a *Auth) UnmarshalYAML(node *yaml.Node) error {
 	type authYAML Auth
 	tmp := authYAML(defaultAuth())
 	if err := node.Decode(&tmp); err != nil {
 		return err
 	}
+	if tmp.Mode == AuthModeOIDC && !mappingHasKey(node, "session_ttl") {
+		tmp.SessionTTL = defaultOIDCSessionTTL
+	}
 	*a = Auth(tmp)
 	return nil
+}
+
+func mappingHasKey(node *yaml.Node, key string) bool {
+	if node.Kind != yaml.MappingNode {
+		return false
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			return true
+		}
+	}
+	return false
 }
 
 // Log is the `log:` block (NFR-OPS-005).

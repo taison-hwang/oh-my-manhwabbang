@@ -14,6 +14,7 @@ import (
 
 	"shelf/internal/config"
 	"shelf/internal/index"
+	"shelf/internal/principal"
 	"shelf/internal/scanner"
 	"shelf/internal/source"
 )
@@ -166,8 +167,23 @@ func (s *Server) handleRoots(w http.ResponseWriter, r *http.Request) error {
 		items = append(items, pending...)
 	}
 
+	if s.hidesServerPaths(r) {
+		for i := range items {
+			items[i].Path, items[i].LastScanError = "", nil
+		}
+	}
 	writeJSON(w, http.StatusOK, RootsResponse{Items: items})
 	return nil
+}
+
+// hidesServerPaths is true for a non-admin in oidc mode: a server's absolute
+// paths are administration data (ruling E-74 §2.10).
+func (s *Server) hidesServerPaths(r *http.Request) bool {
+	if s.oidc == nil {
+		return false
+	}
+	p, ok := principal.From(r.Context())
+	return !ok || !p.Admin
 }
 
 // toRoot maps an index row onto the wire type.

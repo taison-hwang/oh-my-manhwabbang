@@ -1,4 +1,6 @@
 {
   "auth_required": false,
-  "authenticated": false
+  "authenticated": false,
+  "mode": "none",
+  "end_session_available": false
 }

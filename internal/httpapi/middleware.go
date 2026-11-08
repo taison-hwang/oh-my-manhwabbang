@@ -8,6 +8,9 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"shelf/internal/auth/oidc"
+	"shelf/internal/principal"
 )
 
 // contextKey is this package's private context key type, so a value stored here
@@ -205,8 +208,11 @@ func clientAddr(r *http.Request, trustProxy bool) string {
 // Everything else — an XHR, an `<img>`, a curl — gets the §7.2 JSON envelope,
 // which is what `web/src/api/client.ts` already keys on.
 func (s *Server) withAuth(next http.Handler) http.Handler {
+	if s.oidc != nil {
+		return s.withOIDC(next)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.auth.Enabled() || authExempt(r.URL.Path) {
+		if !s.auth.Enabled() || authExempt(r.URL.EscapedPath()) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -224,10 +230,124 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 
 // authExempt reports the paths reachable without a session. The list is closed
 // and exact: a prefix match here would make `/api/auth/../series` a bypass.
+// Callers pass the escaped path because ServeMux routes on it: with the
+// decoded one, `/api%2Fhealth` was exempt here and then routed to the SPA.
 func authExempt(path string) bool {
 	return path == "/api/health" || path == "/api/auth/status" ||
 		path == "/api/auth/login" || path == "/api/auth/logout"
 }
+
+// oidcExempt is authExempt plus exactly the three uni-auth routes (ruling
+// E-74 §2.18). Exact matches only, for the reason authExempt gives.
+func oidcExempt(path string) bool {
+	return authExempt(path) || path == "/api/auth/oidc/start" ||
+		path == "/api/auth/oidc/callback" || path == "/api/auth/oidc/end-session"
+}
+
+type oidcSessionKey struct{}
+
+// withOIDC is the gate of `auth.mode: oidc` (ruling E-74 §2.7, §2.11, §2.18).
+// The same-origin check runs before anything else, the session is looked up
+// on every request, and allow-list and admin membership come from the
+// configuration each time, never from the cookie.
+func (s *Server) withOIDC(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w = &privateCacheWriter{ResponseWriter: w}
+		if isStateChanging(r.Method) && !s.sameOrigin(r) {
+			writeError(w, r, s.log, forbidden("cross_origin", "this request did not come from this site"))
+			return
+		}
+		sess, st, err := s.oidc.Authenticate(r)
+		if err != nil {
+			writeError(w, r, s.log, internalErr(err))
+			return
+		}
+		if st == oidc.StatusOK {
+			ctx := principal.With(r.Context(), principal.Principal{Sub: sess.Sub, Admin: s.oidc.Admin(sess.Sub)})
+			r = r.WithContext(context.WithValue(ctx, oidcSessionKey{}, sess))
+		}
+		if st == oidc.StatusOK || oidcExempt(r.URL.EscapedPath()) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		switch {
+		case st == oidc.StatusNotAllowed:
+			if wantsLoginPage(r) {
+				s.writeOIDCPage(w, r, http.StatusForbidden, oidcPage{Kind: pageNotAllowed})
+				return
+			}
+			writeError(w, r, s.log, forbidden("not_allowed", "this account is not allowed on this server"))
+		case wantsLoginPage(r):
+			s.writeOIDCPage(w, r, http.StatusUnauthorized, oidcPage{Kind: pageLogin, Return: s.base + r.URL.RequestURI()})
+		case st == oidc.StatusExpired:
+			writeError(w, r, s.log, unauthorized().withDetail("reason", "session_expired"))
+		default:
+			writeError(w, r, s.log, unauthorized())
+		}
+	})
+}
+
+func isStateChanging(method string) bool {
+	return method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions
+}
+
+// sameOrigin wants an Origin equal to redirect_url's, or with no Origin a
+// Sec-Fetch-Site of same-origin; a request with neither is refused, because
+// SameSite=Lax does not stop a sibling on the same registrable domain.
+func (s *Server) sameOrigin(r *http.Request) bool {
+	if o := r.Header.Get("Origin"); o != "" {
+		return o == s.oidc.Origin()
+	}
+	return r.Header.Get("Sec-Fetch-Site") == "same-origin"
+}
+
+// oidcSession is the request's session, present only for a live one.
+func oidcSession(r *http.Request) (oidc.Session, bool) {
+	sess, ok := r.Context().Value(oidcSessionKey{}).(oidc.Session)
+	return sess, ok
+}
+
+// privateCacheWriter turns a `public` Cache-Control into `private`, and gives
+// a response without one `private, no-cache`, at the moment the header is
+// written. The server is reachable through a shared
+// cache (the Cloudflare tunnel) that does not key on the session cookie, so
+// in oidc mode no response may be stored there (ruling E-74 §2.18).
+type privateCacheWriter struct {
+	http.ResponseWriter
+	wrote bool
+}
+
+func (w *privateCacheWriter) rewrite() {
+	if w.wrote {
+		return
+	}
+	w.wrote = true
+	h := w.ResponseWriter.Header()
+	cc := h.Get("Cache-Control")
+	if cc == "" {
+		h.Set("Cache-Control", "private, no-cache")
+		return
+	}
+	parts := strings.Split(cc, ",")
+	for i, p := range parts {
+		if strings.EqualFold(strings.TrimSpace(p), "public") {
+			parts[i] = strings.Replace(p, strings.TrimSpace(p), "private", 1)
+		}
+	}
+	h.Set("Cache-Control", strings.Join(parts, ","))
+}
+
+func (w *privateCacheWriter) WriteHeader(status int) {
+	w.rewrite()
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *privateCacheWriter) Write(b []byte) (int, error) {
+	w.rewrite()
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *privateCacheWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // wantsLoginPage reports whether an unauthenticated request is a browser
 // navigation, and therefore something a human is about to look at.

@@ -608,6 +608,8 @@ export interface ServerSettings {
   pdf_enabled: boolean
   avif_enabled: boolean
   auth_enabled: boolean
+  /** Amendment A-20 (ruling E-74). */
+  auth_mode: 'none' | 'password' | 'oidc'
   base_path: string
   version: string
   /**
@@ -840,6 +842,17 @@ export interface ProgressImportResult {
 export interface AuthStatus {
   auth_required: boolean
   authenticated: boolean
+  /** Amendment A-20 (ruling E-74). */
+  mode: 'none' | 'password' | 'oidc'
+  /** True in oidc mode when uni-auth offers the logout from every service. */
+  end_session_available: boolean
+  /** The signed-in uni-auth user; present only in oidc mode with a session. */
+  user?: AuthUser
+}
+
+export interface AuthUser {
+  sub: string
+  is_admin: boolean
 }
 
 export interface LoginRequest {

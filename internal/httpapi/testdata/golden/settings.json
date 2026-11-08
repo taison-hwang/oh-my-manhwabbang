@@ -20,6 +20,7 @@
     "pdf_enabled": false,
     "avif_enabled": false,
     "auth_enabled": false,
+    "auth_mode": "none",
     "base_path": "",
     "version": "dev",
     "recently_added_days": 14,

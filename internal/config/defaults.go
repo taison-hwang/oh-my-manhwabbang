@@ -34,6 +34,9 @@ const (
 	defaultFitMode             = "height" // amendment A-2 (was "contain" in arch §3.2)
 	defaultTheme               = "system"
 	defaultSessionTTL          = 720 * time.Hour
+	defaultOIDCSessionTTL      = 12 * time.Hour
+	maxOIDCSessionTTL          = 24 * time.Hour
+	defaultOIDCIssuer          = "https://auth.betterax.net"
 	defaultLogLevel            = "info"
 	defaultLogFormat           = "text"
 )
@@ -116,7 +119,9 @@ func defaults() *Config {
 func defaultRoot() Root { return Root{Enabled: true} }
 
 // defaultAuth is what an `auth:` block looks like before its keys are read.
-func defaultAuth() Auth { return Auth{SessionTTL: defaultSessionTTL} }
+func defaultAuth() Auth {
+	return Auth{SessionTTL: defaultSessionTTL, OIDC: OIDC{Issuer: defaultOIDCIssuer}}
+}
 
 // scanWorkersFor is `0 => min(8, max(2, NumCPU/2))`: archive reading is I/O
 // bound, and more than eight readers buys nothing.

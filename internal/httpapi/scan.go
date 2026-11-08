@@ -115,7 +115,11 @@ func (s *Server) handleScanStatus(w http.ResponseWriter, r *http.Request) error 
 	if s.scan == nil {
 		return unavailable("the scanner is not available")
 	}
-	writeJSON(w, http.StatusOK, toScanStatus(s.scan.Status()))
+	st := toScanStatus(s.scan.Status())
+	if s.hidesServerPaths(r) {
+		st.LastError = nil // its text can name a server path, like Root.last_scan_error
+	}
+	writeJSON(w, http.StatusOK, st)
 	return nil
 }
 

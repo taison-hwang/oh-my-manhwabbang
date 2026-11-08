@@ -244,7 +244,7 @@ describe('useSeriesDirSeedMigration', () => {
     client.setQueryData(queryKeys.cache.usage, cacheUsage)
     renderHook(
       () => {
-        useSeriesDirSeedMigration({ auth_required: false, authenticated: false })
+        useSeriesDirSeedMigration({ auth_required: false, authenticated: false, mode: 'none', end_session_available: false })
       },
       { wrapper: wrapper(client) },
     )
@@ -295,7 +295,7 @@ describe('useSeriesDirSeedMigration', () => {
     client.setQueryData(queryKeys.cache.usage, cacheUsage)
     renderHook(
       () => {
-        useSeriesDirSeedMigration({ auth_required: false, authenticated: false })
+        useSeriesDirSeedMigration({ auth_required: false, authenticated: false, mode: 'none', end_session_available: false })
       },
       { wrapper: wrapper(client) },
     )
@@ -330,7 +330,7 @@ describe('useSeriesDirSeedMigration', () => {
     client.setQueryData(queryKeys.books.detail(BOOK_ID), bookDetail)
     renderHook(
       () => {
-        useSeriesDirSeedMigration({ auth_required: false, authenticated: false })
+        useSeriesDirSeedMigration({ auth_required: false, authenticated: false, mode: 'none', end_session_available: false })
       },
       { wrapper: wrapper(client) },
     )
@@ -350,7 +350,7 @@ describe('useSeriesDirSeedMigration', () => {
    * landed last and put R→L back over the reader's choice.
    */
   describe('against the reader’s own writes (one queue with the `.seg`)', () => {
-    const READY: AuthStatus = { auth_required: false, authenticated: false }
+    const READY: AuthStatus = { auth_required: false, authenticated: false, mode: 'none', end_session_available: false }
 
     /**
      * The series GET reads the stored value **when it arrives** and its answer is
@@ -504,7 +504,7 @@ describe('useSeriesDirSeedMigration', () => {
       },
       { wrapper: wrapper(client), initialProps: { auth: undefined } },
     )
-    rerender({ auth: { auth_required: true, authenticated: false } })
+    rerender({ auth: { auth_required: true, authenticated: false, mode: 'password', end_session_available: false } })
     await new Promise((resolve) => setTimeout(resolve, 30))
     // No handler is registered: any request would fail this test (src/test/msw.ts).
     expect(left()).toEqual({ [SERIES_ID]: 'rtl' })

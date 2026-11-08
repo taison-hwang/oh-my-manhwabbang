@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"shelf/internal/auth"
+	"shelf/internal/auth/oidc"
+	"shelf/internal/principal"
 )
 
 // handleAuthStatus is `GET /api/auth/status` (arch §7.12).
@@ -16,9 +18,23 @@ import (
 // required a session to report whether a session is required would be a
 // bootstrap problem with no solution.
 func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) error {
+	if s.oidc != nil {
+		st := AuthStatus{AuthRequired: true, Mode: "oidc", EndSessionAvailable: s.oidc.EndSessionAvailable(r.Context())}
+		if p, ok := principal.From(r.Context()); ok {
+			st.Authenticated = true
+			st.User = &AuthUser{Sub: p.Sub, IsAdmin: p.Admin}
+		}
+		writeJSON(w, http.StatusOK, st)
+		return nil
+	}
+	mode := "none"
+	if s.auth.Enabled() {
+		mode = "password"
+	}
 	writeJSON(w, http.StatusOK, AuthStatus{
 		AuthRequired:  s.auth.Enabled(),
 		Authenticated: s.auth.Enabled() && s.auth.Authenticated(r),
+		Mode:          mode,
 	})
 	return nil
 }
@@ -47,6 +63,9 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) error 
 // cannot repost the password) and the form again, with the failure's status, on
 // anything else.
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) error {
+	if s.oidc != nil {
+		return badRequest("this server signs in through uni-auth").withDetail("reason", "oidc_mode")
+	}
 	if !s.auth.Enabled() {
 		// Nothing to log in to. 404 rather than 204: pretending to
 		// authenticate would leave the client believing it holds a session.
@@ -147,7 +166,109 @@ func loginFailure(err error) *apiError {
 // Clearing an absent session is not an error: 204 is idempotent and "you are
 // logged out" is true either way.
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) error {
+	if s.oidc != nil {
+		cookies, err := s.oidc.Logout(r)
+		if err != nil {
+			return internalErr(err)
+		}
+		for _, c := range cookies {
+			http.SetCookie(w, c)
+		}
+		if isFormLogin(r) {
+			s.writeOIDCPage(w, r, http.StatusOK, oidcPage{Kind: pageLoggedOut, EndSession: s.oidc.EndSessionAvailable(r.Context())})
+			return nil
+		}
+		noContent(w)
+		return nil
+	}
 	http.SetCookie(w, s.auth.ClearCookie(r))
 	noContent(w)
 	return nil
+}
+
+// handleOIDCStart is `GET /api/auth/oidc/start?return=&reauth=1` (ruling E-74 §2.5).
+func (s *Server) handleOIDCStart(w http.ResponseWriter, r *http.Request) error {
+	if s.oidc == nil {
+		return notFound("uni-auth login is not enabled")
+	}
+	q := r.URL.Query()
+	ret := q.Get("return")
+	red, err := s.oidc.Start(r, auth.ClientIP(r, s.trustProxy), ret, q.Get("reauth") == "1")
+	var rl *oidc.RateLimitError
+	switch {
+	case errors.As(err, &rl):
+		seconds := max(1, int(rl.RetryAfter.Seconds()))
+		w.Header().Set("Retry-After", strconv.Itoa(seconds))
+		s.writeOIDCPage(w, r, http.StatusTooManyRequests, oidcPage{Kind: pageRateLimited, Return: ret})
+		return nil
+	case errors.Is(err, oidc.ErrNoSession):
+		s.writeOIDCPage(w, r, http.StatusUnauthorized, oidcPage{Kind: pageLogin, Return: ret})
+		return nil
+	case oidc.IsProviderUnavailable(err):
+		s.log.Warn("uni-auth unreachable", "err", err)
+		s.writeOIDCPage(w, r, http.StatusServiceUnavailable, oidcPage{Kind: pageUnavailable, Return: ret})
+		return nil
+	case err != nil:
+		s.log.Error("starting a uni-auth login", "err", err)
+		s.writeOIDCPage(w, r, http.StatusBadGateway, oidcPage{Kind: pageLoginFailed, Return: ret})
+		return nil
+	}
+	s.redirect(w, r, red)
+	return nil
+}
+
+// handleOIDCCallback is `GET /api/auth/oidc/callback` (ruling E-74 §2.6).
+func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) error {
+	if s.oidc == nil {
+		return notFound("uni-auth login is not enabled")
+	}
+	res := s.oidc.Callback(r)
+	for _, c := range res.Redirect.Cookies {
+		http.SetCookie(w, c)
+	}
+	if res.Err != nil {
+		s.log.Warn("uni-auth login did not complete", "err", res.Err)
+	}
+	switch res.Outcome {
+	case oidc.OutcomeRedirect:
+		http.Redirect(w, r, res.Redirect.Location, http.StatusFound)
+	case oidc.OutcomeNotAllowed:
+		s.writeOIDCPage(w, r, http.StatusForbidden, oidcPage{Kind: pageNotAllowed, Sub: res.Sub})
+	case oidc.OutcomeReauthFailed:
+		s.writeOIDCPage(w, r, http.StatusForbidden, oidcPage{Kind: pageReauthFailed})
+	case oidc.OutcomeUnavailable:
+		s.writeOIDCPage(w, r, http.StatusServiceUnavailable, oidcPage{Kind: pageUnavailable})
+	case oidc.OutcomeLoginFailed:
+		s.writeOIDCPage(w, r, http.StatusBadGateway, oidcPage{Kind: pageLoginFailed})
+	default:
+		s.writeOIDCPage(w, r, http.StatusBadRequest, oidcPage{Kind: pageRestart})
+	}
+	return nil
+}
+
+// handleOIDCEndSession is `POST /api/auth/oidc/end-session` (ruling E-74 §2.12).
+func (s *Server) handleOIDCEndSession(w http.ResponseWriter, r *http.Request) error {
+	if s.oidc == nil {
+		return notFound("uni-auth login is not enabled")
+	}
+	red, err := s.oidc.EndSession(r)
+	for _, c := range red.Cookies {
+		http.SetCookie(w, c)
+	}
+	if err != nil {
+		s.log.Warn("ending the uni-auth session", "err", err)
+	}
+	if red.Location != "" {
+		http.Redirect(w, r, red.Location, http.StatusFound)
+		return nil
+	}
+	s.writeOIDCPage(w, r, http.StatusOK, oidcPage{Kind: pageLoggedOut})
+	return nil
+}
+
+func (s *Server) redirect(w http.ResponseWriter, r *http.Request, red oidc.Redirect) {
+	for _, c := range red.Cookies {
+		http.SetCookie(w, c)
+	}
+	http.Redirect(w, r, red.Location, http.StatusFound)
 }

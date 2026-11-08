@@ -228,6 +228,7 @@ describe('shapes the UI depends on', () => {
       'pdf_enabled',
       'avif_enabled',
       'auth_enabled',
+      'auth_mode', // amendment A-20
       'base_path',
       'version',
       'recently_added_days', // amendment A-8

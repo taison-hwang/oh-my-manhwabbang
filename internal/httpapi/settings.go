@@ -243,14 +243,15 @@ func (s *Server) serverSettings(r *http.Request) ServerSettings {
 		ThumbWorkers:      s.cfg.Thumbnails.Workers,
 		PDFEnabled:        s.pdfEnabled(),
 		AVIFEnabled:       s.avifEnabled(),
-		AuthEnabled:       s.auth.Enabled(),
+		AuthEnabled:       s.auth.Enabled() || s.oidc != nil,
+		AuthMode:          s.authMode(),
 		BasePath:          s.base,
 		Version:           buildinfo.Version,
 		RecentlyAddedDays: s.cfg.Library.RecentlyAddedDays,
 		// AbsFilePath, not FilePath: the lookup order's second entry is
 		// `./shelf.yaml`, and "edit shelf.yaml" is not an answer to "which of the
 		// four candidates am I running?" (amendment A-10, ruling E-25).
-		ConfigPath:          s.cfg.AbsFilePath(),
+		ConfigPath:          blankIf(s.hidesServerPaths(r), s.cfg.AbsFilePath()),
 		RootEditingEnabled:  s.rootEditingEnabled(),
 		ConfigChangedOnDisk: s.configChangedOnDisk(r),
 	}
@@ -304,4 +305,16 @@ func (s *Server) configFileStateOrZero(r *http.Request) (config.FileState, bool)
 		return config.FileState{}, false
 	}
 	return state, true
+}
+
+// authMode is `Settings.server.auth_mode` (amendment A-20).
+func (s *Server) authMode() string {
+	switch {
+	case s.oidc != nil:
+		return "oidc"
+	case s.auth.Enabled():
+		return "password"
+	default:
+		return "none"
+	}
 }

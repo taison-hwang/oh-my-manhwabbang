@@ -76,7 +76,7 @@ beforeEach(() => {
   seriesQueries = []
   server.use(
     http.get(`${ORIGIN}/api/auth/status`, () =>
-      HttpResponse.json({ auth_required: false, authenticated: true } satisfies AuthStatus),
+      HttpResponse.json({ auth_required: false, authenticated: true, mode: 'none', end_session_available: false } satisfies AuthStatus),
     ),
     http.get(`${ORIGIN}/api/roots`, () => HttpResponse.json(rootsResponse)),
     http.get(`${ORIGIN}/api/scan/status`, () => HttpResponse.json(scanStatusIdle)),
@@ -631,7 +631,7 @@ describe('ShellDataProvider — the server theme on every route', () => {
     useUiStore.setState({ theme: 'light' })
     server.use(
       http.get(`${ORIGIN}/api/auth/status`, () =>
-        HttpResponse.json({ auth_required: true, authenticated: loggedIn } satisfies AuthStatus),
+        HttpResponse.json({ auth_required: true, authenticated: loggedIn, mode: 'password', end_session_available: false } satisfies AuthStatus),
       ),
       http.get(`${ORIGIN}/api/roots`, () => (loggedIn ? HttpResponse.json(rootsResponse) : refused())),
       http.get(`${ORIGIN}/api/scan/status`, () =>

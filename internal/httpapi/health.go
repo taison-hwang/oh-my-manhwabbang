@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"runtime"
 
+	"shelf/internal/principal"
+
 	"shelf/internal/buildinfo"
 	"shelf/internal/pdfium"
 	"shelf/internal/thumbs"
@@ -26,7 +28,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) error {
 		PDFEnabled:  s.pdfEnabled(),
 		AVIFEnabled: s.avifEnabled(),
 	}
-	if r.URL.Query().Get("verbose") == "1" {
+	if r.URL.Query().Get("verbose") == "1" && s.mayReadVerboseHealth(r) {
 		h.Verbose = s.healthVerbose()
 	}
 	writeJSON(w, http.StatusOK, h)
@@ -90,4 +92,15 @@ func (s *Server) healthVerbose() *HealthVerbose {
 		}
 	}
 	return v
+}
+
+// mayReadVerboseHealth keeps the pool and queue counters from a visitor with
+// no session in oidc mode (ruling E-74 §2.18); elsewhere they are open, as the
+// E2E gate relies on (amendment A-15).
+func (s *Server) mayReadVerboseHealth(r *http.Request) bool {
+	if s.oidc == nil {
+		return true
+	}
+	_, ok := principal.From(r.Context())
+	return ok
 }

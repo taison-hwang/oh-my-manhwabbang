@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"html/template"
 	"net/http"
+	"net/url"
 	"strconv"
 )
 
@@ -55,55 +56,14 @@ type loginPageData struct {
 
 // loginPageTemplate is parsed once at init; html/template's contextual escaping
 // covers the two interpolations.
-var loginPageTemplate = template.Must(template.New("login").Parse(`<!doctype html>
+var loginPageTemplate = template.Must(template.Must(template.New("login").Parse(pageStyle)).Parse(`<!doctype html>
 <html lang="ko">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex, nofollow" />
 <title>석교만화방</title>
-<style>
-/* E-46's 서고 palette, restated rather than referenced.
-   This page is served *before* the SPA and deliberately depends on nothing: no
-   stylesheet, no script, no webfont. The vendored 고운바탕 is same-origin and
-   would pass the CSP, but its filename is fingerprinted by Vite at build time
-   and this Go template cannot know it — so the face is a system 명조 stack and
-   the colours are literals. Two copies of a palette is a cost; a gate page that
-   can fail to render because an asset moved is a larger one.
-   The values are tokens.css's light and dark grounds, ink and 인주. */
-:root { color-scheme: light dark; }
-* { box-sizing: border-box; border-radius: 2px; }
-body {
-  margin: 0; min-height: 100vh; display: flex; align-items: center;
-  justify-content: center; padding: 24px;
-  font-family: "Gowun Batang", "Noto Serif KR", "Apple SD Gothic Neo", batang, serif;
-  background: #DED5C4; color: #221E1A;
-}
-main { width: 100%; max-width: 320px; }
-/* A proper noun, and 명조 will not take negative tracking — the strokes close
-   up and the syllables blot. Zero here for the same reason base.css pins zero
-   on every heading. */
-h1 { font-size: 22px; font-weight: 700; letter-spacing: 0; margin: 0 0 4px; }
-p { font-size: 13px; line-height: 1.5; margin: 0 0 20px; color: #564D42; }
-p.error { color: #7A281D; }
-label { display: block; font-size: 12px; margin-bottom: 6px; color: #564D42; }
-input, button {
-  width: 100%; font: inherit; font-size: 14px; padding: 10px 12px;
-  border: 1px solid #A5967E; background: #EFE9DC; color: #221E1A;
-}
-button {
-  margin-top: 12px; background: #A2382A; color: #F6F2E9; cursor: pointer;
-  border-color: #A2382A; font-weight: 700;
-}
-@media (prefers-color-scheme: dark) {
-  body { background: #221E1A; color: #DED5C4; }
-  p { color: #B7A78B; }
-  p.error { color: #D3A79D; }
-  label { color: #B7A78B; }
-  input { background: #302A24; color: #DED5C4; border-color: #6E6355; }
-  button { background: #A2382A; color: #F6F2E9; border-color: #A2382A; }
-}
-</style>
+{{template "style"}}
 </head>
 <body>
 <main>
@@ -160,4 +120,152 @@ func loginMessage(status int) string {
 	default:
 		return "로그인하지 못했습니다."
 	}
+}
+
+// pageStyle is shared by every server-rendered page: the password form and
+// the uni-auth pages.
+const pageStyle = `{{define "style"}}<style>
+/* E-46's 서고 palette, restated rather than referenced.
+   This page is served *before* the SPA and deliberately depends on nothing: no
+   stylesheet, no script, no webfont. The vendored 고운바탕 is same-origin and
+   would pass the CSP, but its filename is fingerprinted by Vite at build time
+   and this Go template cannot know it — so the face is a system 명조 stack and
+   the colours are literals. Two copies of a palette is a cost; a gate page that
+   can fail to render because an asset moved is a larger one.
+   The values are tokens.css's light and dark grounds, ink and 인주. */
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; border-radius: 2px; }
+body {
+  margin: 0; min-height: 100vh; display: flex; align-items: center;
+  justify-content: center; padding: 24px;
+  font-family: "Gowun Batang", "Noto Serif KR", "Apple SD Gothic Neo", batang, serif;
+  background: #DED5C4; color: #221E1A;
+}
+main { width: 100%; max-width: 320px; }
+/* A proper noun, and 명조 will not take negative tracking — the strokes close
+   up and the syllables blot. Zero here for the same reason base.css pins zero
+   on every heading. */
+h1 { font-size: 22px; font-weight: 700; letter-spacing: 0; margin: 0 0 4px; }
+p { font-size: 13px; line-height: 1.5; margin: 0 0 20px; color: #564D42; }
+p.error { color: #7A281D; }
+label { display: block; font-size: 12px; margin-bottom: 6px; color: #564D42; }
+input, button {
+  width: 100%; font: inherit; font-size: 14px; padding: 10px 12px;
+  border: 1px solid #A5967E; background: #EFE9DC; color: #221E1A;
+}
+button, a.button {
+  margin-top: 12px; background: #A2382A; color: #F6F2E9; cursor: pointer;
+  border-color: #A2382A; font-weight: 700;
+}
+@media (prefers-color-scheme: dark) {
+  body { background: #221E1A; color: #DED5C4; }
+  p { color: #B7A78B; }
+  p.error { color: #D3A79D; }
+  label { color: #B7A78B; }
+  input { background: #302A24; color: #DED5C4; border-color: #6E6355; }
+  button { background: #A2382A; color: #F6F2E9; border-color: #A2382A; }
+}
+</style>
+<style>
+a.button { display: block; text-align: center; text-decoration: none; background: #A2382A;
+  color: #F6F2E9; border: 1px solid #A2382A; font-weight: 700; padding: 10px 12px; font-size: 14px; }
+button.quiet { background: transparent; color: inherit; border-color: #A5967E; font-weight: 400; }
+code { font-size: 12px; word-break: break-all; }
+</style>{{end}}`
+
+// The uni-auth pages of `auth.mode: oidc` (ruling E-74 §2.17). The server
+// renders them because the gate keeps the SPA from loading without a session,
+// and they reference no asset.
+type oidcPageKind int
+
+const (
+	pageLogin oidcPageKind = iota
+	pageNotAllowed
+	pageReauthFailed
+	pageUnavailable
+	pageLoginFailed
+	pageRestart
+	pageRateLimited
+	pageLoggedOut
+)
+
+type oidcPage struct {
+	Kind       oidcPageKind
+	Return     string // where the login button comes back to
+	Sub        string // pageNotAllowed: the sub the operator must add
+	EndSession bool   // pageLoggedOut: offer the logout from every service
+}
+
+type oidcPageData struct {
+	Message          string
+	Error            bool
+	Sub              string
+	LoginURL         string
+	LoginLabel       string
+	EndSessionAction string
+}
+
+var oidcPageTemplate = template.Must(template.Must(template.New("oidc").Parse(pageStyle)).Parse(`<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex, nofollow" />
+<title>석교만화방</title>
+{{template "style"}}
+</head>
+<body>
+<main>
+<h1>석교만화방</h1>
+<p{{if .Error}} class="error" role="alert"{{end}}>{{.Message}}</p>
+{{if .Sub}}<p>사용자 ID: <code>{{.Sub}}</code></p>{{end}}
+{{if .LoginURL}}<a class="button" href="{{.LoginURL}}">{{.LoginLabel}}</a>{{end}}
+{{if .EndSessionAction}}<form method="post" action="{{.EndSessionAction}}"><button type="submit" class="quiet">모든 서비스에서 로그아웃</button></form>{{end}}
+</main>
+</body>
+</html>
+`))
+
+func (s *Server) writeOIDCPage(w http.ResponseWriter, r *http.Request, status int, pg oidcPage) {
+	login := s.base + "/api/auth/oidc/start"
+	if pg.Return != "" {
+		login += "?return=" + url.QueryEscape(pg.Return)
+	}
+	d := oidcPageData{LoginURL: login, LoginLabel: "다시 시도"}
+	switch pg.Kind {
+	case pageLogin:
+		d.Message, d.LoginLabel = "계속하려면 로그인하세요.", "uni-auth로 로그인"
+	case pageNotAllowed:
+		d.Message, d.Error, d.Sub, d.LoginURL = "이 계정은 이 서재에 들어올 수 없습니다. 들어오려면 운영자에게 아래 사용자 ID를 알려 주세요.", true, pg.Sub, ""
+	case pageReauthFailed:
+		d.Message, d.Error = "본인 확인을 마치지 못했습니다. 하려던 작업을 다시 시도하세요.", true
+		d.LoginURL, d.LoginLabel = s.base+"/", "서재로 돌아가기"
+	case pageUnavailable:
+		d.Message, d.Error = "인증 서버에 연결할 수 없습니다. 잠시 후 다시 시도하세요.", true
+	case pageLoginFailed:
+		d.Message, d.Error = "로그인하지 못했습니다.", true
+	case pageRestart:
+		d.Message, d.Error, d.LoginLabel = "로그인이 만료되었거나 다른 창에서 시작되었습니다. 처음부터 다시 로그인하세요.", true, "다시 로그인"
+	case pageRateLimited:
+		d.Message, d.Error = "로그인 시도가 너무 많습니다. 잠시 후 다시 시도하세요.", true
+	case pageLoggedOut:
+		d.Message, d.LoginLabel = "로그아웃했습니다. 다른 서비스에는 계속 로그인되어 있습니다.", "다시 로그인"
+		if pg.EndSession {
+			d.EndSessionAction = s.base + "/api/auth/oidc/end-session"
+		}
+	}
+	var buf bytes.Buffer
+	if err := oidcPageTemplate.Execute(&buf, d); err != nil {
+		writeError(w, r, s.log, internalErr(err))
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", "text/html; charset=utf-8")
+	h.Set("Cache-Control", "no-store")
+	h.Set("Content-Length", strconv.Itoa(buf.Len()))
+	w.WriteHeader(status)
+	if r.Method == http.MethodHead {
+		return
+	}
+	_, _ = w.Write(buf.Bytes())
 }

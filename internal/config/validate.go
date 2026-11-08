@@ -368,7 +368,12 @@ func (c *Config) validate() error {
 	checkEnum(s, "reader.theme", c.Reader.Theme, add, "light", "dark", "system")
 
 	// ---- auth (NFR-SEC-002) ----------------------------------------------
-	if a := c.Auth; a != nil {
+	if a := c.Auth; a != nil && a.Mode == AuthModeOIDC {
+		c.validateOIDC(add)
+	} else if a != nil {
+		if a.Mode != "" && a.Mode != AuthModePassword {
+			add(s.errValue("auth.mode", a.Mode, `must be "password" or "oidc"`))
+		}
 		switch {
 		case a.Password != "" && a.PasswordHash != "":
 			add(s.errf("auth.password", "set either auth.password or auth.password_hash, not both"))

@@ -3945,7 +3945,7 @@ describe('the series 읽기 방향 (ruling E-69 §2.3, replacing E-33 §2)', () 
  */
 describe('a leftover series-direction seed, uploaded at boot (E-69 §2.3)', () => {
   function SeedUpload(): null {
-    useSeriesDirSeedMigration({ auth_required: false, authenticated: false })
+    useSeriesDirSeedMigration({ auth_required: false, authenticated: false, mode: 'none', end_session_available: false })
     return null
   }
 

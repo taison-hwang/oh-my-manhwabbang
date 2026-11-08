@@ -320,6 +320,8 @@ describe('endpoints', () => {
     await expect(getAuthStatus()).resolves.toEqual({
       auth_required: true,
       authenticated: false,
+      mode: 'password',
+      end_session_available: false,
     })
   })
 

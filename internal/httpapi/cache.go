@@ -33,7 +33,7 @@ func (s *Server) handleCacheUsage(w http.ResponseWriter, r *http.Request) error 
 		ComputedAt: usage.ComputedAt.Unix(),
 		Entries:    entries,
 		TotalBytes: usage.TotalBytes,
-		CacheDir:   usage.CacheDir,
+		CacheDir:   blankIf(s.hidesServerPaths(r), usage.CacheDir),
 	})
 	return nil
 }
@@ -70,4 +70,12 @@ func (s *Server) handleCachePurge(w http.ResponseWriter, r *http.Request) error 
 		FreedBytes:   res.FreedBytes,
 	})
 	return nil
+}
+
+// blankIf is v, or "" when hide is set.
+func blankIf(hide bool, v string) string {
+	if hide {
+		return ""
+	}
+	return v
 }

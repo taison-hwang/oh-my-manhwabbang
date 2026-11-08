@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -126,12 +127,14 @@ func serve(ctx context.Context, f *flags, stdout, stderr io.Writer) (int, error)
 
 	log.Info("starting", "version", buildinfo.Version, "commit", buildinfo.Commit,
 		"config", cfg.FilePath, "log_level", level.String())
+	warnPublicExposure(cfg, log)
 
 	a, err := app.New(ctx, app.Options{
 		Config:       cfg,
 		Logger:       log,
 		Static:       web.Dist(),
 		RebuildIndex: f.rebuildIndex,
+		PerUser:      cfg.Auth.IsOIDC(), // ruling E-74 §2.13
 	})
 	if err != nil {
 		return exitFailure, err
@@ -148,4 +151,20 @@ func serve(ctx context.Context, f *flags, stdout, stderr io.Writer) (int, error)
 	}
 	log.Info("stopped")
 	return exitOK, nil
+}
+
+// warnPublicExposure logs the deployment conditions ruling E-74 §2.18 forbids
+// before the tunnel is connected. They are warnings, not startup failures, so
+// that a reverse proxy on another LAN machine stays possible.
+func warnPublicExposure(cfg *config.Config, log *slog.Logger) {
+	if !cfg.Auth.IsOIDC() {
+		return
+	}
+	if !config.IsLoopbackHost(cfg.Server.Listen) {
+		log.Warn("auth.mode is oidc but server.listen is not a loopback address; do not publish this server through the tunnel until only the tunnel can reach it (E-74 §2.18)",
+			"listen", cfg.Server.Listen)
+	}
+	if cfg.Server.TrustedProxyHeaders {
+		log.Warn("auth.mode is oidc with server.trusted_proxy_headers on; anyone can forge the per-IP limit's key, and the server must not be published like this (E-74 §2.18)")
+	}
 }

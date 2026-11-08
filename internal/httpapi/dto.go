@@ -400,6 +400,7 @@ type ServerSettings struct {
 	PDFEnabled      bool   `json:"pdf_enabled"`
 	AVIFEnabled     bool   `json:"avif_enabled"`
 	AuthEnabled     bool   `json:"auth_enabled"`
+	AuthMode        string `json:"auth_mode"` // amendment A-20: "none" | "password" | "oidc"
 	BasePath        string `json:"base_path"`
 	Version         string `json:"version"`
 	// RecentlyAddedDays is `library.recently_added_days` (amendment A-8). It
@@ -515,6 +516,16 @@ type ScanLogResponse struct {
 type AuthStatus struct {
 	AuthRequired  bool `json:"auth_required"`
 	Authenticated bool `json:"authenticated"`
+	// Mode, EndSessionAvailable and User: amendment A-20 (ruling E-74).
+	Mode                string    `json:"mode"`
+	EndSessionAvailable bool      `json:"end_session_available"`
+	User                *AuthUser `json:"user,omitempty"`
+}
+
+// AuthUser is the signed-in uni-auth user of `auth.mode: oidc` (A-20).
+type AuthUser struct {
+	Sub     string `json:"sub"`
+	IsAdmin bool   `json:"is_admin"`
 }
 
 // --- request bodies --------------------------------------------------------

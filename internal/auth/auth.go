@@ -222,6 +222,9 @@ func FromConfig(cfg *config.Config) (Options, error) {
 		return opts, nil
 	}
 	opts.SessionTTL = cfg.Auth.SessionTTL
+	if cfg.Auth.IsOIDC() {
+		return opts, nil
+	}
 
 	hasPlain := cfg.Auth.Password != ""
 	hasHash := cfg.Auth.PasswordHash != ""
