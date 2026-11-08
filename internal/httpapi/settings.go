@@ -53,6 +53,10 @@ const (
 
 // handleGetSettings is `GET /api/settings` (UI-004).
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) error {
+	r, err := s.scoped(r)
+	if err != nil {
+		return err
+	}
 	settings, err := s.settings(r)
 	if err != nil {
 		return err
@@ -69,6 +73,10 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) error
 // for free because settingsUpdateBody has no `server` field. Roots are not
 // editable here either (C-5, ruling E-3).
 func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) error {
+	r, err := s.scoped(r)
+	if err != nil {
+		return err
+	}
 	if s.user == nil {
 		return unavailable("user data is not available")
 	}

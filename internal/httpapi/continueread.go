@@ -17,6 +17,10 @@ const (
 // 없으면 영역 자체를 숨김"), which is why it is an empty array and never null:
 // `items.length === 0` has to be a safe thing for the client to write.
 func (s *Server) handleContinue(w http.ResponseWriter, r *http.Request) error {
+	r, err := s.scoped(r)
+	if err != nil {
+		return err
+	}
 	if s.idx == nil {
 		return unavailable("the catalogue is not available")
 	}

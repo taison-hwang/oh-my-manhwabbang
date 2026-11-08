@@ -125,6 +125,7 @@ type env struct {
 type envOption func(*envConfig)
 
 type envConfig struct {
+	perUser  bool
 	basePath string
 	password string
 	static   bool
@@ -166,6 +167,9 @@ const secondRootName = "docs"
 
 func withBasePath(p string) envOption { return func(c *envConfig) { c.basePath = p } }
 func withPassword(p string) envOption { return func(c *envConfig) { c.password = p } }
+
+// withPerUser builds the server as auth.mode "oidc" would (ruling E-74 §2.13).
+func withPerUser() envOption { return func(c *envConfig) { c.perUser = true } }
 func withStatic() envOption           { return func(c *envConfig) { c.static = true } }
 func withPDF() envOption              { return func(c *envConfig) { c.pdf = true } }
 func withoutAVIFConfig() envOption    { return func(c *envConfig) { c.noAVIFConfig = true } }
@@ -289,6 +293,7 @@ func newEnv(t *testing.T, opts ...envOption) *env {
 		Roots:        rootSet,
 		Pool:         pool,
 		Auth:         authenticator,
+		PerUser:      ec.perUser,
 		Static:       static,
 		Logger:       discard(),
 		Now:          func() time.Time { return fixedNow },

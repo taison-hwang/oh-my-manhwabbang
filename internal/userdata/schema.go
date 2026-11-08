@@ -17,7 +17,12 @@ import (
 //
 // 3 adds `book_covers` and `series_prefs` (ruling E-69 §2.5), additive in the
 // same way.
-const schemaVersion = 3
+//
+// 4 adds the per-user tables of ruling E-74 §2.13 (`user_progress`,
+// `user_book_prefs`, `user_settings`, `user_view_state`, `users`). Also additive:
+// the old tables stay exactly as they were and keep serving the modes that have
+// no user.
+const schemaVersion = 4
 
 // IDVersion pins the identifier scheme of arch-backend §3.4. It is exported
 // because the progress export carries it and the importer refuses a mismatch:
@@ -59,6 +64,7 @@ var migrations = []migration{
 	{to: 1, sql: schemaV1},
 	{to: 2, sql: schemaV2},
 	{to: 3, sql: schemaV3},
+	{to: 4, sql: schemaV4},
 }
 
 // schemaV1 is the DDL of arch-backend §3.6, verbatim.
@@ -173,6 +179,68 @@ CREATE TABLE IF NOT EXISTS pending_relocations (
     evidence TEXT NOT NULL
 );
 
+`
+
+// schemaV4 is ruling E-74 §2.13: the data an `auth.mode: oidc` server keeps per
+// user. Each table is the old one with `user_sub` in front of the key, columns
+// otherwise unchanged (so `updated_at` is still there for the restore-owner
+// merge). The shared tables — series_seen, book_covers, series_prefs,
+// pending_relocations — are deliberately not repeated here.
+//
+// Like every rung this only creates (arch §3.6 rule 8), and the old tables are
+// untouched: password and no-auth servers keep reading them.
+//
+// users records who has signed in; it holds no name or e-mail.
+const schemaV4 = `
+CREATE TABLE IF NOT EXISTS user_progress (
+    user_sub    TEXT NOT NULL,
+    book_id     TEXT NOT NULL,
+    series_id   TEXT NOT NULL,
+    root_name   TEXT NOT NULL,
+    book_path   TEXT NOT NULL,
+    last_page   INTEGER NOT NULL,
+    page_count  INTEGER NOT NULL,
+    completed   INTEGER NOT NULL DEFAULT 0,
+    started_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL,
+    PRIMARY KEY (user_sub, book_id)
+);
+CREATE INDEX IF NOT EXISTS ix_user_progress_series   ON user_progress(user_sub, series_id);
+CREATE INDEX IF NOT EXISTS ix_user_progress_updated  ON user_progress(user_sub, updated_at DESC);
+CREATE INDEX IF NOT EXISTS ix_user_progress_continue ON user_progress(user_sub, updated_at DESC)
+    WHERE completed = 0;
+
+CREATE TABLE IF NOT EXISTS user_book_prefs (
+    user_sub     TEXT NOT NULL,
+    book_id      TEXT NOT NULL,
+    reading_dir  TEXT,
+    display_mode TEXT,
+    fit_mode     TEXT,
+    updated_at   INTEGER NOT NULL,
+    PRIMARY KEY (user_sub, book_id)
+);
+
+CREATE TABLE IF NOT EXISTS user_settings (
+    user_sub   TEXT NOT NULL,
+    key        TEXT NOT NULL,
+    value      TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (user_sub, key)
+);
+
+CREATE TABLE IF NOT EXISTS user_view_state (
+    user_sub   TEXT NOT NULL,
+    key        TEXT NOT NULL,
+    value      TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (user_sub, key)
+);
+
+CREATE TABLE IF NOT EXISTS users (
+    user_sub      TEXT PRIMARY KEY,
+    first_seen_at INTEGER NOT NULL,
+    last_login_at INTEGER NOT NULL
+);
 `
 
 // migrate brings the file up to schemaVersion, creating it from empty when the

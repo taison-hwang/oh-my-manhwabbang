@@ -26,6 +26,10 @@ import (
 // `page_count` baseline is a separate question, and the answer is `stale_seen`:
 // only an acknowledged write rebaselines (ruling E-45, userdata.PutProgress).
 func (s *Server) handlePutProgress(w http.ResponseWriter, r *http.Request) error {
+	r, err := s.scoped(r)
+	if err != nil {
+		return err
+	}
 	if s.user == nil {
 		return unavailable("user data is not available")
 	}
@@ -76,6 +80,10 @@ func (s *Server) handlePutProgress(w http.ResponseWriter, r *http.Request) error
 // handleDeleteProgress is `DELETE /api/books/{bid}/progress` → 204: the
 // "안읽음" / mark-as-unread half of FR-VWR-012.
 func (s *Server) handleDeleteProgress(w http.ResponseWriter, r *http.Request) error {
+	r, err := s.scoped(r)
+	if err != nil {
+		return err
+	}
 	if s.user == nil {
 		return unavailable("user data is not available")
 	}
@@ -100,6 +108,10 @@ func (s *Server) handleDeleteProgress(w http.ResponseWriter, r *http.Request) er
 // for them is stage 3. `Content-Disposition: attachment` so a browser hitting
 // the URL saves a file instead of rendering JSON.
 func (s *Server) handleProgressExport(w http.ResponseWriter, r *http.Request) error {
+	r, err := s.scoped(r)
+	if err != nil {
+		return err
+	}
 	if s.user == nil {
 		return unavailable("user data is not available")
 	}
@@ -121,6 +133,10 @@ func (s *Server) handleProgressExport(w http.ResponseWriter, r *http.Request) er
 // applies the whole thing in one transaction — a partial import of somebody's
 // reading history is worse than a failed one.
 func (s *Server) handleProgressImport(w http.ResponseWriter, r *http.Request) error {
+	r, err := s.scoped(r)
+	if err != nil {
+		return err
+	}
 	if s.user == nil {
 		return unavailable("user data is not available")
 	}

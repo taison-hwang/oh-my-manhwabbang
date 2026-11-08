@@ -47,12 +47,14 @@ package httpapi
 
 import (
 	"context"
+	"net/http"
 	"os"
 
 	"shelf/internal/bookcover"
 	"shelf/internal/config"
 	"shelf/internal/index"
 	"shelf/internal/openpool"
+	"shelf/internal/principal"
 	"shelf/internal/scanner"
 	"shelf/internal/source"
 	"shelf/internal/thumbs"
@@ -161,4 +163,24 @@ type Roots interface {
 // simply reports no pool counters.
 type HandlePool interface {
 	Stats() openpool.Stats
+}
+
+// scoped is the one gate between a request and user-owned data (ruling E-74
+// §2.13). A per-user server refuses a request that carries no principal with
+// 401 — otherwise the storage layer would read the single-user tables for it,
+// which hold the pre-E-74 owner's data. A server that is not per-user strips any
+// principal, so it keeps reading exactly the tables it always has.
+//
+// Every handler that reads or writes progress, book preferences, settings or
+// view state, or that returns a progress field, calls it first and uses the
+// request it returns.
+func (s *Server) scoped(r *http.Request) (*http.Request, error) {
+	_, ok := principal.From(r.Context())
+	switch {
+	case s.perUser && !ok:
+		return r, unauthorized()
+	case !s.perUser && ok:
+		return r.WithContext(principal.With(r.Context(), principal.Principal{})), nil
+	}
+	return r, nil
 }

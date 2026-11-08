@@ -50,6 +50,9 @@ func run(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(argv) > 0 && argv[0] == "verify" {
 		return runVerify(argv[1:], stdout, stderr)
 	}
+	if len(argv) > 0 && argv[0] == "auth" {
+		return runAuth(argv[1:], stdout, stderr)
+	}
 	f, err := parseFlags(argv, stderr)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {

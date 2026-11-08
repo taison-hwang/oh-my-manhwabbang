@@ -11,11 +11,18 @@ import (
 type UserData interface {
 	GetCover(context.Context, string) (userdata.Cover, bool, error)
 	ReadingDirLadder(context.Context, string, string) (*string, *string, error)
+	GetSeriesPrefs(context.Context, string) (userdata.SeriesPrefs, error)
 }
 
 // Resolve shares the effective cover inputs between HTTP reads and scan pre-generation.
 // The stored choice is returned even when it cannot currently be applied (E-69 §2.5).
-func Resolve(ctx context.Context, user UserData, book index.BookRow, global string) (thumbs.Request, *userdata.Cover, error) {
+//
+// shared is true on a per-user server (ruling E-74 §2.13). A cover is one image
+// every user is shown, so it must not depend on who asks: the direction is then
+// the series' choice, else global, and global must be the configuration file's
+// reader.reading_direction rather than anyone's settings. The caller supplies
+// that; this function only declines to read the book rung.
+func Resolve(ctx context.Context, user UserData, book index.BookRow, global string, shared bool) (thumbs.Request, *userdata.Cover, error) {
 	c := thumbs.Cover{Dir: global}
 	page := 1
 	var stored *userdata.Cover
@@ -32,9 +39,18 @@ func Resolve(ctx context.Context, user UserData, book index.BookRow, global stri
 			}
 		}
 		if c.Region == nil {
-			b, s, err := user.ReadingDirLadder(ctx, book.ID, book.SeriesID)
-			if err != nil {
-				return thumbs.Request{}, nil, err
+			var b, s *string
+			if shared {
+				sp, err := user.GetSeriesPrefs(ctx, book.SeriesID)
+				if err != nil {
+					return thumbs.Request{}, nil, err
+				}
+				s = sp.ReadingDir
+			} else {
+				var err error
+				if b, s, err = user.ReadingDirLadder(ctx, book.ID, book.SeriesID); err != nil {
+					return thumbs.Request{}, nil, err
+				}
 			}
 			c.Dir = userdata.EffectiveReadingDir(b, s, global)
 		}

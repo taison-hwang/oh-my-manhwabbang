@@ -57,6 +57,7 @@ import (
 	"shelf/internal/index"
 	"shelf/internal/openpool"
 	"shelf/internal/pdfium"
+	"shelf/internal/principal"
 	"shelf/internal/repair"
 	"shelf/internal/scanner"
 	"shelf/internal/source"
@@ -88,6 +89,11 @@ type Options struct {
 	// anything, then forces the first scan to be full (FR-IDX-005). user.db is
 	// never touched, which is the whole of AC-006.
 	RebuildIndex bool
+
+	// PerUser is true for auth.mode "oidc": progress, preferences and settings
+	// are kept per user, and the cover rule ignores both (ruling E-74 §2.13).
+	// cmd/shelf sets it from the configuration.
+	PerUser bool
 
 	// StartedAt is the process start, reported by GET /api/health. Zero selects
 	// time.Now().
@@ -127,6 +133,7 @@ type App struct {
 
 	pendingRelocations []index.Relocation
 	rebuilt            bool
+	perUser            bool
 	started            time.Time
 	closed             bool
 }
@@ -151,7 +158,7 @@ func New(ctx context.Context, opts Options) (a *App, err error) {
 		started = time.Now()
 	}
 
-	a = &App{cfg: opts.Config, log: log, started: started, rebuilt: opts.RebuildIndex}
+	a = &App{cfg: opts.Config, log: log, started: started, rebuilt: opts.RebuildIndex, perUser: opts.PerUser}
 	// Any failure below leaves half a process behind unless it is unwound here.
 	defer func() {
 		if err != nil {
@@ -262,7 +269,7 @@ func New(ctx context.Context, opts Options) (a *App, err error) {
 
 	covers := scanner.CoverQueue(nil)
 	if a.cfg.Thumbnails.CoverFirst {
-		covers = newCoverBridge(a.thumb, a.idx, a.user, a.cfg.Reader.ReadingDirection)
+		covers = newCoverBridge(a.thumb, a.idx, a.user, a.cfg.Reader.ReadingDirection, a.perUser)
 	}
 	books := scanner.BookLister(a.src)
 	if opts.wrapBooks != nil {
@@ -298,14 +305,21 @@ func New(ctx context.Context, opts Options) (a *App, err error) {
 			// cover and prefs (U1 codex cycle 1, finding 2). Each step still
 			// runs; they write, and none of them deletes.
 			explained := a.carryProgressAcrossRelocations(ctx, res, log)
-			explained = a.repairSplitProgress(ctx, log) && explained
-			explained = a.refileMisfiledProgress(ctx, log) && explained
+			explained = a.forEachScope(ctx, log, func(ctx context.Context) bool {
+				return a.repairSplitProgress(ctx, log)
+			}) && explained
+			explained = a.forEachScope(ctx, log, func(ctx context.Context) bool {
+				return a.refileMisfiledProgress(ctx, log)
+			}) && explained
 			if !explained {
 				log.Warn("not deleting anything for missing books this run: an earlier cleanup step failed, " +
 					"and a row it would have moved looks the same as a vanished one")
 				return
 			}
-			a.purgeVanishedProgress(ctx, res, log)
+			a.forEachScope(ctx, log, func(ctx context.Context) bool {
+				a.purgeVanishedProgress(ctx, res, log)
+				return true
+			})
 		},
 		Logger: log,
 	}); err != nil {
@@ -326,6 +340,7 @@ func New(ctx context.Context, opts Options) (a *App, err error) {
 		Roots:        a.roots,
 		Pool:         a.pool,
 		Auth:         authn,
+		PerUser:      a.perUser,
 		Static:       opts.Static,
 		Logger:       log,
 		StartedAt:    started,
@@ -424,6 +439,29 @@ func (a *App) reconcileRoots(ctx context.Context) error {
 // It reports false when a lookup or the write failed, so the purge of the same
 // run can stand down (see the AfterScan hook). A pairing it declined is not a
 // failure.
+// forEachScope runs one cleanup step against the single-user tables and then
+// against each user's rows (ruling E-74 §2.13). The index and userdata read the
+// scope from the context's principal, so a user's pass is the same code under
+// that user's identity; the first pass has no principal and is the old
+// behaviour unchanged. It reports whether every pass succeeded.
+//
+// Listing the users can fail; that counts as a failed step, which stops the
+// purge for this run, so a user's rows are never judged by a scan that could
+// not look at them.
+func (a *App) forEachScope(ctx context.Context, log *slog.Logger, step func(context.Context) bool) bool {
+	ok := step(ctx)
+	subs, err := a.user.UserSubs(ctx)
+	if err != nil {
+		log.Warn("could not list users to clean up their reading progress; the next scan will try again",
+			"error", err)
+		return false
+	}
+	for _, sub := range subs {
+		ok = step(principal.With(ctx, principal.Principal{Sub: sub})) && ok
+	}
+	return ok
+}
+
 func (a *App) carryProgressAcrossRelocations(ctx context.Context, res *scanner.Result, log *slog.Logger) (success bool) {
 	if res == nil {
 		return true
@@ -492,54 +530,61 @@ func (a *App) carryProgressAcrossRelocations(ctx context.Context, res *scanner.R
 		}
 	}()
 
-	// Every table filed under the old ids, not only progress (ruling E-69
-	// §2.12): a book nobody read can still carry a direction or a cover.
-	oldIDs := repair.RelocationIDs(relocs)
-	existing, err := a.user.GetProgressMany(ctx, oldIDs)
-	if err != nil {
-		log.Warn("could not check which relocated books had been read; "+
-			"reading progress is unchanged", "error", err)
-		return false
-	}
-	covers, err := a.user.GetCovers(ctx, oldIDs)
-	if err != nil {
-		log.Warn("could not check which relocated books had a chosen cover; "+
-			"user.db is unchanged", "error", err)
-		return false
-	}
-	seriesNow, err := a.idx.SeriesAt(ctx, repair.RelocationSeriesIDs(relocs))
-	if err != nil {
-		log.Warn("could not check which series the relocated books left; "+
-			"user.db is unchanged", "error", err)
-		return false
-	}
-	carry, skipped := repair.PlanCarry(relocs, existing, covers, seriesNow)
-	for _, s := range skipped {
-		log.Warn("reading progress not carried across a move: the pairing does not add up "+
-			"(the cover and preferences still follow it)",
-			"old_book_id", s.OldBookID, "new_book_id", s.NewBookID,
-			"reason", string(s.Reason), "baseline_pages", s.PageCount, "new_pages", s.NewPages)
-	}
-	r, err := a.user.ApplyCarry(ctx, carry)
-	if err != nil {
-		log.Warn("could not carry reading progress, covers and preferences across a move; "+
-			"user.db is unchanged",
-			"error", err, "planned_progress", len(carry.Progress), "declined", len(skipped))
-		return false
-	}
-	if r == (userdata.CarryResult{}) {
-		log.Info("books moved, none of them had progress, a cover or preferences to carry",
-			"relocations", len(relocs), "declined", len(skipped))
+	// The same proof is applied to the single-user tables and then to every
+	// user's rows (ruling E-74 §2.13): a rename moves each reader's place. The
+	// covers and series directions are shared, so the first pass carries them
+	// and the later ones find nothing left to do.
+	carryOnce := func(ctx context.Context) bool {
+		// Every table filed under the old ids, not only progress (ruling E-69
+		// §2.12): a book nobody read can still carry a direction or a cover.
+		oldIDs := repair.RelocationIDs(relocs)
+		existing, err := a.user.GetProgressMany(ctx, oldIDs)
+		if err != nil {
+			log.Warn("could not check which relocated books had been read; "+
+				"reading progress is unchanged", "error", err)
+			return false
+		}
+		covers, err := a.user.GetCovers(ctx, oldIDs)
+		if err != nil {
+			log.Warn("could not check which relocated books had a chosen cover; "+
+				"user.db is unchanged", "error", err)
+			return false
+		}
+		seriesNow, err := a.idx.SeriesAt(ctx, repair.RelocationSeriesIDs(relocs))
+		if err != nil {
+			log.Warn("could not check which series the relocated books left; "+
+				"user.db is unchanged", "error", err)
+			return false
+		}
+		carry, skipped := repair.PlanCarry(relocs, existing, covers, seriesNow)
+		for _, s := range skipped {
+			log.Warn("reading progress not carried across a move: the pairing does not add up "+
+				"(the cover and preferences still follow it)",
+				"old_book_id", s.OldBookID, "new_book_id", s.NewBookID,
+				"reason", string(s.Reason), "baseline_pages", s.PageCount, "new_pages", s.NewPages)
+		}
+		r, err := a.user.ApplyCarry(ctx, carry)
+		if err != nil {
+			log.Warn("could not carry reading progress, covers and preferences across a move; "+
+				"user.db is unchanged",
+				"error", err, "planned_progress", len(carry.Progress), "declined", len(skipped))
+			return false
+		}
+		if r == (userdata.CarryResult{}) {
+			log.Info("books moved, none of them had progress, a cover or preferences to carry",
+				"relocations", len(relocs), "declined", len(skipped))
+			return true
+		}
+		log.Info("carried reading progress, covers and preferences across books the scan saw move",
+			"relocations", len(relocs), "retired", r.Progress.Retired, "written", r.Progress.Written,
+			"kept_newer_local", r.Progress.Kept,
+			"covers_written", r.Covers.Written, "covers_kept", r.Covers.Kept,
+			"prefs_written", r.Prefs.Written, "prefs_kept", r.Prefs.Kept,
+			"series_prefs_written", r.Series.Written, "series_prefs_kept", r.Series.Kept,
+			"declined", len(skipped))
 		return true
 	}
-	log.Info("carried reading progress, covers and preferences across books the scan saw move",
-		"relocations", len(relocs), "retired", r.Progress.Retired, "written", r.Progress.Written,
-		"kept_newer_local", r.Progress.Kept,
-		"covers_written", r.Covers.Written, "covers_kept", r.Covers.Kept,
-		"prefs_written", r.Prefs.Written, "prefs_kept", r.Prefs.Kept,
-		"series_prefs_written", r.Series.Written, "series_prefs_kept", r.Series.Kept,
-		"declined", len(skipped))
-	return true
+	return a.forEachScope(ctx, log, carryOnce)
 }
 
 // purgeVanishedProgress deletes reading history for books a completed walk of

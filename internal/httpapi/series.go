@@ -23,6 +23,10 @@ const (
 // handleSeriesList is `GET /api/series` — filter, sort, paginate, search
 // (FR-LIB-003…007, amendments A-4 and A-8).
 func (s *Server) handleSeriesList(w http.ResponseWriter, r *http.Request) error {
+	r, err := s.scoped(r)
+	if err != nil {
+		return err
+	}
 	if s.idx == nil {
 		return unavailable("the catalogue is not available")
 	}
@@ -120,6 +124,10 @@ const maxOffset = math.MaxInt32
 
 // handleSeriesDetail is `GET /api/series/{sid}` (arch §7.5).
 func (s *Server) handleSeriesDetail(w http.ResponseWriter, r *http.Request) error {
+	r, err := s.scoped(r)
+	if err != nil {
+		return err
+	}
 	if s.idx == nil {
 		return unavailable("the catalogue is not available")
 	}

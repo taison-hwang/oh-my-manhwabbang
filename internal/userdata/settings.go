@@ -17,33 +17,37 @@ import (
 // key needs no change here.
 type KV struct {
 	db    *DB
-	table string
+	table func(scope) string
 }
 
 // Settings is the user-mutable settings store.
-func (db *DB) Settings() *KV { return &KV{db: db, table: "settings"} }
+func (db *DB) Settings() *KV { return &KV{db: db, table: scope.settings} }
 
 // ViewState is the sticky view-state store.
-func (db *DB) ViewState() *KV { return &KV{db: db, table: "view_state"} }
+func (db *DB) ViewState() *KV { return &KV{db: db, table: scope.viewState} }
 
 // Get reads one value. ok is false when the key has never been set.
 func (kv *KV) Get(ctx context.Context, key string) (value string, ok bool, err error) {
+	sc := scopeOf(ctx)
+	table := kv.table(sc)
 	err = kv.db.sqldb.QueryRowContext(ctx,
-		`SELECT value FROM `+kv.table+` WHERE key = ?`, key).Scan(&value)
+		`SELECT value FROM `+table+sc.where(`key = ?`), sc.args(key)...).Scan(&value)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return "", false, nil
 	case err != nil:
-		return "", false, fmt.Errorf("reading %s %q: %w", kv.table, key, err)
+		return "", false, fmt.Errorf("reading %s %q: %w", table, key, err)
 	}
 	return value, true, nil
 }
 
 // All reads the whole store.
 func (kv *KV) All(ctx context.Context) (map[string]string, error) {
-	rows, err := kv.db.sqldb.QueryContext(ctx, `SELECT key, value FROM `+kv.table)
+	sc := scopeOf(ctx)
+	table := kv.table(sc)
+	rows, err := kv.db.sqldb.QueryContext(ctx, `SELECT key, value FROM `+table+sc.where(""), sc.args()...)
 	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", kv.table, err)
+		return nil, fmt.Errorf("reading %s: %w", table, err)
 	}
 	defer rows.Close()
 
@@ -51,12 +55,12 @@ func (kv *KV) All(ctx context.Context) (map[string]string, error) {
 	for rows.Next() {
 		var k, v string
 		if err := rows.Scan(&k, &v); err != nil {
-			return nil, fmt.Errorf("scanning %s: %w", kv.table, err)
+			return nil, fmt.Errorf("scanning %s: %w", table, err)
 		}
 		out[k] = v
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("reading %s: %w", kv.table, err)
+		return nil, fmt.Errorf("reading %s: %w", table, err)
 	}
 	return out, nil
 }
@@ -77,25 +81,27 @@ func (kv *KV) PutAll(ctx context.Context, values map[string]string) error {
 	keys := make([]string, 0, len(values))
 	for k := range values {
 		if k == "" {
-			return fmt.Errorf("userdata: empty %s key: %w", kv.table, ErrInvalidArgument)
+			return fmt.Errorf("userdata: empty %s key: %w", kv.table(scopeOf(ctx)), ErrInvalidArgument)
 		}
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 
 	now := kv.db.now().Unix()
+	sc := scopeOf(ctx)
+	table := kv.table(sc)
 	return kv.db.writeTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		stmt, err := tx.PrepareContext(ctx, `
-			INSERT INTO `+kv.table+` (key, value, updated_at) VALUES (?, ?, ?)
-			ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`)
+			INSERT INTO `+table+` (`+sc.insCols()+`key, value, updated_at) VALUES (`+sc.insVals()+`?, ?, ?)
+			ON CONFLICT(`+sc.conflict()+`key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`)
 		if err != nil {
-			return fmt.Errorf("preparing %s write: %w", kv.table, err)
+			return fmt.Errorf("preparing %s write: %w", table, err)
 		}
 		defer stmt.Close()
 
 		for _, k := range keys {
-			if _, err := stmt.ExecContext(ctx, k, values[k], now); err != nil {
-				return fmt.Errorf("writing %s %q: %w", kv.table, k, err)
+			if _, err := stmt.ExecContext(ctx, sc.args(k, values[k], now)...); err != nil {
+				return fmt.Errorf("writing %s %q: %w", table, k, err)
 			}
 		}
 		return nil
@@ -104,9 +110,11 @@ func (kv *KV) PutAll(ctx context.Context, values map[string]string) error {
 
 // Delete removes one key. Deleting an absent key is not an error.
 func (kv *KV) Delete(ctx context.Context, key string) error {
+	sc := scopeOf(ctx)
+	table := kv.table(sc)
 	return kv.db.writeTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM `+kv.table+` WHERE key = ?`, key); err != nil {
-			return fmt.Errorf("deleting %s %q: %w", kv.table, key, err)
+		if _, err := tx.ExecContext(ctx, `DELETE FROM `+table+sc.where(`key = ?`), sc.args(key)...); err != nil {
+			return fmt.Errorf("deleting %s %q: %w", table, key, err)
 		}
 		return nil
 	})

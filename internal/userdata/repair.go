@@ -76,31 +76,32 @@ func carryProgress(ctx context.Context, tx *sql.Tx, moves []SplitMove) (RepairRe
 	if len(moves) == 0 {
 		return res, nil
 	}
-	lookup, err := tx.PrepareContext(ctx, `SELECT updated_at FROM progress WHERE book_id = ?`)
+	sc := scopeOf(ctx)
+	lookup, err := tx.PrepareContext(ctx, `SELECT updated_at FROM `+sc.progress()+sc.where(`book_id = ?`))
 	if err != nil {
 		return res, fmt.Errorf("preparing progress lookup: %w", err)
 	}
 	defer lookup.Close()
 
 	write, err := tx.PrepareContext(ctx, `
-		INSERT INTO progress (book_id, series_id, root_name, book_path, last_page,
+		INSERT INTO `+sc.progress()+` (`+sc.insCols()+`book_id, series_id, root_name, book_path, last_page,
 		                      page_count, completed, started_at, updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?)
-		ON CONFLICT(book_id) DO UPDATE SET
+		VALUES (`+sc.insVals()+`?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(`+sc.conflict()+`book_id) DO UPDATE SET
 			series_id  = excluded.series_id,
 			root_name  = excluded.root_name,
 			book_path  = excluded.book_path,
 			last_page  = excluded.last_page,
 			page_count = excluded.page_count,
 			completed  = excluded.completed,
-			started_at = min(progress.started_at, excluded.started_at),
+			started_at = min(`+sc.progress()+`.started_at, excluded.started_at),
 			updated_at = excluded.updated_at`)
 	if err != nil {
 		return res, fmt.Errorf("preparing repair write: %w", err)
 	}
 	defer write.Close()
 
-	retire, err := tx.PrepareContext(ctx, `DELETE FROM progress WHERE book_id = ?`)
+	retire, err := tx.PrepareContext(ctx, `DELETE FROM `+sc.progress()+sc.where(`book_id = ?`))
 	if err != nil {
 		return res, fmt.Errorf("preparing repair delete: %w", err)
 	}
@@ -119,7 +120,7 @@ func carryProgress(ctx context.Context, tx *sql.Tx, moves []SplitMove) (RepairRe
 					it.BookID, it.PageCount, ErrInvalidArgument)
 			}
 			var localUpdated int64
-			switch err := lookup.QueryRowContext(ctx, it.BookID).Scan(&localUpdated); {
+			switch err := lookup.QueryRowContext(ctx, sc.args(it.BookID)...).Scan(&localUpdated); {
 			case err == nil:
 				if localUpdated >= it.UpdatedAt {
 					res.Kept++
@@ -137,14 +138,14 @@ func carryProgress(ctx context.Context, tx *sql.Tx, moves []SplitMove) (RepairRe
 			if startedAt == 0 {
 				startedAt = it.UpdatedAt
 			}
-			if _, err := write.ExecContext(ctx, it.BookID, it.SeriesID, it.RootName,
+			if _, err := write.ExecContext(ctx, sc.args(it.BookID, it.SeriesID, it.RootName,
 				it.BookPath, clampPage(it.LastPage, it.PageCount), it.PageCount,
-				completed, startedAt, it.UpdatedAt); err != nil {
+				completed, startedAt, it.UpdatedAt)...); err != nil {
 				return res, fmt.Errorf("repairing progress for book %q: %w", it.BookID, err)
 			}
 			res.Written++
 		}
-		if _, err := retire.ExecContext(ctx, m.OldBookID); err != nil {
+		if _, err := retire.ExecContext(ctx, sc.args(m.OldBookID)...); err != nil {
 			return res, fmt.Errorf("retiring orphaned progress %q: %w", m.OldBookID, err)
 		}
 		res.Retired++
@@ -167,13 +168,17 @@ type Refile struct {
 // mis-read — and `updated_at` in particular must not move, because 이어보기
 // sorts by it and a correction is not something the reader did.
 func (db *DB) RefileProgress(ctx context.Context, rows []Refile) (int, error) {
+	if sc := scopeOf(ctx); sc.perUser() {
+		return db.refile(ctx, `UPDATE user_progress SET series_id = ? WHERE book_id = ? AND series_id <> ? AND user_sub = ?`,
+			"progress", rows, sc.sub)
+	}
 	return db.refile(ctx, `UPDATE progress SET series_id = ? WHERE book_id = ? AND series_id <> ?`,
 		"progress", rows)
 }
 
 // refile runs one series_id correction statement over rows in one
 // transaction; RefileProgress and RefileCovers differ only in the table.
-func (db *DB) refile(ctx context.Context, query, what string, rows []Refile) (int, error) {
+func (db *DB) refile(ctx context.Context, query, what string, rows []Refile, extra ...any) (int, error) {
 	if len(rows) == 0 {
 		return 0, nil
 	}
@@ -189,7 +194,7 @@ func (db *DB) refile(ctx context.Context, query, what string, rows []Refile) (in
 			if r.BookID == "" || r.SeriesID == "" {
 				return fmt.Errorf("userdata: refile with an empty id: %w", ErrInvalidArgument)
 			}
-			res, err := stmt.ExecContext(ctx, r.SeriesID, r.BookID, r.SeriesID)
+			res, err := stmt.ExecContext(ctx, append([]any{r.SeriesID, r.BookID, r.SeriesID}, extra...)...)
 			if err != nil {
 				return fmt.Errorf("refiling %s for book %q: %w", what, r.BookID, err)
 			}

@@ -20,8 +20,8 @@ import (
 func TestOpen_schemaV3_addsBookCoversAndSeriesPrefs(t *testing.T) {
 	t.Parallel()
 	db, _, dir := newDB(t)
-	if v, err := db.SchemaVersion(t.Context()); err != nil || v != 3 {
-		t.Fatalf("schema version = %d (%v), want 3 (E-69 §2.5)", v, err)
+	if v, err := db.SchemaVersion(t.Context()); err != nil || v != 4 {
+		t.Fatalf("schema version = %d (%v), want 4 (E-74 §2.13; E-69 §2.5 added book_covers)", v, err)
 	}
 	raw := openRaw(t, filepath.Join(dir, "user.db"))
 	want := map[string][]string{
@@ -93,8 +93,8 @@ func TestOpen_upgradeFromV2_addsTheV3TablesAndKeepsEveryAuthoredRow(t *testing.T
 	}
 
 	up := openIn(t, dir, clk)
-	if v, err := up.SchemaVersion(ctx); err != nil || v != 3 {
-		t.Fatalf("schema version after the upgrade = %d (%v), want 3", v, err)
+	if v, err := up.SchemaVersion(ctx); err != nil || v != 4 {
+		t.Fatalf("schema version after the upgrade = %d (%v), want 4", v, err)
 	}
 	if after, err := up.GetProgress(ctx, "b1"); err != nil || after != before {
 		t.Errorf("progress after the upgrade = %+v (%v), want %+v", after, err, before)

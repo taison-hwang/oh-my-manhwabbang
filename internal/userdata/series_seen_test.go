@@ -484,8 +484,8 @@ func TestOpen_upgradeFromV1_addsSeriesSeenAndKeepsEveryAuthoredRow(t *testing.T)
 
 	// The upgrade an installed copy performs on its next start.
 	up := openIn(t, dir, clk)
-	if v, err := up.SchemaVersion(ctx); err != nil || v != 3 {
-		t.Fatalf("schema version after the upgrade = %d (%v), want 3", v, err)
+	if v, err := up.SchemaVersion(ctx); err != nil || v != 4 {
+		t.Fatalf("schema version after the upgrade = %d (%v), want 4", v, err)
 	}
 
 	// (1) Nothing authored was touched.

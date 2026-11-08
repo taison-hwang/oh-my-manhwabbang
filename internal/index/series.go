@@ -268,16 +268,18 @@ func (db *DB) ListSeries(ctx context.Context, f SeriesFilter) (SeriesList, error
 
 	out := SeriesList{Offset: offset, Limit: limit}
 
-	countQuery := `SELECT count(*) FROM series s JOIN roots r ON r.name = s.root_name` + where
-	if err := db.sqldb.QueryRowContext(ctx, countQuery, args...).Scan(&out.Total); err != nil {
+	countQuery, countArgs := scopeProgress(ctx,
+		`SELECT count(*) FROM series s JOIN roots r ON r.name = s.root_name`+where, args...)
+	if err := db.sqldb.QueryRowContext(ctx, countQuery, countArgs...).Scan(&out.Total); err != nil {
 		return SeriesList{}, fmt.Errorf("counting series: %w", err)
 	}
 	if out.Total == 0 || offset >= out.Total {
 		return out, nil
 	}
 
-	pageQuery := `SELECT` + seriesColumns + seriesJoins + where + ` ORDER BY ` + orderBy + ` LIMIT ? OFFSET ?`
-	pageArgs := append(append([]any{}, args...), limit, offset)
+	pageQuery, pageArgs := scopeProgress(ctx,
+		`SELECT`+seriesColumns+seriesJoins+where+` ORDER BY `+orderBy+` LIMIT ? OFFSET ?`,
+		append(append([]any{}, args...), limit, offset)...)
 	rows, err := db.sqldb.QueryContext(ctx, pageQuery, pageArgs...)
 	if err != nil {
 		return SeriesList{}, fmt.Errorf("listing series: %w", err)
@@ -299,8 +301,8 @@ func (db *DB) ListSeries(ctx context.Context, f SeriesFilter) (SeriesList, error
 
 // GetSeries returns a series with its books, natural-sorted by ord.
 func (db *DB) GetSeries(ctx context.Context, id string) (SeriesDetail, error) {
-	row := db.sqldb.QueryRowContext(ctx,
-		`SELECT`+seriesColumns+seriesJoins+` WHERE s.id = ?`, id)
+	query, args := scopeProgress(ctx, `SELECT`+seriesColumns+seriesJoins+` WHERE s.id = ?`, id)
+	row := db.sqldb.QueryRowContext(ctx, query, args...)
 	sr, err := scanSeriesRow(row)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):

@@ -193,8 +193,9 @@ func (db *DB) Export(ctx context.Context) (Export, error) {
 		SeriesPrefs: []ExportSeriesPref{},
 	}
 
+	sc := scopeOf(ctx)
 	rows, err := db.sqldb.QueryContext(ctx,
-		`SELECT `+progressColumns+` FROM progress ORDER BY book_id`)
+		`SELECT `+progressColumns+` FROM `+sc.progress()+sc.where("")+` ORDER BY book_id`, sc.args()...)
 	if err != nil {
 		return Export{}, fmt.Errorf("exporting progress: %w", err)
 	}
@@ -321,24 +322,25 @@ func importProgress(ctx context.Context, tx *sql.Tx, items []ExportItem,
 	if len(items) == 0 {
 		return nil
 	}
-	lookup, err := tx.PrepareContext(ctx, `SELECT updated_at FROM progress WHERE book_id = ?`)
+	sc := scopeOf(ctx)
+	lookup, err := tx.PrepareContext(ctx, `SELECT updated_at FROM `+sc.progress()+sc.where(`book_id = ?`))
 	if err != nil {
 		return fmt.Errorf("preparing progress lookup: %w", err)
 	}
 	defer lookup.Close()
 
 	write, err := tx.PrepareContext(ctx, `
-		INSERT INTO progress (book_id, series_id, root_name, book_path, last_page,
+		INSERT INTO `+sc.progress()+` (`+sc.insCols()+`book_id, series_id, root_name, book_path, last_page,
 		                      page_count, completed, started_at, updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?)
-		ON CONFLICT(book_id) DO UPDATE SET
+		VALUES (`+sc.insVals()+`?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(`+sc.conflict()+`book_id) DO UPDATE SET
 			series_id  = excluded.series_id,
 			root_name  = excluded.root_name,
 			book_path  = excluded.book_path,
 			last_page  = excluded.last_page,
 			page_count = excluded.page_count,
 			completed  = excluded.completed,
-			started_at = min(progress.started_at, excluded.started_at),
+			started_at = min(`+sc.progress()+`.started_at, excluded.started_at),
 			updated_at = excluded.updated_at`)
 	if err != nil {
 		return fmt.Errorf("preparing progress write: %w", err)
@@ -354,7 +356,7 @@ func importProgress(ctx context.Context, tx *sql.Tx, items []ExportItem,
 				it.BookID, it.PageCount, ErrInvalidArgument)
 		}
 		var localUpdated int64
-		err := lookup.QueryRowContext(ctx, it.BookID).Scan(&localUpdated)
+		err := lookup.QueryRowContext(ctx, sc.args(it.BookID)...).Scan(&localUpdated)
 		exists := true
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
@@ -377,9 +379,9 @@ func importProgress(ctx context.Context, tx *sql.Tx, items []ExportItem,
 		if startedAt == 0 {
 			startedAt = it.UpdatedAt
 		}
-		if _, err := write.ExecContext(ctx, it.BookID, it.SeriesID, it.RootName, it.BookPath,
+		if _, err := write.ExecContext(ctx, sc.args(it.BookID, it.SeriesID, it.RootName, it.BookPath,
 			clampPage(it.LastPage, it.PageCount), it.PageCount, completed, startedAt,
-			it.UpdatedAt); err != nil {
+			it.UpdatedAt)...); err != nil {
 			return fmt.Errorf("importing progress for book %q: %w", it.BookID, err)
 		}
 		res.Imported++
@@ -392,17 +394,18 @@ func importPrefs(ctx context.Context, tx *sql.Tx, prefs []ExportPref,
 	if len(prefs) == 0 {
 		return nil
 	}
-	verb := `ON CONFLICT(book_id) DO UPDATE SET
+	sc := scopeOf(ctx)
+	verb := `ON CONFLICT(` + sc.conflict() + `book_id) DO UPDATE SET
 			reading_dir  = excluded.reading_dir,
 			display_mode = excluded.display_mode,
 			fit_mode     = excluded.fit_mode,
 			updated_at   = excluded.updated_at`
 	if strategy == StrategyMerge {
-		verb = `ON CONFLICT(book_id) DO NOTHING`
+		verb = `ON CONFLICT(` + sc.conflict() + `book_id) DO NOTHING`
 	}
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO book_prefs (book_id, reading_dir, display_mode, fit_mode, updated_at)
-		VALUES (?,?,?,?,?) `+verb)
+		INSERT INTO `+sc.prefs()+` (`+sc.insCols()+`book_id, reading_dir, display_mode, fit_mode, updated_at)
+		VALUES (`+sc.insVals()+`?,?,?,?,?) `+verb)
 	if err != nil {
 		return fmt.Errorf("preparing prefs write: %w", err)
 	}
@@ -418,8 +421,8 @@ func importPrefs(ctx context.Context, tx *sql.Tx, prefs []ExportPref,
 		if p.ReadingDir == nil && p.DisplayMode == nil && p.FitMode == nil {
 			continue
 		}
-		if _, err := stmt.ExecContext(ctx, p.BookID, p.ReadingDir, p.DisplayMode,
-			p.FitMode, now); err != nil {
+		if _, err := stmt.ExecContext(ctx, sc.args(p.BookID, p.ReadingDir, p.DisplayMode,
+			p.FitMode, now)...); err != nil {
 			return fmt.Errorf("importing prefs for book %q: %w", p.BookID, err)
 		}
 	}

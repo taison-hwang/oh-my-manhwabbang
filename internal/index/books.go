@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"shelf/internal/principal"
 )
 
 // Book mirrors one row of the `books` table: a readable unit inside a series —
@@ -108,7 +109,13 @@ const selectBookByID = `SELECT` + bookColumns + bookJoins + ` WHERE b.id = ?`
 
 // GetBook returns one book with its progress, or ErrNotFound.
 func (db *DB) GetBook(ctx context.Context, id string) (BookRow, error) {
-	row := db.stmts.getBook.QueryRowContext(ctx, id)
+	var row *sql.Row
+	if _, scoped := principal.From(ctx); scoped {
+		query, args := scopeProgress(ctx, selectBookByID, id)
+		row = db.sqldb.QueryRowContext(ctx, query, args...)
+	} else {
+		row = db.stmts.getBook.QueryRowContext(ctx, id)
+	}
 	r, err := scanBookRow(row)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -122,8 +129,9 @@ func (db *DB) GetBook(ctx context.Context, id string) (BookRow, error) {
 // ListBooks returns a series' books ordered by ord, which the scanner
 // materialised from the natural sort (FR-IDX-007).
 func (db *DB) ListBooks(ctx context.Context, seriesID string) ([]BookRow, error) {
-	rows, err := db.sqldb.QueryContext(ctx,
+	query, args := scopeProgress(ctx,
 		`SELECT`+bookColumns+bookJoins+` WHERE b.series_id = ? ORDER BY b.ord ASC, b.id ASC`, seriesID)
+	rows, err := db.sqldb.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing books of series %q: %w", seriesID, err)
 	}
@@ -391,7 +399,7 @@ func (db *DB) ListContinue(ctx context.Context, limit int) ([]ContinueItem, erro
 	if limit <= 0 {
 		limit = 20
 	}
-	rows, err := db.sqldb.QueryContext(ctx, `
+	query, args := scopeProgress(ctx, `
 		SELECT`+bookColumns+`,
 		       s.display_name, COALESCE(s.cover_kind, '')
 		FROM ud.progress p
@@ -402,6 +410,7 @@ func (db *DB) ListContinue(ctx context.Context, limit int) ([]ContinueItem, erro
 		  AND b.id IN (`+latestPerSeries+`)
 		ORDER BY (`+seriesActivity+`) DESC, b.id ASC
 		LIMIT ?`, limit)
+	rows, err := db.sqldb.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing continue-reading books: %w", err)
 	}

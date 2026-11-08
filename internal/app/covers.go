@@ -32,6 +32,7 @@ type coverBridge struct {
 	idx       *index.DB
 	user      *userdata.DB
 	global    string
+	perUser   bool
 	svc       *thumbs.Service
 	widths    []int
 
@@ -40,8 +41,8 @@ type coverBridge struct {
 	accepted atomic.Int64
 }
 
-func newCoverBridge(svc *thumbs.Service, idx *index.DB, user *userdata.DB, global string) *coverBridge {
-	return &coverBridge{svc: svc, widths: svc.Widths(), pending: make(map[string]scanner.CoverRequest), idx: idx, user: user, global: global}
+func newCoverBridge(svc *thumbs.Service, idx *index.DB, user *userdata.DB, global string, perUser bool) *coverBridge {
+	return &coverBridge{svc: svc, widths: svc.Widths(), pending: make(map[string]scanner.CoverRequest), idx: idx, user: user, global: global, perUser: perUser}
 }
 
 // EnqueueCover implements scanner.CoverQueue. It must not block: the scanner
@@ -89,10 +90,12 @@ func (c *coverBridge) enqueueCover(ctx context.Context, req scanner.CoverRequest
 			return
 		}
 		global := c.global
-		if value, _, err := c.user.Settings().Get(ctx, "reading_direction"); err == nil && value != "" {
-			global = value
+		if !c.perUser {
+			if value, _, err := c.user.Settings().Get(ctx, "reading_direction"); err == nil && value != "" {
+				global = value
+			}
 		}
-		base, _, err = bookcover.Resolve(ctx, c.user, book, global)
+		base, _, err = bookcover.Resolve(ctx, c.user, book, global, c.perUser)
 		if err != nil {
 			return
 		}

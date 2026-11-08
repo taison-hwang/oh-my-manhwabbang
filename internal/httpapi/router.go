@@ -43,6 +43,11 @@ type Options struct {
 
 	// Auth is the NFR-SEC-002 gate. nil builds a disabled one, which is the
 	// default deployment (ruling E-8).
+	// PerUser is true for auth.mode "oidc" (ruling E-74 §2.13): reading
+	// progress, viewer preferences and settings belong to the signed-in user,
+	// and a request without a principal is refused before any of them is read.
+	PerUser bool
+
 	Auth *auth.Authenticator
 
 	// Static is the built SPA (web.Dist()). nil serves a plain-text
@@ -90,6 +95,7 @@ type Server struct {
 	roots      Roots
 	pool       HandlePool
 	auth       *auth.Authenticator
+	perUser    bool
 	static     fs.FS
 	log        *slog.Logger
 	now        func() time.Time
@@ -153,6 +159,7 @@ func New(opts Options) (*Server, error) {
 		roots:        opts.Roots,
 		pool:         opts.Pool,
 		auth:         opts.Auth,
+		perUser:      opts.PerUser,
 		static:       opts.Static,
 		log:          opts.Logger,
 		now:          opts.Now,

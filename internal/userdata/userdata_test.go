@@ -90,8 +90,8 @@ func TestOpen_freshDirectory_appliesSchemaInWALMode(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "user.db-wal")); err != nil {
 		t.Errorf("user.db-wal not present after a write: %v", err)
 	}
-	if v, err := db.SchemaVersion(t.Context()); err != nil || v != 3 {
-		t.Errorf("schema version = %d (%v), want 3 (E-69 §2.5 added book_covers, series_prefs)", v, err)
+	if v, err := db.SchemaVersion(t.Context()); err != nil || v != 4 {
+		t.Errorf("schema version = %d (%v), want 4 (E-74 §2.13 added the user_* tables)", v, err)
 	}
 	if v, ok, _ := db.Meta(t.Context(), "id_version"); !ok || v != userdata.IDVersion {
 		t.Errorf("meta id_version = %q (present %v), want %q", v, ok, userdata.IDVersion)

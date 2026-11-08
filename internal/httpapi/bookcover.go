@@ -24,7 +24,11 @@ type BookCoverResult struct {
 }
 
 func (s *Server) coverInputs(r *http.Request, b index.BookRow) (thumbs.Request, BookCoverResult, error) {
-	req, stored, err := bookcover.Resolve(r.Context(), s.user, b, s.defaultPrefs(r).ReadingDirection)
+	global := s.cfg.Reader.ReadingDirection
+	if !s.perUser {
+		global = s.defaultPrefs(r).ReadingDirection
+	}
+	req, stored, err := bookcover.Resolve(r.Context(), s.user, b, global, s.perUser)
 	if err != nil {
 		return req, BookCoverResult{}, internalErr(err)
 	}

@@ -96,7 +96,8 @@ ORDER BY p.book_id`
 // whole rather than paging. A library with no orphans runs one statement and
 // returns nil.
 func (db *DB) SplitOrphans(ctx context.Context) ([]SplitOrphan, error) {
-	rows, err := db.sqldb.QueryContext(ctx, splitOrphanSQL)
+	query, qargs := scopeProgress(ctx, splitOrphanSQL)
+	rows, err := db.sqldb.QueryContext(ctx, query, qargs...)
 	if err != nil {
 		return nil, fmt.Errorf("index: listing orphaned progress: %w", err)
 	}
@@ -236,12 +237,13 @@ type Misfiled struct {
 // Cheap on a clean library: it is an equality test on a join that already has
 // both columns, and it returns nothing.
 func (db *DB) MisfiledProgress(ctx context.Context) ([]Misfiled, error) {
-	rows, err := db.sqldb.QueryContext(ctx, `
+	query, qargs := scopeProgress(ctx, `
 		SELECT p.book_id, p.book_path, p.series_id, b.series_id
 		FROM ud.progress p
 		JOIN books b ON b.id = p.book_id
 		WHERE p.series_id <> b.series_id
 		ORDER BY p.book_id`)
+	rows, err := db.sqldb.QueryContext(ctx, query, qargs...)
 	if err != nil {
 		return nil, fmt.Errorf("index: listing misfiled progress: %w", err)
 	}
@@ -302,12 +304,13 @@ func (db *DB) VanishedProgress(ctx context.Context, roots []string) ([]Vanished,
 	for _, r := range roots {
 		set[r] = struct{}{}
 	}
-	rows, err := db.sqldb.QueryContext(ctx, `
+	query, qargs := scopeProgress(ctx, `
 		SELECT p.book_id, p.root_name, p.book_path, p.last_page, p.page_count, p.updated_at
 		FROM ud.progress p
 		LEFT JOIN books b ON b.id = p.book_id
 		WHERE b.id IS NULL
 		ORDER BY p.book_id`)
+	rows, err := db.sqldb.QueryContext(ctx, query, qargs...)
 	if err != nil {
 		return nil, fmt.Errorf("index: listing vanished progress: %w", err)
 	}

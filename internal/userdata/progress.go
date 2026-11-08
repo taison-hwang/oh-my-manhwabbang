@@ -62,8 +62,9 @@ func scanProgress(sc interface{ Scan(...any) error }) (Progress, error) {
 // GetProgress returns a book's progress, or ErrNotFound when it has never been
 // opened.
 func (db *DB) GetProgress(ctx context.Context, bookID string) (Progress, error) {
+	sc := scopeOf(ctx)
 	row := db.sqldb.QueryRowContext(ctx,
-		`SELECT `+progressColumns+` FROM progress WHERE book_id = ?`, bookID)
+		`SELECT `+progressColumns+` FROM `+sc.progress()+sc.where(`book_id = ?`), sc.args(bookID)...)
 	p, err := scanProgress(row)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -77,10 +78,11 @@ func (db *DB) GetProgress(ctx context.Context, bookID string) (Progress, error) 
 // GetProgressMany returns the rows for the given books, keyed by book id.
 // Missing books are simply absent from the map.
 func (db *DB) GetProgressMany(ctx context.Context, bookIDs []string) (map[string]Progress, error) {
+	sc := scopeOf(ctx)
 	out := make(map[string]Progress, len(bookIDs))
 	err := forEachIDChunk(bookIDs, func(args []any, ph string) error {
 		rows, err := db.sqldb.QueryContext(ctx,
-			`SELECT `+progressColumns+` FROM progress WHERE book_id IN (`+ph+`)`, args...)
+			`SELECT `+progressColumns+` FROM `+sc.progress()+sc.where(`book_id IN (`+ph+`)`), sc.args(args...)...)
 		if err != nil {
 			return fmt.Errorf("reading progress: %w", err)
 		}
@@ -168,23 +170,24 @@ func (db *DB) PutProgress(ctx context.Context, u ProgressUpdate) (Progress, erro
 	}
 
 	now := db.now().Unix()
+	sc := scopeOf(ctx)
 	err := db.writeTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
-			INSERT INTO progress (book_id, series_id, root_name, book_path, last_page,
+			INSERT INTO `+sc.progress()+` (`+sc.insCols()+`book_id, series_id, root_name, book_path, last_page,
 			                      page_count, completed, started_at, updated_at)
-			VALUES (?,?,?,?,?,?,?,?,?)
-			ON CONFLICT(book_id) DO UPDATE SET
+			VALUES (`+sc.insVals()+`?,?,?,?,?,?,?,?,?)
+			ON CONFLICT(`+sc.conflict()+`book_id) DO UPDATE SET
 				series_id  = excluded.series_id,
 				root_name  = excluded.root_name,
 				book_path  = excluded.book_path,
 				last_page  = excluded.last_page,
 				page_count = CASE WHEN ? = 1
 				                  THEN excluded.page_count
-				                  ELSE progress.page_count END,
+				                  ELSE `+sc.progress()+`.page_count END,
 				completed  = excluded.completed,
 				updated_at = excluded.updated_at`,
-			u.BookID, u.SeriesID, u.RootName, u.BookPath, page, u.PageCount, completed, now, now,
-			ackStale)
+			sc.args(u.BookID, u.SeriesID, u.RootName, u.BookPath, page, u.PageCount, completed, now, now,
+				ackStale)...)
 		if err != nil {
 			return fmt.Errorf("writing progress for book %q: %w", u.BookID, err)
 		}
@@ -215,8 +218,9 @@ func clampPage(page, pageCount int) int {
 // DeleteProgress removes a book's progress ("mark as unread"). Deleting a row
 // that does not exist is not an error.
 func (db *DB) DeleteProgress(ctx context.Context, bookID string) error {
+	sc := scopeOf(ctx)
 	return db.writeTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM progress WHERE book_id = ?`, bookID); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM `+sc.progress()+sc.where(`book_id = ?`), sc.args(bookID)...); err != nil {
 			return fmt.Errorf("deleting progress for book %q: %w", bookID, err)
 		}
 		return nil
@@ -235,6 +239,9 @@ type SeriesAggregate struct {
 	LastPage       int
 }
 
+// seriesAggregateSQL is the rollup for the old table; seriesAggregateUserSQL is
+// the same text for user_progress with the user predicate inside each subquery.
+// The user parameter is bound first in the statement by aggregateInto.
 const seriesAggregateSQL = `
 	SELECT p.series_id,
 	       SUM(p.completed),
@@ -245,6 +252,17 @@ const seriesAggregateSQL = `
 	       (SELECT q.last_page FROM progress q WHERE q.series_id = p.series_id
 	         ORDER BY q.updated_at DESC, q.book_id LIMIT 1)
 	FROM progress p`
+
+const seriesAggregateUserSQL = `
+	SELECT p.series_id,
+	       SUM(p.completed),
+	       SUM(1 - p.completed),
+	       MAX(p.updated_at),
+	       (SELECT q.book_id   FROM user_progress q WHERE q.user_sub = ? AND q.series_id = p.series_id
+	         ORDER BY q.updated_at DESC, q.book_id LIMIT 1),
+	       (SELECT q.last_page FROM user_progress q WHERE q.user_sub = ? AND q.series_id = p.series_id
+	         ORDER BY q.updated_at DESC, q.book_id LIMIT 1)
+	FROM user_progress p`
 
 // SeriesAggregates rolls progress up per series. An empty seriesIDs slice
 // aggregates every series that has any progress at all.
@@ -271,8 +289,18 @@ func (db *DB) SeriesAggregates(ctx context.Context, seriesIDs []string) (map[str
 
 func (db *DB) aggregateInto(ctx context.Context, out map[string]SeriesAggregate,
 	where string, args []any) error {
-	rows, err := db.sqldb.QueryContext(ctx,
-		seriesAggregateSQL+where+` GROUP BY p.series_id`, args...)
+	query, qargs := seriesAggregateSQL+where+` GROUP BY p.series_id`, args
+	if sc := scopeOf(ctx); sc.perUser() {
+		// The user parameter sits in the two subqueries; the outer filter's own
+		// arguments follow, and the outer user predicate is added to the WHERE.
+		outer := " WHERE p.user_sub = ?"
+		if where != "" {
+			outer += " AND" + strings.TrimPrefix(where, " WHERE")
+		}
+		query = seriesAggregateUserSQL + outer + ` GROUP BY p.series_id`
+		qargs = append([]any{sc.sub, sc.sub, sc.sub}, args...)
+	}
+	rows, err := db.sqldb.QueryContext(ctx, query, qargs...)
 	if err != nil {
 		return fmt.Errorf("aggregating series progress: %w", err)
 	}
@@ -299,9 +327,10 @@ func (db *DB) Continue(ctx context.Context, limit int) ([]Progress, error) {
 	if limit <= 0 {
 		limit = 20
 	}
+	sc := scopeOf(ctx)
 	rows, err := db.sqldb.QueryContext(ctx,
-		`SELECT `+progressColumns+` FROM progress WHERE completed = 0
-		 ORDER BY updated_at DESC, book_id ASC LIMIT ?`, limit)
+		`SELECT `+progressColumns+` FROM `+sc.progress()+sc.where(`completed = 0`)+
+			` ORDER BY updated_at DESC, book_id ASC LIMIT ?`, sc.args(limit)...)
 	if err != nil {
 		return nil, fmt.Errorf("listing continue-reading progress: %w", err)
 	}
@@ -324,7 +353,8 @@ func (db *DB) Continue(ctx context.Context, limit int) ([]Progress, error) {
 // CountProgress reports how many books have a progress row.
 func (db *DB) CountProgress(ctx context.Context) (int64, error) {
 	var n int64
-	if err := db.sqldb.QueryRowContext(ctx, `SELECT count(*) FROM progress`).Scan(&n); err != nil {
+	sc := scopeOf(ctx)
+	if err := db.sqldb.QueryRowContext(ctx, `SELECT count(*) FROM `+sc.progress()+sc.where(""), sc.args()...).Scan(&n); err != nil {
 		return 0, fmt.Errorf("counting progress rows: %w", err)
 	}
 	return n, nil

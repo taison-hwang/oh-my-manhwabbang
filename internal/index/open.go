@@ -312,7 +312,7 @@ func (db *DB) init(ctx context.Context) error {
 // the authoritative writer and migrates on Open; this is the assertion that it
 // ran first.
 func (db *DB) verifyUserDB(ctx context.Context) error {
-	for _, table := range [...]string{"progress", "series_seen", "book_covers", "series_prefs"} {
+	for _, table := range [...]string{"progress", "user_progress", "series_seen", "book_covers", "series_prefs"} {
 		var n int
 		err := db.sqldb.QueryRowContext(ctx,
 			`SELECT count(*) FROM ud.sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&n)

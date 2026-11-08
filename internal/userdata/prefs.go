@@ -84,9 +84,10 @@ func validateValue(field string, v *string, allowed []string) error {
 // the normal case, not an exception.
 func (db *DB) GetPrefs(ctx context.Context, bookID string) (Prefs, error) {
 	p := Prefs{BookID: bookID}
+	sc := scopeOf(ctx)
 	err := db.sqldb.QueryRowContext(ctx,
-		`SELECT reading_dir, display_mode, fit_mode, updated_at FROM book_prefs WHERE book_id = ?`,
-		bookID).Scan(&p.ReadingDir, &p.DisplayMode, &p.FitMode, &p.UpdatedAt)
+		`SELECT reading_dir, display_mode, fit_mode, updated_at FROM `+sc.prefs()+sc.where(`book_id = ?`),
+		sc.args(bookID)...).Scan(&p.ReadingDir, &p.DisplayMode, &p.FitMode, &p.UpdatedAt)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return p, nil
@@ -125,22 +126,23 @@ func (db *DB) PutPrefs(ctx context.Context, bookID string, patch PrefsPatch) (Pr
 		UpdatedAt:   db.now().Unix(),
 	}
 
+	sc := scopeOf(ctx)
 	err = db.writeTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if next.ReadingDir == nil && next.DisplayMode == nil && next.FitMode == nil {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM book_prefs WHERE book_id = ?`, bookID); err != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM `+sc.prefs()+sc.where(`book_id = ?`), sc.args(bookID)...); err != nil {
 				return fmt.Errorf("clearing prefs for book %q: %w", bookID, err)
 			}
 			return nil
 		}
 		_, err := tx.ExecContext(ctx, `
-			INSERT INTO book_prefs (book_id, reading_dir, display_mode, fit_mode, updated_at)
-			VALUES (?,?,?,?,?)
-			ON CONFLICT(book_id) DO UPDATE SET
+			INSERT INTO `+sc.prefs()+` (`+sc.insCols()+`book_id, reading_dir, display_mode, fit_mode, updated_at)
+			VALUES (`+sc.insVals()+`?,?,?,?,?)
+			ON CONFLICT(`+sc.conflict()+`book_id) DO UPDATE SET
 				reading_dir  = excluded.reading_dir,
 				display_mode = excluded.display_mode,
 				fit_mode     = excluded.fit_mode,
 				updated_at   = excluded.updated_at`,
-			bookID, next.ReadingDir, next.DisplayMode, next.FitMode, next.UpdatedAt)
+			sc.args(bookID, next.ReadingDir, next.DisplayMode, next.FitMode, next.UpdatedAt)...)
 		if err != nil {
 			return fmt.Errorf("writing prefs for book %q: %w", bookID, err)
 		}
@@ -165,9 +167,10 @@ func apply(current *string, p Patch[string]) *string {
 // ListPrefs returns every stored override, ordered by book id. Used by the
 // export.
 func (db *DB) ListPrefs(ctx context.Context) ([]Prefs, error) {
+	sc := scopeOf(ctx)
 	rows, err := db.sqldb.QueryContext(ctx,
 		`SELECT book_id, reading_dir, display_mode, fit_mode, updated_at
-		 FROM book_prefs ORDER BY book_id`)
+		 FROM `+sc.prefs()+sc.where("")+` ORDER BY book_id`, sc.args()...)
 	if err != nil {
 		return nil, fmt.Errorf("listing prefs: %w", err)
 	}
@@ -190,11 +193,12 @@ func (db *DB) ListPrefs(ctx context.Context) ([]Prefs, error) {
 // GetPrefsMany returns the stored overrides of the given books, keyed by book
 // id. Books without a row are absent from the map.
 func (db *DB) GetPrefsMany(ctx context.Context, bookIDs []string) (map[string]Prefs, error) {
+	sc := scopeOf(ctx)
 	out := make(map[string]Prefs, len(bookIDs))
 	err := forEachIDChunk(bookIDs, func(args []any, ph string) error {
 		rows, err := db.sqldb.QueryContext(ctx,
 			`SELECT book_id, reading_dir, display_mode, fit_mode, updated_at
-			 FROM book_prefs WHERE book_id IN (`+ph+`)`, args...)
+			 FROM `+sc.prefs()+sc.where(`book_id IN (`+ph+`)`), sc.args(args...)...)
 		if err != nil {
 			return fmt.Errorf("reading prefs: %w", err)
 		}
@@ -242,10 +246,11 @@ func EffectiveReadingDir(book, series *string, global string) string {
 // nil when there is no choice at that rung. The global rung is the caller's
 // (settings over the YAML `reader:` block live in httpapi).
 func (db *DB) ReadingDirLadder(ctx context.Context, bookID, seriesID string) (book, series *string, err error) {
+	sc := scopeOf(ctx)
 	err = db.sqldb.QueryRowContext(ctx, `
-		SELECT (SELECT reading_dir FROM book_prefs   WHERE book_id   = ?),
+		SELECT (SELECT reading_dir FROM `+sc.prefs()+sc.where(`book_id = ?`)+`),
 		       (SELECT reading_dir FROM series_prefs WHERE series_id = ?)`,
-		bookID, seriesID).Scan(&book, &series)
+		sc.args(bookID, seriesID)...).Scan(&book, &series)
 	if err != nil {
 		return nil, nil, fmt.Errorf("reading the direction ladder for book %q: %w", bookID, err)
 	}

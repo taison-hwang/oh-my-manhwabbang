@@ -114,9 +114,9 @@ func (db *DB) ApplyCarry(ctx context.Context, c Carry) (CarryResult, error) {
 
 // localIsAtLeastAsNew answers the collision rule for one destination: true when
 // the destination row exists and is not older than the carried one.
-func localIsAtLeastAsNew(ctx context.Context, tx *sql.Tx, query, id string, carried int64) (exists, keep bool, err error) {
+func localIsAtLeastAsNew(ctx context.Context, tx *sql.Tx, query string, args []any, carried int64) (exists, keep bool, err error) {
 	var local int64
-	switch err := tx.QueryRowContext(ctx, query, id).Scan(&local); {
+	switch err := tx.QueryRowContext(ctx, query, args...).Scan(&local); {
 	case errors.Is(err, sql.ErrNoRows):
 		return false, false, nil
 	case err != nil:
@@ -135,7 +135,7 @@ func carryCovers(ctx context.Context, tx *sql.Tx, moves []CoverMove) (RepairResu
 			return RepairResult{}, fmt.Errorf("userdata: cover move onto itself (%q): %w", m.OldBookID, ErrInvalidArgument)
 		}
 		_, keep, err := localIsAtLeastAsNew(ctx, tx,
-			`SELECT updated_at FROM book_covers WHERE book_id = ?`, m.Row.BookID, m.Row.UpdatedAt)
+			`SELECT updated_at FROM book_covers WHERE book_id = ?`, []any{m.Row.BookID}, m.Row.UpdatedAt)
 		if err != nil {
 			return RepairResult{}, fmt.Errorf("reading local cover for book %q: %w", m.Row.BookID, err)
 		}
@@ -160,6 +160,7 @@ func carryCovers(ctx context.Context, tx *sql.Tx, moves []CoverMove) (RepairResu
 
 func carryPrefs(ctx context.Context, tx *sql.Tx, moves []PrefsMove) (RepairResult, error) {
 	var res RepairResult
+	sc := scopeOf(ctx)
 	for _, m := range moves {
 		if m.OldBookID == "" {
 			return RepairResult{}, fmt.Errorf("userdata: prefs move with an empty book id: %w", ErrInvalidArgument)
@@ -171,8 +172,8 @@ func carryPrefs(ctx context.Context, tx *sql.Tx, moves []PrefsMove) (RepairResul
 		}
 		var p Prefs
 		err := tx.QueryRowContext(ctx,
-			`SELECT reading_dir, display_mode, fit_mode, updated_at FROM book_prefs WHERE book_id = ?`,
-			m.OldBookID).Scan(&p.ReadingDir, &p.DisplayMode, &p.FitMode, &p.UpdatedAt)
+			`SELECT reading_dir, display_mode, fit_mode, updated_at FROM `+sc.prefs()+sc.where(`book_id = ?`),
+			sc.args(m.OldBookID)...).Scan(&p.ReadingDir, &p.DisplayMode, &p.FitMode, &p.UpdatedAt)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			continue // nothing to carry
@@ -181,7 +182,7 @@ func carryPrefs(ctx context.Context, tx *sql.Tx, moves []PrefsMove) (RepairResul
 		}
 		for _, to := range m.To {
 			exists, keep, err := localIsAtLeastAsNew(ctx, tx,
-				`SELECT updated_at FROM book_prefs WHERE book_id = ?`, to, p.UpdatedAt)
+				`SELECT updated_at FROM `+sc.prefs()+sc.where(`book_id = ?`), sc.args(to), p.UpdatedAt)
 			if err != nil {
 				return RepairResult{}, fmt.Errorf("reading local prefs for book %q: %w", to, err)
 			}
@@ -190,14 +191,14 @@ func carryPrefs(ctx context.Context, tx *sql.Tx, moves []PrefsMove) (RepairResul
 				continue
 			}
 			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO book_prefs (book_id, reading_dir, display_mode, fit_mode, updated_at)
-				VALUES (?,?,?,?,?)
-				ON CONFLICT(book_id) DO UPDATE SET
+				INSERT INTO `+sc.prefs()+` (`+sc.insCols()+`book_id, reading_dir, display_mode, fit_mode, updated_at)
+				VALUES (`+sc.insVals()+`?,?,?,?,?)
+				ON CONFLICT(`+sc.conflict()+`book_id) DO UPDATE SET
 					reading_dir  = excluded.reading_dir,
 					display_mode = excluded.display_mode,
 					fit_mode     = excluded.fit_mode,
 					updated_at   = excluded.updated_at`,
-				to, p.ReadingDir, p.DisplayMode, p.FitMode, p.UpdatedAt); err != nil {
+				sc.args(to, p.ReadingDir, p.DisplayMode, p.FitMode, p.UpdatedAt)...); err != nil {
 				return RepairResult{}, fmt.Errorf("carrying prefs to book %q: %w", to, err)
 			}
 			res.Written++
@@ -205,7 +206,7 @@ func carryPrefs(ctx context.Context, tx *sql.Tx, moves []PrefsMove) (RepairResul
 		if m.OnlyIfAbsent {
 			continue // a split copies; the source row stays (see PrefsMove)
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM book_prefs WHERE book_id = ?`, m.OldBookID); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM `+sc.prefs()+sc.where(`book_id = ?`), sc.args(m.OldBookID)...); err != nil {
 			return RepairResult{}, fmt.Errorf("retiring the prefs of %q: %w", m.OldBookID, err)
 		}
 		res.Retired++
@@ -229,7 +230,7 @@ func carrySeriesPrefs(ctx context.Context, tx *sql.Tx, moves []SeriesPrefsMove) 
 			return RepairResult{}, fmt.Errorf("reading prefs for series %q: %w", m.OldSeriesID, err)
 		}
 		_, keep, err := localIsAtLeastAsNew(ctx, tx,
-			`SELECT updated_at FROM series_prefs WHERE series_id = ?`, m.NewSeriesID, old.UpdatedAt)
+			`SELECT updated_at FROM series_prefs WHERE series_id = ?`, []any{m.NewSeriesID}, old.UpdatedAt)
 		if err != nil {
 			return RepairResult{}, fmt.Errorf("reading local prefs for series %q: %w", m.NewSeriesID, err)
 		}
@@ -289,10 +290,11 @@ func (db *DB) Purge(ctx context.Context, set PurgeSet) (PurgeResult, error) {
 		}
 	}
 	var res PurgeResult
+	sc := scopeOf(ctx)
 	err := db.writeTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		res = PurgeResult{}
-		del := func(query, what, id string, into *int) error {
-			r, err := tx.ExecContext(ctx, query, id)
+		del := func(query, what, id string, args []any, into *int) error {
+			r, err := tx.ExecContext(ctx, query, args...)
 			if err != nil {
 				return fmt.Errorf("purging %s for %q: %w", what, id, err)
 			}
@@ -302,18 +304,18 @@ func (db *DB) Purge(ctx context.Context, set PurgeSet) (PurgeResult, error) {
 			return nil
 		}
 		for _, id := range set.Books {
-			if err := del(`DELETE FROM progress WHERE book_id = ?`, "progress", id, &res.Progress); err != nil {
+			if err := del(`DELETE FROM `+sc.progress()+sc.where(`book_id = ?`), "progress", id, sc.args(id), &res.Progress); err != nil {
 				return err
 			}
-			if err := del(`DELETE FROM book_prefs WHERE book_id = ?`, "preferences", id, &res.Prefs); err != nil {
+			if err := del(`DELETE FROM `+sc.prefs()+sc.where(`book_id = ?`), "preferences", id, sc.args(id), &res.Prefs); err != nil {
 				return err
 			}
-			if err := del(`DELETE FROM book_covers WHERE book_id = ?`, "the cover", id, &res.Covers); err != nil {
+			if err := del(`DELETE FROM book_covers WHERE book_id = ?`, "the cover", id, []any{id}, &res.Covers); err != nil {
 				return err
 			}
 		}
 		for _, id := range set.Series {
-			if err := del(`DELETE FROM series_prefs WHERE series_id = ?`, "series preferences", id, &res.Series); err != nil {
+			if err := del(`DELETE FROM series_prefs WHERE series_id = ?`, "series preferences", id, []any{id}, &res.Series); err != nil {
 				return err
 			}
 		}

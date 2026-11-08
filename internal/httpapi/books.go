@@ -31,6 +31,10 @@ var (
 // render a 손상 badge and the reason, and it cannot do that from a 500
 // (impl-plan §4 #4, FR-IDX-010).
 func (s *Server) handleBookDetail(w http.ResponseWriter, r *http.Request) error {
+	r, err := s.scoped(r)
+	if err != nil {
+		return err
+	}
 	if s.idx == nil {
 		return unavailable("the catalogue is not available")
 	}
@@ -114,6 +118,10 @@ func (s *Server) handleBookDetail(w http.ResponseWriter, r *http.Request) error 
 
 // handleGetPrefs is `GET /api/books/{bid}/prefs`.
 func (s *Server) handleGetPrefs(w http.ResponseWriter, r *http.Request) error {
+	r, err := s.scoped(r)
+	if err != nil {
+		return err
+	}
 	bid, err := pathID(r, "bid")
 	if err != nil {
 		return err
@@ -136,6 +144,10 @@ func (s *Server) handleGetPrefs(w http.ResponseWriter, r *http.Request) error {
 // through the series direction and then `/api/settings`. Every field is optional and three-state: absent leaves
 // the override alone, `null` clears it, a value sets it.
 func (s *Server) handlePutPrefs(w http.ResponseWriter, r *http.Request) error {
+	r, err := s.scoped(r)
+	if err != nil {
+		return err
+	}
 	if s.user == nil {
 		return unavailable("user data is not available")
 	}
