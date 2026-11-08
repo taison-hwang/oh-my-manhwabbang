@@ -275,7 +275,7 @@ NFR-SEC-001/002/003, CON-001…004. All in scope. Gates in §7.
 | ~~**FR-STT-004 export/import *UI***~~ | ~~stage 3. API only (above).~~ **Moved IN by ruling E-68** (사용자 지시 2026-10-26) — see §1.1. |
 | **Mobile gesture *tuning*** (momentum scrolling, edge-swipe, sensitivity setting) | stage 3. Basic tap zones + horizontal swipe are in (FR-VWR-011); pinch-zoom, pan and double-tap are **moved IN by ruling E-70** (`docs/decisions.md`). |
 | **Docker image *publishing*** (registry push, multi-arch, compose) | stage 3, needs separate user approval. The local `Dockerfile` + `make docker` are **moved IN by ruling E-72** (`docs/decisions.md`). `make release` cross-compilation (NFR-OPS-003) is in scope. |
-| **Archive format expansion** (7z, RAR 5, solid/multi-volume/encrypted RAR) | prd §7.2 + stage 3. ~~RAR/CBR, nested ZIP~~: non-solid RAR 4 is IN by ruling **D-71** (and HV3 by **E-51**); nested ZIP is IN by **D-70**. What remains out is reported as `unsupported` with its reason (D-72), not logged and ignored. |
+| **Archive format expansion** (7z, solid/multi-volume/encrypted RAR) | prd §7.2 + stage 3. ~~RAR/CBR, RAR 5, nested ZIP~~: non-solid RAR 4 is IN by ruling **D-71**, non-solid RAR 5 by **E-71** (and HV3 by **E-51**); nested ZIP is IN by **D-70**. What remains out is reported as `unsupported` with its reason (D-72), not logged and ignored. |
 | **`duplicate_of` hints, manual volume reordering** | prd §10 stage 3. |
 | **SSE `/api/scan/stream`** | C-11. |
 | **Cache orphan sweeper / `cache_max_bytes`** | arch §5.6, phase 2 of that doc. Explicit purge only. |
