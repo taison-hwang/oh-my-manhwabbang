@@ -114,6 +114,11 @@ type RestoreResult struct {
 	Progress, Prefs, Settings, ViewState int
 }
 
+// ErrNoUserData is RestoreOwner's refusal when none of the four per-user
+// tables holds a row for the sub: a mistyped sub must not look like a restore
+// that had nothing to do.
+var ErrNoUserData = errors.New("userdata: no data for that user")
+
 // RestoreOwner is the way back from oidc to password mode (ruling E-74 §2.14,
 // `shelf auth restore-owner --sub <sub>`): it copies sub's rows over the
 // single-user tables. For a key both sides have, the row with the newer
@@ -126,6 +131,17 @@ func (db *DB) RestoreOwner(ctx context.Context, sub string) (RestoreResult, erro
 	var res RestoreResult
 	err := db.writeTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		res = RestoreResult{}
+		var rows int
+		if err := tx.QueryRowContext(ctx, `
+			SELECT (SELECT COUNT(*) FROM user_progress   WHERE user_sub = ?1)
+			     + (SELECT COUNT(*) FROM user_book_prefs WHERE user_sub = ?1)
+			     + (SELECT COUNT(*) FROM user_settings   WHERE user_sub = ?1)
+			     + (SELECT COUNT(*) FROM user_view_state WHERE user_sub = ?1)`, sub).Scan(&rows); err != nil {
+			return fmt.Errorf("looking up %q before restoring: %w", sub, err)
+		}
+		if rows == 0 {
+			return fmt.Errorf("%w: %q", ErrNoUserData, sub)
+		}
 		run := func(into *int, stmt string) error {
 			r, err := tx.ExecContext(ctx, stmt, sub)
 			if err != nil {

@@ -55,6 +55,10 @@ func runAuth(argv []string, stdout, stderr io.Writer) int {
 		return config.ExitCode
 	}
 	res, err := restoreOwner(context.Background(), filepath.Join(cfg.Storage.DataDir, "user.db"), sub)
+	if errors.Is(err, userdata.ErrNoUserData) {
+		fmt.Fprintf(stderr, "shelf: 해당 사용자 데이터 없음 (sub %q); 아무것도 쓰지 않았다\n", sub)
+		return exitFailure
+	}
 	if err != nil {
 		fmt.Fprintf(stderr, "shelf: %v\n", err)
 		return exitFailure
