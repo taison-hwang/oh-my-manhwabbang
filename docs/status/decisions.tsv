@@ -64,3 +64,5 @@ ts	작업	결정	이유	증거	결과
 2026-11-09T08:11:06+09:00	F-1	독립 검증 ISSUES 2건: 서체 라이선스 고지 없음(새 화살표 서체 + 기존 벤더 서체 전부의 선행 누락 — 함께 고지 파일·OFL 원문 추가), 작성자 기록 개수 오기(82 = 화살표 78 + e45 4). 코드·기준은 이상 없음	verifier-1 fontTools name 테이블·git ls-files	/tmp/verify-f1/2026-11-09T08-10-14+0900--verify-f1.md	worker-4 보완
 2026-11-09T08:25:30+09:00	U-D	[완료] 3346ef2 검사 PASS 접수. U-B 병합 뒤 rebase HEAD에서 검사·독립 검증. 대기 중 M1 전용 테스트 추가 지시	worker-1 [완료]	3346ef20b3c9224cf7cbf88b8537db1bf037896f	worker-1 대기
 2026-11-09T08:28:42+09:00	U-B	보완 2 86e1305 검사 PASS → 지적 2건만 재검증 배정(크기 재측정 없음)	worker-2 [완료]	86e130561a5329a55fa8da47690d1003140cdf97	verifier-1 재검증 3
+2026-11-09T08:33:28+09:00	U-B	재검증 3 PASS → 병합 지시. 크기 예산 초과(약 78 KB)는 make release만 막고 herdr-check·make gates 밖이라 병합을 막지 않는다고 판단, 예산은 사용자 결정 대기 유지(U-E 전 필요)	verifier-1 PASS, Makefile release 타깃만 SIZE_BUDGET 검사	/tmp/verify-ub/2026-11-09T08-32-50+0900--verify-ub3.md	worker-2 병합 → worker-1 U-D rebase
+2026-11-09T08:34:15+09:00	U-B	main 병합 c36823f(rebase 무충돌, ff). worker-2 /clear. worker-1에 U-D rebase 지시	worker-2 [병합 완료]	c36823f	worker-1 U-D rebase
