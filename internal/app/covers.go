@@ -89,13 +89,7 @@ func (c *coverBridge) enqueueCover(ctx context.Context, req scanner.CoverRequest
 		if err != nil {
 			return
 		}
-		global := c.global
-		if !c.perUser {
-			if value, _, err := c.user.Settings().Get(ctx, "reading_direction"); err == nil && value != "" {
-				global = value
-			}
-		}
-		base, _, err = bookcover.Resolve(ctx, c.user, book, global, c.perUser)
+		base, err = c.pageRequest(ctx, book)
 		if err != nil {
 			return
 		}
@@ -124,6 +118,21 @@ func (c *coverBridge) enqueueCover(ctx context.Context, req scanner.CoverRequest
 // The one inaccuracy is that jobs currently being decoded — at most
 // `thumbnails.workers` of them — are counted as done, so the phase can end a
 // few hundred milliseconds early. That is the right way round: it never hangs.
+// pageRequest is the cover image a page-cover series is shown with: the rule
+// GET /api/books/{bid}/cover applies, so what the scan caches is what a request
+// finds. On a per-user server that rule ignores every user's preferences
+// (ruling E-74 §2.13).
+func (c *coverBridge) pageRequest(ctx context.Context, book index.BookRow) (thumbs.Request, error) {
+	global := c.global
+	if !c.perUser {
+		if value, _, err := c.user.Settings().Get(ctx, "reading_direction"); err == nil && value != "" {
+			global = value
+		}
+	}
+	req, _, err := bookcover.Resolve(ctx, c.user, book, global, c.perUser)
+	return req, err
+}
+
 func (c *coverBridge) CoverProgress() (done, total int64) {
 	total = c.accepted.Load()
 	depth := int64(c.svc.Stats().CoverDepth)
