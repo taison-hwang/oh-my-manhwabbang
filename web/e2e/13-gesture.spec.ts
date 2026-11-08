@@ -22,7 +22,6 @@ import {
   test,
   viewer,
   waitForPage,
-  wakeChrome,
 } from "./shelf";
 
 interface Pt {
@@ -95,14 +94,13 @@ function watchProgressWrites(page: Page): void {
  * after a 1 s debounce and flushes on unmount, so a DELETE issued while the
  * viewer is still mounted can be undone by the write that follows it, and the
  * row then shows in the 이어보기 shelf of the library shots the next viewport
- * project takes. The viewer is left through its own 라이브러리 button (its
- * unmount flushes the pending write), and the DELETE waits until every
+ * project takes. The viewer is left with Escape, as 04-viewer does (the unmount
+ * flushes the pending write), and the DELETE waits until every
  * progress write the page has sent has ended — no sleep.
  */
 async function leaveBook(page: Page, bookId: string): Promise<void> {
-  await wakeChrome(page);
-  await page.locator('[data-role="viewer-library"]').click();
-  await expect(page.locator('[data-testid="library-scroller"]')).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(viewer(page)).toHaveCount(0);
   const tally = progressWrites.get(page);
   expect(tally, "watchProgressWrites must run when the book is opened").toBeDefined();
   await expect.poll(() => (tally?.sent ?? 0) - (tally?.done ?? 0)).toBe(0);
