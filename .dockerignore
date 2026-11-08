@@ -1,0 +1,3 @@
+# Allowlist: the build context is the one binary `make build` produced.
+*
+!dist/shelf

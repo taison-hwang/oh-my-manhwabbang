@@ -4779,7 +4779,7 @@ impl-plan §1.3도 같은 내용을 적었다. 그래서 백업을 만들려면 
 3. **볼륨과 포트.** `VOLUME /config /data /cache`, `EXPOSE 8080`. 의미: `/config`는 `shelf.yaml`과 상태(`data_dir`: index.db·user.db) 둘 다 두는 곳이고, `/data`는 읽기 전용 미디어, `/cache`는 `cache_dir`이다. 이유: arch가 정한 세 볼륨을 그대로 쓰고, 백업할 것(user.db)을 `/config` 하나로 모은다. 컨테이너용 `shelf.yaml`은 `server.listen: "0.0.0.0"`, 루트를 `/data` 아래로, `storage.data_dir: /config/data`, `storage.cache_dir: /cache`로 쓴다(README에 예시).
 4. **설정 경로.** 코드 확인: 설정 탐색은 `--config` → `$SHELF_CONFIG` → … 이고(arch §3.1, `internal/config/config.go`의 `SHELF_CONFIG`), 컨테이너에 `/config`가 탐색 순서에 없다. 새 코드 없이 `ENV SHELF_CONFIG=/config/shelf.yaml`과 `ENTRYPOINT ["/shelf"]`로 정한다. 사용자는 `-e SHELF_CONFIG=…`나 인자 `--config …`로 덮어쓸 수 있다. `--init-config`는 컨테이너 안의 XDG 위치에 쓰므로 이미지의 시작 파일 만들기에는 쓰지 않고, README는 예시 설정 파일을 직접 만들라고 안내한다.
 5. **미디어는 `:ro`.** FR-CFG-005(미디어 볼륨에 쓰지 않는다)에 따라 README가 `-v <미디어>:/data:ro`를 문서화하고 스모크가 이것으로 돈다.
-6. **사용자.** 이미지에 `USER`를 두지 않는다. 마운트한 호스트 디렉터리의 소유자가 호스트마다 달라 고정 UID가 쓰기 실패를 만들기 때문이다. 권한을 줄이려는 사용자는 `docker run --user <uid>:<gid>`를 쓴다고 README에 적는다.
+6. **사용자(P-72에서 정정: 2026-11-09 Orchestrator 지시로 root 실행을 피한다).** 이미지는 `USER 65532:65532`로 돌고, `/config`·`/cache`는 이미지 안에서 그 UID 소유로 만들어 둔다. 이유: 미디어를 읽기만 하는 서버가 root일 이유가 없고, 이름 있는 볼륨은 첫 사용 때 이미지 디렉터리의 소유권을 물려받아 추가 설정 없이 쓸 수 있다. 호스트 디렉터리를 bind mount하면 소유자가 호스트마다 달라 쓰기 실패가 나므로 README가 두 길을 안내한다: 디렉터리를 `chown 65532:65532` 하거나 `docker run --user $(id -u):$(id -g)`로 덮어쓴다. `/data`는 읽기 전용이라 UID와 무관하게 읽히는 모드의 미디어면 된다(읽기 권한이 없으면 `--user`로 맞춘다). 처음 안이던 "USER 없음"은 root 실행이라 기각했다.
 7. **빌드.** `make docker`는 로컬 이름의 이미지(`shelf:local`)만 만든다. 이미 만든 SPA 포함 정적 바이너리를 복사하는 단순 단계를 우선하고(빌드 단계 안에서 Go 도구를 받지 않는다), `.dockerignore`로 `node_modules`·`.git`·`.worktrees`·`web/dist` 등을 빌드 문맥에서 뺀다(바이너리는 `dist/shelf`이므로 `dist/`는 뺄 수 없다). CA 번들은 빌드 문맥에 사본을 두지 않고 다단계 빌드의 기준 이미지에서 복사하며, 기준 이미지 태그는 Dockerfile에 고정한다. `docker push`·`login`·원격 태그는 어떤 타깃도 하지 않는다.
 
 ### 3. 기각한 대안
@@ -4792,7 +4792,7 @@ impl-plan §1.3도 같은 내용을 적었다. 그래서 백업을 만들려면 
 ### 4. 검증
 
 - 문서 판정이다. 코드는 바뀌지 않았다.
-- 구현 묶음(P-72)의 수용 기준(실행 확인): `make docker` 성공과 이미지 크기 기록, 임시 포트·임시 미디어(`:ro`)·임시 설정으로 `docker run`해 `/api/health` 200, 읽기 전용 미디어에서 스캔 성공, `--user $(id -u):$(id -g)`로도 기동, PDF 한 쪽 렌더(`scratch`에서 wazero/pdfium), 컨테이너 안 CA 번들 존재, 컨테이너 정리. :9909 사용자 서버와 사용자 데이터 디렉터리는 마운트하지 않는다.
+- 구현 묶음(P-72)의 수용 기준(실행 확인): `make docker` 성공과 이미지 크기 기록, 임시 포트·임시 미디어(`:ro`)·임시 설정으로 `docker run`해 `/api/health` 200, 읽기 전용 미디어에서 스캔 성공, 기본 UID 65532로 이름 있는 볼륨 `/config`·`/cache`에 쓰기 성공, `--user $(id -u):$(id -g)`+bind mount로도 기동, PDF 한 쪽 렌더(`scratch`에서 wazero/pdfium), 컨테이너 안 CA 번들 존재, 컨테이너 정리. :9909 사용자 서버와 사용자 데이터 디렉터리는 마운트하지 않는다.
 
 ### 5. 바뀐 것
 

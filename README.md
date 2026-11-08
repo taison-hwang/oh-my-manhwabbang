@@ -314,6 +314,42 @@ certificates.
 | `<cache_dir>/thumbs`, `pdf`, `wazero` | Regenerated on demand. Safe to delete at any time, even while the server is running. |
 | your media volume | Read-only. The server opens, stats and reads; it never creates, renames, deletes or re-timestamps anything. |
 
+### Docker (local build)
+
+`make docker` builds the image `shelf:local` from the default static binary
+(`FROM scratch`, CA certificates included for `auth.mode: oidc`). It is a local
+build only: nothing is pushed or published. Volumes: `/config` holds
+`shelf.yaml` and the data directory (`user.db` — back it up), `/data` is your
+media, `/cache` is the cache. The image runs as UID 65532, not root.
+
+```yaml
+# /config/shelf.yaml
+server:
+  port: 8080
+roots:
+  - name: "manga"
+    path: "/data"
+storage:
+  data_dir: "/config/data"
+  cache_dir: "/cache"
+```
+
+```bash
+# create the container first so the named volumes inherit the image's ownership,
+# copy the config in, then start it
+docker create --name shelf -p 127.0.0.1:8080:8080 \
+  -v shelf-config:/config -v shelf-cache:/cache \
+  -v /mnt/media/manga:/data:ro shelf:local
+docker cp shelf.yaml shelf:/config/shelf.yaml
+docker start shelf
+```
+
+Mount the media with `:ro` (the server never writes it). Named volumes work as
+they are; for a host directory bind-mounted at `/config` or `/cache`, either
+`chown 65532:65532` it or run with `--user $(id -u):$(id -g)`. The config path
+comes from `SHELF_CONFIG=/config/shelf.yaml`; pass `--config <path>` to use
+another. The `-avif` build cannot run in this image (it is dynamically linked).
+
 ---
 
 ## Two things to know before you commit to a layout

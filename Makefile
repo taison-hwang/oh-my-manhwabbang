@@ -158,7 +158,7 @@ FROZEN_DEPS := \
 	golang.org/x/crypto:v0.54.0
 
 .PHONY: all web build build-go dev test test-int test-int-full bench lint check-readonly contract \
-        fmt tidy release e2e e2e-synthetic gates gates-precheck web-gates clean help
+        fmt tidy release docker e2e e2e-synthetic gates gates-precheck web-gates clean help
 
 all: build
 
@@ -198,6 +198,14 @@ build-go:
 	$(BUILDENV) $(GO) build -trimpath -tags "$(TAGS)" -ldflags "$(LDFLAGS)" -o dist/shelf ./cmd/shelf
 	@printf '>> dist/shelf  %s bytes\n' "$$(wc -c < dist/shelf)"
 	@SHELF_STATIC_ARTEFACTS="dist/shelf" $(STATICCHECK)
+
+## docker — build the local image $(DOCKER_IMAGE) around the default static binary (E-72). Local only: no push, no login.
+DOCKER       ?= docker
+DOCKER_IMAGE ?= shelf:local
+docker: build
+	@case "$(DOCKER_IMAGE)" in */*) echo "docker: DOCKER_IMAGE must be a local name (no registry path); publishing is not part of this target" >&2; exit 2;; esac
+	$(DOCKER) build -t $(DOCKER_IMAGE) .
+	@$(DOCKER) image inspect --format '>> $(DOCKER_IMAGE)  {{.Size}} bytes' $(DOCKER_IMAGE)
 
 ## dev — fast loop: skip the frontend build, serve whatever is already in web/dist.
 dev:
