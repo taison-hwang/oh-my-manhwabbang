@@ -38,6 +38,7 @@ import (
 	"shelf/internal/archive"
 	"shelf/internal/archive/hv3"
 	"shelf/internal/archive/rar4"
+	"shelf/internal/archive/rar5"
 	"shelf/internal/archive/zipidx"
 	"shelf/internal/config"
 	"shelf/internal/natsort"
@@ -52,10 +53,11 @@ const (
 	KindZIP Kind = "zip"
 	KindDir Kind = "dir"
 	KindPDF Kind = "pdf"
-	// KindRAR is a RAR 4.x container, `.rar` or `.cbr`. prd §7.2 and D-07 put
+	// KindRAR is a RAR 4.x or 5.0 container, `.rar` or `.cbr`. prd §7.2 and D-07 put
 	// it out of scope for v1; D-71 brought it back in after measuring that not
 	// one of the collection's 14 archives is solid, which is what a page served
-	// from a recorded offset requires (see internal/archive/rar4).
+	// from a recorded offset requires (see internal/archive/rar4). E-71 admitted
+	// RAR 5 on the same terms (internal/archive/rar5).
 	KindRAR Kind = "rar"
 	// KindHV3 is a HoneyView HV3 container, `.hv3`. D-72 recorded it as a
 	// format this build could never open, on a reading of its header that
@@ -293,7 +295,8 @@ type Options struct {
 	Pool *openpool.Pool
 	// Archive is the ZIP container reader. Zero means zipidx.New().
 	Archive archive.Reader
-	// RAR is the RAR container reader. Zero means rar4.New().
+	// RAR is the RAR container reader. Zero means rar5.NewAny(rar4.New()), which
+	// reads both versions (E-71).
 	RAR archive.Reader
 	// HV3 is the HoneyView container reader. Zero means hv3.New().
 	HV3 archive.Reader
@@ -347,7 +350,7 @@ func NewFactory(opts Options) *Factory {
 	}
 	f.readers[KindRAR] = opts.RAR
 	if f.readers[KindRAR] == nil {
-		f.readers[KindRAR] = rar4.New()
+		f.readers[KindRAR] = rar5.NewAny(rar4.New())
 	}
 	f.readers[KindHV3] = opts.HV3
 	if f.readers[KindHV3] == nil {

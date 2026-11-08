@@ -1213,6 +1213,20 @@ def main() -> int:
         r.eq("Clover reports its names as cp949 (E-56)", cl.get("encoding"), "cp949")
     status, body, headers = r.get(f"/api/books/{wg_rar['id']}/pages/1?v={wg_rar['cv']}")
     r.eq("and page 1 of the RAR volume streams", status, 200)
+    if not real:
+        # E-71: v04 is RAR 5 (scripts/mkfixture). Same kind, same series, its
+        # own reader; the real collection has no RAR 5 to show this.
+        v04 = next((b for b in wg["books"] if "v04" in b["name"]), None)
+        r.check("the RAR 5 volume v04 is a kind-rar book (E-71)",
+                v04 is not None and v04["kind"] == "rar" and v04["status"] == "ok",
+                f"v04: {v04!r}")
+        if v04 is not None:
+            v04_book = r.json(f"/api/books/{v04['id']}")
+            status, body, _ = r.get(f"/api/books/{v04['id']}/pages/1?v={v04['cv']}")
+            r.check("and its page 1 streams as the JPEG it stores",
+                    status == 200 and body[:2] == b"\xff\xd8"
+                    and len(v04_book["pages"]) == 3,
+                    f"status {status}, {len(body)} bytes, {len(v04_book['pages'])} pages")
     r.check("as an image",
             str(headers.get("Content-Type", "")).startswith("image/"),
             str(headers.get("Content-Type")))

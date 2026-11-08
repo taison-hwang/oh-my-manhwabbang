@@ -202,6 +202,11 @@ func build(root string) error {
 	b.rarFile(wolf+"Wolf_Guy_-_Wolfen_Crest_v01_JP.rar", shiftJISPages(3))
 	b.zipFile(wolf+"Wolf_Guy_-_Wolfen_Crest_v02_JP.zip", shiftJISPages(3))
 	b.rarFile(wolf+"Wolf_Guy_-_Wolfen_Crest_v03_JP.rar", shiftJISPages(3))
+	// v04 is RAR 5 (E-71). The collection has none, so only this round can show
+	// a RAR 5 volume indexing and serving beside RAR 4 and ZIP volumes of the
+	// same kind "rar". Its names are UTF-8, which is all RAR 5 writes, so the
+	// series' cp932 verdict still comes from v01 and v03.
+	b.rar5File(wolf+"Wolf_Guy_-_Wolfen_Crest_v04_JP.rar", utf8JapanesePages(3))
 
 	mixed, err := mixedVolumes()
 	if err != nil {
@@ -411,6 +416,24 @@ func (b *builder) solidRar(rel string, entries []entry) {
 	b.file(rel, data)
 }
 
+// rar5File writes a RAR 5.0 archive of stored entries with testutil's writer,
+// for the reason rarFile gives.
+func (b *builder) rar5File(rel string, entries []entry) {
+	if b.err != nil {
+		return
+	}
+	var spec testutil.RAR5Spec
+	for _, e := range entries {
+		spec.Entries = append(spec.Entries, testutil.RAR5Entry{Name: []byte(e.name), Data: e.data})
+	}
+	data, err := testutil.RAR5Bytes(spec)
+	if err != nil {
+		b.err = err
+		return
+	}
+	b.file(rel, data)
+}
+
 func rarBytes(entries []entry, mainFlags uint16) ([]byte, error) {
 	spec := testutil.RAR4Spec{MainFlags: mainFlags}
 	for _, e := range entries {
@@ -537,6 +560,15 @@ func shiftJISPages(n int) []entry {
 			raw = []byte(name)
 		}
 		out = append(out, entry{rawName: raw, data: jpegPage()})
+	}
+	return out
+}
+
+// utf8JapanesePages is shiftJISPages' names as RAR 5 stores them.
+func utf8JapanesePages(n int) []entry {
+	out := make([]entry, 0, n)
+	for i := 1; i <= n; i++ {
+		out = append(out, entry{name: fmt.Sprintf("第04巻 狼の紋章/%04d頁.jpg", i), data: jpegPage()})
 	}
 	return out
 }

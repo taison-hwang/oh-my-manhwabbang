@@ -4832,7 +4832,7 @@ impl-plan §1.3도 같은 내용을 적었다. 그래서 백업을 만들려면 
 3. RAR 5에서도 이름을 밝혀 `unsupported`로 거부한다: solid(아카이브 플래그 또는 엔트리의 solid 비트), 볼륨 세트, 볼륨에 걸친 엔트리, 헤더 암호화, 엔트리 암호화. 암호화는 RAR 4와 같이 `encrypted`다.
 4. RAR 5에서 새로 생기는 거부 둘:
    - **CRC-32가 없는 엔트리**(BLAKE2만 기록, `rar -htb`). `shelf verify`는 모든 아카이브 엔트리가 CRC-32를 기록한다고 전제한다(arch §6.4, E-58). CRC 없이 들이면 온전한 쪽을 손상으로 보고하게 되므로, 쪽 단위 무결성 정보를 따로 둘 때까지 거부한다.
-   - **압축 창이 64 MiB를 넘는 엔트리.** 비solid에서 창은 엔트리 크기로 줄어들지만 헤더의 크기 값은 파일이 주장하는 값이다. 300바이트 파일이 4 GiB 창을 요구하면 `rardecode`의 기본 상한(4 GiB)까지 메모리를 잡는다. 색인 때 거부하고, 해제 때도 `rardecode.MaxDictionarySize`로 같은 상한을 건다. 이미지 한 장의 RAR 5 기본 창(32 MiB)은 들어온다.
+   - **압축 창이 64 MiB를 넘는 엔트리.** 비solid에서 창은 엔트리 크기로 줄어들지만 헤더의 크기 값은 파일이 주장하는 값이다. 300바이트 파일이 4 GiB 창을 요구하면 `rardecode`의 기본 상한(4 GiB)까지 메모리를 잡는다. 색인 때 거부하고, 쪽을 열 때도 컨테이너의 헤더로 같은 검사를 다시 한다(인덱스가 아니라 컨테이너가 기준이다). 창 계산은 `rardecode`와 같게 엔트리 크기로 줄인 값이라, 큰 창을 적은 작은 엔트리는 들어온다. 이미지 한 장의 RAR 5 기본 창(32 MiB)도 들어온다.
 5. 7z와 분할 볼륨을 나중에 다시 볼 때 먼저 확인할 수치는 위 측정의 0이다.
 
 ### 4. 기각한 대안
@@ -4844,4 +4844,7 @@ impl-plan §1.3도 같은 내용을 적었다. 그래서 백업을 만들려면 
 ### 5. 바뀐 것
 
 - 문서: intent.md 경계 표, prd §7.2, D-71 행 메모, impl-plan §1.3, arch §1.1 `rardecode` 행, 이 절. 개정(A-n)은 없다.
-- 코드: P-71b가 이 절에 더한다.
+- 코드(P-71b): 새 패키지 `internal/archive/rar5`(RAR 5 리더와, 시그니처로 rar4·rar5를 고르는 `Any`), `internal/source/source.go`의 RAR 리더 결선, `internal/testutil/rar5build.go`(RAR 5 작성기와 실제 패커 출력 표본 221 B, MIT), `scripts/mkfixture`의 `울프가이` v04(RAR 5), `scripts/e2e-assert.py`의 v04 단정.
+- 새로 안 것: 고정 `rardecode v2.3.0`의 RAR 5 디코더는 손상된 압축 데이터에서 패닉한다(`decode_reader.go:125` 범위 밖 슬라이스, `FuzzReadIndex`가 찾음, 말뭉치 `internal/archive/rar5/testdata/fuzz/FuzzReadIndex/a0a9f6957c8296a8`). 쪽은 백그라운드 썸네일 작업자도 읽으므로, `rar5`는 해제 경로의 패닉을 `ErrDecode`(손상)로 바꾸고 그 스트림을 실패 상태로 둔다. RAR 4 압축 경로(`rar4`)에는 같은 방어가 없다 — 이 판정 범위 밖이라 후속으로 남긴다.
+- 크기: `-s -w`, go1.26.10, linux/amd64, 같은 트리에서 결선만 바꿔 비교 28,123,401 → 28,160,265 B(**+36,864 B**). RAR 5 디코더는 이미 링크되어 있었다.
+- 의존성: 새 Go 의존성 0(`go.mod` 변화 없음).
