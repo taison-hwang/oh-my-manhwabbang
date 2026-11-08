@@ -35,3 +35,4 @@ ts	작업	결정	이유	증거	결과
 2026-11-09T02:38:30+09:00	U-C	소유 확대 승인: internal/index books·series·orphans progress 출처를 principal.From(ctx) 기반 사용자 범위로(바인드 파라미터, 두 사용자 HTTP 테스트)	E-74 §2.13 진행률 질의가 index에서 ud.progress 직접 조인	worker-1 [진행] 보고	worker-1 진행
 2026-11-09T02:47:46+09:00	U-C	소유 추가 확인: internal/app/app.go·covers.go, internal/bookcover/resolve.go, cmd/shelf/main.go 분기 한 줄, router.go Options.PerUser. U-B 배정문에 접점 반영	정리·표지 선생성·서브커맨드 분기가 그 파일에 있음	worker-1 [진행]	U-B 배정문 갱신
 2026-11-09T02:55:45+09:00	E-70·E-71·E-72	사용자 승인: 세 기능 착수와 intent 경계 변경. E-71은 측정·seek 제약으로 범위 자율 결정, E-72 로컬만(게시 금지). E-73·E-75~77 미승인	Commander t1h 02:5x	phase3-decision-drafts	시작 계약 2
+2026-11-09T02:57:45+09:00	운영	HERDR_MAX_WORKERS 3→5(421ec9f). worker-3 sonnet medium(P-D→P-72→P-70), worker-4 opus high(P-71, 파서·범위 판단 비중)	Commander t1h 선택지 1 지시	harness.env	보기 패널 w6:pG·w6:pH
