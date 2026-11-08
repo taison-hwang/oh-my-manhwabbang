@@ -1,0 +1,61 @@
+Third-party font notices for web/src/assets/fonts/
+
+Every .woff2 file in this directory is, or is cut from, a font licensed under
+the SIL Open Font License, Version 1.1. The full license text is in
+OFL-1.1.txt beside this file and applies to each font listed below.
+
+The copyright line of each font is quoted from the name table (name ID 0) of
+the file in this directory. Files marked "subset" are Modified Versions in the
+sense of the OFL: they keep only some of the original glyphs. The
+noto-serif-tc, noto-sans-jp and shelf-arrows cuts are made by
+scripts/mkfonts/subset.py.
+
+
+Gowun Batang
+  Copyright 2021 The Gowun Batang Project Authors
+  (https://github.com/yangheeryu/Gowun-Batang)
+  License: SIL Open Font License, Version 1.1
+  Source: https://github.com/yangheeryu/Gowun-Batang (Version 2.000)
+  Files (subset):
+    gowun-batang-regular.woff2
+    gowun-batang-bold.woff2
+
+Noto Serif CJK TC
+  © 2017-2023 Adobe (http://www.adobe.com/).   [noto-serif-tc-*, Version 2.002]
+  © 2017-2024 Adobe (http://www.adobe.com/).   [shelf-arrows-*, Version 2.003]
+  License: SIL Open Font License, Version 1.1
+  Source: https://github.com/notofonts/noto-cjk (taken from the Debian/Ubuntu
+          package fonts-noto-cjk, /usr/share/fonts/opentype/noto)
+  Files (subset):
+    noto-serif-tc-400.woff2
+    noto-serif-tc-700.woff2
+    shelf-arrows-400.woff2
+    shelf-arrows-700.woff2
+
+Noto Serif CJK KR
+  © 2017-2023 Adobe (http://www.adobe.com/).
+  License: SIL Open Font License, Version 1.1
+  Source: https://github.com/notofonts/noto-cjk (Version 2.002, taken from the
+          Debian/Ubuntu package fonts-noto-cjk)
+  Files (subset):
+    seal-han-bold.woff2
+    seal-han-done.woff2
+
+Noto Sans CJK JP
+  © 2014-2021 Adobe (http://www.adobe.com/).
+  License: SIL Open Font License, Version 1.1
+  Source: https://github.com/notofonts/noto-cjk (Version 2.004, taken from the
+          Debian/Ubuntu package fonts-noto-cjk)
+  Files (subset):
+    noto-sans-jp-400.woff2
+    noto-sans-jp-700.woff2
+
+Archivo
+  Copyright 2020 The Archivo Project Authors
+  (https://github.com/Omnibus-Type/Archivo)
+  License: SIL Open Font License, Version 1.1
+  Source: npm package @fontsource/archivo 5.2.6,
+          files/archivo-latin-{400,700}-normal.woff2, copied unmodified
+  Files:
+    archivo-latin-400.woff2
+    archivo-latin-700.woff2
