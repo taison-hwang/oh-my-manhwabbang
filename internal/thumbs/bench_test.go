@@ -3,13 +3,10 @@ package thumbs
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"sync/atomic"
 	"testing"
 
-	"shelf/internal/ids"
-	"shelf/internal/index"
 	"shelf/internal/source"
 	"shelf/internal/testutil"
 )
@@ -19,8 +16,6 @@ import (
 // test down with a 1400×2000 encode.
 func (h *harness) addZipBook(rel string, geom [][2]int) (bookID, cv string) {
 	h.t.Helper()
-	ctx := h.t.Context()
-
 	entries := make([]testutil.Entry, 0, len(geom))
 	for i, g := range geom {
 		entries = append(entries, testutil.Entry{
@@ -29,56 +24,7 @@ func (h *harness) addZipBook(rel string, geom [][2]int) (bookID, cv string) {
 			Method: testutil.MethodDeflate,
 		})
 	}
-	abs := filepath.Join(h.rootPath, filepath.FromSlash(rel))
-	writeFile(h.t, abs, testutil.BuildZIP(h.t, testutil.ZIPSpec{Entries: entries}))
-
-	fi, err := os.Stat(abs)
-	if err != nil {
-		h.t.Fatalf("stat %s: %v", rel, err)
-	}
-	bookID = ids.BookID(testRoot, rel)
-	cv = contentVersion(h.t, "zip", abs)
-
-	book := source.Book{
-		ID: bookID, Kind: source.KindZIP, RootName: testRoot, RelPath: rel,
-		FileSize: fi.Size(), FileMtime: fi.ModTime().Unix(),
-	}
-	bs, err := h.factory.Open(ctx, book)
-	if err != nil {
-		h.t.Fatalf("opening %s: %v", rel, err)
-	}
-	listing, err := bs.List(ctx)
-	if err != nil {
-		h.t.Fatalf("listing %s: %v", rel, err)
-	}
-	_ = bs.Close()
-
-	w := h.idx.Writer(index.WriterOptions{})
-	defer func() { _ = w.Close() }()
-	if err := w.UpsertBook(ctx, index.Book{
-		ID: bookID, SeriesID: h.seriesID, RootName: testRoot, RelPath: rel,
-		DisplayName: filepath.Base(rel), SortKey: []byte(rel), Ord: 9,
-		Kind: string(source.KindZIP), PageCount: int64(len(listing.Pages)),
-		TotalBytes: listing.TotalBytes, FileSize: book.FileSize, FileMtime: book.FileMtime,
-		ContentVersion: cv, DimsState: "none", Status: "ok", ScanGen: 1,
-	}); err != nil {
-		h.t.Fatalf("UpsertBook: %v", err)
-	}
-	rows := make([]index.Page, 0, len(listing.Pages))
-	for _, p := range listing.Pages {
-		rows = append(rows, index.Page{
-			BookID: bookID, PageNo: p.No, Name: p.Name, EntryPath: p.EntryPath, Ext: p.Ext,
-			Size: p.Size, CompSize: p.CompSize, Method: int(p.Method),
-			LocalHdrOff: p.LocalHdrOff, CRC32: p.CRC32, Mtime: p.Mtime,
-		})
-	}
-	if err := w.ReplacePages(ctx, bookID, rows); err != nil {
-		h.t.Fatalf("ReplacePages: %v", err)
-	}
-	if err := w.Flush(ctx); err != nil {
-		h.t.Fatalf("Flush: %v", err)
-	}
-	return bookID, cv
+	return h.indexFile(rel, source.KindZIP, testutil.BuildZIP(h.t, testutil.ZIPSpec{Entries: entries}), h.factory)
 }
 
 // BenchmarkThumbnail measures a COLD cover: open the archive, seek to page 1's

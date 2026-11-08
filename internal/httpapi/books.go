@@ -95,8 +95,12 @@ func (s *Server) handleBookDetail(w http.ResponseWriter, r *http.Request) error 
 		s.thumbs.EnsureDims(bid)
 	}
 
+	summary, err := s.bookSummary(r, book)
+	if err != nil {
+		return err
+	}
 	writeJSON(w, http.StatusOK, BookDetail{
-		BookSummary: toBookSummary(book),
+		BookSummary: summary,
 		SeriesName:  series.DisplayName,
 		RootName:    book.RootName,
 		Pages:       pages,
@@ -129,7 +133,7 @@ func (s *Server) handleGetPrefs(w http.ResponseWriter, r *http.Request) error {
 //
 // Reading direction and friends are remembered **per book** — prd FR-VWR-002
 // says 권 단위 (conflict resolution C-9) — falling back to the global defaults
-// in `/api/settings`. Every field is optional and three-state: absent leaves
+// through the series direction and then `/api/settings`. Every field is optional and three-state: absent leaves
 // the override alone, `null` clears it, a value sets it.
 func (s *Server) handlePutPrefs(w http.ResponseWriter, r *http.Request) error {
 	if s.user == nil {
@@ -159,14 +163,18 @@ func (s *Server) handlePutPrefs(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	stored, err := s.user.PutPrefs(r.Context(), bid, patch)
+	_, err = s.user.PutPrefs(r.Context(), bid, patch)
 	if err != nil {
 		if errors.Is(err, userdata.ErrInvalidArgument) {
 			return badRequest("%s", err.Error())
 		}
 		return internalErr(err)
 	}
-	writeJSON(w, http.StatusOK, s.mergePrefsWithDefaults(stored, s.defaultPrefs(r)))
+	prefs, err := s.effectivePrefs(r, bid)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, prefs)
 	return nil
 }
 
@@ -221,26 +229,33 @@ func (s *Server) requireBook(r *http.Request, bid string) error {
 	return nil
 }
 
-// effectivePrefs resolves a book's stored overrides against the global
-// defaults.
+// effectivePrefs resolves book → series → global, field by field (E-69 §2.3).
 func (s *Server) effectivePrefs(r *http.Request, bid string) (BookPrefs, error) {
+	def := s.defaultPrefs(r)
 	if s.user == nil {
-		return s.defaultPrefs(r), nil
+		return def, nil
 	}
-	stored, err := s.user.GetPrefs(r.Context(), bid)
+	b, err := s.idx.GetBook(r.Context(), bid)
 	if err != nil {
-		if errors.Is(err, userdata.ErrNotFound) {
-			return s.defaultPrefs(r), nil
-		}
 		return BookPrefs{}, internalErr(err)
 	}
-	return s.mergePrefsWithDefaults(stored, s.defaultPrefs(r)), nil
+	stored, err := s.user.GetPrefs(r.Context(), bid)
+	if err != nil && !errors.Is(err, userdata.ErrNotFound) {
+		return BookPrefs{}, internalErr(err)
+	}
+	series, err := s.user.GetSeriesPrefs(r.Context(), b.SeriesID)
+	if err != nil {
+		return BookPrefs{}, internalErr(err)
+	}
+	out := s.mergePrefsWithDefaults(stored, def)
+	out.ReadingDirection = userdata.EffectiveReadingDir(stored.ReadingDir, series.ReadingDir, def.ReadingDirection)
+	return out, nil
 }
 
 // mergePrefsWithDefaults fills each nil override from the default.
 //
 // `is_override` is false only when *nothing* is overridden — the contract's
-// "false => these are the global defaults" is a statement about the whole
+// "false => no book override" is a statement about the whole
 // object, so a book that overrides only its reading direction still reports
 // true and the UI can show that it differs.
 func (s *Server) mergePrefsWithDefaults(stored userdata.Prefs, def BookPrefs) BookPrefs {

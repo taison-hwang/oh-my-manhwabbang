@@ -3,6 +3,7 @@ package index
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -329,4 +330,207 @@ func (db *DB) VanishedProgress(ctx context.Context, roots []string) ([]Vanished,
 		return nil, fmt.Errorf("index: reading vanished progress: %w", err)
 	}
 	return out, nil
+}
+
+// ---------------------------------------------------------------------------
+// The same questions asked of book_covers and series_prefs
+// (ruling E-69 §2.11, §2.12). SELECT only, for the reason SplitOrphan gives.
+// ---------------------------------------------------------------------------
+
+// CoverOrphan is a ud.book_covers row whose book_id is not in `books`: the
+// cover-side twin of SplitOrphan. `page_count` is the baseline the split
+// reattach checks the destination against (E-69 §2.5), and `page_no` is the
+// page that has to be mapped.
+type CoverOrphan struct {
+	BookID    string
+	SeriesID  string
+	RootName  string
+	BookPath  string
+	Page      int
+	PageCount int
+	X, Y      float64
+	W, H      float64
+	UpdatedAt int64
+}
+
+// CoverOrphans returns every chosen cover the index cannot resolve to a book.
+func (db *DB) CoverOrphans(ctx context.Context) ([]CoverOrphan, error) {
+	rows, err := db.sqldb.QueryContext(ctx, `
+		SELECT c.book_id, c.series_id, c.root_name, c.book_path, c.page_no, c.page_count,
+		       c.x, c.y, c.w, c.h, c.updated_at
+		FROM ud.book_covers c
+		LEFT JOIN books b ON b.id = c.book_id
+		WHERE b.id IS NULL
+		ORDER BY c.book_id`)
+	if err != nil {
+		return nil, fmt.Errorf("index: listing orphaned covers: %w", err)
+	}
+	defer rows.Close()
+
+	var out []CoverOrphan
+	for rows.Next() {
+		var o CoverOrphan
+		if err := rows.Scan(&o.BookID, &o.SeriesID, &o.RootName, &o.BookPath, &o.Page,
+			&o.PageCount, &o.X, &o.Y, &o.W, &o.H, &o.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("index: scanning orphaned cover: %w", err)
+		}
+		out = append(out, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("index: reading orphaned covers: %w", err)
+	}
+	return out, nil
+}
+
+// MisfiledCovers is MisfiledProgress for book_covers (E-69 §2.11(c)): a cover
+// row whose book resolves but whose series is not the one the book is in.
+func (db *DB) MisfiledCovers(ctx context.Context) ([]Misfiled, error) {
+	rows, err := db.sqldb.QueryContext(ctx, `
+		SELECT c.book_id, c.book_path, c.series_id, b.series_id
+		FROM ud.book_covers c
+		JOIN books b ON b.id = c.book_id
+		WHERE c.series_id <> b.series_id
+		ORDER BY c.book_id`)
+	if err != nil {
+		return nil, fmt.Errorf("index: listing misfiled covers: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Misfiled
+	for rows.Next() {
+		var m Misfiled
+		if err := rows.Scan(&m.BookID, &m.BookPath, &m.StoredSeria, &m.ActualSeria); err != nil {
+			return nil, fmt.Errorf("index: scanning misfiled cover: %w", err)
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("index: reading misfiled covers: %w", err)
+	}
+	return out, nil
+}
+
+// VanishedCover is a cover row whose book is not in the index and whose root
+// has just been walked end to end. See [Vanished] for why the root is the
+// evidence and the absence alone is not.
+type VanishedCover struct {
+	BookID    string
+	RootName  string
+	BookPath  string
+	Page      int
+	PageCount int
+}
+
+// VanishedCovers is VanishedProgress for book_covers. An empty root list
+// returns nothing.
+func (db *DB) VanishedCovers(ctx context.Context, roots []string) ([]VanishedCover, error) {
+	if len(roots) == 0 {
+		return nil, nil
+	}
+	set := rootSet(roots)
+	rows, err := db.sqldb.QueryContext(ctx, `
+		SELECT c.book_id, c.root_name, c.book_path, c.page_no, c.page_count
+		FROM ud.book_covers c
+		LEFT JOIN books b ON b.id = c.book_id
+		WHERE b.id IS NULL
+		ORDER BY c.book_id`)
+	if err != nil {
+		return nil, fmt.Errorf("index: listing vanished covers: %w", err)
+	}
+	defer rows.Close()
+
+	var out []VanishedCover
+	for rows.Next() {
+		var v VanishedCover
+		if err := rows.Scan(&v.BookID, &v.RootName, &v.BookPath, &v.Page, &v.PageCount); err != nil {
+			return nil, fmt.Errorf("index: scanning vanished cover: %w", err)
+		}
+		if _, ok := set[v.RootName]; ok {
+			out = append(out, v)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("index: reading vanished covers: %w", err)
+	}
+	return out, nil
+}
+
+// VanishedSeries is a series_prefs row whose series is not in the index and
+// whose root has just been walked end to end (E-69 §2.11(e)).
+type VanishedSeries struct {
+	SeriesID   string
+	RootName   string
+	SeriesPath string
+}
+
+// VanishedSeriesPrefs is VanishedProgress for series_prefs. An empty root list
+// returns nothing.
+func (db *DB) VanishedSeriesPrefs(ctx context.Context, roots []string) ([]VanishedSeries, error) {
+	if len(roots) == 0 {
+		return nil, nil
+	}
+	set := rootSet(roots)
+	rows, err := db.sqldb.QueryContext(ctx, `
+		SELECT p.series_id, p.root_name, p.series_path
+		FROM ud.series_prefs p
+		LEFT JOIN series s ON s.id = p.series_id
+		WHERE s.id IS NULL
+		ORDER BY p.series_id`)
+	if err != nil {
+		return nil, fmt.Errorf("index: listing vanished series prefs: %w", err)
+	}
+	defer rows.Close()
+
+	var out []VanishedSeries
+	for rows.Next() {
+		var v VanishedSeries
+		if err := rows.Scan(&v.SeriesID, &v.RootName, &v.SeriesPath); err != nil {
+			return nil, fmt.Errorf("index: scanning vanished series prefs: %w", err)
+		}
+		if _, ok := set[v.RootName]; ok {
+			out = append(out, v)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("index: reading vanished series prefs: %w", err)
+	}
+	return out, nil
+}
+
+// SeriesAt answers, for each series id asked about, where the index holds it.
+// A series the index does not have is absent from the map — which is the half
+// of the answer E-69 §2.11(e) needs ("the old series is gone"), the other half
+// being the destination's root and path for the carried row.
+func (db *DB) SeriesAt(ctx context.Context, seriesIDs []string) (map[string]Location, error) {
+	out := make(map[string]Location, len(seriesIDs))
+	if len(seriesIDs) == 0 {
+		return out, nil
+	}
+	stmt, err := db.sqldb.PrepareContext(ctx, `SELECT root_name, rel_path FROM series WHERE id = ?`)
+	if err != nil {
+		return nil, fmt.Errorf("index: preparing series lookup: %w", err)
+	}
+	defer stmt.Close()
+	for _, id := range seriesIDs {
+		if _, done := out[id]; done {
+			continue
+		}
+		var loc Location
+		switch err := stmt.QueryRowContext(ctx, id).Scan(&loc.RootName, &loc.RelPath); {
+		case errors.Is(err, sql.ErrNoRows):
+		case err != nil:
+			return nil, fmt.Errorf("index: looking up series %q: %w", id, err)
+		default:
+			out[id] = loc
+		}
+	}
+	return out, nil
+}
+
+func rootSet(roots []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(roots))
+	for _, r := range roots {
+		set[r] = struct{}{}
+	}
+	return set
 }

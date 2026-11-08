@@ -142,29 +142,47 @@ func Candidates(orphans []index.SplitOrphan, roots []string) []index.Location {
 		out = append(out, l)
 	}
 	for _, o := range orphans {
-		for _, l := range candidatesFor(o, roots) {
+		for _, l := range candidatesAt(o.RootName, o.BookPath, roots) {
 			add(l)
 		}
 	}
 	return out
 }
 
-// candidatesFor is the rule set, in the order a reader would try them: the path
+// CoverCandidates is Candidates for orphaned covers (ruling E-69 §2.11(b)): the
+// same rules, so a cover and a progress row on the same old file look in the
+// same places and BooksAt can answer both in one batch.
+func CoverCandidates(orphans []index.CoverOrphan, roots []string) []index.Location {
+	seen := make(map[index.Location]struct{})
+	var out []index.Location
+	for _, o := range orphans {
+		for _, l := range candidatesAt(o.RootName, o.BookPath, roots) {
+			if _, dup := seen[l]; dup {
+				continue
+			}
+			seen[l] = struct{}{}
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// candidatesAt is the rule set, in the order a reader would try them: the path
 // as written, the path with its leading tag removed, and the same path under
 // each other root.
-func candidatesFor(o index.SplitOrphan, roots []string) []index.Location {
-	out := []index.Location{{RootName: o.RootName, RelPath: o.BookPath}}
-	if stripped := leadingTag.ReplaceAllString(o.BookPath, ""); stripped != "" && stripped != o.BookPath {
-		out = append(out, index.Location{RootName: o.RootName, RelPath: stripped})
+func candidatesAt(root, bookPath string, roots []string) []index.Location {
+	out := []index.Location{{RootName: root, RelPath: bookPath}}
+	if stripped := leadingTag.ReplaceAllString(bookPath, ""); stripped != "" && stripped != bookPath {
+		out = append(out, index.Location{RootName: root, RelPath: stripped})
 		for _, r := range roots {
-			if r != o.RootName {
+			if r != root {
 				out = append(out, index.Location{RootName: r, RelPath: stripped})
 			}
 		}
 	}
 	for _, r := range roots {
-		if r != o.RootName {
-			out = append(out, index.Location{RootName: r, RelPath: o.BookPath})
+		if r != root {
+			out = append(out, index.Location{RootName: r, RelPath: bookPath})
 		}
 	}
 	return out
@@ -180,7 +198,7 @@ func candidatesFor(o index.SplitOrphan, roots []string) []index.Location {
 func Plan(orphans []index.SplitOrphan, roots []string,
 	found map[index.Location][]index.SplitVolume) (moves []userdata.SplitMove, skipped []Skip) {
 	for _, o := range orphans {
-		move, skip, ok := planOne(o, roots, found)
+		move, _, skip, ok := planOne(o, roots, found)
 		if !ok {
 			skipped = append(skipped, skip)
 			continue
@@ -190,51 +208,83 @@ func Plan(orphans []index.SplitOrphan, roots []string,
 	return moves, skipped
 }
 
-func planOne(o index.SplitOrphan, roots []string,
-	found map[index.Location][]index.SplitVolume) (userdata.SplitMove, Skip, bool) {
-	skip := Skip{BookID: o.BookID, BookPath: o.BookPath, LastPage: o.LastPage, PageCount: o.PageCount}
-
+// gate is E-48 §3, and it is the only place the gates are written. Progress
+// (planOne) and a chosen cover (PlanCovers) both call it with their own row's
+// identity, their own `page_count` baseline and their own page; neither has a
+// copy of the conditions. A row that fails any gate is left exactly as it is.
+//
+// It returns the location gate 2 chose, the destination volumes in reading
+// order, what they sum to, and the reason for a decline ("" when every gate
+// passed). total is 0 unless the row got past gate 2, which is what
+// Skip.DestPages has always reported.
+func gate(bookID, root, bookPath string, baseline, page int, roots []string,
+	found map[index.Location][]index.SplitVolume) (at index.Location, dest []index.SplitVolume, total int, reason SkipReason) {
 	// Gate 1 — this row was a whole file, not a volume inside one.
-	if ids.BookID(o.RootName, o.BookPath) != o.BookID {
-		skip.Reason = SkipNotAContainer
-		return userdata.SplitMove{}, skip, false
+	if ids.BookID(root, bookPath) != bookID {
+		return index.Location{}, nil, 0, SkipNotAContainer
 	}
 
 	// Gate 2 — exactly one candidate location has anything.
-	var dest []index.SplitVolume
 	hits := 0
-	for _, loc := range candidatesFor(o, roots) {
+	for _, loc := range candidatesAt(root, bookPath, roots) {
 		if vols, ok := found[loc]; ok && len(vols) > 0 {
 			hits++
 			if dest == nil {
-				dest = vols
+				at, dest = loc, vols
 			}
 		}
 	}
 	switch {
 	case hits == 0:
-		skip.Reason = SkipUnresolved
-		return userdata.SplitMove{}, skip, false
+		return index.Location{}, nil, 0, SkipUnresolved
 	case hits > 1:
-		skip.Reason = SkipAmbiguous
-		return userdata.SplitMove{}, skip, false
+		return index.Location{}, nil, 0, SkipAmbiguous
 	}
 
-	total := 0
 	for _, v := range dest {
 		total += v.PageCount
 	}
-	skip.DestPages = total
-
 	// Gate 3 — the destination is the same pages this row was written against.
-	if total != o.PageCount {
-		skip.Reason = SkipLengthMismatch
-		return userdata.SplitMove{}, skip, false
+	if total != baseline {
+		return index.Location{}, nil, total, SkipLengthMismatch
 	}
 	// Gate 4 — the page is inside them.
-	if o.LastPage < 1 || o.LastPage > total {
-		skip.Reason = SkipPageOutOfRange
-		return userdata.SplitMove{}, skip, false
+	if page < 1 || page > total {
+		return index.Location{}, nil, total, SkipPageOutOfRange
+	}
+	return at, dest, total, ""
+}
+
+// volumeAt is the page map: page P of the old file is page P - start(v) + 1 of
+// the volume v whose cumulative range contains P. It returns v's index in dest
+// and the local page. A zero-length volume is a book whose length is unknown
+// (arch §4.11, a file that failed to open); it owns no page and is stepped
+// over. ok is false only for a page past the last range. A page below 1 is
+// gate 4's to refuse, and this does not repeat the check.
+func volumeAt(dest []index.SplitVolume, page int) (i, local int, ok bool) {
+	start := 1
+	for i, v := range dest {
+		if v.PageCount <= 0 {
+			continue
+		}
+		end := start + v.PageCount - 1
+		if page <= end {
+			return i, page - start + 1, true
+		}
+		start = end + 1
+	}
+	return 0, 0, false
+}
+
+func planOne(o index.SplitOrphan, roots []string,
+	found map[index.Location][]index.SplitVolume) (userdata.SplitMove, []index.SplitVolume, Skip, bool) {
+	skip := Skip{BookID: o.BookID, BookPath: o.BookPath, LastPage: o.LastPage, PageCount: o.PageCount}
+
+	loc, dest, total, reason := gate(o.BookID, o.RootName, o.BookPath, o.PageCount, o.LastPage, roots, found)
+	skip.DestPages = total
+	if reason != "" {
+		skip.Reason = reason
+		return userdata.SplitMove{}, nil, skip, false
 	}
 
 	move := userdata.SplitMove{OldBookID: o.BookID}
@@ -248,9 +298,9 @@ func planOne(o index.SplitOrphan, roots []string,
 			if v.PageCount <= 0 {
 				continue
 			}
-			move.Rows = append(move.Rows, row(o, v, v.PageCount, v.PageCount, true))
+			move.Rows = append(move.Rows, row(o, v, loc, v.PageCount, v.PageCount, true))
 		}
-		return move, Skip{}, true
+		return move, dest, Skip{}, true
 	}
 
 	// The volumes the reader passed through are finished, and saying so is not
@@ -268,27 +318,88 @@ func planOne(o index.SplitOrphan, roots []string,
 	// identity is what the tests assert, because it is the property the reader
 	// actually sees. For a rename the partition has one element and the identity
 	// is trivially the page itself.
-	start := 1
-	for _, v := range dest {
+	at, local, ok := volumeAt(dest, o.LastPage)
+	if !ok {
+		// Unreachable while gate 4 holds: the ranges cover [1, total] with no
+		// holes, because `ord` is dense and every page belongs to one volume.
+		skip.Reason = SkipPageOutOfRange
+		return userdata.SplitMove{}, nil, skip, false
+	}
+	for _, v := range dest[:at] {
 		if v.PageCount <= 0 {
-			// A zero-length volume is a book whose length is unknown (arch
-			// §4.11, a file that failed to open). It owns no page, so it cannot
-			// be passed through and must not be stamped finished.
+			// Owns no page, so it cannot be passed through and must not be
+			// stamped finished.
 			continue
 		}
-		end := start + v.PageCount - 1
-		if o.LastPage <= end {
-			local := o.LastPage - start + 1
-			move.Rows = append(move.Rows, row(o, v, local, v.PageCount, local >= v.PageCount))
-			return move, Skip{}, true
-		}
-		move.Rows = append(move.Rows, row(o, v, v.PageCount, v.PageCount, true))
-		start = end + 1
+		move.Rows = append(move.Rows, row(o, v, loc, v.PageCount, v.PageCount, true))
 	}
-	// Unreachable while gate 4 holds: the loop covers [1, total] with no holes,
-	// because `ord` is dense and every page belongs to exactly one volume.
-	skip.Reason = SkipPageOutOfRange
-	return userdata.SplitMove{}, skip, false
+	v := dest[at]
+	move.Rows = append(move.Rows, row(o, v, loc, local, v.PageCount, local >= v.PageCount))
+	return move, dest, Skip{}, true
+}
+
+// PlanCovers is Plan for chosen covers (ruling E-69 §2.11(b)). Each orphaned
+// cover goes through the same gate as a progress row, against its own
+// `page_count` baseline and its own page; one that fails any gate is declined
+// and left for the purge (§2.11(d)). One that passes moves to the volume whose
+// range holds its page, at the local page, with the region untouched and the
+// volume's length as its new baseline.
+//
+// Identity is the destination's: its series, and the root and path of the
+// location the gate chose — not the orphan's. Unlike a progress row (see row),
+// nothing rewrites a cover's root_name and book_path when the reader next opens
+// the book, and they are the purge's evidence of where the book was
+// (§2.11(d)): a cover reattached from root A to a book in root B but still
+// filed under A would be deleted by a walk of A while B sat unwalked. The
+// reader's own updated_at is kept.
+func PlanCovers(orphans []index.CoverOrphan, roots []string,
+	found map[index.Location][]index.SplitVolume) (moves []userdata.CoverMove, skipped []Skip) {
+	for _, o := range orphans {
+		skip := Skip{BookID: o.BookID, BookPath: o.BookPath, LastPage: o.Page, PageCount: o.PageCount}
+		loc, dest, total, reason := gate(o.BookID, o.RootName, o.BookPath, o.PageCount, o.Page, roots, found)
+		skip.DestPages = total
+		if reason == "" {
+			at, local, ok := volumeAt(dest, o.Page)
+			if ok {
+				v := dest[at]
+				moves = append(moves, userdata.CoverMove{OldBookID: o.BookID, Row: userdata.Cover{
+					BookID: v.BookID, SeriesID: v.SeriesID, RootName: loc.RootName, BookPath: loc.RelPath,
+					Page: local, PageCount: v.PageCount,
+					X: o.X, Y: o.Y, W: o.W, H: o.H, UpdatedAt: o.UpdatedAt,
+				}})
+				continue
+			}
+			reason = SkipPageOutOfRange
+		}
+		skip.Reason = reason
+		skipped = append(skipped, skip)
+	}
+	return moves, skipped
+}
+
+// PlanSplitPrefs carries the container's book_prefs onto its volumes (ruling
+// E-69 §2.12) — only for an orphan whose PROGRESS row passed the gate, because
+// prefs have no length of their own and cannot prove the destination is the
+// same pages. The copy goes to every volume, unstarted ones included (the
+// reader's direction was for the whole file), and only to volumes without a row
+// of their own (PrefsMove.OnlyIfAbsent). The container's row is kept: §2.12
+// copies ("원본은 남긴다"), because prefs cannot prove the destination on their
+// own and this runs at start-up too, where nothing is deleted (E-50 §2).
+func PlanSplitPrefs(orphans []index.SplitOrphan, roots []string,
+	found map[index.Location][]index.SplitVolume) []userdata.PrefsMove {
+	var out []userdata.PrefsMove
+	for _, o := range orphans {
+		_, dest, _, ok := planOne(o, roots, found)
+		if !ok {
+			continue
+		}
+		to := make([]string, 0, len(dest))
+		for _, v := range dest {
+			to = append(to, v.BookID)
+		}
+		out = append(out, userdata.PrefsMove{OldBookID: o.BookID, To: to, OnlyIfAbsent: true})
+	}
+	return out
 }
 
 // row builds one destination progress row. started_at and updated_at come from
@@ -305,17 +416,13 @@ func planOne(o index.SplitOrphan, roots []string,
 // after a first cut of this package shipped without it: 27 rows reachable and
 // invisible at once.
 //
-// `BookPath` keeps the orphan's own path rather than the destination's. It is
-// the column `progress` carries for display and for this repair's own lookup,
-// and the next scan's writer rewrites it the first time the reader opens the
-// book; overwriting it here would be inventing a second source of truth for
-// where the file is, which the index already answers.
-func row(o index.SplitOrphan, v index.SplitVolume, lastPage, pageCount int, completed bool) userdata.ExportItem {
+// Source columns follow the destination identity (E-69 §2.14).
+func row(o index.SplitOrphan, v index.SplitVolume, loc index.Location, lastPage, pageCount int, completed bool) userdata.ExportItem {
 	return userdata.ExportItem{
 		BookID:    v.BookID,
 		SeriesID:  v.SeriesID,
-		RootName:  o.RootName,
-		BookPath:  o.BookPath,
+		RootName:  loc.RootName,
+		BookPath:  loc.RelPath,
 		LastPage:  lastPage,
 		PageCount: pageCount,
 		Completed: completed,
@@ -333,6 +440,20 @@ type RelocationSkip struct {
 	Reason    SkipReason
 	PageCount int
 	NewPages  int
+}
+
+// relocationReason is the check a proven move's length has to pass against a
+// row's own baseline: the content hash is (size, mtime), so a genuine move
+// cannot change the length, and the row's page has to be inside it. "" means
+// the pairing agrees with the row.
+func relocationReason(baseline, page, newPages int) SkipReason {
+	if newPages != baseline {
+		return SkipLengthMismatch
+	}
+	if page < 1 || page > newPages {
+		return SkipPageOutOfRange
+	}
+	return ""
 }
 
 // PlanRelocations turns the moves a scan *proved* — same content, new id — into
@@ -359,20 +480,12 @@ func PlanRelocations(relocs []index.Relocation,
 		if !ok {
 			continue // never opened; there is nothing to carry
 		}
-		skip := RelocationSkip{OldBookID: rl.OldBookID, NewBookID: rl.NewBookID,
-			PageCount: p.PageCount, NewPages: rl.NewPageCount}
-
 		// The content hash is (size, mtime), so a genuine move cannot change the
 		// length. A disagreement means the pairing is not what it claims, and the
 		// cheapest moment to find that out is before writing a page number.
-		if rl.NewPageCount != p.PageCount {
-			skip.Reason = SkipLengthMismatch
-			skipped = append(skipped, skip)
-			continue
-		}
-		if p.LastPage < 1 || p.LastPage > rl.NewPageCount {
-			skip.Reason = SkipPageOutOfRange
-			skipped = append(skipped, skip)
+		if reason := relocationReason(p.PageCount, p.LastPage, rl.NewPageCount); reason != "" {
+			skipped = append(skipped, RelocationSkip{OldBookID: rl.OldBookID, NewBookID: rl.NewBookID,
+				Reason: reason, PageCount: p.PageCount, NewPages: rl.NewPageCount})
 			continue
 		}
 		moves = append(moves, userdata.SplitMove{
@@ -398,6 +511,133 @@ func RelocationIDs(relocs []index.Relocation) []string {
 	out := make([]string, 0, len(relocs))
 	for _, r := range relocs {
 		out = append(out, r.OldBookID)
+	}
+	return out
+}
+
+// PlanCarry is everything a scan's proven moves carry (ruling E-49, E-69
+// §2.11(a)(e), §2.12): the progress rows PlanRelocations plans, plus the chosen
+// covers, the book_prefs and the series_prefs — for every pairing, whether or
+// not anyone read the book. Restricting the carry to read books is exactly the
+// defect §2.12 records: a direction set on a book nobody had turned a page of
+// stayed on an id that is no book.
+//
+// # One gate: the content proof
+//
+// §2.11: "(a)의 관문은 `content_version` 증명 하나다. progress 행의 길이
+// 불일치로 이관이 거절되는 것은 progress에만 걸리고, 표지·prefs·시리즈 1:1 판단을
+// 막지 않는다." So:
+//
+//   - progress is PlanRelocations, unchanged — its length check refuses the
+//     progress row and nothing else;
+//   - a chosen cover always moves, page, region and page_count as stored, under
+//     the new identity. Its own baseline is not checked here: the same content
+//     is the same pages, and a baseline that disagrees only says the row is
+//     older than the file, which §2.5 keeps rather than repairs. The baseline
+//     check belongs to the split reattach (§2.11(b), PlanCovers);
+//   - book_prefs always move (newer-wins at the destination);
+//   - the series-level 1:1 is judged over every pairing, refused progress
+//     included (planSeriesCarry).
+//
+// `progress` and `covers` are the rows filed under the old ids
+// (userdata.GetProgressMany, GetCovers over RelocationIDs). `seriesNow` is
+// index.SeriesAt over every OldSeriesID and NewSeriesID: which series the index
+// still holds after the scan, and where.
+func PlanCarry(relocs []index.Relocation, progress map[string]userdata.Progress,
+	covers map[string]userdata.Cover, seriesNow map[string]index.Location) (userdata.Carry, []RelocationSkip) {
+	var c userdata.Carry
+	var skipped []RelocationSkip
+	c.Progress, skipped = PlanRelocations(relocs, progress)
+
+	for _, rl := range relocs {
+		if cv, chosen := covers[rl.OldBookID]; chosen {
+			row := cv
+			row.BookID, row.SeriesID = rl.NewBookID, rl.NewSeriesID
+			row.RootName, row.BookPath = rl.NewRootName, rl.NewRelPath
+			c.Covers = append(c.Covers, userdata.CoverMove{OldBookID: rl.OldBookID, Row: row})
+		}
+		c.Prefs = append(c.Prefs, userdata.PrefsMove{OldBookID: rl.OldBookID, To: []string{rl.NewBookID}})
+	}
+	c.Series = planSeriesCarry(relocs, seriesNow)
+	return c, skipped
+}
+
+// planSeriesCarry is E-69 §2.11(e). The scan proves moves book by book, so a
+// series' direction moves only when the books say the series moved as a whole:
+//
+//   - the old series is no longer in the index after the scan;
+//   - every pairing out of it went to one new series — every pairing, a
+//     book whose progress row PlanRelocations refused included: the pairing
+//     is proved by content, and that refusal is about the progress row only;
+//   - and that new series received pairings from no other old series. The
+//     ruling states the first two; the third is E-49 §3's "1:1 on both sides"
+//     at series level — two old series merging into one is a guess about whose
+//     direction wins, and it is not made.
+//
+// Anything else is left alone; the purge deletes the old row if its root was
+// walked end to end and the series is gone.
+func planSeriesCarry(relocs []index.Relocation, seriesNow map[string]index.Location) []userdata.SeriesPrefsMove {
+	bySource := map[string]map[string]struct{}{}
+	byDest := map[string]map[string]struct{}{}
+	var order []string
+	for _, rl := range relocs {
+		if rl.OldSeriesID == "" || rl.NewSeriesID == "" {
+			continue
+		}
+		if bySource[rl.OldSeriesID] == nil {
+			bySource[rl.OldSeriesID] = map[string]struct{}{}
+			order = append(order, rl.OldSeriesID)
+		}
+		bySource[rl.OldSeriesID][rl.NewSeriesID] = struct{}{}
+		if byDest[rl.NewSeriesID] == nil {
+			byDest[rl.NewSeriesID] = map[string]struct{}{}
+		}
+		byDest[rl.NewSeriesID][rl.OldSeriesID] = struct{}{}
+	}
+
+	var out []userdata.SeriesPrefsMove
+	for _, old := range order {
+		to := bySource[old]
+		if len(to) != 1 {
+			continue
+		}
+		var dest string
+		for d := range to {
+			dest = d
+		}
+		if dest == old {
+			continue
+		}
+		if _, still := seriesNow[old]; still {
+			continue
+		}
+		if len(byDest[dest]) != 1 {
+			continue
+		}
+		loc, ok := seriesNow[dest]
+		if !ok {
+			continue
+		}
+		out = append(out, userdata.SeriesPrefsMove{
+			OldSeriesID: old, NewSeriesID: dest, RootName: loc.RootName, SeriesPath: loc.RelPath,
+		})
+	}
+	return out
+}
+
+// RelocationSeriesIDs is the series-id list PlanCarry's seriesNow is looked up
+// by: every old and new series a pairing names.
+func RelocationSeriesIDs(relocs []index.Relocation) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, r := range relocs {
+		for _, id := range []string{r.OldSeriesID, r.NewSeriesID} {
+			if _, dup := seen[id]; id == "" || dup {
+				continue
+			}
+			seen[id] = struct{}{}
+			out = append(out, id)
+		}
 	}
 	return out
 }

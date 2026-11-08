@@ -10,6 +10,8 @@
   "file_size": 12,
   "mtime": 1457920766,
   "cv": "deadbeefdeadbeef",
+  "cover_cv": "cover-cv-1",
+  "cover": null,
   "status": "error",
   "error": "central directory is truncated",
   "progress": null,

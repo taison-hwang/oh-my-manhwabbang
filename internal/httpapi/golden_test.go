@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -52,6 +53,7 @@ func assertGoldenRedacted(t *testing.T, name string, body []byte, e *env) {
 	if e != nil {
 		body = e.redact(body)
 	}
+	body = normalizeCoverCV(body)
 
 	var pretty bytes.Buffer
 	if err := json.Indent(&pretty, body, "", "  "); err != nil {
@@ -77,6 +79,74 @@ func assertGoldenRedacted(t *testing.T, name string, body []byte, e *env) {
 	if !bytes.Equal(want, pretty.Bytes()) {
 		t.Errorf("%s does not match the golden file.\n--- want ---\n%s\n--- got ---\n%s", path, want, pretty.Bytes())
 	}
+}
+
+// coverCVField matches a non-empty string `cover_cv` in a compact or indented
+// response. A null cover_cv (a cover_kind='file' series) does not match.
+var coverCVField = regexp.MustCompile(`"cover_cv"(\s*):(\s*)"((?:[^"\\]|\\.)+)"`)
+
+// normalizeCoverCV replaces every string `cover_cv` with `cover-cv-N`,
+// numbered per payload by first appearance (ruling E-69 §2.7).
+//
+// cover_cv is a hash of book_id ‖ page_no ‖ region ‖ format ‖ quality ‖ cv
+// under the `shelf-cover/1` domain, and E-69 does not spell the byte layout of
+// that input the way arch §5.6 spells `shelf-thumb/1`'s, so its value cannot be
+// written into a golden by hand from the contract. What the contract does fix,
+// and what the numbering keeps, is which values are EQUAL within one payload: a
+// cover_kind='page' series' cover_cv is its cover book's (E-69 §2.6), so both
+// read `cover-cv-1`, and two books never share one. The values themselves are
+// pinned by bookcover_test.go through the relations §2.7 implies.
+//
+// The stand-in is URL-safe and outside the id alphabet (it has `-` and digits
+// 0/1), so a golden consumer that appends it as `?v=` still builds a URL and it
+// can never be mistaken for a real hash.
+func normalizeCoverCV(body []byte) []byte {
+	seen := map[string]string{}
+	return coverCVField.ReplaceAllFunc(body, func(m []byte) []byte {
+		sub := coverCVField.FindSubmatch(m)
+		v := string(sub[3])
+		name, ok := seen[v]
+		if !ok {
+			name = "cover-cv-" + strconv.Itoa(len(seen)+1)
+			seen[v] = name
+		}
+		return []byte(`"cover_cv"` + string(sub[1]) + `:` + string(sub[2]) + `"` + name + `"`)
+	})
+}
+
+// TestGolden_bookCover pins `PUT /api/books/{bid}/cover`'s `200 {cover_cv,
+// cover}` (ruling E-69 §2.6). It has its own server because the write changes
+// the BookSummary in series_detail.json and friends, which TestGolden pins in
+// the state with no choice made. The region is exact binary fractions, so the
+// numbers survive the round trip byte for byte.
+func TestGolden_bookCover(t *testing.T) {
+	e := newEnv(t, withoutAVIFConfig())
+	w := e.jsonBody(http.MethodPut, "/api/books/"+e.bookZipID+"/cover",
+		`{"page":2,"x":0.25,"y":0.125,"w":0.5,"h":0.75}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	assertGolden(t, "book_cover", w.Body.Bytes())
+
+	// The one golden whose BookSummary carries a non-null `cover`, so the
+	// object's shape inside BookDetail is pinned too, not only `null`.
+	detail := e.get("/api/books/" + e.bookZipID)
+	if detail.Code != http.StatusOK {
+		t.Fatalf("GET book = %d: %s", detail.Code, detail.Body.String())
+	}
+	assertGoldenRedacted(t, "book_detail_cover", detail.Body.Bytes(), e)
+}
+
+// TestGolden_seriesPrefs pins `PUT /api/series/{sid}/prefs`'s `200
+// {reading_direction}` (ruling E-69 §2.6), on its own server for the same
+// reason as TestGolden_bookCover.
+func TestGolden_seriesPrefs(t *testing.T) {
+	e := newEnv(t, withoutAVIFConfig())
+	w := e.jsonBody(http.MethodPut, "/api/series/"+e.seriesFolderID+"/prefs", `{"reading_direction":"rtl"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	assertGolden(t, "series_prefs", w.Body.Bytes())
 }
 
 // TestGolden captures one file per response shape the contract defines.

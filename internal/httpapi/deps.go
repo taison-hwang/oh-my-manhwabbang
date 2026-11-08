@@ -49,6 +49,7 @@ import (
 	"context"
 	"os"
 
+	"shelf/internal/bookcover"
 	"shelf/internal/config"
 	"shelf/internal/index"
 	"shelf/internal/openpool"
@@ -88,6 +89,11 @@ type Index interface {
 // UserData is the authored half: progress, per-book preferences and settings.
 // *userdata.DB satisfies it.
 type UserData interface {
+	bookcover.UserData
+	PutCover(context.Context, userdata.CoverPut) (userdata.Cover, error)
+	DeleteCover(context.Context, string) error
+	GetSeriesPrefs(context.Context, string) (userdata.SeriesPrefs, error)
+	PutSeriesPrefs(context.Context, userdata.SeriesPrefsPut) (userdata.SeriesPrefs, error)
 	GetProgress(ctx context.Context, bookID string) (userdata.Progress, error)
 	PutProgress(ctx context.Context, u userdata.ProgressUpdate) (userdata.Progress, error)
 	DeleteProgress(ctx context.Context, bookID string) error
@@ -117,6 +123,7 @@ type Scanner interface {
 // of an archive read. The HTTP layer only ever calls Get, which answers
 // immediately with a result, ErrQueued (→ 202) or ErrUndecodable (→ 422).
 type Thumbs interface {
+	CoverVersion(string, int, thumbs.Cover, string) string
 	Get(ctx context.Context, req thumbs.Request) (thumbs.Result, error)
 	Widths() []int
 	Usage(ctx context.Context) (thumbs.Usage, error)

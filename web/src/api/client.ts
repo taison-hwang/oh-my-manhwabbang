@@ -10,6 +10,8 @@
 import { ApiError, codeForStatus, parseErrorEnvelope } from './errors'
 import type {
   AuthStatus,
+  BookCover,
+  BookCoverResult,
   BookDetail,
   BookPrefs,
   BookPrefsUpdate,
@@ -36,6 +38,7 @@ import type {
   SeriesDetail,
   SeriesListParams,
   SeriesListResponse,
+  SeriesPrefs,
   Settings,
   SettingsUpdate,
 } from './types'
@@ -43,6 +46,7 @@ import {
   authLoginUrl,
   authLogoutUrl,
   authStatusUrl,
+  bookCoverWriteUrl,
   bookPrefsUrl,
   bookProgressUrl,
   bookUrl,
@@ -60,6 +64,7 @@ import {
   scanStatusUrl,
   scanUrl,
   seriesListUrl,
+  seriesPrefsUrl,
   seriesRescanUrl,
   seriesUrl,
   settingsUrl,
@@ -408,6 +413,45 @@ export function putBookPrefs(
   options?: WriteOptions,
 ): Promise<BookPrefs> {
   return requestJson<BookPrefs>(bookPrefsUrl(bid), { ...options, method: 'PUT', body: update })
+}
+
+/**
+ * `PUT /api/books/{bid}/cover` → `200 {cover_cv, cover}` — ruling E-69 §2.6.
+ *
+ * The body is rebuilt from the five fields rather than passed through: the endpoint
+ * decodes strictly (§7.1), so a caller holding a wider object — an editor state, an
+ * export row — would otherwise turn a good region into a `400`. A region that breaks
+ * §2.4's rules is `400 bad_request`, a book that is not `ok` is too.
+ */
+export function putBookCover(
+  bid: ID,
+  cover: BookCover,
+  options?: RequestOptions,
+): Promise<BookCoverResult> {
+  const body: BookCover = { page: cover.page, x: cover.x, y: cover.y, w: cover.w, h: cover.h }
+  return requestJson<BookCoverResult>(bookCoverWriteUrl(bid), { ...options, method: 'PUT', body })
+}
+
+/** `DELETE /api/books/{bid}/cover` → `204`: back to the default cover. `204` with no choice too. */
+export function deleteBookCover(bid: ID, options?: RequestOptions): Promise<void> {
+  return requestVoid(bookCoverWriteUrl(bid), { ...options, method: 'DELETE' })
+}
+
+// ---------------------------------------------------------------------------
+// §7.5 Series prefs (ruling E-69 §2.3)
+// ---------------------------------------------------------------------------
+
+/**
+ * `PUT /api/series/{sid}/prefs` → `200 {reading_direction}`. `null` clears the series'
+ * direction, so its books fall to the global default. Only the one field is sent.
+ */
+export function putSeriesPrefs(
+  sid: ID,
+  prefs: SeriesPrefs,
+  options?: RequestOptions,
+): Promise<SeriesPrefs> {
+  const body: SeriesPrefs = { reading_direction: prefs.reading_direction }
+  return requestJson<SeriesPrefs>(seriesPrefsUrl(sid), { ...options, method: 'PUT', body })
 }
 
 // ---------------------------------------------------------------------------

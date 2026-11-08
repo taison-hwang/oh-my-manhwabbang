@@ -293,11 +293,25 @@ func TestI6_AC005_AC006_progressSurvivesAnIndexAndCacheWipe(t *testing.T) {
 	if status, body, _ := s.do(http.MethodPut, "/api/books/"+book.ID+"/prefs", `{"reading_direction":"rtl"}`); status != http.StatusOK {
 		t.Fatalf("PUT prefs = %d: %s", status, truncate(body))
 	}
+	if status, body, _ := s.do(http.MethodPut, "/api/series/"+item.ID+"/prefs", `{"reading_direction":"ltr"}`); status != http.StatusOK {
+		t.Fatalf("PUT series prefs = %d: %s", status, truncate(body))
+	}
 	if status, body, _ := s.do(http.MethodPut, "/api/settings", `{"theme":"dark","prefetch":6}`); status != http.StatusOK {
 		t.Fatalf("PUT settings = %d: %s", status, truncate(body))
 	}
+	wantCover := bookCover{Page: 2, X: 0.1, Y: 0.1, W: 0.8, H: 0.8}
+	if status, body, _ := s.do(http.MethodPut, "/api/books/"+book.ID+"/cover", `{"page":2,"x":0.1,"y":0.1,"w":0.8,"h":0.8}`); status != http.StatusOK {
+		t.Fatalf("PUT cover = %d: %s", status, truncate(body))
+	}
+	var saved bookDetail
+	s.get("/api/books/"+book.ID, &saved)
+	if saved.Cover == nil || *saved.Cover != wantCover || saved.CoverCV == "" {
+		t.Fatalf("the cover was not saved before the wipe: %+v", saved.bookSummary)
+	}
 	// Warm a cover so its regeneration is observable.
-	waitForCover(t, s, item)
+	if !waitForCover(t, s, mustSeries(s, clover)) {
+		t.Fatal("the cover did not render before the cache wipe")
+	}
 	s.stop()
 
 	// The wipe: index.db and its two sidecars, and the entire cache directory.
@@ -350,6 +364,14 @@ func TestI6_AC005_AC006_progressSurvivesAnIndexAndCacheWipe(t *testing.T) {
 			book.ID, status, truncate(body))
 	}
 	s2.get("/api/books/"+book.ID, &reread)
+	if reread.Cover == nil || *reread.Cover != wantCover || reread.CoverCV != saved.CoverCV {
+		t.Errorf("E-69: the cover did not survive the rebuild: %+v", reread.bookSummary)
+	}
+	var series seriesDetail
+	s2.get("/api/series/"+item.ID, &series)
+	if series.ReadingDirection == nil || *series.ReadingDirection != "ltr" {
+		t.Errorf("E-69: the series direction did not survive: %v", series.ReadingDirection)
+	}
 	if reread.Progress == nil {
 		t.Fatal("AC-006: the rebuilt book carries no progress")
 	}

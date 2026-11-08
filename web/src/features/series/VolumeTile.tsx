@@ -1,6 +1,6 @@
 import { TriangleAlert } from 'lucide-react'
 
-import { usePageThumbImage } from '../../api/queries'
+import { useBookCoverImage } from '../../api/queries'
 import type { BookSummary } from '../../api/types'
 import { THUMB_WIDTH_FOR } from '../../api/urls'
 import { Button } from '../../components/ds/Button'
@@ -61,10 +61,13 @@ export function VolumeTile({ book, number, onOpen }: VolumeTileProps) {
   const openable = isOpenable(book)
   const ratio = volumeProgressRatio(book)
   const readToggle = useVolumeReadToggle(book)
-  const thumb = usePageThumbImage(book.id, 1, {
+  // E-69 §2.8: the book cover (the reader's choice, or page 1 — its reading-order
+  // half when it is a spread), versioned by `cover_cv` rather than the content `cv`.
+  const thumb = useBookCoverImage(book.id, {
     w: THUMB_WIDTH_FOR.volumeTile,
-    v: book.cv,
+    v: book.cover_cv,
     enabled: openable,
+    seriesId: book.series_id,
   })
 
   const box = (

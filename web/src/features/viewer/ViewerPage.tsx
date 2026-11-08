@@ -8,9 +8,10 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 
-import { useBook, useSeries, useSettings } from '../../api/queries'
+import { queryKeys, useBook, useSeries, useSettings } from '../../api/queries'
 import type { BookSummary } from '../../api/types'
 import { EmptyState } from '../../components/ds/EmptyState'
 import { cn } from '../../lib/cn'
@@ -18,7 +19,6 @@ import { formatViewerCounter } from '../../lib/format'
 import { toggleFullscreen } from '../../lib/fullscreen'
 import { DARK_MEDIA_QUERY, resolveTheme } from '../../lib/theme'
 import { useMediaQuery } from '../../lib/useMediaQuery'
-import { openingDirection, useSeriesDirStore } from '../../store/seriesDir'
 import { useUiStore } from '../../store/ui'
 import {
   registerChromeFocusHold,
@@ -29,12 +29,22 @@ import {
   type ReadingDirection,
 } from '../../store/viewer'
 import { NextVolumeCard } from './NextVolumeCard'
-import { PAGE_LOADING_LABEL, PageLoadingIndicator } from './PageLoadingIndicator'
+import {
+  PAGE_LOADING_LABEL,
+  PageLoadingIndicator,
+} from './PageLoadingIndicator'
 import { PageStage } from './PageStage'
 import { ViewerBottomBar } from './ViewerBottomBar'
 import { ViewerTopBar } from './ViewerTopBar'
+import { CoverDialog } from './CoverDialog'
 import { bookErrorMessage } from './bookErrors'
-import { makeDimsLookup, nextPage, prevPage, stagePages, type PageDims } from './fit'
+import {
+  makeDimsLookup,
+  nextPage,
+  prevPage,
+  stagePages,
+  type PageDims,
+} from './fit'
 import { usePrefsWriter } from './prefsWriter'
 import { useDelayedFlag } from './useDelayedFlag'
 import { DEFAULT_PREFETCH, usePrefetch } from './usePrefetch'
@@ -141,7 +151,8 @@ function edgeBandAt(clientY: number): EdgeBand | null {
 }
 
 /** The one sentence that explains a viewer which opens with nothing on it. */
-export const CHROME_HINT = '좌·우 클릭으로 페이지 · 중앙 클릭 또는 상하 가장자리로 컨트롤'
+export const CHROME_HINT =
+  '좌·우 클릭으로 페이지 · 중앙 클릭 또는 상하 가장자리로 컨트롤'
 
 /** FR-VWR-009's one line. */
 const STALE_NOTICE = '파일이 변경되었습니다'
@@ -150,7 +161,8 @@ const STALE_NOTICE = '파일이 변경되었습니다'
  * The two surfaces the chrome can be held open from — by a pointer resting on
  * one (E-30), or by the keyboard's focus inside one (E-62).
  */
-const CHROME_BARS = '[data-role="viewer-top-bar"],[data-role="viewer-bottom-bar"]'
+const CHROME_BARS =
+  '[data-role="viewer-top-bar"],[data-role="viewer-bottom-bar"]'
 
 /** Whether a node — under the pointer, or holding the focus — belongs to one of the two bars. */
 function inChrome(node: EventTarget | null): boolean {
@@ -198,6 +210,28 @@ export function ViewerPage() {
   const stageZonesRef = useRef<HTMLDivElement | null>(null)
 
   const book = useBook(bookId, { enabled: bookId !== '' })
+  const coverOpen = useUiStore((s) => s.overlays.includes('cover'))
+  useEffect(
+    () => () => {
+      useUiStore.getState().closeOverlay('cover')
+    },
+    [bookId],
+  )
+  const queryClient = useQueryClient()
+  /**
+   * The cached detail is known to be out of date and its re-read is on the wire.
+   * E-69 §2.3 moved the direction a book opens with to the server's ladder, so a
+   * series or global direction change (and the seed upload) invalidates every
+   * book — but an invalidated query still hands its old data to the next mount,
+   * and this screen opens a book once. Opening on that data would open a volume
+   * read earlier in the direction it had then, and the re-read landing a moment
+   * later could not turn it. So the open waits for the re-read; a detail that is
+   * merely old by `staleTime` still opens at once, as before.
+   */
+  const reReading =
+    book.isFetching &&
+    queryClient.getQueryState(queryKeys.books.detail(bookId))?.isInvalidated ===
+      true
   const settings = useSettings()
   // Only for the next-volume card's title/meta; the series detail is almost
   // always already in the cache because that is the screen the reader came from.
@@ -208,21 +242,6 @@ export function ViewerPage() {
   const systemDark = useMediaQuery(DARK_MEDIA_QUERY)
   const appTheme = resolveTheme(themeSetting, systemDark)
   const setRevealSeries = useUiStore((s) => s.setRevealSeries)
-
-  /**
-   * The series-detail 읽기 방향 seed for *this* series (**E-33 §2**).
-   *
-   * Read here rather than passed through the route, and that is the design
-   * decision the ruling left open. The seed is per **series** (`bySeries`,
-   * `localStorage`), the viewer is the one screen that turns server prefs into
-   * the opening store state, and it already knows the series id from `:sid` —
-   * so this is the single place where "the seed replaces the global default"
-   * can be stated at all. Threading it through `?dir=` instead would have put a
-   * reading preference in the URL, made it forgeable and shareable, and left
-   * every *other* door into the viewer (이어보기, a card's 이어 읽기, a pasted
-   * link) opening the same series the other way round.
-   */
-  const seedDir = useSeriesDirStore((s) => s.bySeries[seriesId])
 
   const page = useViewerStore((s) => s.page)
   const pageCount = useViewerStore((s) => s.pageCount)
@@ -262,12 +281,17 @@ export function ViewerPage() {
   const pages = useMemo(() => detail?.pages ?? [], [detail])
   const decodeKey = `${bookId}:${cv ?? ''}`
 
-  const [decoded, setDecoded] = useState<DecodeState>(() => emptyDecodeState(decodeKey))
+  const [decoded, setDecoded] = useState<DecodeState>(() =>
+    emptyDecodeState(decodeKey),
+  )
   // Derived during render rather than in an effect: an effect would let one
   // frame paint with the previous book's measurements still in force.
   if (decoded.key !== decodeKey) setDecoded(emptyDecodeState(decodeKey))
 
-  const dims = useMemo(() => makeDimsLookup(pages, decoded.measured), [pages, decoded.measured])
+  const dims = useMemo(
+    () => makeDimsLookup(pages, decoded.measured, book.data?.kind === 'pdf'),
+    [pages, decoded.measured, book.data?.kind],
+  )
   const shown = useMemo(
     () => stagePages(page, pageCount, mode, dims),
     [dims, mode, page, pageCount],
@@ -283,15 +307,18 @@ export function ViewerPage() {
     setLoading(pending)
   }, [pending, setLoading])
 
-  const onPageLoaded = useCallback((n: number, width: number, height: number) => {
-    setDecoded((previous) => {
-      const measured = new Map(previous.measured)
-      measured.set(n, { w: width, h: height })
-      const settled = new Set(previous.settled)
-      settled.add(n)
-      return { ...previous, measured, settled }
-    })
-  }, [])
+  const onPageLoaded = useCallback(
+    (n: number, width: number, height: number) => {
+      setDecoded((previous) => {
+        const measured = new Map(previous.measured)
+        measured.set(n, { w: width, h: height })
+        const settled = new Set(previous.settled)
+        settled.add(n)
+        return { ...previous, measured, settled }
+      })
+    },
+    [],
+  )
 
   const onPageFailed = useCallback((n: number) => {
     setDecoded((previous) => {
@@ -386,7 +413,7 @@ export function ViewerPage() {
   }, [])
 
   useEffect(() => {
-    if (detail === undefined || bookId === '') return
+    if (detail === undefined || bookId === '' || reReading) return
     const opened = openedRef.current
     if (opened?.bookId === bookId) {
       const routedHere = opened.route !== params
@@ -406,16 +433,17 @@ export function ViewerPage() {
       pageCount: detail.page_count,
       page: resume,
       mode: detail.prefs.display_mode,
-      // Not `detail.prefs.reading_direction` — that was the shipped defect
-      // E-33 §2 names. A book with no override of its own opens on the series
-      // screen's seed; a book that has one keeps it. See `openingDirection`.
-      dir: openingDirection(detail.prefs, seedDir),
+      // E-69 §2.3: the server's ladder — the book's own direction, else the
+      // series', else the global default — so every door into the viewer
+      // (series screen, 이어보기, a pasted link) opens the same way. E-33 §2's
+      // client-side seed is gone; nothing here may second-guess this value.
+      dir: detail.prefs.reading_direction,
       fit: detail.prefs.fit_mode,
       // E-45 §1. This is the one moment `progress.stale` is trustworthy: the
       // detail has just been fetched and no `PUT` has answered over it yet.
       stale: detail.progress?.stale === true,
     })
-  }, [bookId, detail, open, params, requestedPage, seedDir])
+  }, [bookId, detail, open, params, reReading, requestedPage])
 
   // Leaving the screen must not leave a viewer open in the store — the global
   // `Esc` ladder and the shell both key off `bookId !== null`. The latch goes
@@ -509,7 +537,9 @@ export function ViewerPage() {
    * consumed for a book the writer would refuse.
    */
   const progressReady = detail !== undefined && pageCount > 0
-  const progress = useProgressSync(bookId, page, pageCount, { enabled: progressReady })
+  const progress = useProgressSync(bookId, page, pageCount, {
+    enabled: progressReady,
+  })
 
   /**
    * The acknowledgement (**E-45 §2**).
@@ -588,16 +618,13 @@ export function ViewerPage() {
    * override the reader just deleted. The three setters below are not
    * belt-and-braces; without them the feature does not work.
    *
-   * The direction goes back through `openingDirection`, the same rule the open
-   * path uses: with the override gone, "what this volume shows when nobody chose
-   * anything for it" is the series seed if there is one (E-33 §2) and the global
-   * default otherwise. Anything else would make 이 권 전용 설정 clear the
-   * override and then disagree with the very next open of the same book.
-   *
-   * The fit, by contrast, is **not** wrapped: it is set from the response as it
-   * came back, exactly like the `setMode(prefs.display_mode)` two lines above
-   * it. Every fit the server can name has a segment since E-44 restored 화면,
-   * so there is nothing to coerce.
+   * All three are set from the response as it came back. With the override
+   * gone, "what this volume shows when nobody chose anything for it" is the
+   * series' direction if it has one and the global default otherwise — and
+   * since E-69 §2.3 that ladder is the server's, so the re-merged answer already
+   * says it, and the very next open of the same book agrees. Every fit the
+   * server can name has a segment since E-44 restored 화면, so there is nothing
+   * to coerce either.
    */
   const resetPrefs = useCallback(() => {
     if (detail === undefined) return
@@ -608,11 +635,12 @@ export function ViewerPage() {
         // a seg chosen while it was on the wire is newer than it.
         if (useViewerStore.getState().bookId !== bookId) return
         if (untouched.has('display_mode')) setMode(prefs.display_mode)
-        if (untouched.has('reading_direction')) setDirection(openingDirection(prefs, seedDir))
+        if (untouched.has('reading_direction'))
+          setDirection(prefs.reading_direction)
         if (untouched.has('fit_mode')) setFit(prefs.fit_mode)
       },
     )
-  }, [bookId, detail, savePrefsNow, seedDir, setDirection, setFit, setMode])
+  }, [bookId, detail, savePrefsNow, setDirection, setFit, setMode])
 
   // -------------------------------------------------------------------------
   // Page turns, keys, taps, prefetch
@@ -726,7 +754,8 @@ export function ViewerPage() {
   useEffect(
     () =>
       registerChromeFocusHold(
-        () => lastInput.current === 'keyboard' && inChrome(document.activeElement),
+        () =>
+          lastInput.current === 'keyboard' && inChrome(document.activeElement),
       ),
     [],
   )
@@ -750,7 +779,10 @@ export function ViewerPage() {
    * to ask `activeElement` about. Same landing as the chrome's below.
    */
   const toggleStripLandingFocus = useCallback(() => {
-    if (useViewerStore.getState().stripOpen && inStrip(document.activeElement)) {
+    if (
+      useViewerStore.getState().stripOpen &&
+      inStrip(document.activeElement)
+    ) {
       rootRef.current?.focus({ preventScroll: true })
     }
     toggleStrip()
@@ -981,7 +1013,8 @@ export function ViewerPage() {
       if (event.pointerType === 'touch') return
       // Where the pointer is *now*: `pointerover` names it as the target,
       // `pointerout` as the thing it is leaving for.
-      const under = event.type === 'pointerout' ? event.relatedTarget : event.target
+      const under =
+        event.type === 'pointerout' ? event.relatedTarget : event.target
       if (inChrome(under)) holdChrome()
       else releaseChrome()
     },
@@ -1053,7 +1086,10 @@ export function ViewerPage() {
       : (series.data?.books.find((b) => b.id === detail.next_book_id) ?? null)
 
   const atVolumeEnd =
-    detail !== undefined && pageCount > 0 && page >= pageCount && mode !== 'vertical'
+    detail !== undefined &&
+    pageCount > 0 &&
+    page >= pageCount &&
+    mode !== 'vertical'
 
   // Leaving the end forgets the dismissal — see `endCardDismissed`. Keyed on the
   // derived flag rather than on `page`/`bookId` so every way out is covered by
@@ -1077,7 +1113,11 @@ export function ViewerPage() {
       tabIndex={-1}
       className="fixed inset-0 z-viewer flex flex-col overflow-hidden bg-bg text-ink focus:outline-none focus-visible:outline-none"
       style={{
-        cursor: pointerAwake ? (hoverZone === 'centre' ? 'default' : 'pointer') : 'none',
+        cursor: pointerAwake
+          ? hoverZone === 'centre'
+            ? 'default'
+            : 'pointer'
+          : 'none',
       }}
       onMouseMove={nudgePointer}
       onPointerOver={trackChromeHover}
@@ -1143,6 +1183,7 @@ export function ViewerPage() {
           onTouchEnd={touch.onTouchEnd}
         >
           <PageStage
+            preferRecordedDims={detail.kind === 'pdf'}
             bookId={bookId}
             cv={cv}
             pages={pages}
@@ -1168,14 +1209,18 @@ export function ViewerPage() {
           two modes where the number on screen is not the number being read:
           세로 scrolls through several at once, and 너비 leaves the page taller
           than the viewport. */}
-      {!chromeVisible && !showIndicator && mode !== 'vertical' && fit !== 'width' && pageCount > 0 && (
-        <span
-          data-role="quiet-page-counter"
-          className="pointer-events-none absolute bottom-[10px] right-[14px] text-xs tabular-nums tracking-[.06em] text-ink-dim"
-        >
-          {formatViewerCounter(page, pageCount)}
-        </span>
-      )}
+      {!chromeVisible &&
+        !showIndicator &&
+        mode !== 'vertical' &&
+        fit !== 'width' &&
+        pageCount > 0 && (
+          <span
+            data-role="quiet-page-counter"
+            className="pointer-events-none absolute bottom-[10px] right-[14px] text-xs tabular-nums tracking-[.06em] text-ink-dim"
+          >
+            {formatViewerCounter(page, pageCount)}
+          </span>
+        )}
 
       {hintShown && (
         <div
@@ -1187,6 +1232,16 @@ export function ViewerPage() {
         </div>
       )}
 
+      {coverOpen && detail !== undefined && (
+        <CoverDialog
+          key={detail.id}
+          book={detail}
+          pages={mode === 'vertical' ? [page] : shown}
+          onClose={() => {
+            useUiStore.getState().closeOverlay('cover')
+          }}
+        />
+      )}
       <ViewerTopBar
         visible={chromeVisible}
         seriesName={detail?.series_name ?? ''}
@@ -1201,6 +1256,14 @@ export function ViewerPage() {
         onModeChange={applyMode}
         onDirChange={applyDir}
         onFitChange={applyFit}
+        onCover={
+          detail !== undefined &&
+          ((detail.status === 'ok' && pageCount > 0) || detail.cover !== null)
+            ? () => {
+                useUiStore.getState().openOverlay('cover')
+              }
+            : undefined
+        }
       />
 
       {/* FR-VWR-009: the recorded page count no longer matches the file, so the
@@ -1267,7 +1330,12 @@ export function ViewerPage() {
           changes: a region inserted together with its message is often never
           announced. Each message is its own node and `aria-atomic` is off, so a
           message joining one already up is read alone. */}
-      <div data-role="viewer-status" role="status" aria-atomic="false" className="sr-only">
+      <div
+        data-role="viewer-status"
+        role="status"
+        aria-atomic="false"
+        className="sr-only"
+      >
         {staleVisible && <p>{STALE_NOTICE}</p>}
         {hintShown && <p>{CHROME_HINT}</p>}
         {showIndicator && <p>{PAGE_LOADING_LABEL}</p>}
@@ -1312,7 +1380,9 @@ export function ViewerPage() {
           onNext={() => {
             if (detail.next_book_id === null) return
             progress.flush()
-            void navigate(`/series/${seriesId}/books/${detail.next_book_id}?page=1`)
+            void navigate(
+              `/series/${seriesId}/books/${detail.next_book_id}?page=1`,
+            )
           }}
           onBackToSeries={exit}
           onToggleCompleted={progress.setCompleted}

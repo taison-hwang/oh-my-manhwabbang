@@ -63,87 +63,91 @@ func (db *DB) RepairSplit(ctx context.Context, moves []SplitMove) (RepairResult,
 	if len(moves) == 0 {
 		return RepairResult{}, nil
 	}
-	var res RepairResult
-	err := db.writeTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		res = RepairResult{}
-
-		lookup, err := tx.PrepareContext(ctx, `SELECT updated_at FROM progress WHERE book_id = ?`)
-		if err != nil {
-			return fmt.Errorf("preparing progress lookup: %w", err)
-		}
-		defer lookup.Close()
-
-		write, err := tx.PrepareContext(ctx, `
-			INSERT INTO progress (book_id, series_id, root_name, book_path, last_page,
-			                      page_count, completed, started_at, updated_at)
-			VALUES (?,?,?,?,?,?,?,?,?)
-			ON CONFLICT(book_id) DO UPDATE SET
-				series_id  = excluded.series_id,
-				root_name  = excluded.root_name,
-				book_path  = excluded.book_path,
-				last_page  = excluded.last_page,
-				page_count = excluded.page_count,
-				completed  = excluded.completed,
-				started_at = min(progress.started_at, excluded.started_at),
-				updated_at = excluded.updated_at`)
-		if err != nil {
-			return fmt.Errorf("preparing repair write: %w", err)
-		}
-		defer write.Close()
-
-		retire, err := tx.PrepareContext(ctx, `DELETE FROM progress WHERE book_id = ?`)
-		if err != nil {
-			return fmt.Errorf("preparing repair delete: %w", err)
-		}
-		defer retire.Close()
-
-		for _, m := range moves {
-			if m.OldBookID == "" {
-				return fmt.Errorf("userdata: repair move with empty book id: %w", ErrInvalidArgument)
-			}
-			for _, it := range m.Rows {
-				if it.BookID == "" {
-					return fmt.Errorf("userdata: repair row with empty book id: %w", ErrInvalidArgument)
-				}
-				if it.PageCount < 0 {
-					return fmt.Errorf("userdata: repair row %q: page count %d is negative: %w",
-						it.BookID, it.PageCount, ErrInvalidArgument)
-				}
-				var localUpdated int64
-				switch err := lookup.QueryRowContext(ctx, it.BookID).Scan(&localUpdated); {
-				case err == nil:
-					if localUpdated >= it.UpdatedAt {
-						res.Kept++
-						continue
-					}
-				case errors.Is(err, sql.ErrNoRows):
-				default:
-					return fmt.Errorf("reading local progress for book %q: %w", it.BookID, err)
-				}
-				completed := 0
-				if it.Completed {
-					completed = 1
-				}
-				startedAt := it.StartedAt
-				if startedAt == 0 {
-					startedAt = it.UpdatedAt
-				}
-				if _, err := write.ExecContext(ctx, it.BookID, it.SeriesID, it.RootName,
-					it.BookPath, clampPage(it.LastPage, it.PageCount), it.PageCount,
-					completed, startedAt, it.UpdatedAt); err != nil {
-					return fmt.Errorf("repairing progress for book %q: %w", it.BookID, err)
-				}
-				res.Written++
-			}
-			if _, err := retire.ExecContext(ctx, m.OldBookID); err != nil {
-				return fmt.Errorf("retiring orphaned progress %q: %w", m.OldBookID, err)
-			}
-			res.Retired++
-		}
-		return nil
-	})
+	res, err := db.ApplyCarry(ctx, Carry{Progress: moves})
 	if err != nil {
 		return RepairResult{}, err
+	}
+	return res.Progress, nil
+}
+
+// carryProgress is RepairSplit's write, inside a transaction ApplyCarry owns.
+func carryProgress(ctx context.Context, tx *sql.Tx, moves []SplitMove) (RepairResult, error) {
+	var res RepairResult
+	if len(moves) == 0 {
+		return res, nil
+	}
+	lookup, err := tx.PrepareContext(ctx, `SELECT updated_at FROM progress WHERE book_id = ?`)
+	if err != nil {
+		return res, fmt.Errorf("preparing progress lookup: %w", err)
+	}
+	defer lookup.Close()
+
+	write, err := tx.PrepareContext(ctx, `
+		INSERT INTO progress (book_id, series_id, root_name, book_path, last_page,
+		                      page_count, completed, started_at, updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(book_id) DO UPDATE SET
+			series_id  = excluded.series_id,
+			root_name  = excluded.root_name,
+			book_path  = excluded.book_path,
+			last_page  = excluded.last_page,
+			page_count = excluded.page_count,
+			completed  = excluded.completed,
+			started_at = min(progress.started_at, excluded.started_at),
+			updated_at = excluded.updated_at`)
+	if err != nil {
+		return res, fmt.Errorf("preparing repair write: %w", err)
+	}
+	defer write.Close()
+
+	retire, err := tx.PrepareContext(ctx, `DELETE FROM progress WHERE book_id = ?`)
+	if err != nil {
+		return res, fmt.Errorf("preparing repair delete: %w", err)
+	}
+	defer retire.Close()
+
+	for _, m := range moves {
+		if m.OldBookID == "" {
+			return res, fmt.Errorf("userdata: repair move with empty book id: %w", ErrInvalidArgument)
+		}
+		for _, it := range m.Rows {
+			if it.BookID == "" {
+				return res, fmt.Errorf("userdata: repair row with empty book id: %w", ErrInvalidArgument)
+			}
+			if it.PageCount < 0 {
+				return res, fmt.Errorf("userdata: repair row %q: page count %d is negative: %w",
+					it.BookID, it.PageCount, ErrInvalidArgument)
+			}
+			var localUpdated int64
+			switch err := lookup.QueryRowContext(ctx, it.BookID).Scan(&localUpdated); {
+			case err == nil:
+				if localUpdated >= it.UpdatedAt {
+					res.Kept++
+					continue
+				}
+			case errors.Is(err, sql.ErrNoRows):
+			default:
+				return res, fmt.Errorf("reading local progress for book %q: %w", it.BookID, err)
+			}
+			completed := 0
+			if it.Completed {
+				completed = 1
+			}
+			startedAt := it.StartedAt
+			if startedAt == 0 {
+				startedAt = it.UpdatedAt
+			}
+			if _, err := write.ExecContext(ctx, it.BookID, it.SeriesID, it.RootName,
+				it.BookPath, clampPage(it.LastPage, it.PageCount), it.PageCount,
+				completed, startedAt, it.UpdatedAt); err != nil {
+				return res, fmt.Errorf("repairing progress for book %q: %w", it.BookID, err)
+			}
+			res.Written++
+		}
+		if _, err := retire.ExecContext(ctx, m.OldBookID); err != nil {
+			return res, fmt.Errorf("retiring orphaned progress %q: %w", m.OldBookID, err)
+		}
+		res.Retired++
 	}
 	return res, nil
 }
@@ -163,16 +167,22 @@ type Refile struct {
 // mis-read — and `updated_at` in particular must not move, because 이어보기
 // sorts by it and a correction is not something the reader did.
 func (db *DB) RefileProgress(ctx context.Context, rows []Refile) (int, error) {
+	return db.refile(ctx, `UPDATE progress SET series_id = ? WHERE book_id = ? AND series_id <> ?`,
+		"progress", rows)
+}
+
+// refile runs one series_id correction statement over rows in one
+// transaction; RefileProgress and RefileCovers differ only in the table.
+func (db *DB) refile(ctx context.Context, query, what string, rows []Refile) (int, error) {
 	if len(rows) == 0 {
 		return 0, nil
 	}
 	n := 0
 	err := db.writeTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		n = 0
-		stmt, err := tx.PrepareContext(ctx,
-			`UPDATE progress SET series_id = ? WHERE book_id = ? AND series_id <> ?`)
+		stmt, err := tx.PrepareContext(ctx, query)
 		if err != nil {
-			return fmt.Errorf("preparing the refile: %w", err)
+			return fmt.Errorf("preparing the %s refile: %w", what, err)
 		}
 		defer stmt.Close()
 		for _, r := range rows {
@@ -181,7 +191,7 @@ func (db *DB) RefileProgress(ctx context.Context, rows []Refile) (int, error) {
 			}
 			res, err := stmt.ExecContext(ctx, r.SeriesID, r.BookID, r.SeriesID)
 			if err != nil {
-				return fmt.Errorf("refiling progress for book %q: %w", r.BookID, err)
+				return fmt.Errorf("refiling %s for book %q: %w", what, r.BookID, err)
 			}
 			if c, _ := res.RowsAffected(); c > 0 {
 				n += int(c)
@@ -209,46 +219,13 @@ func (db *DB) RefileProgress(ctx context.Context, rows []Refile) (int, error) {
 // It returns what it deleted so the caller can say so out loud. A purge that
 // reports only a count is indistinguishable from a purge that took the wrong
 // rows.
+//
+// Since E-69 it is a thin view of Purge, so it also removes the ids' chosen
+// covers (§2.11(d)); the post-scan cleanup calls Purge directly.
 func (db *DB) PurgeProgress(ctx context.Context, bookIDs []string) (progress, prefs int, err error) {
-	if len(bookIDs) == 0 {
-		return 0, 0, nil
-	}
-	err = db.writeTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		progress, prefs = 0, 0
-		delProgress, err := tx.PrepareContext(ctx, `DELETE FROM progress WHERE book_id = ?`)
-		if err != nil {
-			return fmt.Errorf("preparing the progress purge: %w", err)
-		}
-		defer delProgress.Close()
-		delPrefs, err := tx.PrepareContext(ctx, `DELETE FROM book_prefs WHERE book_id = ?`)
-		if err != nil {
-			return fmt.Errorf("preparing the prefs purge: %w", err)
-		}
-		defer delPrefs.Close()
-
-		for _, id := range bookIDs {
-			if id == "" {
-				return fmt.Errorf("userdata: purge with an empty book id: %w", ErrInvalidArgument)
-			}
-			r, err := delProgress.ExecContext(ctx, id)
-			if err != nil {
-				return fmt.Errorf("purging progress for book %q: %w", id, err)
-			}
-			if n, _ := r.RowsAffected(); n > 0 {
-				progress += int(n)
-			}
-			r, err = delPrefs.ExecContext(ctx, id)
-			if err != nil {
-				return fmt.Errorf("purging preferences for book %q: %w", id, err)
-			}
-			if n, _ := r.RowsAffected(); n > 0 {
-				prefs += int(n)
-			}
-		}
-		return nil
-	})
+	res, err := db.Purge(ctx, PurgeSet{Books: bookIDs})
 	if err != nil {
 		return 0, 0, err
 	}
-	return progress, prefs, nil
+	return res.Progress, res.Prefs, nil
 }

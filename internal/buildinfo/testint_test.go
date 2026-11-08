@@ -184,14 +184,15 @@ func TestMediaRootLivesInOneFile(t *testing.T) {
 // when the Makefile's own path holds spaces. $(MAKEFILE_LIST) is space-separated,
 // so `$(lastword …)` cut such a path in half and the default went quietly empty
 // (a review reproduced it with `make -f '/tmp/project copy/Makefile'`). The copy
-// lives under a directory with two spaces in a row, which a $(strip) would also
-// break. The `-f other.mk -f Makefile` case is the fallback for a list of more
+// lives under a directory with two spaces in a row and a quote, so neither
+// whitespace normalization nor shell interpolation can lose the path.
+// The `-f other.mk -f Makefile` case is the fallback for a list of more
 // than one makefile, which has no spaces to recover from.
 func TestMediaRootFoundNextToTheMakefile(t *testing.T) {
 	t.Parallel()
 	root := strings.TrimSuffix(repoFile(t, "scripts/media-root"), "\n")
 	base := t.TempDir()
-	proj := filepath.Join(base, "project  copy")
+	proj := filepath.Join(base, "-project  copy's")
 	if err := os.MkdirAll(filepath.Join(proj, "scripts"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -211,6 +212,7 @@ func TestMediaRootFoundNextToTheMakefile(t *testing.T) {
 	}{
 		{"-f with spaces, from elsewhere", elsewhere, []string{"-f", filepath.Join(proj, "Makefile")}},
 		{"-C with spaces", elsewhere, []string{"-C", proj}},
+		{"relative -f starting with a dash", base, []string{"-f", filepath.Join(filepath.Base(proj), "Makefile")}},
 		{"-f other.mk -f the repo Makefile", elsewhere, []string{"-f", other, "-f", filepath.Join(repoRoot(t), "Makefile")}},
 	} {
 		cmd := exec.Command("make", append(append([]string{"-s", "--no-print-directory"}, tc.args...), "print-SHELF_TEST_ROOT")...)

@@ -424,7 +424,7 @@ test('E-68 · 읽기 기록 — export saves the history, and a merge of it back
     ])
     const file = await download.path()
     const doc = JSON.parse(await readFile(file, 'utf8')) as ProgressDoc
-    expect(doc.format, 'the file is a progress export').toBe('shelf-progress/1')
+    expect(doc.format, 'the file is a progress export').toBe('shelf-progress/2')
     expect(doc.items.length, 'the history has at least one book').toBeGreaterThan(0)
     expect(download.suggestedFilename(), 'named by the local date of exported_at').toBe(
       `shelf-progress-${seoulDate(doc.exported_at)}.json`,

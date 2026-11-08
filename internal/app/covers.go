@@ -2,10 +2,14 @@ package app
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 
+	"shelf/internal/bookcover"
+	"shelf/internal/index"
 	"shelf/internal/scanner"
 	"shelf/internal/thumbs"
+	"shelf/internal/userdata"
 )
 
 // coverBridge is the one piece of wiring between the two wave-2 packages.
@@ -23,22 +27,46 @@ import (
 // the extra jobs cost background decode time and nothing on the scan's critical
 // path.
 type coverBridge struct {
-	svc    *thumbs.Service
-	widths []int
+	pendingMu sync.Mutex
+	pending   map[string]scanner.CoverRequest
+	idx       *index.DB
+	user      *userdata.DB
+	global    string
+	svc       *thumbs.Service
+	widths    []int
 
 	// accepted counts the jobs handed to the service. It is the denominator of
 	// the `covers` phase of arch §4.12.
 	accepted atomic.Int64
 }
 
-func newCoverBridge(svc *thumbs.Service) *coverBridge {
-	return &coverBridge{svc: svc, widths: svc.Widths()}
+func newCoverBridge(svc *thumbs.Service, idx *index.DB, user *userdata.DB, global string) *coverBridge {
+	return &coverBridge{svc: svc, widths: svc.Widths(), pending: make(map[string]scanner.CoverRequest), idx: idx, user: user, global: global}
 }
 
 // EnqueueCover implements scanner.CoverQueue. It must not block: the scanner
 // calls it from the goroutine that owns the index write connection.
 // thumbs.Service.Enqueue only ever appends to an unbounded slice under a mutex.
 func (c *coverBridge) EnqueueCover(ctx context.Context, req scanner.CoverRequest) {
+	c.pendingMu.Lock()
+	c.pending[req.SeriesID] = req
+	c.pendingMu.Unlock()
+	c.enqueueCover(ctx, req)
+}
+
+// Refresh resolves the same series again after authored data has followed moves
+// and splits. Earlier queued inputs may have preceded that transaction (E-69 §2.7).
+func (c *coverBridge) Refresh(ctx context.Context) {
+	c.pendingMu.Lock()
+	requests := c.pending
+	c.pending = make(map[string]scanner.CoverRequest)
+	c.pendingMu.Unlock()
+	for _, req := range requests {
+		c.enqueueCover(ctx, req)
+	}
+}
+
+func (c *coverBridge) enqueueCover(ctx context.Context, req scanner.CoverRequest) {
 	if err := ctx.Err(); err != nil {
 		return
 	}
@@ -56,10 +84,19 @@ func (c *coverBridge) EnqueueCover(ctx context.Context, req scanner.CoverRequest
 		base.RootName = req.RootName
 		base.RelPath = req.RelPath
 	case scanner.CoverPage:
-		// cover_kind='page': the key belongs to the book, not the series —
-		// which is what httpapi.handleSeriesCover does too.
-		base.ID = req.BookID
-		base.PageNo = req.PageNo
+		book, err := c.idx.GetBook(ctx, req.BookID)
+		if err != nil {
+			return
+		}
+		global := c.global
+		if value, _, err := c.user.Settings().Get(ctx, "reading_direction"); err == nil && value != "" {
+			global = value
+		}
+		base, _, err = bookcover.Resolve(ctx, c.user, book, global)
+		if err != nil {
+			return
+		}
+
 	default:
 		return
 	}

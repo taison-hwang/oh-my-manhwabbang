@@ -49,12 +49,13 @@ CURATED=(
                                              #   and 15 (完) is §0.0.5's seal-subset shape
 )
 
-# The synthetic tree carries the same names plus three shapes the real
-# collection has no sample of (D-49, extended by D-71).
+# The synthetic tree carries the same names plus four shapes the real
+# collection has no sample of (D-49, extended by D-71 and E-69).
 SYNTHETIC_EXTRA=(
   "암호화 테스트.zip"
   "ZIP64 테스트.zip"
   "솔리드 테스트.rar"
+  "표지 테스트"                              # red|blue landscape page 1s — E-69
 )
 
 synthetic=0

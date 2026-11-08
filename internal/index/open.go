@@ -303,13 +303,16 @@ func (db *DB) init(ctx context.Context) error {
 // progress join would fail later with a confusing "no such table" at request
 // time instead of here, at startup.
 //
-// Both tables the listing joins are checked. series_seen arrived with user.db
+// Every user.db table index reads is checked. series_seen arrived with user.db
 // schema version 2 (amendment A-8), so a file left at version 1 — opened by an
 // older build, or restored from a backup taken before it — would answer every
-// GET /api/series with "no such table". Package userdata is the authoritative
-// writer and migrates on Open; this is the assertion that it ran first.
+// GET /api/series with "no such table". book_covers and series_prefs arrived
+// with version 3 (E-69 §2.5), and the post-scan cleanup reads both, so a file
+// left at version 2 would fail that cleanup the same way. Package userdata is
+// the authoritative writer and migrates on Open; this is the assertion that it
+// ran first.
 func (db *DB) verifyUserDB(ctx context.Context) error {
-	for _, table := range [...]string{"progress", "series_seen"} {
+	for _, table := range [...]string{"progress", "series_seen", "book_covers", "series_prefs"} {
 		var n int
 		err := db.sqldb.QueryRowContext(ctx,
 			`SELECT count(*) FROM ud.sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&n)

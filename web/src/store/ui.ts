@@ -45,7 +45,7 @@ function isOneOf<T extends string>(list: readonly T[], value: unknown): value is
 }
 
 /** Overlays are state, not routes (ui-spec §3). */
-export type Overlay = 'palette' | 'settings' | 'shortcuts'
+export type Overlay = 'palette' | 'settings' | 'shortcuts' | 'cover'
 
 /** The DS default direction for a sortable column's first click (ui-spec §4.5). */
 export function defaultOrderFor(key: SortKey): SortOrder {

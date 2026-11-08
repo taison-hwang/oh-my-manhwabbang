@@ -92,7 +92,10 @@ export function stagePages(
 }
 
 /** The inclusive `[start, end]` page range 세로 mode keeps loaded. */
-export function verticalWindow(page: number, pageCount: number): [number, number] {
+export function verticalWindow(
+  page: number,
+  pageCount: number,
+): [number, number] {
   if (pageCount <= 0) return [1, 0]
   const current = clampPage(page, pageCount)
   return [
@@ -110,7 +113,10 @@ export function nextPage(
 ): number {
   if (pageCount <= 0) return 1
   const shown = stagePages(page, pageCount, mode, dims)
-  return clampPage(clampPage(page, pageCount) + Math.max(1, shown.length), pageCount)
+  return clampPage(
+    clampPage(page, pageCount) + Math.max(1, shown.length),
+    pageCount,
+  )
 }
 
 /**
@@ -260,13 +266,37 @@ export function pageFitStyle(fit: FitMode): CSSProperties {
   const base: CSSProperties = { display: 'block' }
   switch (fit) {
     case 'width':
-      return { ...base, width: '100%', height: 'auto', maxWidth: '100%', maxHeight: 'none' }
+      return {
+        ...base,
+        width: '100%',
+        height: 'auto',
+        maxWidth: '100%',
+        maxHeight: 'none',
+      }
     case 'height':
-      return { ...base, height: '100%', width: 'auto', maxHeight: '100%', maxWidth: 'none' }
+      return {
+        ...base,
+        height: '100%',
+        width: 'auto',
+        maxHeight: '100%',
+        maxWidth: 'none',
+      }
     case 'original':
-      return { ...base, width: 'auto', height: 'auto', maxWidth: 'none', maxHeight: 'none' }
+      return {
+        ...base,
+        width: 'auto',
+        height: 'auto',
+        maxWidth: 'none',
+        maxHeight: 'none',
+      }
     case 'contain':
-      return { ...base, maxWidth: '100%', maxHeight: '100%', width: 'auto', height: 'auto' }
+      return {
+        ...base,
+        maxWidth: '100%',
+        maxHeight: '100%',
+        width: 'auto',
+        height: 'auto',
+      }
   }
 }
 
@@ -319,7 +349,10 @@ export function verticalPageHeight(
  * a scroll handler nobody has checked. It lives here rather than beside the
  * component so `PageStage.tsx` exports components only (react-refresh).
  */
-export function pageAtScroll(tops: readonly number[], scrollTop: number): number {
+export function pageAtScroll(
+  tops: readonly number[],
+  scrollTop: number,
+): number {
   let page = 1
   for (let i = 0; i < tops.length; i++) {
     const top = tops[i]
@@ -381,16 +414,25 @@ export function sliderPercent(page: number, pageCount: number): number {
  * and because exporting them from the component would make it a mixed module
  * that Fast Refresh cannot reload.
  */
-export function stripPageForSlot(slot: number, pageCount: number, dir: ReadingDirection): number {
+export function stripPageForSlot(
+  slot: number,
+  pageCount: number,
+  dir: ReadingDirection,
+): number {
   return dir === 'rtl' ? pageCount - slot : slot + 1
 }
 
-export function stripSlotForPage(page: number, pageCount: number, dir: ReadingDirection): number {
+export function stripSlotForPage(
+  page: number,
+  pageCount: number,
+  dir: ReadingDirection,
+): number {
   return dir === 'rtl' ? pageCount - page : page - 1
 }
 
 /**
- * A dimension lookup that prefers a measured size over the API's.
+ * Image dimensions prefer the browser's EXIF-aware measurement; PDF pages
+ * prefer recorded intrinsic dimensions over rounded render pixels (E-69 §2.2).
  *
  * `PageInfo.w/h` are `null` until the server's dimension pass reaches them
  * (`dims_state`), so FR-VWR-004 would not fire on a freshly indexed book. Once
@@ -399,10 +441,14 @@ export function stripSlotForPage(page: number, pageCount: number, dir: ReadingDi
 export function makeDimsLookup(
   pages: readonly PageInfo[],
   measured: ReadonlyMap<number, PageDims>,
+  preferRecorded = false,
 ): DimsLookup {
   const byNumber = new Map<number, PageDims>()
   for (const info of pages) byNumber.set(info.n, { w: info.w, h: info.h })
   return (page) => {
+    const recorded = byNumber.get(page)
+    if (preferRecorded && recorded?.w != null && recorded.h != null)
+      return recorded
     const known = measured.get(page)
     if (known?.w != null && known.h != null) return known
     return byNumber.get(page)

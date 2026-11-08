@@ -6,13 +6,37 @@ import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
 import { useState } from 'react'
-import { MemoryRouter, Route, Routes, useLocation, useParams } from 'react-router-dom'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  MemoryRouter,
+  Route,
+  Routes,
+  useLocation,
+  useParams,
+} from 'react-router-dom'
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest'
 
-import { continueResponse, ORIGIN, seriesSummary, SERIES_ID } from '../../api/fixtures'
+import {
+  bookDetail,
+  continueResponse,
+  ORIGIN,
+  seriesSummary,
+  SERIES_ID,
+} from '../../api/fixtures'
 import type { ContinueItem, SeriesSummary } from '../../api/types'
 import { resetBasePath } from '../../api/urls'
 import { CommandPalette } from './CommandPalette'
+import { useViewerStore } from '../../store/viewer'
+import { useUiStore } from '../../store/ui'
+import { queryKeys } from '../../api/queries'
 import { failUnhandled } from '../../test/msw'
 
 /**
@@ -27,7 +51,8 @@ import { failUnhandled } from '../../test/msw'
 /** `noUncheckedIndexedAccess` types an indexed query result as `T | undefined`. */
 function at<T>(items: readonly T[], index: number): T {
   const item = items[index]
-  if (item === undefined) throw new Error(`expected an element at index ${String(index)}`)
+  if (item === undefined)
+    throw new Error(`expected an element at index ${String(index)}`)
   return item
 }
 
@@ -52,14 +77,26 @@ beforeAll(() => {
 afterEach(() => {
   server.resetHandlers()
   resetBasePath()
+  useViewerStore.getState().close()
+  useUiStore.getState().closeOverlay('cover')
 })
 afterAll(() => {
   server.close()
 })
 
 const HITS: SeriesSummary[] = [
-  { ...seriesSummary, id: 'aaaaaaaaaaaaaaaa', name: '군계 1~25', book_count: 25 },
-  { ...seriesSummary, id: 'bbbbbbbbbbbbbbbb', name: '히트(HEAT) 1-12권', book_count: 12 },
+  {
+    ...seriesSummary,
+    id: 'aaaaaaaaaaaaaaaa',
+    name: '군계 1~25',
+    book_count: 25,
+  },
+  {
+    ...seriesSummary,
+    id: 'bbbbbbbbbbbbbbbb',
+    name: '히트(HEAT) 1-12권',
+    book_count: 12,
+  },
 ]
 
 beforeEach(() => {
@@ -69,10 +106,19 @@ beforeEach(() => {
       const url = new URL(request.url)
       seriesRequests.push(url.search)
       const q = url.searchParams.get('q') ?? ''
-      const items = HITS.filter((s) => s.name.includes(q) || q === 'ㄱㄱ' || q === 'ㅎ')
-      return HttpResponse.json({ items, total: items.length, offset: 0, limit: 8 })
+      const items = HITS.filter(
+        (s) => s.name.includes(q) || q === 'ㄱㄱ' || q === 'ㅎ',
+      )
+      return HttpResponse.json({
+        items,
+        total: items.length,
+        offset: 0,
+        limit: 8,
+      })
     }),
-    http.get(`${ORIGIN}/api/continue`, () => HttpResponse.json(continueResponse)),
+    http.get(`${ORIGIN}/api/continue`, () =>
+      HttpResponse.json(continueResponse),
+    ),
   )
 })
 
@@ -107,7 +153,10 @@ function Harness() {
   )
 }
 
-function renderPalette(harness = false, onClose: () => void = () => undefined): void {
+function renderPalette(
+  harness = false,
+  onClose: () => void = () => undefined,
+): void {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
@@ -118,11 +167,7 @@ function renderPalette(harness = false, onClose: () => void = () => undefined): 
           <Route
             path="/"
             element={
-              harness ? (
-                <Harness />
-              ) : (
-                <ControlledPalette onClose={onClose} />
-              )
+              harness ? <Harness /> : <ControlledPalette onClose={onClose} />
             }
           />
           <Route path="/series/:sid" element={<SeriesProbe />} />
@@ -135,7 +180,14 @@ function renderPalette(harness = false, onClose: () => void = () => undefined): 
 /** Always-open variant, so a test does not have to open it first. */
 function ControlledPalette({ onClose }: { onClose: () => void }) {
   const [query, setQuery] = useState('')
-  return <CommandPalette open query={query} onQueryChange={setQuery} onClose={onClose} />
+  return (
+    <CommandPalette
+      open
+      query={query}
+      onQueryChange={setQuery}
+      onClose={onClose}
+    />
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -160,26 +212,51 @@ describe('empty query (WP-10 acceptance 5)', () => {
    * above renders `42 / 187p` no matter which field the palette picks. These two
    * set the fields apart locally rather than editing the shared fixture.
    */
-  function recentWith(book: Partial<ContinueItem['book']>, progress: Partial<ContinueItem['progress']>): ContinueItem {
+  function recentWith(
+    book: Partial<ContinueItem['book']>,
+    progress: Partial<ContinueItem['progress']>,
+  ): ContinueItem {
     const base = at(continueResponse.items, 0)
-    return { ...base, book: { ...base.book, ...book }, progress: { ...base.progress, ...progress } }
+    return {
+      ...base,
+      book: { ...base.book, ...book },
+      progress: { ...base.progress, ...progress },
+    }
   }
 
   it('counts a recent against the index length, not the stale baseline (E-45 §6)', async () => {
     // 10 pages became 190 and the reader has seen 10: `10 / 190p`, not `10 / 10p`.
-    const grew = recentWith({ page_count: 190 }, { page_count: 10, last_page: 10 })
-    server.use(http.get(`${ORIGIN}/api/continue`, () => HttpResponse.json({ items: [grew] })))
+    const grew = recentWith(
+      { page_count: 190 },
+      { page_count: 10, last_page: 10 },
+    )
+    server.use(
+      http.get(`${ORIGIN}/api/continue`, () =>
+        HttpResponse.json({ items: [grew] }),
+      ),
+    )
 
     renderPalette()
-    expect(await screen.findByText('군계(軍鷄) 01권.zip · 10 / 190p')).toBeInTheDocument()
+    expect(
+      await screen.findByText('군계(軍鷄) 01권.zip · 10 / 190p'),
+    ).toBeInTheDocument()
   })
 
   it('counts a recent against the index length when the file shrank too (E-45 §6)', async () => {
-    const shrank = recentWith({ page_count: 10 }, { page_count: 190, last_page: 10 })
-    server.use(http.get(`${ORIGIN}/api/continue`, () => HttpResponse.json({ items: [shrank] })))
+    const shrank = recentWith(
+      { page_count: 10 },
+      { page_count: 190, last_page: 10 },
+    )
+    server.use(
+      http.get(`${ORIGIN}/api/continue`, () =>
+        HttpResponse.json({ items: [shrank] }),
+      ),
+    )
 
     renderPalette()
-    expect(await screen.findByText('군계(軍鷄) 01권.zip · 10 / 10p')).toBeInTheDocument()
+    expect(
+      await screen.findByText('군계(軍鷄) 01권.zip · 10 / 10p'),
+    ).toBeInTheDocument()
   })
 
   it('renders the §8.4 footer hints', async () => {
@@ -254,11 +331,20 @@ describe('keyboard (ui-spec §8.4)', () => {
     })
 
     await userEvent.keyboard('{ArrowDown}')
-    expect(screen.getAllByRole('option')[1]).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getAllByRole('option')[1]).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
     await userEvent.keyboard('{ArrowDown}')
-    expect(screen.getAllByRole('option')[0]).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getAllByRole('option')[0]).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
     await userEvent.keyboard('{ArrowUp}')
-    expect(screen.getAllByRole('option')[1]).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getAllByRole('option')[1]).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
   })
 
   it('opens the selected series on ↵', async () => {
@@ -277,8 +363,12 @@ describe('keyboard (ui-spec §8.4)', () => {
   it('opens a row on click', async () => {
     renderPalette()
     await screen.findByText('[만화] 군계 1~25')
-    await userEvent.click(screen.getByRole('option', { name: /\[만화\] 군계 1~25/ }))
-    expect(await screen.findByTestId('landed')).toHaveTextContent(`${SERIES_ID}@/series/${SERIES_ID}`)
+    await userEvent.click(
+      screen.getByRole('option', { name: /\[만화\] 군계 1~25/ }),
+    )
+    expect(await screen.findByTestId('landed')).toHaveTextContent(
+      `${SERIES_ID}@/series/${SERIES_ID}`,
+    )
   })
 
   /**
@@ -289,9 +379,13 @@ describe('keyboard (ui-spec §8.4)', () => {
   it('closes the palette when a row is opened by click', async () => {
     const onClose = vi.fn()
     renderPalette(false, onClose)
-    await userEvent.click(await screen.findByRole('option', { name: /\[만화\] 군계 1~25/ }))
+    await userEvent.click(
+      await screen.findByRole('option', { name: /\[만화\] 군계 1~25/ }),
+    )
     expect(onClose).toHaveBeenCalledTimes(1)
-    expect(await screen.findByTestId('landed')).toHaveTextContent(`${SERIES_ID}@/series/${SERIES_ID}`)
+    expect(await screen.findByTestId('landed')).toHaveTextContent(
+      `${SERIES_ID}@/series/${SERIES_ID}`,
+    )
   })
 
   it('closes the palette when a row is opened with ↵', async () => {
@@ -308,7 +402,9 @@ describe('the dialog contract (WP-10 acceptance 9)', () => {
   it('is a dialog named 커맨드 팔레트', async () => {
     renderPalette()
     await screen.findByText('최근 항목')
-    expect(screen.getByRole('dialog', { name: '커맨드 팔레트' })).toHaveAttribute('aria-modal', 'true')
+    expect(
+      screen.getByRole('dialog', { name: '커맨드 팔레트' }),
+    ).toHaveAttribute('aria-modal', 'true')
   })
 
   it('autofocuses the query, closes on Esc and restores focus to the opener', async () => {
@@ -324,4 +420,42 @@ describe('the dialog contract (WP-10 acceptance 9)', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(trigger).toHaveFocus()
   })
+})
+
+describe('표지로 command', () => {
+  for (const status of ['ok', 'error'] as const) {
+    it(`offers the current page only for an editable book (${status})`, async () => {
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+      })
+      client.setQueryData(queryKeys.books.detail(bookDetail.id), {
+        ...bookDetail,
+        status,
+      })
+      useViewerStore.setState({ bookId: bookDetail.id })
+      const close = vi.fn()
+      render(
+        <QueryClientProvider client={client}>
+          <MemoryRouter>
+            <CommandPalette
+              open
+              query=""
+              onQueryChange={() => undefined}
+              onClose={close}
+            />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      )
+      if (status === 'ok') {
+        await userEvent.click(
+          await screen.findByRole('option', { name: /표지로/ }),
+        )
+        expect(close).toHaveBeenCalledOnce()
+        expect(useUiStore.getState().overlays).toContain('cover')
+      } else
+        expect(
+          screen.queryByRole('option', { name: /표지로/ }),
+        ).not.toBeInTheDocument()
+    })
+  }
 })

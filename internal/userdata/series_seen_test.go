@@ -465,10 +465,13 @@ func TestOpen_upgradeFromV1_addsSeriesSeenAndKeepsEveryAuthoredRow(t *testing.T)
 	}
 
 	// Rewind the file to exactly what a pre-A-8 build left behind: the version-1
-	// schema, stamped '1', with no series_seen and no bootstrap marker.
+	// schema, stamped '1', with no series_seen, no E-69 tables and no bootstrap
+	// marker.
 	raw := openRaw(t, filepath.Join(dir, "user.db"))
 	for _, stmt := range []string{
 		`DROP TABLE series_seen`,
+		`DROP TABLE book_covers`,
+		`DROP TABLE series_prefs`,
 		`UPDATE meta SET value = '1' WHERE key = 'schema_version'`,
 	} {
 		if _, err := raw.Exec(stmt); err != nil {
@@ -481,8 +484,8 @@ func TestOpen_upgradeFromV1_addsSeriesSeenAndKeepsEveryAuthoredRow(t *testing.T)
 
 	// The upgrade an installed copy performs on its next start.
 	up := openIn(t, dir, clk)
-	if v, err := up.SchemaVersion(ctx); err != nil || v != 2 {
-		t.Fatalf("schema version after the upgrade = %d (%v), want 2", v, err)
+	if v, err := up.SchemaVersion(ctx); err != nil || v != 3 {
+		t.Fatalf("schema version after the upgrade = %d (%v), want 3", v, err)
 	}
 
 	// (1) Nothing authored was touched.

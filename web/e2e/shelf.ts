@@ -105,7 +105,9 @@ export const SERIES = {
  * The shapes D-49 asks the synthetic tree to carry that the real collection has
  * no sample of — an encrypted archive, a ZIP64 archive, and (since D-71) a solid
  * RAR, which this build refuses on purpose and which none of the collection's 14
- * real archives is.
+ * real archives is. `cover` (E-69) is the odd one out: the real collection does
+ * have a landscape page 1 — 군계 01권's, which the real round asserts on — but
+ * not one whose halves are flat colours, nor books no other spec shoots.
  *
  * A *copy* on the same terms as `SERIES` above: the same strings are written out
  * in `scripts/e2e-config.sh:49-51` (`SYNTHETIC_EXTRA`, appended to
@@ -123,6 +125,7 @@ export const SYNTHETIC_EXTRA = {
   encrypted: '암호화 테스트.zip',
   zip64: 'ZIP64 테스트.zip',
   solidRar: '솔리드 테스트.rar',
+  cover: '표지 테스트',
 } as const
 
 /**

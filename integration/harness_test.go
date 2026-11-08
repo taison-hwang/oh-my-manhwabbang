@@ -359,18 +359,28 @@ type seriesSummary struct {
 }
 
 type bookSummary struct {
-	ID         string `json:"id"`
-	SeriesID   string `json:"series_id"`
-	Name       string `json:"name"`
-	Path       string `json:"path"`
-	Kind       string `json:"kind"`
-	Ord        int    `json:"ord"`
-	PageCount  int    `json:"page_count"`
-	TotalBytes int64  `json:"total_bytes"`
-	FileSize   int64  `json:"file_size"`
-	CV         string `json:"cv"`
-	Status     string `json:"status"`
-	Error      string `json:"error"`
+	ID         string     `json:"id"`
+	SeriesID   string     `json:"series_id"`
+	Name       string     `json:"name"`
+	Path       string     `json:"path"`
+	Kind       string     `json:"kind"`
+	Ord        int        `json:"ord"`
+	PageCount  int        `json:"page_count"`
+	TotalBytes int64      `json:"total_bytes"`
+	FileSize   int64      `json:"file_size"`
+	CV         string     `json:"cv"`
+	CoverCV    string     `json:"cover_cv"`
+	Cover      *bookCover `json:"cover"`
+	Status     string     `json:"status"`
+	Error      string     `json:"error"`
+}
+
+type bookCover struct {
+	Page int     `json:"page"`
+	X    float64 `json:"x"`
+	Y    float64 `json:"y"`
+	W    float64 `json:"w"`
+	H    float64 `json:"h"`
 }
 
 type pageInfo struct {
@@ -389,8 +399,9 @@ type seriesList struct {
 
 type seriesDetail struct {
 	seriesSummary
-	Books    []bookSummary `json:"books"`
-	Encoding *string       `json:"encoding"`
+	Books            []bookSummary `json:"books"`
+	Encoding         *string       `json:"encoding"`
+	ReadingDirection *string       `json:"reading_direction"`
 }
 
 type bookDetail struct {

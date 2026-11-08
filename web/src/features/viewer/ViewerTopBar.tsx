@@ -68,6 +68,7 @@ export interface ViewerTopBarProps {
   fit: FitMode
   /** `BookPrefs.is_override` — this volume carries settings of its own (E-33 §3). */
   isOverride: boolean
+  onCover?: (() => void) | undefined
   onBack: () => void
   /** E-34: back to the library, keeping the sidebar filter and the search. */
   onLibrary: () => void
@@ -179,6 +180,7 @@ export function ViewerTopBar({
   dir,
   fit,
   isOverride,
+  onCover,
   onBack,
   onLibrary,
   onResetPrefs,
@@ -244,7 +246,11 @@ export function ViewerTopBar({
     >
       {/* No `border-*` here (E-42): `.btn-secondary` is a raised cream pill,
           and a border utility would be painted over it by a later layer. */}
-      <Button variant="secondary" className="gap-[7px] text-sm" onClick={onBack}>
+      <Button
+        variant="secondary"
+        className="gap-[7px] text-sm"
+        onClick={onBack}
+      >
         <ArrowLeft size={13} aria-hidden={true} />
         뒤로
       </Button>
@@ -325,6 +331,11 @@ export function ViewerTopBar({
         </button>
       )}
 
+      {onCover !== undefined && (
+        <Button variant="secondary" onClick={onCover}>
+          표지로
+        </Button>
+      )}
       {modeSeg}
       {dirSeg}
       {fitSeg}

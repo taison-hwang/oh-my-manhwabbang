@@ -439,3 +439,120 @@ func TestValid_rejectsEverythingThatIsNotAnID(t *testing.T) {
 		}
 	}
 }
+
+// The cache-key goldens. Every literal below was computed OUTSIDE Go (Python
+// hashlib over the NUL-joined byte string written beside it), not by running
+// this package, so a refactor that moves a field, drops one or renames a domain
+// fails here even if someone "fixes" the constants to the new output.
+const (
+	keyBookID = goldenBookID
+	keyCV     = "9f3a1c7d5e2b8046"
+)
+
+// TestThumbAndPDFPageKeys_areUnchangedByCoverKeys pins arch §5.6's two existing
+// domains. E-69 §2.7 adds a third domain beside them and says the page-thumbnail
+// key "is not changed": every cached strip thumbnail on disk is addressed by
+// these values, so a drift orphans the whole cache.
+//
+//	"shelf-thumb/1"   ‖ 0 ‖ yvtfrny77ehkt2we ‖ 0 ‖ 1 ‖ 0 ‖ 240 ‖ 0 ‖ jpeg ‖ 0 ‖ 82 ‖ 0 ‖ 9f3a1c7d5e2b8046
+//	"shelf-pdfpage/1" ‖ 0 ‖ yvtfrny77ehkt2we ‖ 0 ‖ 1 ‖ 0 ‖ 240 ‖ 0 ‖ jpeg ‖ 0 ‖ 82 ‖ 0 ‖ 9f3a1c7d5e2b8046
+func TestThumbAndPDFPageKeys_areUnchangedByCoverKeys(t *testing.T) {
+	t.Parallel()
+
+	if got, want := ids.ThumbKey(keyBookID, 1, 240, "jpeg", 82, keyCV), "2un7c3lzsv3fbf5p"; got != want {
+		t.Errorf("ThumbKey = %q, want %q — every cached strip thumbnail would be orphaned (E-69 §2.7)", got, want)
+	}
+	if got, want := ids.PDFPageKey(keyBookID, 1, 240, "jpeg", 82, keyCV), "6sqi3b3upl47yuox"; got != want {
+		t.Errorf("PDFPageKey = %q, want %q", got, want)
+	}
+}
+
+// TestCoverKey_hashInput_isTheE69String pins E-69 §2.7's key for a 권 cover:
+//
+//	"shelf-cover/1" ‖ 0 ‖ <book_id> ‖ 0 ‖ <page_no> ‖ 0 ‖ <area> ‖ 0 ‖ <width>
+//	                ‖ 0 ‖ <format>  ‖ 0 ‖ <quality> ‖ 0 ‖ <content_version>
+//
+// and its `cover_cv`, which is the same input with <width> left out.
+func TestCoverKey_hashInput_isTheE69String(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		page        int
+		area        string
+		width       int
+		key, cv     string
+		description string
+	}{
+		{1, "auto-rtl", 240, "h6epin262wkp3ymf", "ru7pej6wmpxs7fau", "page 1, automatic, right-to-left"},
+		{1, "auto-ltr", 240, "v7nw6w6ydviveurp", "wfk2nl2fl2qnlopa", "page 1, automatic, left-to-right"},
+		{3, "0.25,0,0.5,0.75", 400, "7qpm53vkpb3ttzzg", "gypcprjbntppnrm2", "page 3, a chosen region"},
+	} {
+		if got := ids.CoverKey(keyBookID, c.page, c.area, c.width, "jpeg", 82, keyCV); got != c.key {
+			t.Errorf("%s: CoverKey = %q, want %q", c.description, got, c.key)
+		}
+		if got := ids.CoverVersion(keyBookID, c.page, c.area, "jpeg", 82, keyCV); got != c.cv {
+			t.Errorf("%s: CoverVersion = %q, want %q", c.description, got, c.cv)
+		}
+	}
+
+	// The same construction rebuilt here from literals, so a reader can check
+	// the constants above by hand.
+	spec := func(fields ...string) string {
+		sum := sha256.Sum256([]byte(strings.Join(fields, "\x00")))
+		return base32.NewEncoding("abcdefghijklmnopqrstuvwxyz234567").
+			WithPadding(base32.NoPadding).EncodeToString(sum[:10])
+	}
+	if got := ids.CoverKey(keyBookID, 1, "auto-rtl", 240, "jpeg", 82, keyCV); got != spec("shelf-cover/1", keyBookID, "1", "auto-rtl", "240", "jpeg", "82", keyCV) {
+		t.Errorf("CoverKey = %q, not the E-69 §2.7 byte string", got)
+	}
+	if got := ids.CoverVersion(keyBookID, 1, "auto-rtl", "jpeg", 82, keyCV); got != spec("shelf-cover/1", keyBookID, "1", "auto-rtl", "jpeg", "82", keyCV) {
+		t.Errorf("CoverVersion = %q, not the E-69 §2.7 byte string minus the width", got)
+	}
+}
+
+// TestCoverKey_everyInputButWidth_movesTheVersion is the shape of E-69 §2.7:
+// one `cover_cv` names a cover at every width, so it must ignore the width and
+// nothing else, while the file key must move with every input including it.
+func TestCoverKey_everyInputButWidth_movesTheVersion(t *testing.T) {
+	t.Parallel()
+
+	baseKey := ids.CoverKey(keyBookID, 1, "auto-rtl", 240, "jpeg", 82, keyCV)
+	baseCV := ids.CoverVersion(keyBookID, 1, "auto-rtl", "jpeg", 82, keyCV)
+	if !ids.Valid(baseKey) || !ids.Valid(baseCV) {
+		t.Fatalf("CoverKey %q / CoverVersion %q are not 16-char ids", baseKey, baseCV)
+	}
+
+	// The strip thumbnail of the same page is a different file (E-69 §2.7).
+	if thumb := ids.ThumbKey(keyBookID, 1, 240, "jpeg", 82, keyCV); thumb == baseKey {
+		t.Errorf("CoverKey == ThumbKey == %q for page 1 at 240 px; a cover would overwrite the strip thumbnail", thumb)
+	}
+
+	// Width: the file moves, the version does not.
+	// CoverVersion takes no width at all, so "the version ignores the width" is
+	// a property of its signature; what can still go wrong is the file key
+	// ignoring it, which would serve a 120 px cover where 640 px was asked for.
+	if got := ids.CoverKey(keyBookID, 1, "auto-rtl", 400, "jpeg", 82, keyCV); got == baseKey {
+		t.Errorf("CoverKey ignores the width: %q at 240 and 400 px", got)
+	}
+
+	type variant struct {
+		what    string
+		key, cv string
+	}
+	for _, v := range []variant{
+		{"another book", ids.CoverKey(goldenSeriesID, 1, "auto-rtl", 240, "jpeg", 82, keyCV), ids.CoverVersion(goldenSeriesID, 1, "auto-rtl", "jpeg", 82, keyCV)},
+		{"another page", ids.CoverKey(keyBookID, 2, "auto-rtl", 240, "jpeg", 82, keyCV), ids.CoverVersion(keyBookID, 2, "auto-rtl", "jpeg", 82, keyCV)},
+		{"the other direction", ids.CoverKey(keyBookID, 1, "auto-ltr", 240, "jpeg", 82, keyCV), ids.CoverVersion(keyBookID, 1, "auto-ltr", "jpeg", 82, keyCV)},
+		{"a chosen region", ids.CoverKey(keyBookID, 1, "0,0,1,1", 240, "jpeg", 82, keyCV), ids.CoverVersion(keyBookID, 1, "0,0,1,1", "jpeg", 82, keyCV)},
+		{"another format", ids.CoverKey(keyBookID, 1, "auto-rtl", 240, "webp", 82, keyCV), ids.CoverVersion(keyBookID, 1, "auto-rtl", "webp", 82, keyCV)},
+		{"another quality", ids.CoverKey(keyBookID, 1, "auto-rtl", 240, "jpeg", 90, keyCV), ids.CoverVersion(keyBookID, 1, "auto-rtl", "jpeg", 90, keyCV)},
+		{"another content version", ids.CoverKey(keyBookID, 1, "auto-rtl", 240, "jpeg", 82, "0000000000000000"), ids.CoverVersion(keyBookID, 1, "auto-rtl", "jpeg", 82, "0000000000000000")},
+	} {
+		if v.key == baseKey {
+			t.Errorf("%s: CoverKey unchanged (%q)", v.what, v.key)
+		}
+		if v.cv == baseCV {
+			t.Errorf("%s: CoverVersion unchanged (%q)", v.what, v.cv)
+		}
+	}
+}

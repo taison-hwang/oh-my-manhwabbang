@@ -98,6 +98,9 @@ import (
 // A golden with no entry here is an error: an unmapped contract artefact is
 // exactly the kind of thing that gets added and then never checked.
 var goldenType = map[string]string{
+	"book_cover":               "BookCoverResult",
+	"book_detail_cover":        "BookDetail",
+	"series_prefs":             "SeriesPrefs",
 	"auth_status":              "AuthStatus",
 	"book_detail":              "BookDetail",
 	"book_detail_broken":       "BookDetail",

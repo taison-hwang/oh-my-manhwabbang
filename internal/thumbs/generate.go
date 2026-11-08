@@ -16,6 +16,7 @@ import (
 	"github.com/disintegration/imaging"
 
 	"shelf/internal/index"
+	"shelf/internal/pdfium"
 	"shelf/internal/source"
 
 	// The decoders of FR-IDX-011 plus the two arch §5.5 adds. Importing them
@@ -53,29 +54,48 @@ func (s *Service) produce(ctx context.Context, j job) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	data, natural, err := s.readSource(ctx, j)
+	data, sizes, err := s.readSource(ctx, j)
 	if err != nil {
 		return Result{}, err
 	}
+	natural := sizes.natural
 	if len(data) == 0 {
 		return Result{}, &UndecodableError{Reason: ReasonEmptySource}
 	}
 
-	img, err := s.decode(ctx, data)
+	custom := j.req.Cover != nil && j.req.Cover.Region != nil
+	img, err := s.decode(ctx, data, custom)
 	if err != nil {
 		return Result{}, err
 	}
 	b := img.Bounds()
 	srcW, srcH := b.Dx(), b.Dy()
+	if custom && sniff(data) == "jpeg" {
+		cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+		if err != nil {
+			return Result{}, err
+		}
+		srcW, srcH = cfg.Width, cfg.Height
+	}
 	if srcW <= 0 || srcH <= 0 {
 		return Result{}, &UndecodableError{Reason: ReasonDecodeFailed, Err: errors.New("decoded image has no area")}
+	}
+
+	// E-69 §2.2: a 권 cover is cut from the decoded page BEFORE the downscale,
+	// so the half or the region keeps every source pixel the width allows.
+	// srcW and srcH stay the whole page's: they are what FR-VWR-004 records
+	// below, and half a spread recorded as the page would read as portrait.
+	// Whether the page is landscape is the recorded size's call, not the
+	// decode's (landscapeBasis); the cut itself is in the decoded columns.
+	if j.req.Cover != nil {
+		img = cropTo(img, coverRect(b, *j.req.Cover, landscapeBasis(sizes.recorded, natural, b.Size())))
 	}
 
 	// D-10: imaging.Lanczos, not x/image/draw — 18.7 ms against 196.9 ms at our
 	// ratios. Upscaling is never done: a page narrower than the requested width
 	// is published as it is, which is also what makes a 2×3 test fixture a
 	// legal 640 px thumbnail.
-	if srcW > j.req.Width {
+	if img.Bounds().Dx() > j.req.Width {
 		img = imaging.Resize(img, j.req.Width, 0, imaging.Lanczos)
 	}
 
@@ -103,15 +123,187 @@ func (s *Service) produce(ctx context.Context, j job) (Result, error) {
 	return res, nil
 }
 
+// coverRect is the part of a decoded page of bounds b that a 권 cover shows.
+//
+// Automatic (E-69 §2.2(b)): a page wider than tall — w > h, FR-VWR-004's one
+// definition, so a square page is not landscape — gives the half read first,
+// and any other page is used whole. Wider-than-tall is asked of basis, the
+// page's size as landscapeBasis picks it, and NOT of b: the decode of a PDF
+// render can be square where the page is not. The cut is in b's own columns:
+// the width is split exactly, the spare column of an odd width going to the
+// half read first — ltr is [0, ceil(W/2)), rtl is [floor(W/2), W) of the
+// decoded W. No spine detection (E-69 §3).
+//
+// A region (E-69 §2.4) is mapped onto the pixels edge by edge: each of the
+// four edges is math.Round(fraction × size) — halves away from zero — clamped
+// to [0, size]. Rounding the edges, not the origin and the size, means two
+// regions that share an edge in normalised space share it in pixels. A cut
+// that rounds to nothing keeps one pixel, the last one when it sits at the far
+// edge; Region.Valid's 0.05 floor makes that reachable only below 20 px.
+func coverRect(b image.Rectangle, c Cover, basis image.Point) image.Rectangle {
+	w, h := b.Dx(), b.Dy()
+	if c.Region == nil {
+		if basis.X <= basis.Y {
+			return b
+		}
+		if c.Dir == dirRTL {
+			return image.Rect(b.Min.X+w/2, b.Min.Y, b.Max.X, b.Max.Y)
+		}
+		return image.Rect(b.Min.X, b.Min.Y, b.Min.X+(w+1)/2, b.Max.Y)
+	}
+	r := c.Region
+	x0, x1 := edges(r.X, r.W, w)
+	y0, y1 := edges(r.Y, r.H, h)
+	return image.Rect(b.Min.X+x0, b.Min.Y+y0, b.Min.X+x1, b.Min.Y+y1)
+}
+
+// edges maps one axis of a region — origin and extent as fractions — onto
+// [0, size] pixel edges, as coverRect documents.
+func edges(origin, extent float64, size int) (lo, hi int) {
+	clamp := func(v float64) int {
+		return int(math.Max(0, math.Min(float64(size), math.Round(v*float64(size)))))
+	}
+	lo, hi = clamp(origin), clamp(origin+extent)
+	if hi-lo < 1 {
+		if lo >= size {
+			lo = size - 1
+		}
+		hi = lo + 1
+	}
+	return lo, hi
+}
+
+// cropTo returns the part of img inside r. Every decoder this package
+// registers returns a type with SubImage, which shares the pixels — no second
+// RGBA buffer on top of arch §5.4's ~25 MiB per decode. imaging.Crop, a copy,
+// is only the fallback for a type that has none.
+func cropTo(img image.Image, r image.Rectangle) image.Image {
+	if r == img.Bounds() {
+		return img
+	}
+	if sub, ok := img.(interface {
+		SubImage(image.Rectangle) image.Image
+	}); ok {
+		return sub.SubImage(r)
+	}
+	return imaging.Crop(img, r)
+}
+
+// landscapeBasis is the size that decides whether a page is landscape for an
+// automatic 권 cover: the first of sizes with an area, given in this order —
+//
+//  1. recorded: pages.width/height in the index, once a decode or the
+//     dimension pass has measured the page (arch §5.8);
+//  2. natural: the size produce is about to record for this page — a PDF's
+//     PageSize in points, rounded, which is what recordDims and measurePage
+//     both write for a PDF;
+//  3. the decoded image, only when neither exists (produce passes it last;
+//     readPage, before any decode, passes only the first two and gets the zero
+//     Point for "not known yet").
+//
+// E-69 §2.2(b), last paragraph: the input is the recorded intrinsic size the
+// viewer's spread mode is given, and the decoded or rendered pixels only when
+// none is recorded, PDFs included. The viewer gets pages.width/height as
+// PageInfo.w/h (internal/httpapi/convert.go toPageInfo) and calls it landscape
+// on w > h (web/src/features/viewer/fit.ts isLandscape). Judging on the render
+// instead gave a different answer for a nearly square landscape PDF page:
+// pdfium rounds the render's height UP, so 4000×3999 pt at 800 px is 800×800,
+// and the cover used the page whole while the viewer showed it as a spread.
+// Once an <img> has loaded, fit.ts makeDimsLookup prefers its natural size;
+// for a PDF that is a render, which is the SPA's side of the same rounding.
+func landscapeBasis(sizes ...image.Point) image.Point {
+	for _, p := range sizes {
+		if p.X > 0 && p.Y > 0 {
+			return p
+		}
+	}
+	return image.Point{}
+}
+
+// recordedSize is a page row's pages.width/height, or the zero Point while the
+// page has not been measured.
+func recordedSize(p index.Page) image.Point {
+	if p.Width == nil || p.Height == nil {
+		return image.Point{}
+	}
+	return image.Pt(*p.Width, *p.Height)
+}
+
+// renderWidth is the width to ask a PDF source to rasterise a page at, for a
+// page thumbnail (c nil) or a 권 cover. Every other source ignores it. A PDF
+// has no pixels until it is rendered, at the width the request picks.
+//
+// The result is ALWAYS rounded UP to pdfium.WidthSnap, because the source
+// snaps to the NEAREST step: rendered at "240", a 240 px thumbnail was a 200 px
+// render and, nothing being upscaled (D-10), a 200 px thumbnail — 120 was 100,
+// 640 was 600. Rounded up, the render is at least the requested width and
+// produce's downscale brings it to exactly that width (FR-THM-002's target
+// width, impl-plan §0.4). The cache key is not touched: it is derived in
+// prepare from the requested width snapped to `thumbnails.widths`, never from
+// this one, so a 200 px file cached before the round-up is still a hit under
+// the same key and is not re-made until its content version changes or the
+// cache is purged.
+//
+// A cover's render is also widened by the cut's factor (E-69 §2.2, §2.4), or
+// the cut would be half — or a twentieth — as wide as asked: ⌈width / W⌉ for a
+// region, ×2 for an automatic cover unless basis (landscapeBasis over the
+// recorded and natural sizes, the same input coverRect decides the cut on)
+// says the page is not landscape. A page of unknown shape is widened as if
+// landscape: if it turns out landscape the half is the full width, and if not
+// the downscale in produce brings it back to width.
+//
+// Two ceilings apply. The source clamps to `pdf.max_width` (≤ pdfium.MaxWidth).
+// This function keeps the render inside checkPixelBudget when basis is known —
+// W² × h/w ≤ maxPixels, rounded down to the snap — because a render over it is
+// refused after it was paid for. It never goes below width: a page over the
+// ceiling at the plain width is refused as a thumbnail too, and a page
+// thumbnail the round-up would push over the ceiling asks for its plain width,
+// which the source snaps exactly as it did before the round-up existed. When
+// basis is unknown no ceiling can be computed in advance, and checkPixelBudget
+// alone guards the decode, after the render. For a PDF the recorded size and
+// the natural one are the same rounded PageSize, so basis's aspect is the
+// render's own.
+func renderWidth(width int, c *Cover, basis image.Point, maxPixels int64) int {
+	known := basis.X > 0 && basis.Y > 0
+	want := width
+	switch {
+	case c == nil:
+	case c.Region != nil:
+		want = int(math.Ceil(float64(width) / c.Region.W))
+	case !known || basis.X > basis.Y:
+		want = 2 * width
+	}
+	const snap = pdfium.WidthSnap
+	want = (max(want, width) + snap - 1) / snap * snap
+	if known && maxPixels > 0 {
+		limit := int(math.Sqrt(float64(maxPixels)*float64(basis.X)/float64(basis.Y))) / snap * snap
+		if want > limit {
+			want = max(limit, width)
+		}
+	}
+	return want
+}
+
+// sourceSizes is what reading a page learns about its size besides the bytes.
+type sourceSizes struct {
+	// natural is the page's intrinsic size when the source can report it
+	// without rasterising (PDF only); zero means "use the decoded image". It is
+	// what produce records for the page (FR-VWR-004).
+	natural image.Point
+	// recorded is pages.width/height as the index holds it now, zero until
+	// measured. Only a 권 cover's landscape test reads it (landscapeBasis).
+	recorded image.Point
+}
+
 // readSource fetches the bytes a thumbnail is made from, capped at
 // `thumbnails.max_source_bytes`.
 //
-// natural is the page's intrinsic size when the source can report it without
-// rasterising (PDF only); the zero Point means "use the decoded image".
-func (s *Service) readSource(ctx context.Context, j job) (data []byte, natural image.Point, err error) {
+// A loose-file cover has neither a natural nor a recorded size: it is never
+// cut, and nothing is recorded for it.
+func (s *Service) readSource(ctx context.Context, j job) (data []byte, sizes sourceSizes, err error) {
 	if j.req.fromFile() {
 		data, err = s.readCoverFile(ctx, j.req)
-		return data, image.Point{}, err
+		return data, sourceSizes{}, err
 	}
 	return s.readPage(ctx, j.req)
 }
@@ -151,17 +343,18 @@ func (s *Service) readCoverFile(ctx context.Context, req Request) ([]byte, error
 // readPage streams one page out of its book. It is the ordinary path: 98.7 % of
 // the reference collection reaches this function with a deflated JPEG inside a
 // ZIP.
-func (s *Service) readPage(ctx context.Context, req Request) ([]byte, image.Point, error) {
+func (s *Service) readPage(ctx context.Context, req Request) ([]byte, sourceSizes, error) {
 	if s.idx == nil || s.src == nil {
-		return nil, image.Point{}, fmt.Errorf("thumbnailing book %s: %w (no index or source factory)", req.ID, ErrNotFound)
+		return nil, sourceSizes{}, fmt.Errorf("thumbnailing book %s: %w (no index or source factory)", req.ID, ErrNotFound)
 	}
-	book, page, err := s.lookupPage(ctx, req.ID, req.PageNo)
+	book, row, err := s.lookupPage(ctx, req.ID, req.PageNo)
 	if err != nil {
-		return nil, image.Point{}, err
+		return nil, sourceSizes{}, err
 	}
+	page := pageOf(row)
 	bs, err := s.src.Open(ctx, book)
 	if err != nil {
-		return nil, image.Point{}, mapSourceError(req.ID, err)
+		return nil, sourceSizes{}, mapSourceError(req.ID, err)
 	}
 	defer func() { _ = bs.Close() }()
 
@@ -174,38 +367,45 @@ func (s *Service) readPage(ctx context.Context, req Request) ([]byte, image.Poin
 		}
 	}
 
-	st, err := bs.Open(ctx, page, source.OpenOptions{Width: req.Width})
+	// A PDF render is rounded up past the source's nearest-100 px snap so a page
+	// thumbnail is the requested width, and for a cover also widened to leave
+	// the cut that width (E-69 §2.2) — renderWidth. Every other source ignores
+	// Width. The key was fixed in prepare from the requested width alone.
+	sizes := sourceSizes{natural: natural, recorded: recordedSize(row)}
+	width := renderWidth(req.Width, req.Cover, landscapeBasis(sizes.recorded, sizes.natural), s.maxPixels)
+	st, err := bs.Open(ctx, page, source.OpenOptions{Width: width})
 	if err != nil {
-		return nil, image.Point{}, mapSourceError(req.ID, err)
+		return nil, sourceSizes{}, mapSourceError(req.ID, err)
 	}
 	defer func() { _ = st.Close() }()
 
 	data, err := s.readCapped(st)
 	if err != nil {
-		return nil, image.Point{}, err
+		return nil, sourceSizes{}, err
 	}
-	return data, natural, nil
+	return data, sizes, nil
 }
 
-// lookupPage turns an opaque book id into the (book, page) pair the source
-// factory needs. Nothing but the index ever converts an id into a path — that
-// is path-traversal layer 1.
-func (s *Service) lookupPage(ctx context.Context, bookID string, pageNo int) (source.Book, source.Page, error) {
+// lookupPage turns an opaque book id into the book the source factory needs
+// and the page's index row — pageOf of it for the source, and its recorded
+// size for a cover's landscape test. Nothing but the index ever converts an id
+// into a path — that is path-traversal layer 1.
+func (s *Service) lookupPage(ctx context.Context, bookID string, pageNo int) (source.Book, index.Page, error) {
 	row, err := s.idx.GetBook(ctx, bookID)
 	if err != nil {
 		if errors.Is(err, index.ErrNotFound) {
-			return source.Book{}, source.Page{}, fmt.Errorf("thumbnailing book %s: %w", bookID, ErrNotFound)
+			return source.Book{}, index.Page{}, fmt.Errorf("thumbnailing book %s: %w", bookID, ErrNotFound)
 		}
-		return source.Book{}, source.Page{}, fmt.Errorf("thumbnailing book %s: %w", bookID, err)
+		return source.Book{}, index.Page{}, fmt.Errorf("thumbnailing book %s: %w", bookID, err)
 	}
 	pg, err := s.idx.GetPage(ctx, bookID, pageNo)
 	if err != nil {
 		if errors.Is(err, index.ErrNotFound) {
-			return source.Book{}, source.Page{}, fmt.Errorf("thumbnailing book %s page %d: %w", bookID, pageNo, ErrNotFound)
+			return source.Book{}, index.Page{}, fmt.Errorf("thumbnailing book %s page %d: %w", bookID, pageNo, ErrNotFound)
 		}
-		return source.Book{}, source.Page{}, fmt.Errorf("thumbnailing book %s page %d: %w", bookID, pageNo, err)
+		return source.Book{}, index.Page{}, fmt.Errorf("thumbnailing book %s page %d: %w", bookID, pageNo, err)
 	}
-	return bookOf(row), pageOf(pg), nil
+	return bookOf(row), pg, nil
 }
 
 // bookOf maps an index row onto the plain value internal/source consumes.
@@ -281,7 +481,7 @@ func (s *Service) readCapped(r io.Reader) ([]byte, error) {
 // has to be refused with a named reason rather than a generic decoder error,
 // and an AVIF has to take the one-permit semaphore before its wasm runtime
 // allocates ~170 MiB.
-func (s *Service) decode(ctx context.Context, data []byte) (image.Image, error) {
+func (s *Service) decode(ctx context.Context, data []byte, orient bool) (image.Image, error) {
 	if s.hookDecode != nil {
 		s.hookDecode()
 	}
@@ -317,7 +517,13 @@ func (s *Service) decode(ctx context.Context, data []byte) (image.Image, error) 
 	}
 
 	s.counters.decodes.Add(1)
-	img, _, err := image.Decode(bytes.NewReader(data))
+	var img image.Image
+	var err error
+	if orient {
+		img, err = imaging.Decode(bytes.NewReader(data), imaging.AutoOrientation(true))
+	} else {
+		img, _, err = image.Decode(bytes.NewReader(data))
+	}
 	if err != nil {
 		return nil, &UndecodableError{Reason: ReasonDecodeFailed, Err: err}
 	}

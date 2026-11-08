@@ -589,24 +589,22 @@ func (s *Scanner) run(ctx context.Context, req Request, runID string, begun *beg
 	}
 	s.finishSeen(ctx, seen, req, len(roots), res)
 
-	s.waitForCovers(ctx, coverBase)
-
 	if _, err := s.index.TrimLog(context.WithoutCancel(ctx), index.LogRetention); err != nil {
 		s.log.Warn("trimming the scan log", "run_id", runID, "err", err)
 	}
 
+	// A moved cover or series preference must settle before its final cache key
+	// is pre-generated (E-69 §2.7).
+	if s.afterScan != nil {
+		s.afterScan(ctx, res)
+	}
+	s.waitForCovers(ctx, coverBase)
 	series, books, pages, skipped, errCount := res.Totals()
 	s.log.Info("scan finished", "run_id", runID,
 		"series", series, "books", books, "pages", pages,
 		"skipped", skipped, "errors", errCount,
 		"dur_ms", s.now().Sub(start).Milliseconds(), "cancelled", ctx.Err() != nil)
 
-	// After the log line, so the hook's own lines read as consequences of a scan
-	// that has already reported itself, and after the sweep, so it sees the
-	// index the filesystem actually justifies.
-	if s.afterScan != nil {
-		s.afterScan(ctx, res)
-	}
 	return res, nil
 }
 

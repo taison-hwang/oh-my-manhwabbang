@@ -43,7 +43,11 @@ func (s *Server) handleSeriesList(w http.ResponseWriter, r *http.Request) error 
 
 	items := make([]SeriesSummary, 0, len(list.Items))
 	for _, row := range list.Items {
-		items = append(items, toSeriesSummary(row))
+		summary, err := s.seriesSummary(r, row)
+		if err != nil {
+			return err
+		}
+		items = append(items, summary)
 	}
 	writeJSON(w, http.StatusOK, SeriesListResponse{
 		Items:  items,
@@ -133,12 +137,29 @@ func (s *Server) handleSeriesDetail(w http.ResponseWriter, r *http.Request) erro
 
 	books := make([]BookSummary, 0, len(detail.Books))
 	for _, b := range detail.Books {
-		books = append(books, toBookSummary(b))
+		summary, err := s.bookSummary(r, b)
+		if err != nil {
+			return err
+		}
+		books = append(books, summary)
+	}
+	summary, err := s.seriesSummary(r, detail.SeriesRow)
+	if err != nil {
+		return err
+	}
+	var dir *string
+	if s.user != nil {
+		prefs, err := s.user.GetSeriesPrefs(r.Context(), sid)
+		if err != nil {
+			return internalErr(err)
+		}
+		dir = prefs.ReadingDir
 	}
 	writeJSON(w, http.StatusOK, SeriesDetail{
-		SeriesSummary: toSeriesSummary(detail.SeriesRow),
-		Books:         books,
-		Encoding:      seriesEncoding(detail.Books),
+		ReadingDirection: dir,
+		SeriesSummary:    summary,
+		Books:            books,
+		Encoding:         seriesEncoding(detail.Books),
 	})
 	return nil
 }
@@ -192,6 +213,26 @@ func (s *Server) handleSeriesCover(w http.ResponseWriter, r *http.Request) error
 		return notFound("series %s has no cover", sid)
 	}
 
+	if detail.CoverKind == "page" {
+		b, err := s.idx.GetBook(r.Context(), detail.CoverBookID)
+		if err != nil {
+			return internalErr(err)
+		}
+		req, c, err := s.coverInputs(r, b)
+		if err != nil {
+			return err
+		}
+		width, err := s.thumbWidth(r)
+		if err != nil {
+			return err
+		}
+		req.Width = width
+		mode, err := versionMode(r, c.CoverCV)
+		if err != nil {
+			return err
+		}
+		return s.serveThumb(w, r, req, mode)
+	}
 	width, err := s.thumbWidth(r)
 	if err != nil {
 		return err

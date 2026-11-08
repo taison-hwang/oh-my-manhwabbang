@@ -1,14 +1,14 @@
 import { BookOpen, Play, RefreshCw } from 'lucide-react'
 import type { ReactNode } from 'react'
 
-import { useCoverImage, useRoots } from '../../api/queries'
+import { useCoverImage, useRoots, useSetSeriesDirection, useSettings } from '../../api/queries'
 import type { ReadingDir, SeriesDetail } from '../../api/types'
 import { thumbWidthFor } from '../../api/urls'
 import { FallbackCover } from '../../components/ds/FallbackCover'
 import { Button } from '../../components/ds/Button'
 import { Hr } from '../../components/ds/Hr'
 import { ProgressBar } from '../../components/ds/ProgressBar'
-import { Seg } from '../../components/ds/Seg'
+import { Seg, type SegOption } from '../../components/ds/Seg'
 import {
   formatBytes,
   formatCount,
@@ -17,6 +17,7 @@ import {
   formatSourcePath,
 } from '../../lib/format'
 import { textLang } from '../../lib/textLang'
+import { seriesDirectionErrorMessage } from './seriesErrors'
 import { hasStarted, seriesProgressRatio } from './volume'
 
 /**
@@ -37,15 +38,16 @@ import { hasStarted, seriesProgressRatio } from './volume'
  * `useRoots` is already in the cache — the app shell fetches it — so this costs
  * no request; until it lands the line falls back to the relative path.
  *
- * The 읽기 방향 `.seg` is a client-only seed (C-9 / D-35): persisted direction
- * is per *book*, on the server. This control never writes the API — it seeds
- * the books opened from this screen, and the parent persists it in
- * `store/seriesDir.ts`.
+ * The 읽기 방향 `.seg` is the series' own direction, **on the server** (ruling
+ * E-69 §2.3, reversing C-9 / E-33 §2's client-only seed). It has three values:
+ * `SeriesDetail.reading_direction` as L→R or R→L, or 기본 when that is `null` —
+ * labelled with the global default it follows, `기본 (R→L)`. A change is
+ * `PUT /api/series/{sid}/prefs` (`useSetSeriesDirection`); nothing goes to
+ * `localStorage`. A book's own direction still beats it (D-35) — the server's
+ * ladder decides, and the viewer opens on `BookPrefs.reading_direction`.
  */
 export interface SeriesHeaderProps {
   series: SeriesDetail
-  dir: ReadingDir
-  onDirChange: (dir: ReadingDir) => void
   /** `이어 읽기` / `읽기 시작`. */
   onResume: () => void
   onReadFirst: () => void
@@ -71,10 +73,25 @@ export interface SeriesHeaderProps {
   notice?: string | null
 }
 
-const DIR_OPTIONS = [
-  { value: 'ltr', label: 'L→R' },
-  { value: 'rtl', label: 'R→L' },
-] as const satisfies readonly { value: ReadingDir; label: string }[]
+/**
+ * The 읽기 방향 `.seg`'s three values (ruling E-69 §2.3, ui-spec §5.1): the series'
+ * own `null` — 기본, which follows the global default — and the two directions it
+ * can be pinned to. Two values were not enough: a series following the global
+ * default had the matching option already checked, so it could not be pinned to
+ * it. `default` is the `data-value` of the 기본 label.
+ */
+export type SeriesDirChoice = ReadingDir | 'default'
+
+const DIR_LABELS = { ltr: 'L→R', rtl: 'R→L' } as const satisfies Record<ReadingDir, string>
+
+/** 기본 names the global value it follows now — or nothing while the settings are unread. */
+function dirOptions(global: ReadingDir | undefined): readonly SegOption<SeriesDirChoice>[] {
+  return [
+    { value: 'default', label: global === undefined ? '기본' : `기본 (${DIR_LABELS[global]})` },
+    { value: 'ltr', label: DIR_LABELS.ltr },
+    { value: 'rtl', label: DIR_LABELS.rtl },
+  ]
+}
 
 interface StatProps {
   label: string
@@ -93,8 +110,6 @@ function Stat({ label, children, className }: StatProps) {
 
 export function SeriesHeader({
   series,
-  dir,
-  onDirChange,
   onResume,
   onReadFirst,
   onRescan,
@@ -114,6 +129,17 @@ export function SeriesHeader({
   const sourcePath = formatSourcePath(rootPath, series.path)
   const ratio = seriesProgressRatio(series.progress)
   const started = hasStarted(series.progress)
+
+  const settings = useSettings()
+  const setDirection = useSetSeriesDirection()
+  // The write in flight is shown at once; a refusal falls back to the server's value.
+  // `null` is a value here (기본), so "nothing in flight" is `undefined`, not `null`.
+  const mine = setDirection.variables?.sid === series.id
+  const pending = mine && setDirection.isPending ? setDirection.variables : undefined
+  const seriesDir = pending === undefined ? series.reading_direction : pending.reading_direction
+  const choice: SeriesDirChoice = seriesDir ?? 'default'
+  const dirError =
+    mine && setDirection.isError ? seriesDirectionErrorMessage(setDirection.error) : null
 
   return (
     /* E-32: the hero stops being a band with a 2px rule under it and becomes a
@@ -208,19 +234,35 @@ export function SeriesHeader({
           </Button>
           {scanning && <span className="text-xs text-accent-text">스캔 중</span>}
           <div className="flex-1" />
-          <span className="text-3xs uppercase tracking-[.1em] text-ink-dim">읽기 방향</span>
-          <Seg
-            value={dir}
-            options={DIR_OPTIONS}
-            onChange={onDirChange}
-            aria-label="읽기 방향"
-            className="flex-none whitespace-nowrap"
-          />
+          {/* The label and its `.seg` wrap as one: three values (E-69) no longer fit
+              beside 재스캔 at phone widths, and a label left at the end of one line
+              with its control on the next reads as belonging to the button. Below
+              ~260px of row the label goes above the `.seg` instead of past the edge. */}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="text-3xs uppercase tracking-[.1em] text-ink-dim">읽기 방향</span>
+            <Seg
+              value={choice}
+              options={dirOptions(settings.data?.reading_direction)}
+              onChange={(next) => {
+                setDirection.mutate({
+                  sid: series.id,
+                  reading_direction: next === 'default' ? null : next,
+                })
+              }}
+              aria-label="읽기 방향"
+              className="flex-none whitespace-nowrap"
+            />
+          </div>
         </div>
 
         {notice !== null && notice !== '' && (
           <p role="status" className="text-xs text-accent-text">
             {notice}
+          </p>
+        )}
+        {dirError !== null && (
+          <p role="status" data-role="series-dir-error" className="text-xs text-accent-text">
+            {dirError}
           </p>
         )}
       </div>

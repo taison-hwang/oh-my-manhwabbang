@@ -244,6 +244,27 @@ func build(root string) error {
 	b.zipFile(umi+"[文月晃] 海の御先 02.zip", cp949Pages(3))
 	b.zipFile(umi+"[文月晃] 海の御先 15 (完).zip", cp949Pages(3))
 
+	// 14 — ruling E-69's cover sample, synthetic only. The real collection has
+	// one landscape page 1, 군계 01권's (E-23), and the real round asserts on
+	// it; that page's halves differ only as two drawn pages do. Here they are
+	// red and blue, so the browser tier's "the card is the right half" has a
+	// margin no centre crop can reach, and the books are this spec's own: the
+	// directions and the designation it sets never touch a book another spec
+	// shoots. 01권 and 02권 are the same shape so one can be read rtl and the
+	// other ltr side by side; 03권 is the designation book (coverPortrait,
+	// coverQuadrants), whose portrait page 1 is shown whole page, with halves
+	// that differ so a halving bug is visible.
+	const cover = "표지 테스트/"
+	for _, vol := range []string{"표지 테스트 01권.zip", "표지 테스트 02권.zip"} {
+		pages := cp949Pages(3)
+		pages[0].data = coverLandscape()
+		b.zipFile(cover+vol, pages)
+	}
+	designation := cp949Pages(3)
+	designation[0].data = coverPortrait()
+	designation[1].data = coverQuadrants()
+	b.zipFile(cover+"표지 테스트 03권.zip", designation)
+
 	// D-49's two extras, which the real collection has no sample of.
 	b.encryptedZip("암호화 테스트.zip", cp949Pages(3))
 	b.zip64("ZIP64 테스트.zip")
@@ -602,6 +623,65 @@ func landscapeJPEG() []byte {
 	}
 	cachedLandscapeJPEG = buf.Bytes()
 	return cachedLandscapeJPEG
+}
+
+// coverLandscape is 표지 테스트's page 1: 120×80, so `w > h` and E-69 §2.2
+// halves it, with a red left half and a blue right half. Flat colours rather
+// than a gradient because the browser tier compares the card with each half
+// after two resizes and a JPEG round trip; the width is even so neither half
+// carries the other's colour (the odd-width rule is U2's unit tests).
+func coverLandscape() []byte {
+	return solidBlocks(120, 80, func(x, _ int) color.RGBA {
+		if x < 60 {
+			return color.RGBA{R: 0xd0, G: 0x30, B: 0x30, A: 0xff}
+		}
+		return color.RGBA{R: 0x30, G: 0x30, B: 0xd0, A: 0xff}
+	})
+}
+
+// coverPortrait is 03권's page 1, which §2.2 shows whole page; its halves
+// differ (green left, orange right) so a halving bug is visible: a card that
+// is one half of it matches that half, not the whole. Neither colour is one of
+// page 2's quadrants.
+func coverPortrait() []byte {
+	return solidBlocks(80, 120, func(x, _ int) color.RGBA {
+		if x < 40 {
+			return color.RGBA{R: 0x30, G: 0xa0, B: 0x40, A: 0xff} // green
+		}
+		return color.RGBA{R: 0xe0, G: 0x80, B: 0x20, A: 0xff} // orange
+	})
+}
+
+// coverQuadrants is 03권's page 2, the page a cover is designated on. Four
+// quadrants of four colours, none of them page 1's green or orange, so a
+// region of it is told both from the whole page and from the default cover.
+func coverQuadrants() []byte {
+	return solidBlocks(80, 120, func(x, y int) color.RGBA {
+		switch {
+		case x < 40 && y < 60:
+			return color.RGBA{R: 0xe0, G: 0xd0, B: 0x30, A: 0xff} // yellow
+		case y < 60:
+			return color.RGBA{R: 0x30, G: 0xc0, B: 0xd0, A: 0xff} // cyan
+		case x < 40:
+			return color.RGBA{R: 0xc0, G: 0x30, B: 0xb0, A: 0xff} // magenta
+		default:
+			return color.RGBA{R: 0x20, G: 0x20, B: 0x20, A: 0xff} // near black
+		}
+	})
+}
+
+func solidBlocks(w, h int, at func(x, y int) color.RGBA) []byte {
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := range h {
+		for x := range w {
+			img.Set(x, y, at(x, y))
+		}
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err != nil {
+		panic(err)
+	}
+	return buf.Bytes()
 }
 
 // ---------------------------------------------------------------------------

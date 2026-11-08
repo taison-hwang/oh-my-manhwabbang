@@ -37,6 +37,9 @@ func (s *Service) prepare(req Request) (job, error) {
 	if req.ID == "" {
 		return job{}, fmt.Errorf("%w: empty id", ErrBadRequest)
 	}
+	if req.Cover != nil {
+		return s.prepareCover(req)
+	}
 	if req.fromFile() {
 		if req.RootName == "" {
 			return job{}, fmt.Errorf("%w: file request for %q has no root", ErrBadRequest, req.ID)
@@ -52,6 +55,31 @@ func (s *Service) prepare(req Request) (job, error) {
 	}
 	req.Width = s.snapWidth(req.Width)
 	return job{req: req, key: s.cache.key(req.ID, req.PageNo, req.Width, req.ContentVersion)}, nil
+}
+
+// prepareCover is prepare for the 권-cover shape (E-69 §2.2, §2.7).
+//
+// The Cover is copied, Region and all, so the queued job cannot change under a
+// caller that reuses its value after Get returns: the key is computed from it
+// now and the picture is cut from it later, and the two must agree.
+func (s *Service) prepareCover(req Request) (job, error) {
+	if req.fromFile() {
+		return job{}, fmt.Errorf("%w: a cover request for %q also names a loose file", ErrBadRequest, req.ID)
+	}
+	if req.PageNo < 1 {
+		return job{}, fmt.Errorf("%w: page number %d is below 1 (pages are 1-based)", ErrBadRequest, req.PageNo)
+	}
+	c := *req.Cover
+	if err := c.validate(); err != nil {
+		return job{}, err
+	}
+	if c.Region != nil {
+		r := *c.Region
+		c.Region, c.Dir = &r, ""
+	}
+	req.Cover = &c
+	req.Width = s.snapWidth(req.Width)
+	return job{req: req, key: s.cache.coverKey(req.ID, req.PageNo, c.area(), req.Width, req.ContentVersion)}, nil
 }
 
 // Get returns a ready thumbnail, or enqueues one and reports [ErrQueued]. It

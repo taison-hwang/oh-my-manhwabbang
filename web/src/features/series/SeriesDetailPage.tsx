@@ -1,11 +1,10 @@
 import { useNavigate, useParams } from 'react-router-dom'
 
-import { useRescanSeries, useScanStatus, useSeries, useSettings } from '../../api/queries'
-import type { BookSummary, ReadingDir } from '../../api/types'
+import { useRescanSeries, useScanStatus, useSeries } from '../../api/queries'
+import type { BookSummary } from '../../api/types'
 import { EmptyState } from '../../components/ds/EmptyState'
 import { Skeleton } from '../../components/ds/Skeleton'
 import { formatVolumeCount } from '../../lib/format'
-import { useSeriesDirStore } from '../../store/seriesDir'
 import { useUiStore } from '../../store/ui'
 import { SeriesHeader } from './SeriesHeader'
 import { rescanErrorMessage, seriesErrorMessage } from './seriesErrors'
@@ -26,13 +25,10 @@ export function SeriesDetailPage() {
   const navigate = useNavigate()
 
   const series = useSeries(seriesId, { enabled: seriesId !== '' })
-  const settings = useSettings()
   const scan = useScanStatus()
   const rescan = useRescanSeries()
 
   const view = useUiStore((s) => s.view)
-  const dirBySeries = useSeriesDirStore((s) => s.bySeries)
-  const setSeriesDir = useSeriesDirStore((s) => s.setSeriesDir)
 
   const openBook = (book: BookSummary): void => {
     const page = Math.max(1, book.progress?.last_page ?? 1)
@@ -67,10 +63,9 @@ export function SeriesDetailPage() {
   }
 
   const detail = series.data
-  // C-9 / D-35: the `.seg` seeds books opened from this screen and is stored in
-  // localStorage. The persisted direction is per book, on the server.
-  const dir: ReadingDir =
-    dirBySeries[detail.id] ?? settings.data?.reading_direction ?? 'ltr'
+  // E-69 §2.3: the 읽기 방향 `.seg` is the series' own direction, on the server — the
+  // header reads and writes it. Nothing here opens a book in a direction any more:
+  // the viewer takes the server's book → series → global ladder.
 
   const resume = resumeTarget(detail.books, detail.progress)
   const first = firstOpenableBook(detail.books)
@@ -81,10 +76,6 @@ export function SeriesDetailPage() {
     <div className="flex h-full flex-col overflow-auto">
       <SeriesHeader
         series={detail}
-        dir={dir}
-        onDirChange={(next) => {
-          setSeriesDir(detail.id, next)
-        }}
         onResume={() => {
           if (resume === null) return
           void navigate(

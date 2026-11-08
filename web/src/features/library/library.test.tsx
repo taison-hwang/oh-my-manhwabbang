@@ -158,6 +158,8 @@ function makeContinueItem(): ContinueItem {
       status: 'ok',
       error: null,
       progress: null,
+      cover_cv: 'c0ffee00b00c0077',
+      cover: null,
     },
     series_id: GUNGYE.id,
     series_name: '[만화] 군계 1~25',

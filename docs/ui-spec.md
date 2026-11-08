@@ -1242,20 +1242,30 @@ grid/list toggle now switches the **volume** list.
     `.btn.btn-primary` (`이어 읽기` if in progress else `읽기 시작`) ·
     `.btn.btn-secondary` `처음부터 읽기` · `.btn.btn-secondary` `이 시리즈 재스캔` ·
     spacer `flex:1` · `읽기 방향` label (10px, .1em, uppercase, `--ink-dim`) ·
-    `.seg` `L→R` / `R→L`.
+    `.seg` `기본 (<global>)` / `L→R` / `R→L` (three values since E-69 — see the paragraph below).
 
 **Reading-direction default** (FR-VWR-002). ~~`dirs[seriesId] ?? (root is a manga root ? 'rtl' : 'ltr')`.
-Persist per series.~~ **Superseded — conflict resolution C-9 (`impl-plan.md`) and ruling E-33.** There is no
-"manga root" metadata to key a heuristic on, so the heuristic never existed in the product; and the
-persisted direction is **per book**, on the server (`PUT /api/books/{bid}/prefs`), falling back to the
-global default in `/api/settings`. The sentence above is kept struck through rather than deleted because
-two sessions re-derived it from here and it needs to stay findable.
+Persist per series.~~ **Superseded — conflict resolution C-9 (`impl-plan.md`) and ruling E-33, then amended
+by ruling E-69.** There is no "manga root" metadata to key a heuristic on, so the heuristic never existed in
+the product. The sentence above is kept struck through rather than deleted because two sessions re-derived it
+from here and it needs to stay findable.
 
-The `.seg` on **this** screen is the seed C-9 describes: it is client-only (`store/seriesDir.ts`,
-`localStorage`), it never writes the server, and per **E-33 §2** it seeds the direction of a book opened
-from this screen **only when that book has no override of its own**. Before E-33 it seeded nothing at all —
-the value was written and displayed but never travelled to the viewer, so the control looked like it worked
-and did not. A test that asserts on the store cannot see that; assert on what the viewer opens with.
+**Since E-69** the direction a book opens with is resolved per field on the server: the book's own override
+(`PUT /api/books/{bid}/prefs`) → the series' direction (`PUT /api/series/{sid}/prefs`) → the global default in
+`/api/settings`. `BookPrefs.reading_direction` is already that result. A series direction, once set, stays when
+the global default changes (the user's answer recorded in E-69 §2.1), and E-69 §2.2 halves a spread first page
+by the same direction to make the default cover — which is why it has to live on the server.
+
+The `.seg` on **this** screen has three values — `기본 (<global>)`, `L→R`, `R→L` — and writes the series
+direction to the server; it no longer touches `localStorage`. `기본` is a null series value: its label carries the
+current global default (e.g. `기본 (R→L)`), and choosing it PUTs `{reading_direction: null}`. Two values were not
+enough: when the series follows the global default, the matching option is already the checked radio, so the
+reader could not pin the series to it — re-clicking a checked radio does nothing a keyboard or screen-reader user
+can perceive (arrows move the choice; Space on the checked one is a no-op). Under E-33 it was a client-only seed
+(`store/seriesDir.ts`) that applied only to a book with no override of its own, so changing just a book's display
+mode pushed the seed out; the per-field ladder ends that. Seeds still in `localStorage` (`shelf.seriesDir`) are
+uploaded once at boot for series whose server value is still null, then dropped. As under E-33: a test that
+asserts on the store cannot see whether the direction reaches the viewer; assert on what the viewer opens with.
 
 ### 5.2 Volume list header
 

@@ -11,8 +11,20 @@
 import { describe, expect, it } from 'vitest'
 
 import { codeForStatus } from './errors'
-import { BOOK_ID, SERIES_ID, bookDetail, brokenBookDetail, settings } from './fixtures'
 import {
+  BOOK_ID,
+  SERIES_ID,
+  bookDetail,
+  bookSummary,
+  brokenBookDetail,
+  coveredBookSummary,
+  progressExport,
+  progressExportV1,
+  seriesDetail,
+  settings,
+} from './fixtures'
+import {
+  BOOK_COVER_MIN_EXTENT,
   BOOK_KINDS,
   CACHE_KINDS,
   DIMS_STATES,
@@ -227,5 +239,62 @@ describe('shapes the UI depends on', () => {
     // A-10 is only worth having if the value is one a user can act on: the
     // lookup order has four candidates, so the fixture pins an absolute path.
     expect(settings.server.config_path.startsWith('/')).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Ruling E-69 — book covers, series prefs, `shelf-progress/2`
+// ---------------------------------------------------------------------------
+
+describe('book covers and series prefs (ruling E-69 §2.6)', () => {
+  it('every book summary carries a cover_cv, and cover is null when nobody chose one', () => {
+    // §2.6: `cover_cv: string` is always present — the `v` of the new endpoint —
+    // and `cover` is the user's choice or `null` for the default.
+    expect(typeof bookSummary.cover_cv).toBe('string')
+    expect(bookSummary.cover_cv).not.toBe('')
+    expect(bookSummary).toHaveProperty('cover', null)
+  })
+
+  it('a chosen cover is exactly {page, x, y, w, h}', () => {
+    expect(Object.keys(coveredBookSummary.cover ?? {}).sort()).toEqual(['h', 'page', 'w', 'x', 'y'])
+  })
+
+  it('a series detail says reading_direction, null when the series has none', () => {
+    expect(seriesDetail).toHaveProperty('reading_direction', null)
+  })
+
+  it('the smallest legal cover side is 0.05 of the page (§2.4)', () => {
+    expect(BOOK_COVER_MIN_EXTENT).toBe(0.05)
+  })
+})
+
+describe('progress export formats (ruling E-69 §2.9)', () => {
+  it('an export is always /2, with the covers and series_prefs rows §2.9 lists', () => {
+    expect(progressExport.format).toBe('shelf-progress/2')
+    expect(Object.keys(progressExport.covers[0] ?? {})).toEqual([
+      'book_id',
+      'series_id',
+      'root_name',
+      'book_path',
+      'page',
+      'page_count', // E-69 §2.5: the re-attach baseline
+      'x',
+      'y',
+      'w',
+      'h',
+      'updated_at',
+    ])
+    expect(Object.keys(progressExport.series_prefs[0] ?? {})).toEqual([
+      'series_id',
+      'root_name',
+      'series_path',
+      'reading_direction',
+    ])
+  })
+
+  it('a /1 document has neither array', () => {
+    expect(progressExportV1.format).toBe('shelf-progress/1')
+    expect(progressExportV1).not.toHaveProperty('covers')
+    expect(progressExportV1).not.toHaveProperty('series_prefs')
   })
 })

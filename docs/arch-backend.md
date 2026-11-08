@@ -520,6 +520,7 @@ Notes:
 4. A rescan recomputes `yvtfrny77ehkt2we` from the same inputs, so the `LEFT JOIN` on the rebuilt index finds the row again.
 
 *Corollary and warning to be documented in `shelf.example.yaml`:* renaming a root in the YAML **is** an identity change and orphans that root's progress. `shelf migrate-root --from old --to new` (phase 3) will rewrite `user.db` ids; until then the config comment must say so.
+This warning is about the root's *name*. A file or directory moved or renamed on disk, within a root or between roots, is followed after a scan by its content fingerprint (§4.9, ruling **E-49**).
 
 ### 3.5 Index database — `<data_dir>/index.db` (derived, disposable, NFR-DAT-001)
 
@@ -722,7 +723,7 @@ PRAGMA journal_mode = WAL;
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
-);   -- schema_version='2' under A-8 (was '1'), id_version='shelf-id/1',
+);   -- schema_version='3' under A-19 ('2' under A-8, was '1'), id_version='shelf-id/1',
      -- first_seen_bootstrap=<unix seconds> once a bootstrap run has COMPLETED.
      --   Its absence is the only signal that one is still needed (rule 6, E-16).
 
@@ -793,6 +794,43 @@ CREATE TABLE IF NOT EXISTS series_seen (
     first_seen_at INTEGER NOT NULL               -- unix seconds. *** WRITE-ONCE ***
 );
 CREATE INDEX IF NOT EXISTS ix_series_seen_first ON series_seen(first_seen_at DESC);
+
+-- AMENDMENT A-19 (ruling E-69 §2.5) — schema_version 3. The user's choice of a book's
+-- cover (§4.10), and the series reading direction the server now needs to honour it.
+-- Authored, not derived, so they live here and survive --rebuild-index. No foreign
+-- keys: a row whose page has gone, or whose book is not ok, stays and is not used.
+-- Only the user's DELETE (§7.6) and the post-scan cleanup (§4.9) remove rows.
+CREATE TABLE IF NOT EXISTS book_covers (
+    book_id     TEXT PRIMARY KEY,                -- ids.BookID(...) — computed, not FK
+    series_id   TEXT NOT NULL,
+    root_name   TEXT NOT NULL,
+    book_path   TEXT NOT NULL,                   -- root-relative; re-derives the id after
+                                                 --   a rename, like progress
+    page_no     INTEGER NOT NULL,                -- 1-based
+    page_count  INTEGER NOT NULL,                -- the book's length when the region was
+                                                 --   chosen: the split-reattach baseline
+                                                 --   (§4.9 step 2)
+    x           REAL NOT NULL,                   -- region, normalised to the page, 0..1
+    y           REAL NOT NULL,
+    w           REAL NOT NULL,
+    h           REAL NOT NULL,
+    updated_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_book_covers_series ON book_covers(series_id);   -- §4.9 step 3
+
+CREATE TABLE IF NOT EXISTS series_prefs (
+    series_id   TEXT PRIMARY KEY,                -- ids.SeriesID(...) — computed, not FK
+    root_name   TEXT NOT NULL,
+    series_path TEXT NOT NULL,
+    reading_dir TEXT,        -- 'ltr' | 'rtl' | NULL (= none set; the global default applies)
+    updated_at  INTEGER NOT NULL
+);
+
+-- E-69 §2.13: retain proven moves across failed authored-data writes.
+CREATE TABLE IF NOT EXISTS pending_relocations (
+    old_book_id TEXT PRIMARY KEY,
+    evidence TEXT NOT NULL
+);
 ```
 
 #### `first_seen_at` — the write rule (A-8), stated as rules because it is a compatibility surface
@@ -827,8 +865,11 @@ CREATE INDEX IF NOT EXISTS ix_series_seen_first ON series_seen(first_seen_at DES
 4. **Not deleted by an index rebuild, and not deleted by the generation sweep.** `--rebuild-index`
    removes `index.db`, `index.db-wal`, `index.db-shm` from a hard-coded allowlist (§3.7) and never opens
    `user.db`. §4.9's `DELETE FROM series … WHERE scan_gen < ?` is an **`index.db`** statement and must
-   not grow a `user.db` counterpart. Rows for series that no longer exist are deliberately kept, exactly
-   like orphaned `progress` rows: a temporarily unplugged drive must not rewrite history. A row is ~80
+   not grow a `user.db` counterpart. Rows for series that no longer exist are deliberately kept: a
+   temporarily unplugged drive must not rewrite history. (`progress` — and, under A-19, `book_covers` and
+   `series_prefs` — are no longer kept unconditionally: §4.9's post-scan cleanup deletes them for a root walked
+   end to end, and a book's `book_prefs` with them, rulings **E-50** and **E-69** §2.11. A `book_prefs` row with
+   neither is kept. `series_seen` is not part of it.) A row is ~80
    bytes; 10⁴ dead series cost under 1 MB. (A `shelf prune-user-db` is phase 3, and must be an explicit
    operator action, never automatic.)
 5. **A series that vanishes and later returns keeps its original `first_seen_at`.** The row survives the
@@ -877,6 +918,8 @@ CREATE INDEX IF NOT EXISTS ix_series_seen_first ON series_seen(first_seen_at DES
    the rung may only `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`. A file at version 2
    opened by a build that only knows version 1 still refuses to start (`ErrSchemaTooNew`, §6.3) — which is
    correct and is why the rung is additive.
+   **AMENDMENT A-19 (ruling E-69):** `book_covers` and `series_prefs` are the next rung, `'2'` → `'3'`
+   (`{to: 3, sql: schemaV3}`), under the same rule: creates only.
 
 ### 3.7 Connecting the two databases
 
@@ -894,6 +937,7 @@ sqlite.RegisterConnectionHook(func(c sqlite.ExecQuerierContext, dsn string) erro
 Rules that keep the separation real:
 * **No transaction ever spans both databases.** SQLite offers no two-phase commit across attached WAL databases, and we do not need it: index writes come only from the scanner, and every user write goes through the dedicated `userdata` handle.
   *Amended by A-8:* the scanner is now a `user.db` writer too — it calls `userdata.MarkSeriesSeen` for `series_seen.first_seen_at` (§3.6). That call is a **separate transaction on the `userdata` handle**, never part of the index writer's transaction, so the rule above is unchanged. It is also the only `user.db` write the scanner may ever make, and it is write-once and idempotent, so a crash between the two commits is harmless in both orders: an index row without a `series_seen` row is simply not "recently added" until the next run, and a `series_seen` row without an index row is invisible to every query.
+  The post-scan cleanup of §4.9 (rulings E-48–E-50, A-19) is not a scanner write either: the scan only reports what it observed (`RootResult.Relocations`), and the app runs the cleanup through `userdata` after the scan (E-49 §4).
 * `--rebuild-index` deletes `index.db*` **only**, and the file list is a hard-coded allowlist, not a glob. It never opens `user.db`, which is what makes `first_seen_at` (and progress) survive it.
 * `ud.` is read-only from the index connection by convention; user writes go through the dedicated `userdata` handle. Enforced by a `make lint` check that no SQL string containing `ud.` also contains `INSERT`/`UPDATE`/`DELETE`.
 
@@ -1252,8 +1296,48 @@ Every scan run gets `run_id` (UUIDv4-ish random hex) and a monotonic `scan_gen` 
 DELETE FROM books  WHERE root_name = ?1 AND scan_gen < ?2;
 DELETE FROM series WHERE root_name = ?1 AND scan_gen < ?2;   -- cascades
 ```
-Both statements are **`index.db` only**. There is deliberately no `user.db` counterpart: `progress`,
-`book_prefs` and (A-8) `series_seen` rows for vanished items are kept forever — see §3.6 rule 4.
+Both statements are **`index.db` only**, and the sweep writes nothing to `user.db`. What happens to the `user.db`
+rows of vanished books is the post-scan cleanup below; `series_seen` rows are kept (§3.6 rule 4).
+
+**Post-scan cleanup of `user.db`** (rulings **E-48**, **E-49**, **E-50**; **AMENDMENT A-19**, ruling **E-69** §2.11–§2.12).
+After a scan the app runs four steps through `userdata` (§3.7), in this order. At startup only steps 2 and 3 run:
+nothing was walked, so every absence is unexplained (E-50 §2). Steps 1–3 only write. When any of them fails, that
+run deletes nothing: a row a failed step would have moved looks the same as a vanished one.
+
+1. **Move (E-49).** Inside the sweep transaction, while both rows exist, a vanishing book row and a surviving one
+   with the same `content_version` — searched in every root, one-to-one on both sides or not at all — are a proven
+   move. `progress`, `book_prefs` and `book_covers` rows move to the new `book_id` and `series_id`, and the old
+   rows retire; both `progress` and `book_covers` take the new `root_name` and `book_path` and keeps its page and region. Where
+   the destination already has a row, the newer `updated_at` wins. The proof is `content_version` alone: a
+   `progress` row refused the move because its length does not match is refused alone, and that does not stop
+   the cover, the prefs or the series-level decision below.
+2. **Reattach (E-48).** A row whose id is a split container's `BookID(root, book_path)` is mapped onto the volumes
+   only through three gates: the id matches, the volumes' page counts sum to the row's `page_count` baseline, and
+   the page is within that sum. Page P goes to the volume v whose range holds it, as page `P − start(v) + 1`;
+   for `progress` the earlier volumes are marked completed and the newer `updated_at` wins. `book_covers` passes the
+   same gates on its own `page_count` and keeps its region. `book_prefs`, which has no baseline, is **copied** —
+   the original stays — to each volume without a row of its own, and only when that book's `progress` row passed:
+   it cannot prove itself, and this step also runs at startup, when nothing may be deleted. A row that fails a gate
+   is untouched.
+3. **`series_id` correction.** `progress` and `book_covers` take `books.series_id` from the index.
+4. **Delete (E-50).** Only for a root walked end to end — not when its listing failed, the scan was cancelled, or
+   the run covered chosen series only, the three cases in which the index sweep is refused too. The ids of books
+   that vanished from such a root are gathered from `progress` and `book_covers`, the two tables that carry a root
+   and a path, so a book with a cover and no `progress` row is included. An id is deleted only when every
+   `progress` and `book_covers` row it has names a root walked end to end; otherwise all of its rows are kept.
+   The `progress`, `book_covers` and `book_prefs` rows of the ids deleted go in one transaction. A `book_prefs` row with neither a `progress` nor a `book_covers`
+   row is never deleted: it has no root or path column, so nothing proves which root it vanished from. It is
+   harmless, and a book that returns at the same path uses it again. An empty root list deletes nothing.
+   Logging (`Info`), one line per row: `deleting reading progress` (`root`, `book_path`, `book_id`, `last_page`,
+   `page_count` — E-50 §3's "with the page the reader was on"), `deleting a chosen cover` (`root`, `book_path`,
+   `book_id`, `page`, `page_count`), `deleting a series reading direction` (`root`, `series_path`, `series_id`), and
+   for a kept id `keeping a missing book's progress, cover and preferences` with the id and both rows' root and
+   path. `book_prefs` rows have no line of their own: they go with the `book_id` of a progress or cover line. One
+   summary line counts `progress_rows`, `pref_rows`, `cover_rows`, `series_pref_rows` and `roots_walked`.
+
+`series_prefs` (E-69 §2.11(e)) moves only when the move is one-to-one at the series level: the old series is gone
+from the index after the scan and every book moved out of it went to one new series, where the newer `updated_at`
+wins. Otherwise it stays, and it is deleted when a root walked end to end no longer has the series.
 
 Rows for disabled or unreachable roots are never swept — an unmounted drive must not silently erase a third of the library. If a root's `path` does not exist or `os.ReadDir` fails at the top level, the run **aborts that root** with `roots.last_scan_error` set and deletes nothing.
 
@@ -1263,8 +1347,21 @@ Per series, in order:
 
 1. A loose image in the series directory whose base name (case-insensitive, extension removed) matches `^(\[)?(cover|folder|poster|thumb|thumbnail)(\])?$` or **contains** `cover` → `cover_kind='file'`. Catches `[cover].jpg` and `강철의 연금술사 00 Cover.jpg` from the real tree.
 2. Otherwise, if `collectBooks` produced exactly one cover candidate (§4.2 step 5) → `cover_kind='file'` with that file.
-3. Otherwise **page 1 of the first book by `ord`** whose `status='ok'` → `cover_kind='page'`. This is prd's literal "first page of the first volume".
+3. Otherwise **the first book by `ord`** whose `status='ok'` → `cover_kind='page'`, and the image is that book's **권 표지** (below). **AMENDMENT A-19 (ruling E-69):** it was page 1 itself; prd's "first page of the first volume" (FR-THM-003) now reads as that book's 권 표지, so a 권 표지 chosen for the first book is the series cover. The scan still records `cover_page_no = 1`; the page and region are resolved when the cover is generated.
 4. Otherwise `cover_kind=NULL` → `GET /api/series/{sid}/cover` returns **404**, and the frontend renders the name-text placeholder required by FR-LIB-008. The API never fabricates an image.
+
+A `cover_kind='file'` cover is the file as it is: the rules below do not apply to it, because the user put it there.
+
+**권 표지 (book cover) — AMENDMENT A-19 (ruling E-69).** Every book has one, served by `GET /api/books/{bid}/cover` (§7.6). In order:
+
+1. The user's choice (`book_covers`, §3.6), when its page is in `[1, page_count]` of the book as indexed now and the book is `status='ok'`: that page, cropped to the stored region.
+2. Otherwise page 1. When page 1 is wider than tall (`w > h`, FR-VWR-004's definition, no ratio threshold), only the half that comes first in the **effective reading direction**: the right half for `rtl`, the left half for `ltr`. The width is split exactly in two, and on an odd width the first half takes the extra pixel. There is no spine detection. Otherwise the whole page.
+
+A choice that no longer applies (rule 1's conditions fail) falls through to rule 2 and its row is kept; when the page comes back it applies again. A changed `cv` does not remove a choice.
+
+**Effective reading direction** = `book_prefs.reading_dir` → `series_prefs.reading_dir` → the global `reader.reading_direction`, field by field: a `NULL` falls through to the next. `BookPrefs.reading_direction` (§7.6) is this value.
+
+The crop is taken from the decoded page before the resize of §5.4. After a scan, `coverQ` (§5.4, FR-THM-003) pre-generates the cover book's 권 표지, with its effective direction, at every width of `thumbnails.widths`.
 
 ### 4.11 Error isolation (FR-IDX-010)
 
@@ -1511,6 +1608,27 @@ SHA-256 → first 10 bytes → the same lowercase base32 as §3.4 → 16 chars `
 
 Rendered PDF pages use the identical scheme under `<cache_dir>/pdf/` with domain `"shelf-pdfpage/1"` and `<width>` in place of the thumbnail width.
 
+**권 표지 — AMENDMENT A-19 (ruling E-69).** The 권 표지 (§4.10) has its own domain, so page 1's strip thumbnail
+(`shelf-thumb/1`, unchanged) and the 권 표지 are different files even when they show the same pixels:
+
+```
+"shelf-cover/1" ‖ 0x00 ‖ <book_id> ‖ 0x00 ‖ <page_no decimal> ‖ 0x00 ‖ <region>
+                ‖ 0x00 ‖ <width decimal> ‖ 0x00 ‖ <format> ‖ 0x00 ‖ <quality decimal>
+                ‖ 0x00 ‖ <content_version>
+```
+`<region>` is the user's choice as `x,y,w,h` joined by commas, each written by `strconv.FormatFloat(v, 'g', -1, 64)`
+with `-0` written `0`, or, with no choice, `auto-ltr` / `auto-rtl` from the effective reading direction — always,
+whether or not page 1 turns out to be wide, because page dimensions may be unknown until the decode (§5.8). Same
+SHA-256 → first 10 bytes → lowercase base32 → 16 chars `h` and the same path as above, under `<cache_dir>/thumbs/`, so
+`DELETE /api/cache?kind=thumbs` covers it (`ids.CoverKey`).
+
+`cover_cv` (`BookSummary.cover_cv`, §7.3) is the same hash over the same input with the `<width decimal> ‖ 0x00` field
+left out — 16 chars, like `h` (`ids.CoverVersion`). So changing a book's effective direction changes the URL of every 권 표지 it
+decides — for the global default, every book with no choice whose direction falls through to it — and those covers
+are generated again.
+A series `cover_cv` with `cover_kind='page'` is its cover book's `cover_cv` (§7.5). Series covers cached before A-19
+were page-1 strip thumbnails, which the strip still uses, so nothing is moved or deleted.
+
 * **FR-THM-006 (mtime invalidation) is structural.** `content_version` is derived from `(file_size, file_mtime)`. A changed source file ⇒ a different `cv` ⇒ a different hash ⇒ a different path. There is no invalidation *code* that can be forgotten or get it wrong; the old file simply becomes unreferenced and is removed by the sweeper or by an explicit purge.
 * **FR-THM-007 (cache deletable at any time).** Nothing reads the cache without falling back to generation. `rm -rf <cache_dir>` while the server runs costs latency, not correctness. AC-005 is the union of this and NFR-DAT-001.
 * **FR-THM-008 (usage + purge).** `GET /api/cache/usage` walks the cache once per 60 s (cached result) and reports per-kind file counts and bytes. `DELETE /api/cache?kind=thumbs|pdf|wazero|all` removes the subtree. `wazero` is listed separately because deleting it costs a 3.9 s pdfium re-compile.
@@ -1597,7 +1715,7 @@ Measured contributions: base process + sqlite ≈ 33 MiB RSS; pdfium pool +43 Mi
 
 The frontend is built against this section in parallel with the backend. It is binding.
 
-> **Binding as amended.** The contract is this section **plus amendments A-1…A-18** in `impl-plan.md` §0.3
+> **Binding as amended.** The contract is this section **plus amendments A-1…A-19** in `impl-plan.md` §0.3
 > (D-47). Amendments in force: **A-4** `GET /api/series?progress=any|reading|done|unread`; **A-5**
 > `Settings.library_scope: string`; **A-6** default `w` on `/cover` and `/thumbs/{n}` is **120**
 > (`widths[0]` under A-1's `[120, 240, 400, 640]`); **A-8** `GET /api/series?scope=all|added` backed by
@@ -1614,9 +1732,13 @@ The frontend is built against this section in parallel with the backend. It is b
 > active,inflight}` of `GET /api/health?verbose=1` (§7.4, ruling **E-57**); **A-16** `SeriesDetail.encoding:
 > NameEncoding | null`, kenc's five labels, `mixed` gone (§7.5, ruling **E-56**). **A-17** import never moves `started_at` later, and a
 > `prefs` row, which carries no `updated_at`, loses to a local override under merge (§7.11, ruling **E-64**). **A-18**
-> `GET /api/books/{bid}/pages/{n}` lists `422 unprocessable` and the missing-page-row `404` (§7.6, ruling **E-65**). **A-7** freezes everything
+> `GET /api/books/{bid}/pages/{n}` lists `422 unprocessable` and the missing-page-row `404` (§7.6, ruling **E-65**). **A-19**
+> the 권 표지: `GET`/`PUT`/`DELETE /api/books/{bid}/cover`, `BookSummary.cover_cv` and `.cover`, a `cover_kind='page'`
+> series cover that is its cover book's 권 표지, `PUT /api/series/{sid}/prefs` and `SeriesDetail.reading_direction`,
+> `BookPrefs.reading_direction` resolved book → series → global, and the export format `shelf-progress/2` with
+> `covers` and `series_prefs` (§3.6, §4.10, §5.6, §7.3, §7.5, §7.6, §7.11, ruling **E-69**). **A-7** freezes everything
 > else verbatim, and requires this table to be updated before anything else moves — which is what A-8
-> through A-18 did.
+> through A-19 did.
 > Rulings **E-14** (the `series.status` fold, §3.5/§7.3) and **E-15** (`Settings.library_sort` is the closed
 > FR-LIB-004 set, §7.8) are *sharpenings*, not amendments: they narrow a type to the values the server
 > already produced and accepted, so no client that was correct becomes incorrect.
@@ -1828,9 +1950,23 @@ interface BookSummary {
   file_size: number;       // 0 for kind:"dir"
   mtime: Unix;
   cv: string;              // content version — append as ?v= to page/thumb URLs
+  cover_cv: string;        // AMENDMENT A-19 (ruling E-69): the 권 표지's version (§5.6), computed
+                           //   from the cover actually served — append as ?v= to
+                           //   GET /api/books/{bid}/cover
+  cover: BookCover | null; // AMENDMENT A-19: the user's stored choice; null => none. Shown as
+                           //   stored even when it does not apply (§4.10 rule 1 fails), while
+                           //   cover_cv follows the page-1 cover then in use
   status: ItemStatus;
   error: string | null;
   progress: Progress | null;
+}
+
+interface BookCover {      // AMENDMENT A-19 (ruling E-69). Normalised to the source page, 0..1
+  page: number;            // 1-based
+  x: number;
+  y: number;
+  w: number;
+  h: number;
 }
 
 interface PageInfo {
@@ -2329,6 +2465,8 @@ plus `series_count` per root from `GET /api/roots` (§7.4), which is unchanged.
 interface SeriesDetail extends SeriesSummary {
   books: BookSummary[];         // natural-sorted by ord
   encoding: NameEncoding | null; // AMENDMENT A-16 (ruling E-56). diagnostics — see below
+  reading_direction: ReadingDir | null; // AMENDMENT A-19 (ruling E-69). The series' own
+                                        //   direction (series_prefs); null => none set
 }
 type NameEncoding = "utf-8" | "utf-8-invalid" | "cp949" | "cp932" | "unknown";
 ```
@@ -2357,9 +2495,27 @@ value that means "these characters may be wrong", so it is the one a fold must n
 with `detail: {cv: "<current>"}`**, so the client refetches the series rather than caching a superseded
 cover for a year. Same for `/thumbs/{n}` in §7.6 against the book's `cv`.
 
+**AMENDMENT A-19 (ruling E-69).** With `cover_kind='page'` this endpoint serves the cover book's **권 표지**
+(§4.10) — the same image as `GET /api/books/{bid}/cover` for that book — and the series `cover_cv` is that book's
+`cover_cv`. With `cover_kind='file'` nothing changes: the file as it is, and `cover_cv` as before.
+
 #### `POST /api/series/{sid}/rescan`
 
 Body: none. `202 {run_id: string}` · `409 conflict` if a scan is already running. UI-002's "이 시리즈 재스캔".
+
+#### `PUT /api/series/{sid}/prefs` — AMENDMENT A-19 (ruling E-69)
+
+```ts
+// request, and the 200 response
+interface SeriesPrefs {
+  reading_direction: ReadingDir | null; // null clears the series' direction
+}
+```
+Sets the series' own reading direction, the middle rung of the effective direction (§4.10): a book's own
+`reading_direction` beats it, and it beats the global default — a later change to the global default does not
+move it. The field is required — only an explicit `null` means "none set" — and strict decoding (§7.1) applies. `200 SeriesPrefs` (the stored value) ·
+`400 bad_request` for a missing field or a value outside `ReadingDir` · `404` for an unknown `sid`.
+It is also `SeriesDetail.reading_direction`.
 
 ### 7.6 Books and pages
 
@@ -2378,10 +2534,12 @@ interface BookDetail extends BookSummary {
 }
 
 interface BookPrefs {
-  reading_direction: ReadingDir;
+  reading_direction: ReadingDir;        // AMENDMENT A-19 (ruling E-69): book ?? series ?? global,
+                                        //   field by field (§4.10); the other two stay book ?? global
   display_mode: DisplayMode;
   fit_mode: FitMode;
-  is_override: boolean;                 // false => these are the global defaults
+  is_override: boolean;                 // true => the book has its own prefs row. false => no book
+                                        //   override; reading_direction may still be the series'
 }
 ```
 A 1,071-page book returns 1,071 `PageInfo` objects ≈ 110 KB of JSON — well inside AC-008 and far cheaper than paginating page metadata. Fetching this once is what makes arbitrary page jumps instant.
@@ -2414,6 +2572,31 @@ A 1,071-page book returns 1,071 `PageInfo` objects ≈ 110 KB of JSON — well i
 | `v` | string | the book's `cv` |
 
 `200 image/jpeg` · `202` + `Retry-After: 1` when queued · `404` · `422 thumb_unavailable` (§5.5). The thumbnail strip (FR-VWR-008) requests these lazily as it scrolls; the 202 path is what keeps a 1,071-page strip from blocking.
+
+#### `GET /api/books/{bid}/cover` — AMENDMENT A-19 (ruling E-69)
+
+The book's **권 표지** (§4.10) as `image/jpeg`. Parameters and responses are those of `GET /api/series/{sid}/cover`
+(§7.5), with `v` checked against the book's `cover_cv`: `200` · `202` + `Retry-After: 1` · `404` for an unknown book
+or one with no pages (a book with pages gets rule 2's page-1 cover even when its `status` is not `ok`) · `409 stale_version` with `detail: {cv: "<current cover_cv>"}` · `422 thumb_unavailable`.
+Library cards use this, not `/thumbs/1`.
+
+#### `PUT /api/books/{bid}/cover` — AMENDMENT A-19 (ruling E-69)
+
+```ts
+// request: BookCover (§7.3)
+interface BookCoverResult {   // 200
+  cover_cv: string;
+  cover: BookCover;
+}
+```
+Stores the user's choice. Strict decoding (§7.1) applies and all five fields are required. It is `400 bad_request`
+unless `0 ≤ x`, `0 ≤ y`, `w ≥ 0.05`, `h ≥ 0.05`, `x + w ≤ 1`, `y + h ≤ 1`, `page` is in `[1, page_count]` and the book
+is `status = ok`. The bounds are compared as floats with no tolerance, so the sender clamps (`w = min(w, 1 − x)`,
+`h = min(h, 1 − y)`). The aspect ratio is not enforced (the client's frame is 2:3). `404` for an unknown book.
+
+#### `DELETE /api/books/{bid}/cover` → `204` — AMENDMENT A-19
+
+Back to the default 권 표지. `204` whether or not a choice existed; `404` for an unknown book.
 
 #### `PUT /api/books/{bid}/progress` (FR-VWR-009, FR-STT-001)
 
@@ -2722,7 +2905,7 @@ POST /api/progress/import      -> 200 {imported: number, skipped: number, confli
 ```
 ```ts
 interface ProgressExport {
-  format: "shelf-progress/1";
+  format: "shelf-progress/2";   // AMENDMENT A-19 (ruling E-69): was /1. Import takes both
   exported_at: Unix;
   id_version: "shelf-id/1";     // importer refuses a mismatch
   items: {
@@ -2738,6 +2921,25 @@ interface ProgressExport {
   }[];
   prefs: { book_id: ID; reading_direction: ReadingDir | null;
            display_mode: DisplayMode | null; fit_mode: FitMode | null }[];
+  covers: {                     // AMENDMENT A-19: the book_covers rows (§3.6)
+    book_id: ID;
+    series_id: ID;
+    root_name: string;
+    book_path: string;
+    page: number;               // 1-based
+    page_count: number;         // the book's length when the choice was made
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    updated_at: Unix;
+  }[];
+  series_prefs: {               // AMENDMENT A-19: the series_prefs rows (§3.6)
+    series_id: ID;
+    root_name: string;
+    series_path: string;
+    reading_direction: ReadingDir | null;
+  }[];
 }
 ```
 Import merges by `book_id`, keeping the row with the newer `updated_at`; `?strategy=replace` overwrites unconditionally.
@@ -2748,6 +2950,20 @@ Import merges by `book_id`, keeping the row with the newer `updated_at`; `?strat
 * **`last_page` is clamped to `[1, page_count]`** (the upper bound only when `page_count > 0`), exactly as the §7.6 progress write does.
 * **A `prefs` row carries no `updated_at`, so "newer" is undefined for it.** Under merge (the default), a book that already has a local override keeps it and the incoming row is dropped; a book without one takes the incoming row. `?strategy=replace` overwrites the override. A row whose three fields are all `null` is ignored under either strategy — it does not clear a local override. The stored `updated_at` of an imported prefs row is the import time. Prefs rows are not counted in `imported`/`skipped`/`conflicts`, which describe `items` only.
 * For `items`, a tie (`local.updated_at == incoming.updated_at`) keeps the local row under merge.
+
+**AMENDMENT A-19 (ruling E-69) — `shelf-progress/2`.** Export always writes `/2`. Import accepts `/1` and `/2`. A `/1`
+file has neither `covers` nor `series_prefs`, and one that carries either — even as `[]` — is `400 bad_request`
+(strict decoding, §7.1, looks only at whether the key is there). An empty `format` is read as the current one, `/2`.
+Export writes an empty array as `[]`, never `null`. A server from before A-19 refuses a `/2` file.
+
+* **`covers`** merge by `book_id` like `items`: the newer `updated_at` wins and a tie keeps the local row.
+  Under `?strategy=replace` the file's row overwrites whatever its `updated_at`.
+* **`series_prefs`** merge by `series_id` by A-17's `prefs` rule: a local direction is kept under merge,
+  `?strategy=replace` overwrites it as A-17 does, and a `null` row is ignored.
+* Neither is counted in `imported`/`skipped`/`conflicts`.
+* Every `covers` row is checked against itself only, not the index: `1 ≤ page ≤ page_count` of that row, and the
+  region rules of `PUT /api/books/{bid}/cover` (§7.6), with the same no-tolerance comparison. One row that fails
+  is `400 bad_request` for the whole file, and nothing is written: the import is one transaction.
 
 ### 7.12 Auth (NFR-SEC-002)
 
@@ -2775,6 +2991,7 @@ When auth is enabled, every other `/api/*` route and every static asset requires
 | `GET /api/scan/status` | §7.10 | as specified |
 | `GET/PUT /api/settings` | §7.8 | as specified |
 | — | `/api/health`, `/api/continue`, `/api/books/{bid}/prefs`, `DELETE progress`, `/api/scan/cancel`, `/api/scan/log`, `/api/cache/*`, `/api/progress/*`, `/api/auth/*`, `POST /api/series/{sid}/rescan` | **added** — each required by an FR that prd 6.3's overview table did not enumerate |
+| — | `GET`/`PUT`/`DELETE /api/books/{bid}/cover`, `PUT /api/series/{sid}/prefs` | **added by amendment A-19** (ruling E-69) — the 권 표지 and the series reading direction, by the user's instruction of 2026-10-29; prd §9 has no such feature |
 
 ---
 

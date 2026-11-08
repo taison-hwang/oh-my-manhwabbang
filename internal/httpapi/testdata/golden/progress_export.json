@@ -1,5 +1,5 @@
 {
-  "format": "shelf-progress/1",
+  "format": "shelf-progress/2",
   "exported_at": 1785229200,
   "id_version": "shelf-id/1",
   "items": [
@@ -15,5 +15,7 @@
       "updated_at": 1785229200
     }
   ],
-  "prefs": []
+  "prefs": [],
+  "covers": [],
+  "series_prefs": []
 }

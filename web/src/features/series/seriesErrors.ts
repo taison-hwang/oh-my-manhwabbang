@@ -55,3 +55,25 @@ export function rescanErrorMessage(error: unknown): string {
   }
   return scanStartErrorMessage(error)
 }
+
+/**
+ * A refused `PUT /api/series/{sid}/prefs` — the 읽기 방향 `.seg` (ruling E-69
+ * §2.3, §2.6) — as the header's notice. As above, the status picks the sentence
+ * and the envelope's English `message` is not shown.
+ *
+ * Only a `404`, or a `400` about the `sid` (`detail.param`), says the series is
+ * gone. Any other `400` is the decoder refusing the body — the client's to fix,
+ * not the reader's; a reload would not help, so it is not offered as the cure.
+ */
+export function seriesDirectionErrorMessage(error: unknown): string {
+  if (!isApiError(error)) {
+    return '서버에 연결하지 못해 읽기 방향을 저장하지 못했습니다. 잠시 후 다시 시도하세요.'
+  }
+  if (error.status === 404 || (error.status === 400 && error.detailString('param') === 'sid')) {
+    return '라이브러리에 없는 시리즈라 읽기 방향을 저장하지 못했습니다. 화면을 새로 고친 뒤 다시 시도하세요.'
+  }
+  if (error.status === 503) {
+    return '서버가 지금 읽기 방향을 저장할 수 없습니다. 서버 상태를 확인한 뒤 다시 시도하세요.'
+  }
+  return '읽기 방향을 저장하지 못했습니다. 잠시 후 다시 시도하세요.'
+}

@@ -275,6 +275,29 @@ export function pageThumbUrl(bid: ID, n: number, options: ImageUrlOptions): stri
   })
 }
 
+/**
+ * `GET /api/books/{bid}/cover` — the book cover JPEG of ruling E-69 §2.6. The same
+ * answers as the series cover (§7.5: `200`, `202 + Retry-After`, `404`,
+ * `409 stale_version`, `422`) and the same `?w=`/`?v=` discipline; `v` is
+ * `BookSummary.cover_cv`, **not** the content `cv`.
+ */
+export function bookCoverUrl(bid: ID, options: ImageUrlOptions): string {
+  return apiUrl(`/books/${encodeURIComponent(bid)}/cover`, {
+    w: options.w,
+    v: options.v,
+  })
+}
+
+/** `PUT` (choose a cover) and `DELETE` (back to the default) — E-69 §2.6. No query. */
+export function bookCoverWriteUrl(bid: ID): string {
+  return apiUrl(`/books/${encodeURIComponent(bid)}/cover`)
+}
+
+/** `PUT /api/series/{sid}/prefs` — the series' own reading direction (E-69 §2.3, §2.6). */
+export function seriesPrefsUrl(sid: ID): string {
+  return apiUrl(`/series/${encodeURIComponent(sid)}/prefs`)
+}
+
 export function bookProgressUrl(bid: ID): string {
   return apiUrl(`/books/${encodeURIComponent(bid)}/progress`)
 }

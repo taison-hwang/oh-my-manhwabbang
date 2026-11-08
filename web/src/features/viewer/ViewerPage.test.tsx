@@ -37,7 +37,11 @@ import { resetBasePath } from '../../api/urls'
 import { LibraryPage } from '../library/LibraryPage'
 import { useLibrarySettingsSync } from '../library/useLibrary'
 import { SeriesDetailPage } from '../series/SeriesDetailPage'
-import { useSeriesDirStore } from '../../store/seriesDir'
+import {
+  SERIES_DIR_STORAGE_KEY,
+  resetSeriesDirMigration,
+  useSeriesDirSeedMigration,
+} from '../../store/seriesDir'
 import { seriesCardDomId, seriesRowDomId, useUiStore } from '../../store/ui'
 import {
   CHROME_AUTOHIDE_MS,
@@ -53,7 +57,7 @@ import { PREFS_SAVE_DEBOUNCE_MS, resetPrefsWriter } from './prefsWriter'
 import { OVERRIDE_CHIP_LABEL } from './ViewerTopBar'
 import { THUMB_SLOT_PX, THUMB_SLOT_TOUCH_PX } from './ThumbnailStrip'
 import { LOADING_INDICATOR_DELAY_MS } from './useDelayedFlag'
-import { failUnhandled } from '../../test/msw'
+import { createCoverMock, failUnhandled, type CoverMock } from '../../test/msw'
 
 /**
  * Screen 3 end to end against MSW — the composition WP-11 is actually judged on
@@ -752,7 +756,6 @@ beforeEach(() => {
     view: 'grid',
     revealSeries: null,
   })
-  useSeriesDirStore.setState({ bySeries: {} })
   useViewerStore.getState().close()
 })
 
@@ -3660,30 +3663,139 @@ function seriesScreenHandlers() {
   ]
 }
 
+/** What `user.db` holds for this book: each field its own, or `null` for "not chosen". */
+interface StoredBookPrefs {
+  reading_direction: ReadingDir | null
+  display_mode: DisplayMode | null
+  fit_mode: FitMode | null
+}
+
+const NOTHING_STORED: StoredBookPrefs = {
+  reading_direction: null,
+  display_mode: null,
+  fit_mode: null,
+}
+
 /**
- * Renders the **series screen and the viewer in one router**, starting on the
- * series screen.
- *
- * E-33 §2 spells out why the test has to be shaped like this: "스토어를 단언하는
- * 테스트로는 보이지 않는다 — 스토어는 결함이 있을 때도 올바른 값을 담고 있었다."
- * `store/seriesDir.ts` held `rtl` perfectly well throughout the defect; what was
- * missing was a consumer, and the only way to see a missing consumer is to walk
- * the reader's actual path — set the direction on one screen, open a volume, and
- * read the direction off the *other* screen's DOM.
+ * The server's ladder (ruling **E-69 §2.3**), field by field: the book's own value,
+ * else — for the direction only — the series', else the global default.
+ * `is_override` keeps its old meaning, "the book has a row" (§2.6).
  */
-async function setupSeriesThenViewer(prefs: Partial<BookPrefs> = {}): Promise<Recorded> {
+function ladder(
+  stored: StoredBookPrefs,
+  seriesDir: ReadingDir | null,
+  global: ReadingDir,
+): BookPrefs {
+  return {
+    reading_direction: stored.reading_direction ?? seriesDir ?? global,
+    display_mode: stored.display_mode ?? settings.display_mode,
+    fit_mode: stored.fit_mode ?? settings.fit_mode,
+    is_override: PREF_FIELDS.some((field) => stored[field] !== null),
+  }
+}
+
+interface LadderServer {
+  recorded: Recorded
+  mock: CoverMock
+}
+
+/**
+ * The series screen's and the viewer's endpoints over **one** stored state: the
+ * series' direction (`PUT /api/series/{sid}/prefs`, kept by the contract mock),
+ * this book's stored prefs (`PUT /api/books/{bid}/prefs`), and every `GET` reading
+ * them back through `ladder`. The client is never told the answer in advance — it
+ * has to ask, which is the whole of E-69 §2.3's move to the server.
+ */
+function ladderHandlers(
+  initial: StoredBookPrefs,
+  seriesDir: ReadingDir | null,
+  global: ReadingDir = settings.reading_direction,
+): LadderServer {
   const recorded = newRecorded()
-  const detail = detailOf(prefs)
-  server.use(...handlers(detail, recorded), ...seriesScreenHandlers())
+  const base = detailOf({}, {})
+  const books = [
+    { ...bookSummary, id: BOOK_ID, page_count: PAGE_COUNT },
+    {
+      ...bookSummary,
+      id: NEXT_BOOK_ID,
+      name: '군계(軍鷄) 02권.zip',
+      ord: 1,
+      page_count: NEXT_PAGE_COUNT,
+      progress: null,
+    },
+  ]
+  // The same stored state drives the covers: E-69 §2.7 puts the effective
+  // direction into every default cover's `cover_cv`.
+  const mock = createCoverMock(ORIGIN, {
+    books,
+    series: [SERIES_ID],
+    seriesDirs: { [SERIES_ID]: seriesDir },
+    bookDirs: { [BOOK_ID]: initial.reading_direction },
+    globalDir: global,
+  })
+  const stored = new Map<string, StoredBookPrefs>([[BOOK_ID, { ...initial }]])
+  const prefsOf = (bid: string): BookPrefs =>
+    ladder(stored.get(bid) ?? NOTHING_STORED, mock.seriesDirs.get(SERIES_ID) ?? null, global)
+
+  // Earlier handlers in one `use` win, so the ladder's go first and the shared
+  // harness only answers what they leave (progress, thumbs, roots, scan status).
+  server.use(
+    ...mock.handlers,
+    http.get(`${ORIGIN}/api/settings`, () =>
+      HttpResponse.json({ ...settings, reading_direction: global }),
+    ),
+    http.get(`${ORIGIN}/api/series/:sid`, () =>
+      HttpResponse.json({
+        ...seriesDetail,
+        books: books.map((book) => mock.summaryOf(book.id)),
+        reading_direction: mock.seriesDirs.get(SERIES_ID) ?? null,
+      }),
+    ),
+    http.get(`${ORIGIN}/api/books/:bid`, ({ params }) => {
+      const bid = String(params.bid)
+      return HttpResponse.json(
+        bid === BOOK_ID
+          ? { ...base, prefs: prefsOf(bid) }
+          : {
+              ...base,
+              id: bid,
+              page_count: NEXT_PAGE_COUNT,
+              pages: PAGES.slice(0, NEXT_PAGE_COUNT),
+              next_book_id: null,
+              prefs: prefsOf(bid),
+            },
+      )
+    }),
+    http.put(`${ORIGIN}/api/books/:bid/prefs`, async ({ request, params }) => {
+      const bid = String(params.bid)
+      const body = (await request.json()) as PrefsPatch
+      recorded.prefsPuts.push(body)
+      recorded.prefsWrites.push({ bid, body })
+      const row = { ...(stored.get(bid) ?? NOTHING_STORED) }
+      for (const field of PREF_FIELDS) {
+        if (field in body) (row as Record<string, string | null>)[field] = body[field] ?? null
+      }
+      stored.set(bid, row)
+      mock.setBookDirection(bid, row.reading_direction)
+      return HttpResponse.json(prefsOf(bid))
+    }),
+    ...seriesScreenHandlers(),
+    ...handlers(base, recorded),
+  )
   stubViewport(1_440)
   stubImage(recorded)
+  return { recorded, mock }
+}
 
+/** `shell` is mounted beside the routes, as `ShellDataProvider`'s hooks are in the app. */
+function renderRoutes(initialEntry: string, shell?: ReactNode): void {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
   render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[`/series/${SERIES_ID}`]}>
+      {shell}
+      <MemoryRouter initialEntries={[initialEntry]}>
         <Routes>
           <Route path="/series/:sid" element={<SeriesDetailPage />} />
           <Route path="/series/:sid/books/:bid" element={<ViewerPage />} />
@@ -3691,8 +3803,26 @@ async function setupSeriesThenViewer(prefs: Partial<BookPrefs> = {}): Promise<Re
       </MemoryRouter>
     </QueryClientProvider>,
   )
+}
+
+/**
+ * Renders the **series screen and the viewer in one router**, starting on the
+ * series screen.
+ *
+ * E-33 §2 spells out why the test has to be shaped like this, and E-69 keeps it:
+ * "스토어를 단언하는 테스트로는 보이지 않는다". What is asserted is the direction
+ * the *viewer* opens in, read off its DOM after walking the reader's own path —
+ * set the direction on one screen, open a volume, look at the other screen.
+ */
+async function setupSeriesThenViewer(
+  stored: StoredBookPrefs = NOTHING_STORED,
+  seriesDir: ReadingDir | null = null,
+  global?: ReadingDir,
+): Promise<LadderServer> {
+  const server = ladderHandlers(stored, seriesDir, global)
+  renderRoutes(`/series/${SERIES_ID}`)
   await screen.findByRole('heading', { name: seriesDetail.name })
-  return recorded
+  return server
 }
 
 /** Opens the first volume from the series screen's grid. */
@@ -3705,42 +3835,245 @@ async function openFirstVolume(): Promise<void> {
   await screen.findAllByRole('img', { name: /page_/ })
 }
 
-describe('the series-detail 읽기 방향 seed (ruling E-33 §2, C-9)', () => {
-  it('opens a volume in the direction the series screen was just set to', async () => {
-    // `is_override: false` ⇒ every field of `prefs` is the global default, which
-    // is what the seed is entitled to replace.
-    await setupSeriesThenViewer({ reading_direction: 'ltr', is_override: false })
+/** Sets the series screen's `.seg` and waits for the server to have taken it. */
+async function setSeriesDirection(mock: CoverMock, label: 'L→R' | 'R→L'): Promise<void> {
+  const group = screen.getByRole('radiogroup', { name: '읽기 방향' })
+  const before = mock.seriesPrefsPuts.length
+  await userEvent.click(within(group).getByRole('radio', { name: label }))
+  await waitFor(() => {
+    expect(mock.seriesPrefsPuts).toHaveLength(before + 1)
+  })
+}
 
-    const group = screen.getByRole('radiogroup', { name: '읽기 방향' })
-    await userEvent.click(within(group).getByRole('radio', { name: 'R→L' }))
+/**
+ * **Ruling E-69 §2.3 replaces E-33 §2 here.** E-33 kept the series direction in
+ * `localStorage` and had the viewer prefer it over the global default unless
+ * `is_override` was set. The direction now lives on the server and the viewer
+ * opens on `BookPrefs.reading_direction`, which *is* the book → series → global
+ * ladder. The three E-33 cases are kept with their new mechanism; the fourth is
+ * the case E-33 got wrong and E-69 names (a book that changed only its display
+ * mode lost the series direction); the fifth pins that the old seed is not read.
+ */
+describe('the series 읽기 방향 (ruling E-69 §2.3, replacing E-33 §2)', () => {
+  it('opens a volume in the direction the series screen was just set to', async () => {
+    const { mock } = await setupSeriesThenViewer()
+    await setSeriesDirection(mock, 'R→L')
+    expect(mock.seriesPrefsPuts.at(-1)?.body).toEqual({ reading_direction: 'rtl' })
 
     await openFirstVolume()
 
-    // The DOM of the *viewer*, not the seed store: the store was already right
-    // while the product was wrong (E-33 §2).
+    // The DOM of the *viewer*, not any store.
     expect(stage()).toHaveAttribute('data-dir', 'rtl')
     expect(screen.getByRole('radio', { name: 'R→L' })).toBeChecked()
   })
 
-  it('leaves a volume that has its own settings alone — the seed is not an override', async () => {
-    // A book the reader has already set to L→R for itself. The seed replaces the
-    // *global default*; it does not beat a choice made for this volume.
-    await setupSeriesThenViewer({ reading_direction: 'ltr', is_override: true })
-
-    const group = screen.getByRole('radiogroup', { name: '읽기 방향' })
-    await userEvent.click(within(group).getByRole('radio', { name: 'R→L' }))
-
+  it('leaves a volume that has its own direction alone — the book beats the series (D-35)', async () => {
+    const { mock } = await setupSeriesThenViewer({ ...NOTHING_STORED, reading_direction: 'ltr' })
+    await setSeriesDirection(mock, 'R→L')
     await openFirstVolume()
-
     expect(stage()).toHaveAttribute('data-dir', 'ltr')
   })
 
-  it('falls back to the global default when the series has no seed', async () => {
-    await setupSeriesThenViewer({ reading_direction: 'rtl', is_override: false })
-    // Nothing touched on the series screen: `bySeries` is empty, so the book's
-    // effective prefs stand exactly as the server sent them.
+  it('follows the series for a volume that chose only its display mode (E-69 §2.3)', async () => {
+    // `is_override: true` — the book has a row — but its direction field is
+    // empty. E-33 stood the seed down for the whole object here; the ladder is
+    // per field.
+    const { mock } = await setupSeriesThenViewer({ ...NOTHING_STORED, display_mode: 'spread' })
+    await setSeriesDirection(mock, 'R→L')
     await openFirstVolume()
     expect(stage()).toHaveAttribute('data-dir', 'rtl')
+    expect(stage()).toHaveAttribute('data-mode', 'spread')
+  })
+
+  it('falls back to the global default when the series has no direction', async () => {
+    // A global R→L, so the default cannot be mistaken for the store's own `ltr`.
+    await setupSeriesThenViewer(NOTHING_STORED, null, 'rtl')
+    await openFirstVolume()
+    expect(stage()).toHaveAttribute('data-dir', 'rtl')
+  })
+
+  it('keeps a series direction when the global default is the other way', async () => {
+    await setupSeriesThenViewer(NOTHING_STORED, 'rtl', 'ltr')
+    const group = screen.getByRole('radiogroup', { name: '읽기 방향' })
+    await waitFor(() => {
+      expect(within(group).getByRole('radio', { name: 'R→L' })).toBeChecked()
+    })
+    await openFirstVolume()
+    expect(stage()).toHaveAttribute('data-dir', 'rtl')
+  })
+
+  it('does not read the old localStorage seed — the server’s answer is the direction', async () => {
+    // Exactly E-33's condition for the seed to apply: no book override at all.
+    localStorage.setItem(
+      SERIES_DIR_STORAGE_KEY,
+      JSON.stringify({ state: { bySeries: { [SERIES_ID]: 'ltr' } }, version: 0 }),
+    )
+    ladderHandlers(NOTHING_STORED, 'rtl', 'ltr')
+    renderRoutes(`/series/${SERIES_ID}/books/${BOOK_ID}?page=12`)
+    await screen.findAllByRole('img', { name: /page_/ })
+    expect(stage()).toHaveAttribute('data-dir', 'rtl')
+  })
+
+  /**
+   * The direction moved on the server while this tab still held the book's
+   * detail from the last time it was open: `BookPrefs.reading_direction` in the
+   * cache is the old rung of the ladder. The series write invalidates it, but an
+   * invalidated query still hands its old data to the next mount — and the
+   * viewer opens once (`openedRef`), so a refetch landing a moment later cannot
+   * turn it. The viewer has to open on the re-read, not on what it replaces.
+   */
+  it('reopens a volume read before in the direction the series was set to since', async () => {
+    const { mock } = await setupSeriesThenViewer()
+    await openFirstVolume()
+    expect(stage()).toHaveAttribute('data-dir', 'ltr')
+    fireEvent.click(screen.getByRole('button', { name: '뒤로' }))
+    await screen.findByRole('heading', { name: seriesDetail.name })
+
+    await setSeriesDirection(mock, 'R→L')
+    await openFirstVolume()
+
+    expect(stage()).toHaveAttribute('data-dir', 'rtl')
+    expect(screen.getByRole('radio', { name: 'R→L' })).toBeChecked()
+  })
+})
+
+/**
+ * E-69 §2.3: a direction the pre-E-69 client kept in `localStorage` is offered to
+ * the server once at boot (`useSeriesDirSeedMigration`, which `ShellDataProvider`
+ * mounts). What that is for is the *viewer*: as under E-33, a test that looks at
+ * the store — or at the PUT — cannot see whether a volume opens that way.
+ */
+describe('a leftover series-direction seed, uploaded at boot (E-69 §2.3)', () => {
+  function SeedUpload(): null {
+    useSeriesDirSeedMigration({ auth_required: false, authenticated: false })
+    return null
+  }
+
+  function plantSeed(dir: ReadingDir): void {
+    resetSeriesDirMigration()
+    localStorage.setItem(
+      SERIES_DIR_STORAGE_KEY,
+      JSON.stringify({ state: { bySeries: { [SERIES_ID]: dir } }, version: 0 }),
+    )
+  }
+
+  it('opens a volume in the uploaded direction, and the series screen shows it as the series’ own', async () => {
+    plantSeed('rtl')
+    const { mock } = ladderHandlers(NOTHING_STORED, null, 'ltr')
+    renderRoutes(`/series/${SERIES_ID}`, <SeedUpload />)
+    await screen.findByRole('heading', { name: seriesDetail.name })
+    await waitFor(() => {
+      expect(mock.seriesPrefsPuts.map((p) => p.body)).toEqual([{ reading_direction: 'rtl' }])
+    })
+    // The upload re-read the series on screen: R→L is now its own, not 기본.
+    const group = screen.getByRole('radiogroup', { name: '읽기 방향' })
+    await waitFor(() => {
+      expect(within(group).getByRole('radio', { name: 'R→L' })).toBeChecked()
+    })
+
+    await openFirstVolume()
+    expect(stage()).toHaveAttribute('data-dir', 'rtl')
+    expect(localStorage.getItem(SERIES_DIR_STORAGE_KEY)).toBeNull()
+  })
+
+  it('reopens a volume already read this session in the uploaded direction', async () => {
+    // The upload's PUT is held before the server applies it, so the reader opens
+    // (and leaves) a volume first: that book's detail is in the cache from before
+    // the server took the seed.
+    plantSeed('rtl')
+    const { mock } = ladderHandlers(NOTHING_STORED, null, 'ltr')
+    let release = (): void => undefined
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    server.use(
+      // Falls through to the mock once released.
+      http.put(`${ORIGIN}/api/series/:sid/prefs`, async () => {
+        await held
+      }),
+    )
+    renderRoutes(`/series/${SERIES_ID}`, <SeedUpload />)
+    await screen.findByRole('heading', { name: seriesDetail.name })
+    await openFirstVolume()
+    expect(stage()).toHaveAttribute('data-dir', 'ltr')
+    fireEvent.click(screen.getByRole('button', { name: '뒤로' }))
+    await screen.findByRole('heading', { name: seriesDetail.name })
+
+    release()
+    await waitFor(() => {
+      expect(mock.seriesPrefsPuts.map((p) => p.body)).toEqual([{ reading_direction: 'rtl' }])
+    })
+    await waitFor(() => {
+      expect(
+        within(screen.getByRole('radiogroup', { name: '읽기 방향' })).getByRole('radio', { name: 'R→L' }),
+      ).toBeChecked()
+    })
+    await openFirstVolume()
+    expect(stage()).toHaveAttribute('data-dir', 'rtl')
+  })
+
+  /**
+   * Two seeds, uploaded one after the other. This series' seed has been taken; the
+   * next series' GET is still on the wire. A volume of this series read earlier in
+   * the session must already open the uploaded way — the invalidation that makes the
+   * viewer wait for its re-read belongs to the seed the server took, not to the end of
+   * the whole upload, which a slow request for another series can hold back for as
+   * long as it likes.
+   */
+  it('reopens a volume of a series whose seed was taken while the next series’ seed is still on its way', async () => {
+    const OTHER_SERIES = 'otherseries22222'
+    resetSeriesDirMigration()
+    // This series first: `Object.entries` keeps the order the keys were written in.
+    localStorage.setItem(
+      SERIES_DIR_STORAGE_KEY,
+      JSON.stringify({ state: { bySeries: { [SERIES_ID]: 'rtl', [OTHER_SERIES]: 'ltr' } }, version: 0 }),
+    )
+    const { mock } = ladderHandlers(NOTHING_STORED, null, 'ltr')
+    let releasePut = (): void => undefined
+    const putHeld = new Promise<void>((resolve) => {
+      releasePut = resolve
+    })
+    let releaseOther = (): void => undefined
+    const otherHeld = new Promise<void>((resolve) => {
+      releaseOther = resolve
+    })
+    let otherAsked = false
+    server.use(
+      // Falls through to the mock once released.
+      http.put(`${ORIGIN}/api/series/:sid/prefs`, async () => {
+        await putHeld
+      }),
+      // The next seed's series: the upload's GET of it does not come back yet.
+      http.get(`${ORIGIN}/api/series/${OTHER_SERIES}`, async () => {
+        otherAsked = true
+        await otherHeld
+        // A direction of its own: that seed is dropped without a PUT.
+        return HttpResponse.json({ ...seriesDetail, id: OTHER_SERIES, books: [], reading_direction: 'ltr' })
+      }),
+    )
+    try {
+      renderRoutes(`/series/${SERIES_ID}`, <SeedUpload />)
+      await screen.findByRole('heading', { name: seriesDetail.name })
+      await openFirstVolume()
+      expect(stage()).toHaveAttribute('data-dir', 'ltr')
+      fireEvent.click(screen.getByRole('button', { name: '뒤로' }))
+      await screen.findByRole('heading', { name: seriesDetail.name })
+
+      releasePut()
+      // The server took this series' seed, and the upload has moved on to the next one.
+      await waitFor(() => {
+        expect(otherAsked).toBe(true)
+      })
+      expect(mock.seriesPrefsPuts.map((p) => p.body)).toEqual([{ reading_direction: 'rtl' }])
+
+      await openFirstVolume()
+      expect(stage()).toHaveAttribute('data-dir', 'rtl')
+    } finally {
+      releaseOther()
+      await waitFor(() => {
+        expect(localStorage.getItem(SERIES_DIR_STORAGE_KEY)).toBeNull()
+      })
+    }
   })
 })
 
@@ -3828,15 +4161,14 @@ describe('the per-book override chip (ruling E-33 §3)', () => {
     expect(counter()).toBe(before)
   })
 
-  it('lands on the series seed rather than the global default, when there is one', async () => {
-    // One rule, two call sites: with the override gone, "what this volume shows
-    // when nobody chose anything for it" is the seed (E-33 §2) — otherwise 이 권
-    // 전용 설정 would clear the override and then disagree with the very next
-    // open of the same book.
-    useSeriesDirStore.setState({ bySeries: { [SERIES_ID]: 'rtl' } })
-    await setup({
-      prefs: { reading_direction: 'ltr', display_mode: 'spread', is_override: true },
-    })
+  it('lands on the series direction rather than the global default, when there is one', async () => {
+    // With the override gone, "what this volume shows when nobody chose anything
+    // for it" is the series' direction — E-69 §2.3 makes that the server's answer
+    // to the reset itself, so the viewer only has to take it as it came back.
+    ladderHandlers({ reading_direction: 'ltr', display_mode: 'spread', fit_mode: null }, 'rtl', 'ltr')
+    renderRoutes(`/series/${SERIES_ID}/books/${BOOK_ID}?page=12`)
+    await screen.findAllByRole('img', { name: /page_/ })
+    expect(stage()).toHaveAttribute('data-dir', 'ltr')
     const button = chip()
     if (button === null) throw new Error('the override chip was not raised')
     await userEvent.click(button)

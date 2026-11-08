@@ -14,6 +14,12 @@
  *  4. A book with `status !== "ok"` is `200` with `pages: []` and a populated `error`.
  *  5. Unknown JSON body fields are rejected with `400`; unknown query params are ignored.
  *
+ * **Ruling E-69 (amendment A-19)** adds the book cover: `BookSummary.cover_cv` and
+ * `.cover`, `GET|PUT|DELETE /api/books/{bid}/cover`, the series' own reading direction
+ * (`SeriesDetail.reading_direction`, `PUT /api/series/{sid}/prefs`) and the export
+ * format `shelf-progress/2`. `BookPrefs.reading_direction` is now the effective value
+ * of the book → series → global ladder (E-69 §2.3), so the client never re-derives it.
+ *
  * Wire fields keep their `snake_case` names (impl-plan §5.3). A field the server sends
  * as `null` is typed `T | null` and never `T | undefined` (WP-06 acceptance 1); `?` is
  * used only where §7 itself writes `?`, i.e. in request bodies and the error `detail`.
@@ -271,6 +277,24 @@ export interface SeriesSummary {
   progress: SeriesProgress
 }
 
+/**
+ * A user-chosen book cover — ruling E-69 §2.4. The region is normalised to the page's
+ * own pixels (`0..1`), and `page` is 1-based. The server checks exactly this:
+ * `0 ≤ x`, `0 ≤ y`, `w ≥ 0.05`, `h ≥ 0.05`, `x + w ≤ 1`, `y + h ≤ 1`,
+ * `page ∈ [1, page_count]` and a book whose `status` is `ok`, and answers
+ * `400 bad_request` otherwise. It does **not** enforce the 2:3 frame the editor draws.
+ */
+export interface BookCover {
+  page: number
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+/** E-69 §2.4: the smallest legal `w` and `h` of a `BookCover`. */
+export const BOOK_COVER_MIN_EXTENT = 0.05
+
 export interface BookSummary {
   id: ID
   series_id: ID
@@ -288,6 +312,14 @@ export interface BookSummary {
   mtime: Unix
   /** Content version — append as `?v=` to page/thumb URLs (arch §5.3). */
   cv: string
+  /**
+   * E-69 §2.6/§2.7 — the version of this book's **cover**, the `?v=` of
+   * `GET /api/books/{bid}/cover`. Not `cv`: it also turns over when the chosen region or
+   * the effective reading direction changes, which `cv` (the content) does not.
+   */
+  cover_cv: string
+  /** E-69 §2.6 — the user's choice, or `null` for the default (§2.2 (b)). */
+  cover: BookCover | null
   status: ItemStatus
   error: string | null
   progress: Progress | null
@@ -457,6 +489,21 @@ export interface SeriesDetail extends SeriesSummary {
   books: BookSummary[]
   /** Diagnostics only (E-56): the most suspect book label, or `null` for no verdict. */
   encoding: NameEncoding | null
+  /**
+   * E-69 §2.3/§2.6 — the series' own reading direction, or `null` when none was set and
+   * its books fall through to the global default. The series-detail `.seg` shows it as
+   * L→R / R→L, or `null` as `기본 (<global>)`, and writes it with
+   * `PUT /api/series/{sid}/prefs`; a global change does not move a series that has one.
+   */
+  reading_direction: ReadingDir | null
+}
+
+/**
+ * `PUT /api/series/{sid}/prefs` — ruling E-69 §2.6. The body and the `200` answer are
+ * the same shape; `null` clears the series' direction.
+ */
+export interface SeriesPrefs {
+  reading_direction: ReadingDir | null
 }
 
 /** `POST /api/series/{sid}/rescan` and `POST /api/scan` both answer `202 {run_id}`. */
@@ -469,6 +516,10 @@ export interface ScanRunResponse {
 // ---------------------------------------------------------------------------
 
 export interface BookPrefs {
+  /**
+   * E-69 §2.3/§2.6: the **effective** direction, field by field — the book's own, else
+   * the series', else the global default. The viewer opens on exactly this value.
+   */
   reading_direction: ReadingDir
   display_mode: DisplayMode
   fit_mode: FitMode
@@ -509,6 +560,12 @@ export interface ProgressUpdate {
    * bodies (`scripts/contractcheck/main.go:48-53`). Known and accepted (E-45 §4).
    */
   stale_seen?: boolean
+}
+
+/** `200` of `PUT /api/books/{bid}/cover` (E-69 §2.6). `DELETE` is a bare `204`. */
+export interface BookCoverResult {
+  cover_cv: string
+  cover: BookCover
 }
 
 /** `PUT /api/books/{bid}/prefs` — every field optional; `null` clears the override. */
@@ -718,13 +775,52 @@ export interface ProgressExportPref {
   fit_mode: FitMode | null
 }
 
+/**
+ * E-69 §2.5/§2.9 — one `book_covers` row. The region rules are §2.4's, as on the `PUT`;
+ * an importer checks `1 ≤ page ≤ page_count` within the row, since it cannot know the book.
+ */
+export interface ProgressExportCover {
+  book_id: ID
+  series_id: ID
+  root_name: string
+  book_path: string
+  page: number
+  /** The book's page count when the cover was chosen (E-69 §2.5) — a re-attach baseline. */
+  page_count: number
+  x: number
+  y: number
+  w: number
+  h: number
+  updated_at: Unix
+}
+
+/** E-69 §2.9 — one `series_prefs` row. */
+export interface ProgressExportSeriesPref {
+  series_id: ID
+  root_name: string
+  series_path: string
+  reading_direction: ReadingDir | null
+}
+
+/**
+ * `GET /api/progress/export` — always `shelf-progress/2` since E-69 §2.9.
+ *
+ * An import still takes a `/1` file, which has neither `covers` nor `series_prefs` (and is
+ * `400` if it does). That shape is not modelled here: nothing produces it any more, and the
+ * 읽기 기록 panel sends a chosen file to the server exactly as read. A server from before
+ * E-69 refuses a `/2` file (strict decoding).
+ */
 export interface ProgressExport {
-  format: 'shelf-progress/1'
+  format: 'shelf-progress/2'
   exported_at: Unix
   /** The importer refuses a mismatch. */
   id_version: 'shelf-id/1'
   items: ProgressExportItem[]
   prefs: ProgressExportPref[]
+  /** E-69 §2.9. Merged newest `updated_at` first, local on a tie; not counted in the result. */
+  covers: ProgressExportCover[]
+  /** E-69 §2.9. Merged by A-17's prefs rule; not counted in the result. */
+  series_prefs: ProgressExportSeriesPref[]
 }
 
 export const IMPORT_STRATEGIES = ['merge', 'replace'] as const

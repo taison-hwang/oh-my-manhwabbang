@@ -2,11 +2,17 @@ import { CornerDownLeft, Search } from 'lucide-react'
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-import { useContinue, useSeriesList } from '../../api/queries'
+import { useBook, useContinue, useSeriesList } from '../../api/queries'
+import { useViewerStore } from '../../store/viewer'
+import { useUiStore } from '../../store/ui'
 import { Dialog } from '../../components/ds/Dialog'
 import { cn } from '../../lib/cn'
 import { matchRange } from '../../lib/chosung'
-import { formatBytes, formatContinueCounter, formatVolumeCount } from '../../lib/format'
+import {
+  formatBytes,
+  formatContinueCounter,
+  formatVolumeCount,
+} from '../../lib/format'
 import { textLang } from '../../lib/textLang'
 
 /**
@@ -51,14 +57,30 @@ function Highlight({ title, query }: HighlightProps) {
   return (
     <>
       {chars.slice(0, start).join('')}
-      <mark className="bg-transparent text-accent-text">{chars.slice(start, end).join('')}</mark>
+      <mark className="bg-transparent text-accent-text">
+        {chars.slice(start, end).join('')}
+      </mark>
       {chars.slice(end).join('')}
     </>
   )
 }
 
-export function CommandPalette({ open, query, onQueryChange, onClose }: CommandPaletteProps) {
+export function CommandPalette({
+  open,
+  query,
+  onQueryChange,
+  onClose,
+}: CommandPaletteProps) {
   const navigate = useNavigate()
+  const viewerBook = useViewerStore((s) => s.bookId)
+  const detail = useBook(viewerBook ?? '', {
+    enabled: open && viewerBook !== null,
+  })
+  const coverAvailable =
+    viewerBook !== null &&
+    detail.data !== undefined &&
+    ((detail.data.status === 'ok' && detail.data.page_count > 0) ||
+      detail.data.cover !== null)
   const [debounced, setDebounced] = useState(query)
   const [selected, setSelected] = useState(0)
 
@@ -79,7 +101,7 @@ export function CommandPalette({ open, query, onQueryChange, onClose }: CommandP
   )
   const recents = useContinue(PALETTE_LIMIT, { enabled: open && !searching })
 
-  const items = useMemo<readonly PaletteItem[]>(() => {
+  const seriesItems = useMemo<readonly PaletteItem[]>(() => {
     if (searching) {
       return (search.data?.items ?? []).map((series) => ({
         seriesId: series.id,
@@ -104,13 +126,27 @@ export function CommandPalette({ open, query, onQueryChange, onClose }: CommandP
   }, [searching, search.data, recents.data])
 
   // Row 0 is preselected, and stays selected as results change underneath.
+
+  const items: readonly PaletteItem[] =
+    coverAvailable && (!searching || '표지로'.includes(debounced.trim()))
+      ? [
+          {
+            seriesId: '__cover',
+            title: '표지로',
+            sub: '현재 쪽으로 표지 편집',
+          },
+          ...seriesItems,
+        ]
+      : seriesItems
+
   useEffect(() => {
     setSelected(0)
   }, [debounced, items.length])
 
   const pick = (item: PaletteItem): void => {
     onClose()
-    void navigate(`/series/${item.seriesId}`)
+    if (item.seriesId === '__cover') useUiStore.getState().openOverlay('cover')
+    else void navigate(`/series/${item.seriesId}`)
   }
 
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>): void => {
@@ -200,7 +236,11 @@ export function CommandPalette({ open, query, onQueryChange, onClose }: CommandP
         />
       </div>
 
-      <div className="max-h-[52vh] overflow-y-auto" role="listbox" aria-label="검색 결과">
+      <div
+        className="max-h-[52vh] overflow-y-auto"
+        role="listbox"
+        aria-label="검색 결과"
+      >
         <div className="px-4 pb-1 pt-3 text-3xs uppercase tracking-[.12em] text-ink-dim">
           {searching ? '검색 결과' : '최근 항목'}
         </div>
@@ -235,7 +275,10 @@ export function CommandPalette({ open, query, onQueryChange, onClose }: CommandP
               {/* The sub-line is a volume name plus a counter, so it carries a
                   name of its own and is tagged from its own text rather than
                   from the title's. */}
-              <span className="flex-none text-xs tabular-nums text-ink-dim" lang={textLang(item.sub)}>
+              <span
+                className="flex-none text-xs tabular-nums text-ink-dim"
+                lang={textLang(item.sub)}
+              >
                 {item.sub}
               </span>
             </button>

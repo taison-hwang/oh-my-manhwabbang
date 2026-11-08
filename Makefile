@@ -302,12 +302,12 @@ test:
 # is the only place the media volume's path is written (E-66 §2.4); scripts/e2e.sh
 # and scripts/e2e-config.sh read the same file for SHELF_E2E_ROOT. The file is
 # found next to this Makefile, not in the working directory, so `make -f` from
-# elsewhere reads the same default. $(file <) drops the final newline and nothing
-# else — no $(strip), because the path holds spaces and a strip would be one more
+# elsewhere reads the same default. $(shell cat) drops the final newline and nothing
+# else for this single-line file — no $(strip), because the path holds spaces and a strip would be one more
 # reader with its own idea of the value. The environment or the command line still
 # override it through `?=`, and an explicitly empty value stays empty.
 #
-# Finding "next to this Makefile" without a shell: $(MAKEFILE_LIST) is a
+# Finding "next to this Makefile": $(MAKEFILE_LIST) is a
 # space-separated list, so `$(dir $(lastword …))` cuts a path with spaces in it
 # in half. Here (no `include` above this line) the list is normally just this
 # Makefile, so the whole list is read as ONE path first — spaces swapped for a
@@ -317,6 +317,8 @@ test:
 # several makefiles in the list AND a space in one of them, which make itself
 # cannot tell apart; the default is then empty, and the gates pre-check and
 # test-int name the empty SHELF_TEST_ROOT.
+# GNU Make 4.4.1's $(file <) stops the filename at its first space. Read the
+# single-line file through the shell with quotes preserved instead.
 #
 # With the root missing, the tests that NEED it skip themselves (those that build
 # their own tree, as from scripts/mkfixture, run regardless) and `go test` exits
@@ -351,8 +353,9 @@ test:
 shelf_empty           :=
 shelf_sp              := $(shelf_empty) $(shelf_empty)
 shelf_whole_dir       := $(subst <shelf:sp>,$(shelf_sp),$(dir $(subst $(shelf_sp),<shelf:sp>,$(MAKEFILE_LIST))))
-shelf_media_whole     := $(file <$(shelf_whole_dir)scripts/media-root)
-SHELF_MEDIA_ROOT      := $(if $(shelf_media_whole),$(shelf_media_whole),$(file <$(dir $(lastword $(MAKEFILE_LIST)))scripts/media-root))
+shelf_read_media       = $(shell cat -- '$(subst ','"'"',$(1))' 2>/dev/null)
+shelf_media_whole     := $(call shelf_read_media,$(shelf_whole_dir)scripts/media-root)
+SHELF_MEDIA_ROOT      := $(if $(shelf_media_whole),$(shelf_media_whole),$(call shelf_read_media,$(dir $(lastword $(MAKEFILE_LIST)))scripts/media-root))
 SHELF_TEST_ROOT       ?= $(SHELF_MEDIA_ROOT)
 TEST_INT_SAMPLE       ?= 500
 TEST_INT_REQUIRE_ROOT ?= 0

@@ -69,7 +69,8 @@
 // TestIDs_hashInput_isTheArchSpecString derives from the spec string in situ.
 //
 // Cache keys (ThumbKey, PDFPageKey) carry their own domain, exactly as arch
-// §5.6 specifies; nothing contradicts that section.
+// §5.6 specifies; nothing contradicts that section. CoverKey and CoverVersion
+// add a third domain for the 권 cover (E-69 §2.7).
 package ids
 
 import (
@@ -97,12 +98,14 @@ const (
 	domainBook   = "book"
 )
 
-// Cache-key domain tags, the first field of a cache-key hash input (arch §5.6).
-// Changing either string invalidates that whole cache — which is exactly how
-// D-18/D-19 want a format change to behave, but it is never free.
+// Cache-key domain tags, the first field of a cache-key hash input (arch §5.6,
+// and E-69 §2.7 for the 권 cover). Changing any of them invalidates that whole
+// cache — which is exactly how D-18/D-19 want a format change to behave, but it
+// is never free.
 const (
 	thumbVersion   = "shelf-thumb/1"
 	pdfPageVersion = "shelf-pdfpage/1"
+	coverVersion   = "shelf-cover/1"
 )
 
 // Length is the character count of every id and cache key: 80 bits of SHA-256
@@ -185,6 +188,31 @@ func ThumbKey(bookID string, pageNo, width int, format string, quality int, cont
 // full-size render of the same page at the same width never share a file.
 func PDFPageKey(bookID string, pageNo, width int, format string, quality int, contentVersion string) string {
 	return cacheKey(pdfPageVersion, bookID, pageNo, width, format, quality, contentVersion)
+}
+
+// CoverKey returns the cache key of one 권 cover at one width (E-69 §2.7). It
+// is a domain of its own, so page 1's strip thumbnail ([ThumbKey]) and the cover
+// cut from page 1 are different files: the cover may be half of the page.
+//
+// area names the part of the page the cover is cut from: `auto-ltr` or
+// `auto-rtl` when the user chose nothing (the direction is always an input,
+// whether or not the page turns out to be landscape), or the chosen region
+// spelled by internal/thumbs. The hash input is
+//
+//	"shelf-cover/1" ‖ 0 ‖ <book_id> ‖ 0 ‖ <page_no> ‖ 0 ‖ <area> ‖ 0 ‖ <width>
+//	                ‖ 0 ‖ <format>  ‖ 0 ‖ <quality> ‖ 0 ‖ <content_version>
+func CoverKey(bookID string, pageNo int, area string, width int, format string, quality int, contentVersion string) string {
+	return hash(coverVersion, bookID, strconv.Itoa(pageNo), area, strconv.Itoa(width),
+		format, strconv.Itoa(quality), contentVersion)
+}
+
+// CoverVersion returns a 권's `cover_cv` (E-69 §2.6, §2.7): [CoverKey]'s input
+// with the width left out, so one value names the cover at every width the
+// client may ask for, and moves whenever the page, the area, the encoder or the
+// source file does.
+func CoverVersion(bookID string, pageNo int, area string, format string, quality int, contentVersion string) string {
+	return hash(coverVersion, bookID, strconv.Itoa(pageNo), area,
+		format, strconv.Itoa(quality), contentVersion)
 }
 
 // cacheKey implements the exact hash input of arch §5.6:

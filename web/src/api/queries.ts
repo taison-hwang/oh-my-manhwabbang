@@ -7,7 +7,9 @@
  *  * `useScanCompletionRefresh` re-reads the library once per completed run, off that poll.
  *  * A `202` on an image endpoint retries after `Retry-After`, at most 10 attempts, then
  *    reports `unavailable` so the caller falls back to the FR-LIB-008 placeholder.
- *  * A `409 stale_version` invalidates the book query and retries once.
+ *  * A `409 stale_version` re-reads the book query — with a read that starts after the
+ *    409 (`rereadAfterStale`) — and retries once (a book cover also re-reads its series,
+ *    which is where a volume card's `cover_cv` comes from — E-69).
  *  * A `401` invalidates the auth status, which flips the shell to the login screen.
  *  * `useSaveProgress` debounces 1 s and is idempotent.
  *  * Settings writes are ordered by `settingsWriter.ts`; a `GET /api/settings` keeps the
@@ -16,11 +18,14 @@
 
 import {
   keepPreviousData,
+  MutationObserver,
   QueryClient,
   useInfiniteQuery,
   useMutation,
   useQuery,
   useQueryClient,
+  type Query,
+  type QueryKey,
   type UseInfiniteQueryResult,
   type UseMutationResult,
   type UseQueryResult,
@@ -30,6 +35,7 @@ import { useCallback, useEffect, useRef } from 'react'
 import {
   cancelScan,
   createRoot,
+  deleteBookCover,
   deleteProgress,
   deleteRoot,
   exportProgress,
@@ -51,8 +57,10 @@ import {
   login,
   logout,
   purgeCache,
+  putBookCover,
   putBookPrefs,
   putProgress,
+  putSeriesPrefs,
   rescanSeries,
   startScan,
   subscribeUnauthorized,
@@ -61,6 +69,8 @@ import {
 import { type ApiError, ImageQueuedError, isApiError, isImageQueuedError } from './errors'
 import type {
   AuthStatus,
+  BookCover,
+  BookCoverResult,
   BookDetail,
   BookPrefs,
   BookPrefsUpdate,
@@ -76,6 +86,7 @@ import type {
   ProgressImportResult,
   ProgressUpdate,
   PurgeKind,
+  ReadingDir,
   RootCreate,
   RootEntry,
   RootsResponse,
@@ -88,12 +99,14 @@ import type {
   SeriesDetail,
   SeriesListParams,
   SeriesListResponse,
+  SeriesPrefs,
   Settings,
 } from './types'
 import { SERIES_LIST_DEFAULT_LIMIT } from './types'
 import { SETTINGS_QUERY_KEY, settingsReadMark, withUnsavedSettings } from './settingsWriter'
 import {
   assertPageNumber,
+  bookCoverUrl,
   pageThumbUrl,
   seriesCoverUrl,
   type ThumbWidth,
@@ -189,6 +202,8 @@ export const queryKeys = {
   image: {
     all: ['image'] as const,
     cover: (sid: ID, w: number, v: string | null) => ['image', 'cover', sid, w, v] as const,
+    /** E-69 §2.6 — keyed by `cover_cv`, so a new choice or direction is a new entry. */
+    bookCover: (bid: ID, w: number, v: string | null) => ['image', 'bookCover', bid, w, v] as const,
     thumb: (bid: ID, n: number, w: number, v: string | null) =>
       ['image', 'thumb', bid, n, w, v] as const,
   },
@@ -368,6 +383,103 @@ export function useRescanSeries(): UseMutationResult<ScanRunResponse, Error, ID>
     mutationFn: (sid: ID) => rescanSeries(sid),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.scan.status })
+    },
+  })
+}
+
+/**
+ * Everything a book cover's `cover_cv` rides on (E-69 §2.6/§2.8): every `books` key
+ * (detail and prefs), every `series` key (the volume list, and the series cover that
+ * `cover_kind = 'page'` takes from its cover volume) and 이어보기. The image keys carry
+ * `cover_cv`, so they turn over by themselves once these land — `image.all` is left alone.
+ * Fire-and-forget, as `useImportProgress` does (E-68 §2.6). The `.seg`, the cover writes
+ * and each seed the boot-time upload has the server take (`store/seriesDir.ts`) use it.
+ */
+export function invalidateCoverFamilies(queryClient: QueryClient): void {
+  void queryClient.invalidateQueries({ queryKey: queryKeys.books.all })
+  void queryClient.invalidateQueries({ queryKey: queryKeys.series.all })
+  void queryClient.invalidateQueries({ queryKey: queryKeys.continueReading.all })
+}
+
+/**
+ * The one queue every write of a series' direction goes through: the `.seg`
+ * (`useSetSeriesDirection`) and the boot-time upload of the old localStorage seed
+ * (`store/seriesDir.ts`, E-69 §2.3). In one TanStack mutation scope, a step runs
+ * after every write asked for before it and before every one asked for after it,
+ * so the upload's GET → "still null?" → PUT cannot have a reader's choice land in
+ * the middle, nor overtake one.
+ */
+export const SERIES_PREFS_SCOPE = { id: 'series-prefs' } as const
+
+/** The series whose direction the reader has asked to write, per client — noted at `mutate`. */
+const seriesDirectionAsks = new WeakMap<QueryClient, Set<ID>>()
+
+/**
+ * Whether the reader has asked, on this client, for a direction of `sid` — noted
+ * when the write is asked for, not when the queue reaches it. A seed may not go
+ * over that: E-69 §2.3 uploads one only where nobody chose, and a `null` the
+ * server holds may be the reader's own 기본.
+ */
+export function seriesDirectionAsked(client: QueryClient, sid: ID): boolean {
+  return seriesDirectionAsks.get(client)?.has(sid) ?? false
+}
+
+/** Runs `step` in `SERIES_PREFS_SCOPE`, in its turn among the `.seg`'s writes. */
+export function inSeriesPrefsQueue<T>(client: QueryClient, step: () => Promise<T>): Promise<T> {
+  const observer = new MutationObserver<T, Error, void>(client, {
+    scope: SERIES_PREFS_SCOPE,
+    mutationFn: step,
+  })
+  // `reset` lets go of the mutation, so the cache can collect it once it settles.
+  return observer.mutate().finally(() => {
+    observer.reset()
+  })
+}
+
+export interface SetSeriesDirectionVariables {
+  sid: ID
+  /** `null` clears the series' own direction; its books then fall to the global default. */
+  reading_direction: ReadingDir | null
+}
+
+/**
+ * `PUT /api/series/{sid}/prefs` — the series-detail `.seg` (ruling E-69 §2.3).
+ *
+ * The answer is written into that series' detail at once, so the segment shows the
+ * server's value without waiting for a refetch. Then everything the direction moves is
+ * invalidated: each book of the series now opens on another *effective* direction
+ * (`BookPrefs.reading_direction` is the book → series → global ladder), and every cover
+ * without a chosen region turned over its `cover_cv` (§2.7) — hence the three families,
+ * which include `books.prefs` for every book of the series.
+ *
+ * `scope` serialises the writes: two clicks in a row reach the server in the order they
+ * were made, so the later choice is the one that stays. The seed upload takes the same
+ * queue (`SERIES_PREFS_SCOPE`) and stands down for a series the reader asked to write.
+ */
+export function useSetSeriesDirection(): UseMutationResult<
+  SeriesPrefs,
+  Error,
+  SetSeriesDirectionVariables
+> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    scope: SERIES_PREFS_SCOPE,
+    // `onMutate` runs when the write is asked for, before the scope lets it go.
+    onMutate: ({ sid }: SetSeriesDirectionVariables) => {
+      let asked = seriesDirectionAsks.get(queryClient)
+      if (asked === undefined) {
+        asked = new Set()
+        seriesDirectionAsks.set(queryClient, asked)
+      }
+      asked.add(sid)
+    },
+    mutationFn: ({ sid, reading_direction }: SetSeriesDirectionVariables) =>
+      putSeriesPrefs(sid, { reading_direction }),
+    onSuccess: (prefs, { sid }) => {
+      queryClient.setQueryData<SeriesDetail>(queryKeys.series.detail(sid), (old) =>
+        old === undefined ? undefined : { ...old, reading_direction: prefs.reading_direction },
+      )
+      invalidateCoverFamilies(queryClient)
     },
   })
 }
@@ -558,6 +670,52 @@ export function useDeleteProgress(): UseMutationResult<void, Error, ID> {
       void queryClient.invalidateQueries({ queryKey: queryKeys.books.detail(bid) })
       void queryClient.invalidateQueries({ queryKey: queryKeys.series.all })
       void queryClient.invalidateQueries({ queryKey: queryKeys.continueReading.all })
+    },
+  })
+}
+
+/**
+ * The mutation scope of one book's cover writes. 표지로 지정 and 기본 표지로 되돌리기
+ * share it, so a reset asked for while a choice is on its way is sent after the
+ * choice has been answered — never beside it, where the server could apply the two
+ * in either order and keep the region the reader just took back. Another book's
+ * writes are another scope and do not wait.
+ */
+export function bookCoverScope(bid: ID): { id: string } {
+  return { id: `book-cover:${bid}` }
+}
+
+/**
+ * `PUT /api/books/{bid}/cover` — the 표지로 dialog's 표지로 지정 (ruling E-69 §2.8).
+ * A success invalidates `books`, `series` and 이어보기; a refusal (`400` for a region
+ * outside §2.4's rules or a book that is not `ok`) invalidates nothing.
+ *
+ * The book is the hook's, not the write's: a TanStack scope is fixed per hook, and the
+ * order this has to keep is per book (`bookCoverScope`). A write already asked for
+ * keeps the book it was asked for, even if the viewer moves on to the next volume.
+ */
+export function useSetBookCover(bid: ID): UseMutationResult<BookCoverResult, Error, BookCover> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    scope: bookCoverScope(bid),
+    mutationFn: (cover: BookCover) => putBookCover(bid, cover),
+    onSuccess: () => {
+      invalidateCoverFamilies(queryClient)
+    },
+  })
+}
+
+/**
+ * `DELETE /api/books/{bid}/cover` — 기본 표지로 되돌리기 (E-69 §2.8); `204` even with no
+ * choice. In `useSetBookCover`'s scope for the same book, so the two keep their order.
+ */
+export function useResetBookCover(bid: ID): UseMutationResult<void, Error, void> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    scope: bookCoverScope(bid),
+    mutationFn: () => deleteBookCover(bid),
+    onSuccess: () => {
+      invalidateCoverFamilies(queryClient)
     },
   })
 }
@@ -909,9 +1067,59 @@ export interface ImageState {
   error: ApiError | null
 }
 
+/**
+ * The queries owed a read that starts after a `409 stale_version` — see `rereadAfterStale`.
+ * Keyed by the `Query` itself, so per client, and let go with it.
+ */
+const staleRereadsOwed = new WeakSet<Query>()
+
+/**
+ * Re-reads `queryKey` because a `409 stale_version` said the version it handed an image
+ * is gone (E-69 §2.7) — with a read that **starts after the 409**.
+ *
+ *  * Nothing on the wire: invalidate, which starts that read now (or, for a query
+ *    nobody is watching, on its next mount).
+ *  * A read on the wire began before this 409 and may answer the very version the server
+ *    just refused — it was asked before the change. Joining it (`cancelRefetch: false`)
+ *    would land that version again; the image's one retry is refused on it too, nothing
+ *    is left to re-read, and the card stays striped. Cancelling it instead restarts the
+ *    read once per 409, so a grid that went stale all at once would ask once a card. So
+ *    it is let finish, and then the query is invalidated once more.
+ *  * That second read is owed once per query: every 409 that comes back before it starts
+ *    is answered by it. A grid of N stale covers costs one or two reads, not N.
+ */
+function rereadAfterStale(client: QueryClient, queryKey: QueryKey): void {
+  const cache = client.getQueryCache()
+  const query = cache.find({ queryKey, exact: true })
+  // Not in the cache: whoever mounts it next reads it from the server anyway.
+  if (query === undefined || staleRereadsOwed.has(query)) return
+  if (query.state.fetchStatus === 'idle') {
+    void client.invalidateQueries({ queryKey, exact: true }, { cancelRefetch: false })
+    return
+  }
+  staleRereadsOwed.add(query)
+  const unsubscribe = cache.subscribe((event) => {
+    if (event.query !== query) return
+    if (event.type === 'removed') {
+      unsubscribe()
+      staleRereadsOwed.delete(query)
+      return
+    }
+    if (query.state.fetchStatus !== 'idle') return
+    unsubscribe()
+    // After the cache has finished telling everyone that read settled, not inside it.
+    queueMicrotask(() => {
+      staleRereadsOwed.delete(query)
+      void client.invalidateQueries({ queryKey, exact: true }, { cancelRefetch: false })
+    })
+  })
+}
+
 interface ImageResourceOptions extends EnabledOption {
   /** When set, a `409 stale_version` invalidates this book before the single retry. */
   bookId?: ID
+  /** And this series' detail — where a volume card read its `cover_cv` (E-69). */
+  seriesId?: ID
 }
 
 function useImageResource(
@@ -921,6 +1129,7 @@ function useImageResource(
 ): ImageState {
   const queryClient = useQueryClient()
   const bookId = options.bookId
+  const seriesId = options.seriesId
   const query = useQuery({
     queryKey,
     queryFn: async ({ signal }) => {
@@ -929,8 +1138,14 @@ function useImageResource(
         if (result.state === 'queued') throw new ImageQueuedError(result.retryAfterMs)
         return result.url
       } catch (error) {
-        if (bookId !== undefined && isApiError(error) && error.code === 'stale_version') {
-          void queryClient.invalidateQueries({ queryKey: queryKeys.books.detail(bookId) })
+        if (isApiError(error) && error.code === 'stale_version') {
+          // A read that starts after this 409, shared by every 409 waiting for one: a
+          // grid of covers that all went stale at once (a direction change from another
+          // tab) asks for the series once or twice, not once each.
+          if (bookId !== undefined) rereadAfterStale(queryClient, queryKeys.books.detail(bookId))
+          if (seriesId !== undefined) {
+            rereadAfterStale(queryClient, queryKeys.series.detail(seriesId))
+          }
         }
         throw error
       }
@@ -993,5 +1208,33 @@ export function usePageThumbImage(bid: ID, n: number, options: ThumbImageOptions
   return useImageResource(queryKeys.image.thumb(bid, n, options.w, options.v), url, {
     enabled: options.enabled ?? true,
     bookId: bid,
+  })
+}
+
+export interface BookCoverImageOptions extends EnabledOption {
+  /** Always an explicit width from `THUMB_WIDTHS` (§0.4). */
+  w: ThumbWidth
+  /** The book's `cover_cv` — not its content `cv` (E-69 §2.7). */
+  v: string | null
+  /**
+   * The series the caller read `cover_cv` from. A `409 stale_version` re-reads it, as well
+   * as the book: the cover's version moves on things this tab did not do (a global
+   * direction change, another browser's choice), and the same url retried cannot recover.
+   */
+  seriesId?: ID
+}
+
+/**
+ * `GET /api/books/{bid}/cover` — a volume card's picture (ruling E-69 §2.6, §2.8). The
+ * series cover's behaviour exactly: `202` retries after `Retry-After`, `404` (a book with
+ * no pages) and `422` are `unavailable` at once, `409 stale_version` re-reads and retries
+ * once. `unavailable` means "keep the striped placeholder".
+ */
+export function useBookCoverImage(bid: ID, options: BookCoverImageOptions): ImageState {
+  const url = bookCoverUrl(bid, { w: options.w, v: options.v })
+  return useImageResource(queryKeys.image.bookCover(bid, options.w, options.v), url, {
+    enabled: options.enabled ?? true,
+    bookId: bid,
+    ...(options.seriesId === undefined ? {} : { seriesId: options.seriesId }),
   })
 }

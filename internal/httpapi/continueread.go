@@ -32,7 +32,10 @@ func (s *Server) handleContinue(w http.ResponseWriter, r *http.Request) error {
 
 	items := make([]ContinueItem, 0, len(rows))
 	for _, row := range rows {
-		book := toBookSummary(row.Book)
+		book, err := s.bookSummary(r, row.Book)
+		if err != nil {
+			return err
+		}
 		// Every row of this query has progress by construction — it selects
 		// started-but-unfinished books — but the wire type carries a non-nullable
 		// Progress, so a row that somehow lacks it is dropped rather than

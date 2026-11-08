@@ -125,9 +125,10 @@ type App struct {
 	http  *http.Server
 	ln    net.Listener
 
-	rebuilt bool
-	started time.Time
-	closed  bool
+	pendingRelocations []index.Relocation
+	rebuilt            bool
+	started            time.Time
+	closed             bool
 }
 
 // New performs steps 2 to 6 of arch §6.3 and binds the listener. It does not
@@ -261,7 +262,7 @@ func New(ctx context.Context, opts Options) (a *App, err error) {
 
 	covers := scanner.CoverQueue(nil)
 	if a.cfg.Thumbnails.CoverFirst {
-		covers = newCoverBridge(a.thumb)
+		covers = newCoverBridge(a.thumb, a.idx, a.user, a.cfg.Reader.ReadingDirection)
 	}
 	books := scanner.BookLister(a.src)
 	if opts.wrapBooks != nil {
@@ -281,13 +282,29 @@ func New(ctx context.Context, opts Options) (a *App, err error) {
 		// the operator has to restart, and the only visible symptom in the
 		// meantime is a series reading 0 % for no reason they can see.
 		AfterScan: func(ctx context.Context, res *scanner.Result) {
+			if bridge, ok := covers.(*coverBridge); ok {
+				defer bridge.Refresh(ctx)
+			}
 			// Evidence first, inference second. carryProgress acts on moves the
 			// scan proved by content hash; repairSplitProgress then sweeps up
 			// whatever is still orphaned, including rows whose proof was
 			// destroyed by a sweep that ran before any of this existed.
-			a.carryProgressAcrossRelocations(ctx, res, log)
-			a.repairSplitProgress(ctx, log)
-			a.refileMisfiledProgress(ctx, log)
+			//
+			// The purge runs only when every step before it succeeded. It
+			// deletes whatever those steps did not explain, so a step that
+			// failed — a carry whose write rolled back, a lookup that errored —
+			// would hand it rows that were explained and only failed to land,
+			// and a transient error would destroy a moved book's progress,
+			// cover and prefs (U1 codex cycle 1, finding 2). Each step still
+			// runs; they write, and none of them deletes.
+			explained := a.carryProgressAcrossRelocations(ctx, res, log)
+			explained = a.repairSplitProgress(ctx, log) && explained
+			explained = a.refileMisfiledProgress(ctx, log) && explained
+			if !explained {
+				log.Warn("not deleting anything for missing books this run: an earlier cleanup step failed, " +
+					"and a row it would have moved looks the same as a vanished one")
+				return
+			}
 			a.purgeVanishedProgress(ctx, res, log)
 		},
 		Logger: log,
@@ -388,7 +405,10 @@ func (a *App) reconcileRoots(ctx context.Context) error {
 }
 
 // carryProgressAcrossRelocations moves reading progress onto the new id of every
-// book this scan proved had merely moved.
+// book this scan proved had merely moved — and, since ruling E-69 §2.11(a)(e)
+// and §2.12, the book's chosen cover, its viewer preferences and (for a
+// series-level 1:1 move) the series' reading direction, in one transaction,
+// whether or not the book was ever read.
 //
 // This is the mechanism a rename *should* go through, and the reason it lives
 // here rather than in the scanner is arch §3.7: internal/scanner cannot write to
@@ -400,48 +420,132 @@ func (a *App) reconcileRoots(ctx context.Context) error {
 // on content hash needs no opinion about filenames; the path rules downstream
 // exist only for rows whose old index entry was already swept away, which is a
 // backlog and not a mechanism.
-func (a *App) carryProgressAcrossRelocations(ctx context.Context, res *scanner.Result, log *slog.Logger) {
+//
+// It reports false when a lookup or the write failed, so the purge of the same
+// run can stand down (see the AfterScan hook). A pairing it declined is not a
+// failure.
+func (a *App) carryProgressAcrossRelocations(ctx context.Context, res *scanner.Result, log *slog.Logger) (success bool) {
 	if res == nil {
-		return
+		return true
 	}
-	var relocs []index.Relocation
+	var fresh []index.Relocation
 	for _, rr := range res.Roots {
-		relocs = append(relocs, rr.Relocations...)
+		fresh = append(fresh, rr.Relocations...)
+	}
+	pending, err := a.user.PendingRelocations(ctx)
+	var relocs []index.Relocation
+	for _, p := range pending {
+		relocs = append(relocs, index.Relocation(p))
+	}
+	relocs = append(relocs, a.pendingRelocations...)
+	relocs = append(relocs, fresh...)
+	seen := map[string]bool{}
+	unique := relocs[:0]
+	for _, p := range relocs {
+		if !seen[p.OldBookID] {
+			unique = append(unique, p)
+			seen[p.OldBookID] = true
+		}
+	}
+	relocs = unique
+	defer func() {
+		if success {
+			a.pendingRelocations = nil
+			return
+		}
+		a.pendingRelocations = append([]index.Relocation(nil), relocs...)
+		pairs := make([]userdata.PendingRelocation, 0, len(relocs))
+		for _, p := range relocs {
+			pairs = append(pairs, userdata.PendingRelocation(p))
+		}
+		if err := a.user.SavePendingRelocations(ctx, pairs); err != nil {
+			log.Warn("keeping relocation evidence in memory: persistence failed", "error", err)
+		}
+	}()
+	if err != nil {
+		log.Warn("could not read pending relocation evidence; skipping deletion", "error", err)
+		return false
 	}
 	if len(relocs) == 0 {
-		return
+		return true
 	}
-	existing, err := a.user.GetProgressMany(ctx, repair.RelocationIDs(relocs))
+	oldIDsToClear := repair.RelocationIDs(relocs)
+	available := relocs[:0]
+	for _, p := range relocs {
+		b, err := a.idx.GetBook(ctx, p.NewBookID)
+		if errors.Is(err, index.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return false
+		}
+		p.NewRootName, p.NewRelPath, p.NewSeriesID, p.NewPageCount = b.RootName, b.RelPath, b.SeriesID, int(b.PageCount)
+		available = append(available, p)
+	}
+	relocs = available
+	defer func() {
+		if success {
+			if err := a.user.ClearPendingRelocations(ctx, oldIDsToClear); err != nil {
+				log.Warn("could not retire relocation evidence", "error", err)
+				success = false
+			}
+		}
+	}()
+
+	// Every table filed under the old ids, not only progress (ruling E-69
+	// §2.12): a book nobody read can still carry a direction or a cover.
+	oldIDs := repair.RelocationIDs(relocs)
+	existing, err := a.user.GetProgressMany(ctx, oldIDs)
 	if err != nil {
 		log.Warn("could not check which relocated books had been read; "+
-			"reading progress is unchanged and the next scan will try again", "error", err)
-		return
+			"reading progress is unchanged", "error", err)
+		return false
 	}
-	moves, skipped := repair.PlanRelocations(relocs, existing)
+	covers, err := a.user.GetCovers(ctx, oldIDs)
+	if err != nil {
+		log.Warn("could not check which relocated books had a chosen cover; "+
+			"user.db is unchanged", "error", err)
+		return false
+	}
+	seriesNow, err := a.idx.SeriesAt(ctx, repair.RelocationSeriesIDs(relocs))
+	if err != nil {
+		log.Warn("could not check which series the relocated books left; "+
+			"user.db is unchanged", "error", err)
+		return false
+	}
+	carry, skipped := repair.PlanCarry(relocs, existing, covers, seriesNow)
 	for _, s := range skipped {
-		log.Warn("reading progress not carried across a move: the pairing does not add up",
+		log.Warn("reading progress not carried across a move: the pairing does not add up "+
+			"(the cover and preferences still follow it)",
 			"old_book_id", s.OldBookID, "new_book_id", s.NewBookID,
 			"reason", string(s.Reason), "baseline_pages", s.PageCount, "new_pages", s.NewPages)
 	}
-	if len(moves) == 0 {
-		log.Info("books moved, none of them had been read",
-			"relocations", len(relocs), "declined", len(skipped))
-		return
-	}
-	r, err := a.user.RepairSplit(ctx, moves)
+	r, err := a.user.ApplyCarry(ctx, carry)
 	if err != nil {
-		log.Warn("could not carry reading progress across a move; "+
-			"user.db is unchanged and the next scan will try again",
-			"error", err, "planned", len(moves), "declined", len(skipped))
-		return
+		log.Warn("could not carry reading progress, covers and preferences across a move; "+
+			"user.db is unchanged",
+			"error", err, "planned_progress", len(carry.Progress), "declined", len(skipped))
+		return false
 	}
-	log.Info("carried reading progress across books the scan saw move",
-		"relocations", len(relocs), "retired", r.Retired, "written", r.Written,
-		"kept_newer_local", r.Kept, "declined", len(skipped))
+	if r == (userdata.CarryResult{}) {
+		log.Info("books moved, none of them had progress, a cover or preferences to carry",
+			"relocations", len(relocs), "declined", len(skipped))
+		return true
+	}
+	log.Info("carried reading progress, covers and preferences across books the scan saw move",
+		"relocations", len(relocs), "retired", r.Progress.Retired, "written", r.Progress.Written,
+		"kept_newer_local", r.Progress.Kept,
+		"covers_written", r.Covers.Written, "covers_kept", r.Covers.Kept,
+		"prefs_written", r.Prefs.Written, "prefs_kept", r.Prefs.Kept,
+		"series_prefs_written", r.Series.Written, "series_prefs_kept", r.Series.Kept,
+		"declined", len(skipped))
+	return true
 }
 
 // purgeVanishedProgress deletes reading history for books a completed walk of
-// their root did not find.
+// their root did not find, together with their chosen covers and viewer
+// preferences, and the reading direction of series such a walk did not find
+// (ruling E-69 §2.11(d)(e)).
 //
 // **This is the only thing in the server that destroys authored data**, so its
 // guard is the whole design. It runs only from a scan — never at startup, where
@@ -475,35 +579,129 @@ func (a *App) purgeVanishedProgress(ctx context.Context, res *scanner.Result, lo
 	if len(swept) == 0 {
 		return
 	}
+	failed := func(err error) {
+		log.Warn("could not check for reading progress, covers or preferences whose book is gone; "+
+			"nothing was deleted and the next scan will try again", "error", err)
+	}
+
+	// The ids are collected from the tables that record where a book was —
+	// progress and book_covers, each with root_name and book_path (ruling E-69
+	// §2.11(d)): a book can have a cover and no progress at all. Each id found
+	// is removed from all three tables, its book_prefs included.
+	//
+	// book_prefs has no root column, so a prefs row with neither a progress nor
+	// a cover row beside it cannot say which root it was in, and it is never
+	// deleted here (§2.11(d), revised after U1 codex cycle 1). "Every root the
+	// index knows was walked" is not a substitute: a root taken out of the
+	// configuration and an index rebuilt leave the index not knowing that root
+	// at all, and A-11 promises adding it back reattaches everything. Such a
+	// row is harmless, and a book that returns at the same path picks it up.
 	gone, err := a.idx.VanishedProgress(ctx, swept)
 	if err != nil {
-		log.Warn("could not check for reading progress whose book is gone; "+
-			"nothing was deleted and the next scan will try again", "error", err)
+		failed(err)
 		return
 	}
-	if len(gone) == 0 {
-		return
-	}
-	ids := make([]string, 0, len(gone))
-	for _, g := range gone {
-		log.Info("deleting reading progress: the file is not in a root this run walked end to end",
-			"root", g.RootName, "book_path", g.BookPath, "book_id", g.BookID,
-			"last_page", g.LastPage, "page_count", g.PageCount)
-		ids = append(ids, g.BookID)
-	}
-	progress, prefs, err := a.user.PurgeProgress(ctx, ids)
+	goneCovers, err := a.idx.VanishedCovers(ctx, swept)
 	if err != nil {
-		log.Warn("could not delete reading progress for missing books; "+
-			"user.db is unchanged and the next scan will try again",
-			"error", err, "rows", len(ids))
+		failed(err)
 		return
 	}
-	log.Info("deleted reading progress for books the filesystem no longer has",
-		"progress_rows", progress, "pref_rows", prefs, "roots_walked", len(swept))
+	goneSeries, err := a.idx.VanishedSeriesPrefs(ctx, swept)
+	if err != nil {
+		failed(err)
+		return
+	}
+
+	// One id can have two sources that disagree. A split reattachment across
+	// roots files the cover under the destination it chose and leaves the
+	// progress row naming the orphan's root (repair.row), so one table can say
+	// "gone from a root this run walked" while the other names a root nobody
+	// walked — one taken out of the configuration, or one whose sweep was
+	// refused. The purge deletes the id from every table, so it believes the
+	// id only when every row it has names a walked root, and otherwise keeps
+	// all of them (U1 codex cycle 2). Keeping is the safe error: a held row is
+	// harmless, a deleted one is gone.
+	walked := make(map[string]bool, len(swept))
+	for _, r := range swept {
+		walked[r] = true
+	}
+	candidates := make([]string, 0, len(gone)+len(goneCovers))
+	for _, g := range gone {
+		candidates = append(candidates, g.BookID)
+	}
+	for _, g := range goneCovers {
+		candidates = append(candidates, g.BookID)
+	}
+	progressOf, err := a.user.GetProgressMany(ctx, candidates)
+	if err != nil {
+		failed(err)
+		return
+	}
+	coverOf, err := a.user.GetCovers(ctx, candidates)
+	if err != nil {
+		failed(err)
+		return
+	}
+	held := map[string]bool{}
+	for _, id := range candidates {
+		p, hasProgress := progressOf[id]
+		c, hasCover := coverOf[id]
+		if held[id] || (!hasProgress || walked[p.RootName]) && (!hasCover || walked[c.RootName]) {
+			continue
+		}
+		held[id] = true
+		log.Info("keeping a missing book's progress, cover and preferences: one of its rows names a root this run did not walk end to end",
+			"book_id", id,
+			"progress_root", p.RootName, "progress_book_path", p.BookPath,
+			"cover_root", c.RootName, "cover_book_path", c.BookPath)
+	}
+
+	var set userdata.PurgeSet
+	seen := map[string]struct{}{}
+	add := func(id string) bool {
+		if _, dup := seen[id]; dup || held[id] {
+			return false
+		}
+		seen[id] = struct{}{}
+		set.Books = append(set.Books, id)
+		return true
+	}
+	for _, g := range gone {
+		if add(g.BookID) {
+			log.Info("deleting reading progress: the file is not in a root this run walked end to end",
+				"root", g.RootName, "book_path", g.BookPath, "book_id", g.BookID,
+				"last_page", g.LastPage, "page_count", g.PageCount)
+		}
+	}
+	for _, g := range goneCovers {
+		if add(g.BookID) {
+			log.Info("deleting a chosen cover: the file is not in a root this run walked end to end",
+				"root", g.RootName, "book_path", g.BookPath, "book_id", g.BookID,
+				"page", g.Page, "page_count", g.PageCount)
+		}
+	}
+	for _, g := range goneSeries {
+		set.Series = append(set.Series, g.SeriesID)
+		log.Info("deleting a series reading direction: the series is not in a root this run walked end to end",
+			"root", g.RootName, "series_path", g.SeriesPath, "series_id", g.SeriesID)
+	}
+	if len(set.Books) == 0 && len(set.Series) == 0 {
+		return
+	}
+	r, err := a.user.Purge(ctx, set)
+	if err != nil {
+		log.Warn("could not delete reading progress, covers or preferences for missing books; "+
+			"user.db is unchanged and the next scan will try again",
+			"error", err, "books", len(set.Books), "series", len(set.Series))
+		return
+	}
+	log.Info("deleted reading progress, covers and preferences for books the filesystem no longer has",
+		"progress_rows", r.Progress, "pref_rows", r.Prefs, "cover_rows", r.Covers,
+		"series_pref_rows", r.Series, "roots_walked", len(swept))
 }
 
-// refileMisfiledProgress puts progress rows back under the series their book is
-// actually in.
+// refileMisfiledProgress puts progress rows — and chosen covers (ruling E-69
+// §2.11(c)) — back under the series their book is actually in.
 //
 // It runs last of the three, after any row this scan moved has been written, so
 // a carry that got the series wrong is corrected in the same pass rather than a
@@ -514,33 +712,50 @@ func (a *App) purgeVanishedProgress(ctx context.Context, res *scanner.Result, lo
 // own answer to which series a book is in, so there is no second candidate to
 // weigh and nothing to be uncertain about — a disagreement is simply wrong and
 // the correction is a lookup.
-func (a *App) refileMisfiledProgress(ctx context.Context, log *slog.Logger) {
-	misfiled, err := a.idx.MisfiledProgress(ctx)
+//
+// It reports false when either refile failed (see the AfterScan hook).
+func (a *App) refileMisfiledProgress(ctx context.Context, log *slog.Logger) bool {
+	ok := a.refile(ctx, log, "reading progress", a.idx.MisfiledProgress, a.user.RefileProgress)
+	// The same correction for chosen covers (ruling E-69 §2.11(c)).
+	return a.refile(ctx, log, "chosen covers", a.idx.MisfiledCovers, a.user.RefileCovers) && ok
+}
+
+func (a *App) refile(ctx context.Context, log *slog.Logger, what string,
+	find func(context.Context) ([]index.Misfiled, error),
+	write func(context.Context, []userdata.Refile) (int, error)) bool {
+	misfiled, err := find(ctx)
 	if err != nil {
-		log.Warn("could not check whether reading progress is filed under the right series; "+
+		log.Warn("could not check whether "+what+" is filed under the right series; "+
 			"the library is unaffected and the next scan will try again", "error", err)
-		return
+		return false
 	}
 	if len(misfiled) == 0 {
-		return
+		return true
 	}
 	rows := make([]userdata.Refile, 0, len(misfiled))
 	for _, m := range misfiled {
 		rows = append(rows, userdata.Refile{BookID: m.BookID, SeriesID: m.ActualSeria})
 	}
-	n, err := a.user.RefileProgress(ctx, rows)
+	n, err := write(ctx, rows)
 	if err != nil {
-		log.Warn("could not refile reading progress onto the right series; "+
+		log.Warn("could not refile "+what+" onto the right series; "+
 			"user.db is unchanged and the next scan will try again",
 			"error", err, "rows", len(rows))
-		return
+		return false
 	}
-	log.Info("refiled reading progress onto the series its book belongs to",
+	log.Info("refiled "+what+" onto the series its book belongs to",
 		"rows", n, "seen", len(misfiled))
+	return true
 }
 
 // repairSplitProgress reattaches reading progress that names a book the index
-// has since split into volumes (internal/repair).
+// has since split into volumes (internal/repair), and with it the chosen covers
+// that pass the same gates on their own baseline and the container's viewer
+// preferences (ruling E-69 §2.11(b), §2.12).
+//
+// It reports false when a lookup or the write failed (see the AfterScan hook);
+// a declined row is not a failure. Start-up (step 5a) ignores the report:
+// nothing is purged there.
 //
 // It counts every decline rather than only the successes: a repair that moved
 // 20 of 23 rows and said nothing about the other three would be the same shape
@@ -559,64 +774,83 @@ func (a *App) refileMisfiledProgress(ctx context.Context, log *slog.Logger) {
 //
 // Nothing here is fatal. Every failure path leaves user.db exactly as it was
 // (the write is one transaction) and the next start tries again.
-func (a *App) repairSplitProgress(ctx context.Context, log *slog.Logger) {
+func (a *App) repairSplitProgress(ctx context.Context, log *slog.Logger) bool {
 	orphans, err := a.idx.SplitOrphans(ctx)
 	if err != nil {
 		log.Warn("could not look for reading progress the index cannot resolve; "+
 			"the library is unaffected and the next scan will try again", "error", err)
-		return
+		return false
 	}
-	if len(orphans) == 0 {
-		return
+	// Chosen covers go through the same gates against their own baseline
+	// (ruling E-69 §2.11(b)), so they are looked for here too.
+	coverOrphans, err := a.idx.CoverOrphans(ctx)
+	if err != nil {
+		log.Warn("could not look for chosen covers the index cannot resolve; "+
+			"the library is unaffected and the next scan will try again", "error", err)
+		return false
+	}
+	if len(orphans) == 0 && len(coverOrphans) == 0 {
+		return true
 	}
 	roots, err := a.idx.RootNames(ctx)
 	if err != nil {
 		log.Warn("could not list roots to look for relocated books; "+
 			"the library is unaffected and the next scan will try again", "error", err)
-		return
+		return false
 	}
-	found, err := a.idx.BooksAt(ctx, repair.Candidates(orphans, roots))
+	found, err := a.idx.BooksAt(ctx, append(repair.Candidates(orphans, roots),
+		repair.CoverCandidates(coverOrphans, roots)...))
 	if err != nil {
 		log.Warn("could not look up where orphaned reading progress may have moved to; "+
 			"the library is unaffected and the next scan will try again", "error", err)
-		return
+		return false
 	}
 	moves, skipped := repair.Plan(orphans, roots, found)
+	coverMoves, coverSkipped := repair.PlanCovers(coverOrphans, roots, found)
+	carry := userdata.Carry{
+		Progress: moves,
+		Covers:   coverMoves,
+		Prefs:    repair.PlanSplitPrefs(orphans, roots, found),
+	}
 
 	byReason := make(map[repair.SkipReason]int, 5)
-	for _, s := range skipped {
+	for _, s := range append(skipped, coverSkipped...) {
 		byReason[s.Reason]++
 		switch s.Reason {
 		case repair.SkipLengthMismatch, repair.SkipPageOutOfRange, repair.SkipAmbiguous:
-			log.Warn("reading progress left alone: a destination was found but cannot be trusted",
+			log.Warn("reading progress or a chosen cover left alone: a destination was found but cannot be trusted",
 				"book_path", s.BookPath, "book_id", s.BookID, "reason", string(s.Reason),
-				"last_page", s.LastPage, "baseline_pages", s.PageCount, "destination_pages", s.DestPages)
+				"page", s.LastPage, "baseline_pages", s.PageCount, "destination_pages", s.DestPages)
 		case repair.SkipNotAContainer, repair.SkipUnresolved:
 			// Counted only: nothing on this machine can act on them.
 		}
 	}
 	counts := []any{
 		"orphans_seen", len(orphans),
+		"cover_orphans_seen", len(coverOrphans),
 		"unreachable_file_gone", byReason[repair.SkipUnresolved] + byReason[repair.SkipNotAContainer],
 		"declined_ambiguous", byReason[repair.SkipAmbiguous],
 		"declined_length_mismatch", byReason[repair.SkipLengthMismatch],
 		"declined_page_out_of_range", byReason[repair.SkipPageOutOfRange],
 	}
 
-	if len(moves) == 0 {
+	if len(carry.Progress) == 0 && len(carry.Covers) == 0 {
 		log.Info("orphaned reading progress found, none of it reattachable", counts...)
-		return
+		return true
 	}
-	res, err := a.user.RepairSplit(ctx, moves)
+	res, err := a.user.ApplyCarry(ctx, carry)
 	if err != nil {
 		log.Warn("could not reattach orphaned reading progress; "+
 			"user.db is unchanged and the next scan will try again",
-			append([]any{"error", err, "planned", len(moves)}, counts...)...)
-		return
+			append([]any{"error", err, "planned", len(moves), "planned_covers", len(coverMoves)}, counts...)...)
+		return false
 	}
 	log.Info("reattached reading progress to the books it belongs to",
-		append([]any{"retired", res.Retired, "written", res.Written,
-			"kept_newer_local", res.Kept}, counts...)...)
+		append([]any{"retired", res.Progress.Retired, "written", res.Progress.Written,
+			"kept_newer_local", res.Progress.Kept,
+			"covers_written", res.Covers.Written, "covers_kept", res.Covers.Kept,
+			"prefs_written", res.Prefs.Written, "prefs_kept", res.Prefs.Kept}, counts...)...)
+	return true
 }
 
 // buildAuth turns the optional `auth:` block into an Authenticator (NFR-SEC-002).

@@ -44,6 +44,11 @@ export const SERIES_ID = 'gzj75n6x7rir6but'
 export const BOOK_ID = 'ox74tfcrwwnfopch'
 export const BOOK_CV = '3f2a91cc7b40e5d1'
 export const COVER_CV = 'a1b2c3d4e5f60718'
+/**
+ * E-69 §2.7: a book's cover version, distinct from its content `cv` — the same
+ * book's cover turns over when the chosen region or the effective direction does.
+ */
+export const BOOK_COVER_CV = 'c0ffee00b00c0001'
 
 export const root: Root = {
   name: 'mangga',
@@ -151,9 +156,22 @@ export const bookSummary: BookSummary = {
   file_size: 24_500_000,
   mtime: 1_400_000_000,
   cv: BOOK_CV,
+  cover_cv: BOOK_COVER_CV,
+  cover: null,
   status: 'ok',
   error: null,
   progress,
+}
+
+/**
+ * E-69 §2.4: a volume whose cover the reader chose — the right half of page 3, as
+ * a 2:3 frame on a 1600×1200 spread (w = 0.375 of 1600 = 600, h = 0.75 of 1200 =
+ * 900). Every number is exact in binary, so a boundary check reads it as written.
+ */
+export const coveredBookSummary: BookSummary = {
+  ...bookSummary,
+  cover_cv: 'c0ffee00b00c0002',
+  cover: { page: 3, x: 0.5, y: 0.125, w: 0.375, h: 0.75 },
 }
 
 /** FR-IDX-010 as the UI sees it: still `200`, `pages: []`, `error` populated. */
@@ -169,6 +187,8 @@ export const brokenBookSummary: BookSummary = {
   file_size: 18_300_000,
   mtime: 1_400_000_000,
   cv: 'ccdd00112233aabb',
+  cover_cv: 'ccdd00112233aabc',
+  cover: null,
   status: 'error',
   error: 'reading central directory: unexpected EOF',
   progress: null,
@@ -178,6 +198,8 @@ export const seriesDetail: SeriesDetail = {
   ...seriesSummary,
   books: [bookSummary, brokenBookSummary],
   encoding: 'cp949',
+  // E-69 §2.3: nobody set this series' direction, so its books fall to the global one.
+  reading_direction: null,
 }
 
 export const seriesListResponse: SeriesListResponse = {
@@ -334,8 +356,9 @@ export const health: Health = {
   avif_enabled: true,
 }
 
+/** E-69 §2.9: what `GET /api/progress/export` answers — always `/2`. */
 export const progressExport: ProgressExport = {
-  format: 'shelf-progress/1',
+  format: 'shelf-progress/2',
   exported_at: 1_753_600_700,
   id_version: 'shelf-id/1',
   items: [
@@ -359,6 +382,43 @@ export const progressExport: ProgressExport = {
       fit_mode: null,
     },
   ],
+  covers: [
+    {
+      book_id: BOOK_ID,
+      series_id: SERIES_ID,
+      root_name: 'mangga',
+      book_path: '[만화] 군계 1~25/군계(軍鷄) 01권.zip',
+      page: 3,
+      page_count: 187,
+      x: 0.5,
+      y: 0.125,
+      w: 0.375,
+      h: 0.75,
+      updated_at: 1_753_600_600,
+    },
+  ],
+  series_prefs: [
+    {
+      series_id: SERIES_ID,
+      root_name: 'mangga',
+      series_path: '[만화] 군계 1~25',
+      reading_direction: 'rtl',
+    },
+  ],
+}
+
+/**
+ * A file written before E-69: `/1`, with neither of §2.9's two arrays. Still importable,
+ * and deliberately not a `ProgressExport` — no server writes this shape any more.
+ */
+export const progressExportV1: Omit<ProgressExport, 'format' | 'covers' | 'series_prefs'> & {
+  format: 'shelf-progress/1'
+} = {
+  format: 'shelf-progress/1',
+  exported_at: progressExport.exported_at,
+  id_version: 'shelf-id/1',
+  items: progressExport.items,
+  prefs: progressExport.prefs,
 }
 
 /** The §7.2 envelope, for handlers that must fail in a contract-shaped way. */

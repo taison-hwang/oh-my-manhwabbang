@@ -26,6 +26,7 @@ import { SeriesDetailPage } from './features/series/SeriesDetailPage'
 import { ViewerPage } from './features/viewer/ViewerPage'
 import { ROUTER_BASENAME } from './lib/basePath'
 import { DEFAULT_SHELL_DATA, ShellDataContext, type ShellData } from './lib/shellData'
+import { useSeriesDirSeedMigration } from './store/seriesDir'
 
 /**
  * The router (impl-plan §5.2, ui-spec §3).
@@ -100,6 +101,8 @@ export function ShellDataProvider({ children }: { children: ReactNode }) {
   // Mounted here for the same reason: `theme` is the one server setting every
   // screen paints with.
   useThemeSettingsSync()
+  // E-69 §2.3: the old localStorage direction seed goes to the server once per boot.
+  useSeriesDirSeedMigration(auth.data)
   // And the library's four, for a reason of their own: the shell changes them on
   // every route — the sort select and the view switch (`TopBar`), the scope rows
   // (`Sidebar`) — so the sync's `reconciled` state has to outlive whatever

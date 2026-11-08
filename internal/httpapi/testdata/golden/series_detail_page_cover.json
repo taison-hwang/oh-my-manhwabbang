@@ -12,7 +12,7 @@
   "status": "ok",
   "error": null,
   "has_cover": true,
-  "cover_cv": "c10bec10bec10be0",
+  "cover_cv": "cover-cv-1",
   "progress": {
     "books_total": 1,
     "books_completed": 0,
@@ -35,10 +35,13 @@
       "file_size": 1610,
       "mtime": 1457920766,
       "cv": "c10bec10bec10be0",
+      "cover_cv": "cover-cv-1",
+      "cover": null,
       "status": "ok",
       "error": null,
       "progress": null
     }
   ],
-  "encoding": null
+  "encoding": null,
+  "reading_direction": null
 }

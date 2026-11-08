@@ -90,8 +90,8 @@ func TestOpen_freshDirectory_appliesSchemaInWALMode(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "user.db-wal")); err != nil {
 		t.Errorf("user.db-wal not present after a write: %v", err)
 	}
-	if v, err := db.SchemaVersion(t.Context()); err != nil || v != 2 {
-		t.Errorf("schema version = %d (%v), want 2 (amendment A-8 added series_seen)", v, err)
+	if v, err := db.SchemaVersion(t.Context()); err != nil || v != 3 {
+		t.Errorf("schema version = %d (%v), want 3 (E-69 §2.5 added book_covers, series_prefs)", v, err)
 	}
 	if v, ok, _ := db.Meta(t.Context(), "id_version"); !ok || v != userdata.IDVersion {
 		t.Errorf("meta id_version = %q (present %v), want %q", v, ok, userdata.IDVersion)
@@ -764,7 +764,8 @@ func TestExport_roundTripsThroughImport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Export: %v", err)
 	}
-	if doc.Format != "shelf-progress/1" || doc.IDVersion != "shelf-id/1" {
+	// E-69 §2.9: every export is written at /2.
+	if doc.Format != "shelf-progress/2" || doc.IDVersion != "shelf-id/1" {
 		t.Errorf("envelope = format %q, id_version %q", doc.Format, doc.IDVersion)
 	}
 	if len(doc.Items) != 2 || len(doc.Prefs) != 1 {

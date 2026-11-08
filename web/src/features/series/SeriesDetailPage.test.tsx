@@ -1,7 +1,7 @@
 import '@testing-library/jest-dom/vitest'
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
@@ -9,6 +9,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import {
+  BOOK_COVER_CV,
   bookSummary,
   errorEnvelope,
   ORIGIN,
@@ -22,8 +23,9 @@ import {
 } from '../../api/fixtures'
 import { ApiError } from '../../api/errors'
 import { resetBasePath } from '../../api/urls'
-import type { BookSummary, SeriesDetail } from '../../api/types'
-import { useSeriesDirStore } from '../../store/seriesDir'
+import { queryKeys } from '../../api/queries'
+import type { BookSummary, ReadingDir, SeriesDetail, Settings } from '../../api/types'
+import { SERIES_DIR_STORAGE_KEY } from '../../store/seriesDir'
 import { useUiStore } from '../../store/ui'
 import { SeriesDetailPage } from './SeriesDetailPage'
 import { rescanErrorMessage, seriesErrorMessage } from './seriesErrors'
@@ -34,7 +36,7 @@ import {
   VOLUME_ROW_GAP_PX,
   VOLUME_ROW_GRID_CLASS,
 } from './VolumeRow'
-import { failUnhandled } from '../../test/msw'
+import { createCoverMock, failUnhandled, type CoverMock } from '../../test/msw'
 
 /**
  * Screen 2 end to end against MSW: prd UI-002 / FR-LIB-009 (the volume list and
@@ -81,7 +83,6 @@ afterAll(() => {
 beforeEach(() => {
   localStorage.clear()
   useUiStore.setState({ view: 'grid' })
-  useSeriesDirStore.setState({ bySeries: {} })
 })
 
 // ---------------------------------------------------------------------------
@@ -232,26 +233,39 @@ interface Recorded {
   rescans: string[]
   progressPuts: { bid: string; body: unknown }[]
   progressDeletes: string[]
-  /** Every `/api/books/{bid}/thumbs/{n}` the screen asked for, in order. */
-  thumbs: { bid: string; n: string; w: string | null; v: string | null }[]
+  /**
+   * Every `GET /api/books/{bid}/cover` the screen asked for, in order — E-69
+   * §2.8 moved the volume cards off `/thumbs/1`. A request for `/thumbs/…`
+   * has no handler here and fails the test (`src/test/msw.ts`).
+   */
+  covers: { bid: string; w: string | null; v: string | null }[]
+  /** The contract-keeping mock behind the covers and `PUT /api/series/{sid}/prefs`. */
+  mock: CoverMock | null
 }
 
 function baseHandlers(detail: SeriesDetail, recorded: Recorded, rescanStatus = 202) {
+  // E-69 §2.3: the series direction is the server's now, so the series GET reads
+  // it back from what the PUT stored — a reload shows what was written.
+  const mock = createCoverMock(ORIGIN, {
+    books: detail.books,
+    series: [detail.id],
+    seriesDirs: { [detail.id]: detail.reading_direction },
+  })
+  recorded.mock = mock
+  recorded.covers = mock.gets
   return [
-    http.get(`${ORIGIN}/api/series/:sid`, () => HttpResponse.json(detail)),
-    // prd UI-002 / design.md 화면 2: every volume carries its own thumbnail.
-    http.get(`${ORIGIN}/api/books/:bid/thumbs/:n`, ({ params, request }) => {
-      const url = new URL(request.url)
-      recorded.thumbs.push({
-        bid: String(params.bid),
-        n: String(params.n),
-        w: url.searchParams.get('w'),
-        v: url.searchParams.get('v'),
-      })
-      return new HttpResponse(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), {
-        headers: { 'Content-Type': 'image/jpeg' },
-      })
-    }),
+    http.get(`${ORIGIN}/api/series/:sid`, () =>
+      HttpResponse.json({
+        ...detail,
+        // E-69 §2.7: each volume as the server lists it now — its `cover_cv` moves
+        // with the effective direction.
+        books: detail.books.map((book) => mock.summaryOf(book.id)),
+        reading_direction: mock.seriesDirs.get(detail.id) ?? null,
+      }),
+    ),
+    // prd UI-002 / design.md 화면 2: every volume carries its own picture — since
+    // E-69 §2.8 the book cover, not page 1's thumbnail.
+    ...mock.handlers,
     http.post(`${ORIGIN}/api/series/:sid/rescan`, ({ params }) => {
       recorded.rescans.push(String(params.sid))
       if (rescanStatus === 409) {
@@ -298,10 +312,8 @@ function LocationProbe() {
   return <p data-testid="location">{`${location.pathname}${location.search}`}</p>
 }
 
-function renderPage(): void {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  })
+function renderPage(client = newClient()): QueryClient {
+  // A fresh client each time: a second render is a reload, and reads the server again.
   render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[`/series/${SERIES_ID}`]}>
@@ -312,10 +324,17 @@ function renderPage(): void {
       </MemoryRouter>
     </QueryClientProvider>,
   )
+  return client
+}
+
+function newClient(): QueryClient {
+  return new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  })
 }
 
 function newRecorded(): Recorded {
-  return { rescans: [], progressPuts: [], progressDeletes: [], thumbs: [] }
+  return { rescans: [], progressPuts: [], progressDeletes: [], covers: [], mock: null }
 }
 
 async function setup(detail = detailOf(), rescanStatus = 202): Promise<Recorded> {
@@ -426,27 +445,102 @@ describe('series header (prd UI-002, ui-spec §5.1)', () => {
     expect(screen.queryByRole('button', { name: '이어 읽기' })).not.toBeInTheDocument()
   })
 
-  it('seeds 읽기 방향 from the global default and keeps the change client-side (C-9)', async () => {
-    await setup()
+  /**
+   * **E-69 §2.3 reverses what this asserted.** Under C-9 / E-33 §2 the `.seg`
+   * was a client-only seed: the change went to `localStorage` and the test
+   * pinned that nothing reached the server. The series' direction is the
+   * server's now — the change is a `PUT /api/series/{sid}/prefs`, nothing is
+   * written to `localStorage`, and a reload reads the server's value back.
+   */
+  it('shows 기본 for a series with none, and writes a change to the server (E-69 §2.3)', async () => {
+    const recorded = await setup()
     const group = screen.getByRole('radiogroup', { name: '읽기 방향' })
-    // `settings.reading_direction` is `ltr` in the fixture.
-    expect(within(group).getByRole('radio', { name: 'L→R' })).toBeChecked()
+    // `settings.reading_direction` is `ltr` and the series has none of its own:
+    // that is 기본, not L→R — which would be the series pinned to L→R.
+    await waitFor(() => {
+      expect(within(group).getByRole('radio', { name: '기본 (L→R)' })).toBeChecked()
+    })
+    expect(within(group).getByRole('radio', { name: 'L→R' })).not.toBeChecked()
 
     await userEvent.click(within(group).getByRole('radio', { name: 'R→L' }))
     await waitFor(() => {
-      expect(useSeriesDirStore.getState().bySeries[SERIES_ID]).toBe('rtl')
+      expect(recorded.mock?.seriesPrefsPuts).toEqual([
+        { sid: SERIES_ID, body: { reading_direction: 'rtl' } },
+      ])
     })
-    // Nothing was written to the server: PUT /api/settings has no handler, and
-    // `src/test/msw.ts` would have failed the test if one fired.
+    await waitFor(() => {
+      expect(within(group).getByRole('radio', { name: 'R→L' })).toBeChecked()
+    })
+    expect(localStorage.getItem(SERIES_DIR_STORAGE_KEY)).toBeNull()
+    // PUT /api/settings has no handler: the global default was not touched.
   })
 
-  it('seeds 읽기 방향 from the global default even when that is not the fallback', async () => {
+  it('reads the series’ direction back from the server after a reload', async () => {
+    const recorded = await setup()
+    await userEvent.click(
+      within(screen.getByRole('radiogroup', { name: '읽기 방향' })).getByRole('radio', { name: 'R→L' }),
+    )
+    await waitFor(() => {
+      expect(recorded.mock?.seriesPrefsPuts).toHaveLength(1)
+    })
+    cleanup()
+    renderPage()
+    await screen.findByRole('heading', { name: seriesDetail.name })
+    const group = await screen.findByRole('radiogroup', { name: '읽기 방향' })
+    await waitFor(() => {
+      expect(within(group).getByRole('radio', { name: 'R→L' })).toBeChecked()
+    })
+  })
+
+  it.each([
+    ['rtl', 'ltr', 'R→L'],
+    ['ltr', 'rtl', 'L→R'],
+  ] as const)(
+    'shows the series’ own %s over a global %s (E-69 §2.3)',
+    async (own, global, label) => {
+      server.use(...baseHandlers(detailOf({ reading_direction: own }), newRecorded(), 202))
+      server.use(
+        http.get(`${ORIGIN}/api/settings`, () =>
+          HttpResponse.json({ ...settings, reading_direction: global }),
+        ),
+      )
+      renderPage()
+      const group = await screen.findByRole('radiogroup', { name: '읽기 방향' })
+      await waitFor(() => {
+        expect(within(group).getByRole('radio', { name: label })).toBeChecked()
+      })
+      // And it stays there once the settings have landed.
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      expect(within(group).getByRole('radio', { name: label })).toBeChecked()
+    },
+  )
+
+  it.each([
+    [500, '읽기 방향을 저장하지 못했습니다. 잠시 후 다시 시도하세요.'],
+    [404, '라이브러리에 없는 시리즈라 읽기 방향을 저장하지 못했습니다. 화면을 새로 고친 뒤 다시 시도하세요.'],
+    [503, '서버가 지금 읽기 방향을 저장할 수 없습니다. 서버 상태를 확인한 뒤 다시 시도하세요.'],
+  ] as const)('says a refused write (%i) in Korean, picked by status, and goes back', async (status, sentence) => {
+    await setup()
+    server.use(
+      http.put(`${ORIGIN}/api/series/:sid/prefs`, () =>
+        HttpResponse.json(errorEnvelope('internal', 'database is locked'), { status }),
+      ),
+    )
+    const group = screen.getByRole('radiogroup', { name: '읽기 방향' })
+    await userEvent.click(within(group).getByRole('radio', { name: 'R→L' }))
+
+    expect(await screen.findByText(sentence)).toBeInTheDocument()
+    // The envelope's English message is not for the reader (seriesErrors.ts).
+    expect(screen.queryByText(/database is locked/)).not.toBeInTheDocument()
+    // Back on the server's value: none of its own, so 기본.
+    expect(within(group).getByRole('radio', { name: '기본 (L→R)' })).toBeChecked()
+  })
+
+  it('names the global default in 기본 even when that is not the fallback', async () => {
     // The fixture's `ltr` is also what the page falls back to with no settings
     // at all, so the case above cannot tell the two apart. `rtl` can. The
     // settings are held until the page is up, so they land after its first
-    // render — a page that froze the direction it first drew would stay on L→R.
-    // (What it shows while they are in flight is not asserted: drawing the
-    // fallback or waiting are both fine.)
+    // render — a page that froze the label it first drew would stay wrong.
     let release = (): void => undefined
     const held = new Promise<void>((resolve) => {
       release = resolve
@@ -460,14 +554,180 @@ describe('series header (prd UI-002, ui-spec §5.1)', () => {
     )
     renderPage()
     await screen.findByRole('heading', { name: seriesDetail.name })
+    const group = await screen.findByRole('radiogroup', { name: '읽기 방향' })
+    // While the settings are in flight 기본 is checked and names nothing — it
+    // does not guess a global it has not read.
+    expect(within(group).getByRole('radio', { name: '기본' })).toBeChecked()
 
     release()
-    const group = await screen.findByRole('radiogroup', { name: '읽기 방향' })
     await waitFor(() => {
-      expect(within(group).getByRole('radio', { name: 'R→L' })).toBeChecked()
+      expect(within(group).getByRole('radio', { name: '기본 (R→L)' })).toBeChecked()
     })
+    expect(within(group).getByRole('radio', { name: 'R→L' })).not.toBeChecked()
     expect(within(group).getByRole('radio', { name: 'L→R' })).not.toBeChecked()
-    expect(useSeriesDirStore.getState().bySeries[SERIES_ID]).toBeUndefined()
+  })
+
+  /**
+   * **E-69 §2.3, ui-spec §5.1: three values.** With two, a series that follows
+   * the global default has the matching option already checked, so the reader
+   * cannot pin the series to it — re-clicking a checked radio does nothing a
+   * keyboard or screen-reader user can perceive. `기본` is the series' `null`,
+   * named after the global value it follows now.
+   */
+  describe('the three-value 읽기 방향 .seg (E-69 §2.3)', () => {
+    function seg(): HTMLElement {
+      const group = document.querySelector<HTMLElement>('[aria-label="읽기 방향"]')
+      if (group === null) throw new Error('no 읽기 방향 group')
+      return group
+    }
+    function option(value: 'default' | 'ltr' | 'rtl'): HTMLElement {
+      const label = seg().querySelector<HTMLElement>(`label[data-value="${value}"]`)
+      if (label === null) throw new Error(`no ${value} option`)
+      return label
+    }
+    function checkedValue(): string | null {
+      return seg().querySelector('label[data-checked="true"]')?.getAttribute('data-value') ?? null
+    }
+
+    it('has 기본 · L→R · R→L in that order, and 기본 checked for a series with none', async () => {
+      await setup()
+      await waitFor(() => {
+        expect(option('default')).toHaveTextContent('기본 (L→R)')
+      })
+      expect([...seg().querySelectorAll('label')].map((l) => l.getAttribute('data-value'))).toEqual([
+        'default',
+        'ltr',
+        'rtl',
+      ])
+      expect(option('default')).toHaveAttribute('data-checked', 'true')
+      expect(option('ltr')).toHaveAttribute('data-checked', 'false')
+      expect(option('rtl')).toHaveAttribute('data-checked', 'false')
+    })
+
+    it('renames 기본 when the global default changes', async () => {
+      const recorded = newRecorded()
+      server.use(...baseHandlers(detailOf(), recorded))
+      const client = renderPage()
+      await screen.findByRole('heading', { name: seriesDetail.name })
+      await waitFor(() => {
+        expect(option('default')).toHaveTextContent('기본 (L→R)')
+      })
+      // What a settings write or re-read lands in the cache.
+      act(() => {
+        client.setQueryData<Settings>(queryKeys.settings, { ...settings, reading_direction: 'rtl' })
+      })
+      // TanStack notifies its observers on a timer, not inside `act`.
+      await waitFor(() => {
+        expect(option('default')).toHaveTextContent('기본 (R→L)')
+      })
+      expect(checkedValue()).toBe('default')
+    })
+
+    it('choosing 기본 PUTs exactly {reading_direction: null}, and a reload still shows 기본', async () => {
+      const recorded = await setup(detailOf({ reading_direction: 'rtl' }))
+      await waitFor(() => {
+        expect(checkedValue()).toBe('rtl')
+      })
+      await userEvent.click(within(seg()).getByRole('radio', { name: '기본 (L→R)' }))
+      await waitFor(() => {
+        expect(recorded.mock?.seriesPrefsPuts).toHaveLength(1)
+      })
+      const body = recorded.mock?.seriesPrefsPuts[0]?.body
+      expect(body).toStrictEqual({ reading_direction: null })
+      expect(recorded.mock?.seriesDirs.get(SERIES_ID)).toBeNull()
+      await waitFor(() => {
+        expect(checkedValue()).toBe('default')
+      })
+
+      cleanup()
+      renderPage()
+      await screen.findByRole('heading', { name: seriesDetail.name })
+      await waitFor(() => {
+        expect(option('default')).toHaveAttribute('data-checked', 'true')
+      })
+    })
+
+    it.each([
+      ['ltr', 'L→R'],
+      ['rtl', 'R→L'],
+    ] as const)(
+      'an explicit %s is the series’ own, and stays when the global default changes',
+      async (value, label) => {
+        let global: ReadingDir = 'ltr'
+        const recorded = newRecorded()
+        server.use(...baseHandlers(detailOf(), recorded))
+        server.use(
+          http.get(`${ORIGIN}/api/settings`, () =>
+            HttpResponse.json({ ...settings, reading_direction: global }),
+          ),
+        )
+        const client = renderPage()
+        await screen.findByRole('heading', { name: seriesDetail.name })
+        await waitFor(() => {
+          expect(option('default')).toHaveTextContent('기본 (L→R)')
+        })
+        // L→R is the global value too: only the third option makes pinning it possible.
+        await userEvent.click(within(seg()).getByRole('radio', { name: label }))
+        await waitFor(() => {
+          expect(recorded.mock?.seriesPrefsPuts.map((p) => p.body)).toEqual([
+            { reading_direction: value },
+          ])
+        })
+        await waitFor(() => {
+          expect(checkedValue()).toBe(value)
+        })
+
+        // The global default goes the other way (another tab, the settings dialog).
+        global = 'rtl'
+        recorded.mock?.setGlobalDirection('rtl')
+        act(() => {
+          client.setQueryData<Settings>(queryKeys.settings, { ...settings, reading_direction: 'rtl' })
+        })
+        await waitFor(() => {
+          expect(option('default')).toHaveTextContent('기본 (R→L)')
+        })
+        expect(checkedValue()).toBe(value)
+
+        cleanup()
+        renderPage()
+        await screen.findByRole('heading', { name: seriesDetail.name })
+        await waitFor(() => {
+          expect(option('default')).toHaveTextContent('기본 (R→L)')
+        })
+        expect(checkedValue()).toBe(value)
+      },
+    )
+
+    it('moves between the three with the arrow keys, writing each — a native radio group', async () => {
+      const recorded = await setup()
+      await waitFor(() => {
+        expect(checkedValue()).toBe('default')
+      })
+      within(seg()).getByRole('radio', { name: '기본 (L→R)' }).focus()
+
+      await userEvent.keyboard('{ArrowRight}')
+      await waitFor(() => {
+        expect(checkedValue()).toBe('ltr')
+      })
+      await userEvent.keyboard('{ArrowRight}')
+      await waitFor(() => {
+        expect(checkedValue()).toBe('rtl')
+      })
+      await userEvent.keyboard('{ArrowRight}')
+      await waitFor(() => {
+        expect(checkedValue()).toBe('default')
+      })
+      await waitFor(() => {
+        expect(recorded.mock?.seriesPrefsPuts.map((p) => p.body)).toEqual([
+          { reading_direction: 'ltr' },
+          { reading_direction: 'rtl' },
+          { reading_direction: null },
+        ])
+      })
+      // In order, so the last key is the server's value.
+      expect(recorded.mock?.seriesDirs.get(SERIES_ID)).toBeNull()
+      expect(document.activeElement).toBe(within(seg()).getByRole('radio', { name: '기본 (L→R)' }))
+    })
   })
 })
 
@@ -532,40 +792,201 @@ describe('volume grid (FR-LIB-009, ui-spec §5.3)', () => {
     expect(within(grid).getByText('0p · 21 MB')).toBeInTheDocument()
   })
 
-  it('requests a thumbnail for every openable volume (prd UI-002, design.md 화면 2)', async () => {
-    // The regression: the volume list never issued a single
-    // `/api/books/{bid}/thumbs/…`, so every volume rendered the striped "no
-    // thumbnail" placeholder for ever. impl-plan §0.4 budgets the width for
-    // this exact consumer ("Volume tile (series detail) — 128 CSS px ⇒ w=400").
+  /**
+   * **E-69 §2.8 changed what this asserts.** It pinned `/thumbs/1?v={cv}` —
+   * page 1's thumbnail, which is what a volume showed before the reader could
+   * choose a cover. The card now shows the *book cover*: `GET
+   * /api/books/{bid}/cover`, versioned by `cover_cv` (which turns over with the
+   * chosen region and the effective direction, §2.7), not by the content `cv`.
+   * The original regression — no request at all, stripes for ever — is still
+   * what the `<img>` count catches.
+   */
+  it('requests the book cover for every openable volume (prd UI-002, E-69 §2.8)', async () => {
     const recorded = await setup()
-    // Three openable volumes ⇒ three <img> elements inside the grid. The
-    // failure this pins reported exactly one <img> on the whole screen (the
-    // series hero cover) and zero /thumbs/ requests in the network log.
+    // Three openable volumes ⇒ three <img> elements inside the grid.
     await waitFor(() => {
       expect(screen.getByTestId('volume-grid').querySelectorAll('img')).toHaveLength(3)
     })
-    const asked = recorded.thumbs
+    const asked = recorded.covers
     expect(asked.map((t) => t.bid).sort()).toEqual(
       ['aaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbb', 'eeeeeeeeeeeeeeee'].sort(),
     )
-    // Page 1 is the volume's cover; `w` comes from THUMB_WIDTHS (§0.4) and `v`
-    // is the book's own `cv`, which is what makes the response immutable.
+    // `w` comes from THUMB_WIDTHS (§0.4); `v` is the cover's version, not `cv`.
+    expect(BOOK_COVER_CV).not.toBe(bookSummary.cv)
     for (const t of asked) {
-      expect(t.n).toBe('1')
       expect(t.w).toBe('400')
-      expect(t.v).toBe(bookSummary.cv)
+      expect(t.v).toBe(BOOK_COVER_CV)
+    }
+    for (const img of screen.getByTestId('volume-grid').querySelectorAll('img')) {
+      expect(img.getAttribute('src')).toMatch(
+        new RegExp(`^/api/books/[a-z2-7]{16}/cover\\?w=400&v=${BOOK_COVER_CV}$`),
+      )
     }
   })
 
-  it('never asks for a thumbnail of a volume that cannot be opened (FR-IDX-010)', async () => {
+  /**
+   * E-69 §2.7: a volume card's `?v=` is the `cover_cv` its series detail listed,
+   * and that turns over on things this tab did not do — here another browser set
+   * the series to R→L, so every default cover's inputs changed. The card on screen
+   * asks with the old `v`, gets `409 stale_version`, and only re-reading **the
+   * series** (where the card got `cover_cv`) can give it the new one; retrying the
+   * same url cannot. So the card has to name its series to the image hook — a card
+   * that did not would retry once, 409 again, and stay on the striped placeholder.
+   */
+  it('a card on a stale cover_cv re-reads its series and shows the cover at the new one (E-69 §2.7)', async () => {
+    const recorded = newRecorded()
+    const detail = detailOf()
+    server.use(...baseHandlers(detail, recorded))
+    let seriesGets = 0
+    server.use(
+      // Counts, then falls through to the harness's series GET.
+      http.get(`${ORIGIN}/api/series/${SERIES_ID}`, () => {
+        seriesGets += 1
+      }),
+    )
+    const mock = recorded.mock
+    if (mock === null) throw new Error('no mock')
+    // This tab read the series a moment ago — fresh enough that it would not ask again…
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: 60_000 }, mutations: { retry: false } },
+    })
+    client.setQueryData<SeriesDetail>(queryKeys.series.detail(SERIES_ID), {
+      ...detail,
+      books: detail.books.map((book) => mock.summaryOf(book.id)),
+    })
+    const openable = ['aaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbb', 'eeeeeeeeeeeeeeee']
+    const before = new Map(openable.map((bid) => [bid, mock.coverCvOf(bid)] as const))
+    // …and then another browser set the series to R→L.
+    mock.seriesDirs.set(SERIES_ID, 'rtl')
+    const after = new Map(openable.map((bid) => [bid, mock.coverCvOf(bid)] as const))
+    for (const bid of openable) expect(after.get(bid)).not.toBe(before.get(bid))
+
+    renderPage(client)
+    await screen.findByRole('heading', { name: detail.name })
+
+    await waitFor(() => {
+      const srcs = [...screen.getByTestId('volume-grid').querySelectorAll('img')].map((img) =>
+        img.getAttribute('src'),
+      )
+      expect(srcs.sort()).toEqual(
+        openable.map((bid) => `/api/books/${bid}/cover?w=400&v=${after.get(bid) ?? ''}`).sort(),
+      )
+    })
+    for (const bid of openable) {
+      const asked = recorded.covers.filter((g) => g.bid === bid).map((g) => g.v)
+      // The old version first (409), then the new one (200).
+      expect(asked[0]).toBe(before.get(bid))
+      expect(asked.at(-1)).toBe(after.get(bid))
+    }
+    // Three stale cards: their series is re-read once or twice, not once a card. The
+    // first 409 starts a read; one that comes back while that read is out began
+    // before it and is owed one more read after it (see the test below) — and only one,
+    // however many such 409s there are.
+    expect(seriesGets).toBeGreaterThanOrEqual(1)
+    expect(seriesGets).toBeLessThanOrEqual(2)
+    // And the header shows what that re-read brought.
+    expect(
+      document.querySelector('[aria-label="읽기 방향"] label[data-checked="true"]')?.getAttribute('data-value'),
+    ).toBe('rtl')
+  })
+
+  /**
+   * The same change, but this tab began re-reading the series a moment **before**
+   * another browser set it to R→L: that read answers the old versions. A 409 that
+   * only joined it would land them again — both of each card's attempts refused,
+   * nothing left to re-read the series, every card striped for good. A read that
+   * starts after the 409s has to follow the one that was out, and one is enough for
+   * the whole grid.
+   */
+  it('a card whose series re-read was already out when its 409 came still ends on the new cover_cv (E-69 §2.7)', async () => {
+    const recorded = newRecorded()
+    const detail = detailOf()
+    server.use(...baseHandlers(detail, recorded))
+    const mock = recorded.mock
+    if (mock === null) throw new Error('no mock')
+    const openable = ['aaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbb', 'eeeeeeeeeeeeeeee']
+    const before = new Map(openable.map((bid) => [bid, mock.coverCvOf(bid)] as const))
+    let seriesGets = 0
+    let changed = (): void => undefined
+    const change = new Promise<void>((resolve) => {
+      changed = resolve
+    })
+    let release = (): void => undefined
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    server.use(
+      http.get(`${ORIGIN}/api/series/${SERIES_ID}`, async () => {
+        seriesGets += 1
+        // Every later read falls through to the harness: the server as it is now.
+        if (seriesGets > 1) return undefined
+        // The first read is answered as the server stood when it was asked…
+        const answer: SeriesDetail = {
+          ...detail,
+          books: detail.books.map((book) => mock.summaryOf(book.id)),
+          reading_direction: mock.seriesDirs.get(SERIES_ID) ?? null,
+        }
+        // …and then another browser set the series to R→L, while it was on its way.
+        mock.seriesDirs.set(SERIES_ID, 'rtl')
+        changed()
+        await held
+        return HttpResponse.json(answer)
+      }),
+      // No card asks before the change; then the contract mock answers.
+      http.get(`${ORIGIN}/api/books/:bid/cover`, async () => {
+        await change
+        return undefined
+      }),
+    )
+    // `staleTime` 0: the series this tab already holds is re-read on mount.
+    const client = newClient()
+    client.setQueryData<SeriesDetail>(queryKeys.series.detail(SERIES_ID), {
+      ...detail,
+      books: detail.books.map((book) => mock.summaryOf(book.id)),
+    })
+
+    renderPage(client)
+    await screen.findByRole('heading', { name: detail.name })
+    await change
+    const after = new Map(openable.map((bid) => [bid, mock.coverCvOf(bid)] as const))
+    for (const bid of openable) expect(after.get(bid)).not.toBe(before.get(bid))
+
+    // Both of every card's attempts are refused while the first read is still out.
+    await waitFor(
+      () => {
+        for (const bid of openable) {
+          const asked = recorded.covers.filter((g) => g.bid === bid).map((g) => g.v)
+          expect(asked).toEqual([before.get(bid), before.get(bid)])
+        }
+      },
+      { timeout: 5_000 },
+    )
+    release()
+
+    await waitFor(
+      () => {
+        const srcs = [...screen.getByTestId('volume-grid').querySelectorAll('img')].map((img) =>
+          img.getAttribute('src'),
+        )
+        expect(srcs.sort()).toEqual(
+          openable.map((bid) => `/api/books/${bid}/cover?w=400&v=${after.get(bid) ?? ''}`).sort(),
+        )
+      },
+      { timeout: 5_000 },
+    )
+    // The read that was out, and one after it — not one per card, nor per 409.
+    expect(seriesGets).toBe(2)
+   }, 15_000)
+
+  it('never asks for the cover of a volume that cannot be opened (FR-IDX-010)', async () => {
     const recorded = await setup()
     await waitFor(() => {
-      expect(recorded.thumbs.length).toBeGreaterThan(0)
+      expect(recorded.covers.length).toBeGreaterThan(0)
     })
     // `cccccccccccccccc` is truncated and `dddddddddddddddd` is encrypted:
-    // neither has a page 1 to render, so neither may cost a request.
-    expect(recorded.thumbs.map((t) => t.bid)).not.toContain('cccccccccccccccc')
-    expect(recorded.thumbs.map((t) => t.bid)).not.toContain('dddddddddddddddd')
+    // neither can be opened, so neither may cost a request.
+    expect(recorded.covers.map((t) => t.bid)).not.toContain('cccccccccccccccc')
+    expect(recorded.covers.map((t) => t.bid)).not.toContain('dddddddddddddddd')
   })
 
   /**
@@ -656,16 +1077,17 @@ describe('volume list mode (ui-spec §5.4)', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('carries a per-volume thumbnail in the row thumb cell too (prd UI-002)', async () => {
+  it('carries the book cover in the row thumb cell too (prd UI-002, E-69 §2.8)', async () => {
     const recorded = await setup()
     await waitFor(() => {
       expect(screen.getByTestId('volume-list').querySelectorAll('img')).toHaveLength(3)
     })
     // §0.4's "List-row thumb — 24 CSS px ⇒ w=120": the row is 20×30, so it must
     // not pull the tile's 400px image down to a 20px box.
-    for (const t of recorded.thumbs) {
-      expect(t.n).toBe('1')
+    expect(recorded.covers).toHaveLength(3)
+    for (const t of recorded.covers) {
       expect(t.w).toBe('120')
+      expect(t.v).toBe(BOOK_COVER_CV)
     }
   })
 

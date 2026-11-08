@@ -172,11 +172,13 @@ func repoFieldContract() fieldContract {
 	sort.Strings(roots)
 	return fieldContract{
 		archToTS: map[string]string{
-			"Settings.server":      "ServerSettings",
-			"CacheUsage.entries":   "CacheUsageEntry",
-			"ProgressExport.items": "ProgressExportItem",
-			"ProgressExport.prefs": "ProgressExportPref",
-			"ErrorResponse.error":  "ErrorBody",
+			"Settings.server":             "ServerSettings",
+			"CacheUsage.entries":          "CacheUsageEntry",
+			"ProgressExport.items":        "ProgressExportItem",
+			"ProgressExport.prefs":        "ProgressExportPref",
+			"ProgressExport.covers":       "ProgressExportCover",
+			"ProgressExport.series_prefs": "ProgressExportSeriesPref",
+			"ErrorResponse.error":         "ErrorBody",
 		},
 		tsWithoutArch: map[string]string{
 			"AuthStatus":           "arch §7.12 describes GET /api/auth/status in its endpoint table, not a ```ts block",
@@ -194,13 +196,16 @@ func repoFieldContract() fieldContract {
 		},
 		responseRoots: roots,
 		tsToGo: map[string]string{
-			"CacheUsageEntry":      "httpapi.CacheUsageItem",
-			"CachePurgeResult":     "httpapi.PurgeResult",
-			"ScanRunResponse":      "httpapi.RunAccepted",
-			"ProgressExport":       "userdata.Export",
-			"ProgressExportItem":   "userdata.ExportItem",
-			"ProgressExportPref":   "userdata.ExportPref",
-			"ProgressImportResult": "userdata.ImportResult",
+			"CacheUsageEntry":          "httpapi.CacheUsageItem",
+			"CachePurgeResult":         "httpapi.PurgeResult",
+			"ScanRunResponse":          "httpapi.RunAccepted",
+			"ProgressExport":           "userdata.Export",
+			"ProgressExportItem":       "userdata.ExportItem",
+			"ProgressExportPref":       "userdata.ExportPref",
+			"ProgressExportCover":      "userdata.ExportCover",
+			"ProgressExportSeriesPref": "userdata.ExportSeriesPref",
+			"SeriesPrefs":              "httpapi.SeriesPrefs",
+			"ProgressImportResult":     "userdata.ImportResult",
 		},
 		requestPairs: map[string]string{
 			"ProgressUpdate":   "httpapi.progressUpdateBody",

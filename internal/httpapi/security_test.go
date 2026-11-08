@@ -58,6 +58,7 @@ func TestAuth_gateAndLoginFlow(t *testing.T) {
 		"/api/books/" + e.bookZipID,
 		"/api/books/" + e.bookZipID + "/pages/1",
 		"/api/books/" + e.bookZipID + "/thumbs/1",
+		"/api/books/" + e.bookZipID + "/cover", // E-69 §2.6
 		"/api/continue",
 		"/api/settings",
 		"/api/cache/usage",
@@ -169,6 +170,11 @@ func TestAuth_gateCoversEveryWriteMethod(t *testing.T) {
 		{http.MethodPut, "/api/books/" + e.bookZipID + "/progress", `{"page":5}`, http.StatusOK},
 		{http.MethodDelete, "/api/books/" + e.bookZipID + "/progress", "", http.StatusNoContent},
 		{http.MethodPut, "/api/books/" + e.bookZipID + "/prefs", `{"fit_mode":"width"}`, http.StatusOK},
+		// Ruling E-69 §2.6. The PUT comes before the DELETE so that, with a
+		// session, the DELETE has a choice to remove.
+		{http.MethodPut, "/api/books/" + e.bookZipID + "/cover", `{"page":1,"x":0,"y":0,"w":0.5,"h":0.5}`, http.StatusOK},
+		{http.MethodDelete, "/api/books/" + e.bookZipID + "/cover", "", http.StatusNoContent},
+		{http.MethodPut, "/api/series/" + e.seriesFolderID + "/prefs", `{"reading_direction":"rtl"}`, http.StatusOK},
 		{http.MethodPut, "/api/settings", `{"theme":"dark"}`, http.StatusOK},
 		{http.MethodDelete, "/api/cache?kind=thumbs", "", http.StatusOK},
 		{http.MethodPost, "/api/scan", `{}`, http.StatusAccepted},
@@ -257,6 +263,21 @@ func TestAuth_gateCoversEveryWriteMethod(t *testing.T) {
 	}
 	session := login.Result().Cookies()[0]
 	withCookie := func(r *http.Request) { r.AddCookie(session) }
+
+	// E-69: the cover choice and the series direction the 401s asked for were
+	// not stored either. Read over HTTP with the session, because the new
+	// storage has no API this package can call yet.
+	if got := e.get("/api/books/"+e.bookZipID, withCookie); got.Code != http.StatusOK {
+		t.Errorf("GET book with the session = %d: %s", got.Code, got.Body.String())
+	} else if b := decodeWireBook(t, got.Body.Bytes()); b.Cover != nil {
+		t.Errorf("cover after PUT without a session = %+v, want null", *b.Cover)
+	}
+	if got := e.get("/api/series/"+e.seriesFolderID, withCookie); got.Code != http.StatusOK {
+		t.Errorf("GET series with the session = %d: %s", got.Code, got.Body.String())
+	} else if m := rawObject(t, got.Body.Bytes(), "SeriesDetail"); string(m["reading_direction"]) != "null" {
+		t.Errorf("series reading_direction after PUT without a session = %s, want null", m["reading_direction"])
+	}
+
 	for _, w := range writes {
 		if got := send(w.method, w.target, w.body, withCookie); got.Code != w.want {
 			t.Errorf("%s %s with the session = %d, want %d: %s", w.method, w.target, got.Code, w.want, got.Body.String())

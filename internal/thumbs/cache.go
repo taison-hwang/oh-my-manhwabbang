@@ -67,6 +67,15 @@ func (c *cache) key(id string, pageNo, width int, contentVersion string) string 
 	return ids.ThumbKey(id, pageNo, width, c.format, c.quality, contentVersion)
 }
 
+// coverKey derives the cache key of one 권 cover (E-69 §2.7): its own domain,
+// `shelf-cover/1`, with the cut — `auto-<dir>` or the region — as a field, so
+// page 1's strip thumbnail and the cover cut from page 1 are two files. Both
+// live in the thumbs subtree: the purge kinds are a closed set (arch §7.9), and
+// a cover is a thumbnail as far as `DELETE /api/cache?kind=thumbs` is concerned.
+func (c *cache) coverKey(bookID string, pageNo int, area string, width int, contentVersion string) string {
+	return ids.CoverKey(bookID, pageNo, area, width, c.format, c.quality, contentVersion)
+}
+
 // pdfKey derives the cache key of one rasterised PDF page: the identical scheme
 // under the `shelf-pdfpage/1` domain, so a 640 px thumbnail and a 640 px render
 // of the same page never share a file (arch §5.6).
@@ -203,6 +212,16 @@ func publishOnce(final, dir, key string, data []byte) (Result, error) {
 	return res, nil
 }
 
+// CoverVersion is a 권's `cover_cv` (E-69 §2.6, §2.7): [ids.CoverVersion] over
+// this service's format and quality — the cover key's input without the width,
+// so one value names the cover at every width of the ladder.
+//
+// It does not validate c; the caller passes the Cover it also sends in the
+// [Request], which is where a bad direction or region is refused.
+func (s *Service) CoverVersion(bookID string, pageNo int, c Cover, contentVersion string) string {
+	return CoverVersion(bookID, pageNo, c, s.cache.format, s.cache.quality, contentVersion)
+}
+
 // LookupPDFPage reports a cached full-size PDF render (FR-SRV-006 / arch §5.6).
 // Rendering is internal/source's job; the cache layout is this package's, so
 // the two domains stay in one file.
@@ -250,4 +269,9 @@ func safeRel(rel string) (string, error) {
 		}
 	}
 	return clean, nil
+}
+
+// CoverVersion computes the version even when image generation is not configured.
+func CoverVersion(bookID string, pageNo int, c Cover, format string, quality int, contentVersion string) string {
+	return ids.CoverVersion(bookID, pageNo, c.area(), format, quality, contentVersion)
 }

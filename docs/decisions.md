@@ -4370,3 +4370,162 @@ impl-plan §1.3도 같은 내용을 적었다. 그래서 백업을 만들려면 
 - `web/src/api/types.ts`·`client.ts`의 §7.11 머리 주석("no UI in this build" → E-68).
 - 코드: `web/src/features/overlays/ProgressPanel.tsx`·`progressErrors.ts`(새), `SettingsDialog.tsx`(마지막에 마운트), `web/src/api/queries.ts`(`useExportProgress`·`useImportProgress`).
   테스트: `ProgressPanel.test.tsx`·`progressErrors.test.ts`(새), `SettingsDialog.test.tsx`, `queries.test.tsx`.
+
+## E-69 — **권 표지를 사용자가 고를 수 있게 한다. 고르지 않은 양면 스캔 표지는 읽기 방향의 첫 쪽 절반을 쓰고, 시리즈 읽기 방향은 서버에 둔다** (사용자 지시 "만화책의 thumbnail 편집기능 추가" 2026-10-29와 같은 날 네 가지 답, 메인 배분 · 25 설계 — HTTP 계약·user.db 스키마·내보내기 형식이 바뀐다, 개정 A-19) — BINDING
+
+### 1. 문제
+
+- 권 표지는 늘 1쪽이다(arch §4.10 3단, 화면은 `/thumbs/1`). 사용자가 다른 쪽이나 영역을 고를 길이 없다.
+  prd §9 로드맵에 없는 기능이다. 그래서 범위에 넣는 근거는 사용자 지시다(E-68 §2.1과 같은 방식). D-02의 "trivially free"에 기대지 않는다.
+- 두 쪽을 한 장으로 스캔한 1쪽은 2:3 칸의 `object-cover`가 가운데를 보여 줘서 책등이 표지가 된다.
+  서버는 자르지 않는다(`internal/thumbs/generate.go` `produce`는 `imaging.Resize`만 한다).
+- 서버는 시리즈 읽기 방향을 모른다. 시리즈 상세 `.seg`는 localStorage 씨앗이다(C-9, E-33 §2). 그래서 서버가 만드는 표지는 사용자가 시리즈에 정한 방향을 따를 수 없다.
+
+### 2. 판정
+
+1. **사용자 답(2026-10-29).** 지정은 권 표지만 한다(시리즈 표지는 따로 지정하지 않는다). 진입점은 뷰어다. 내보내기에 포함한다.
+   방향은 "지정이 없으면 전역 방향, 시리즈 방향을 정하면 전역이 바뀌어도 그 시리즈는 그대로, 그 방향으로 오른쪽·왼쪽을 고른다"이다.
+2. **권 표지(book cover)를 둔다. 다음 순서로 정한다.**
+   (a) 사용자 지정이 있고 그 쪽이 지금 책에 있으면, 그 쪽의 지정 영역.
+   (b) 아니면 1쪽. 1쪽이 가로로 길면(`w > h`, FR-VWR-004와 같은 정의, 비율 임계값 없음) 유효 읽기 방향의 첫 쪽 절반을 쓴다. `rtl`이면 오른쪽 절반, `ltr`이면 왼쪽 절반이다. 가로로 길지 않으면 쪽 전체다.
+   절반은 폭을 정확히 둘로 나눈다. 폭이 홀수면 첫 쪽 쪽이 1px 더 갖는다. 책등 감지는 하지 않는다.
+   가로 판정의 입력은 뷰어의 펼침 판정과 같은, 기록된 쪽 고유 크기다. 기록된 크기가 없을 때만 디코드하거나 렌더한 크기로 판정한다. PDF도 같다.
+   렌더한 픽셀로 판정하면, 거의 정사각인 가로 PDF 쪽이 렌더 반올림으로 `w = h`가 되어 뷰어는 가로로, 표지는 세로로 보게 된다. 같은 값을 두 곳이 다르게 보는 정의가 생긴다(U2 codex 2사이클 보류 항목, 메인 지적으로 25가 고침).
+   뷰어도 같은 입력을 쓴다. 지금 뷰어(`fit.ts` `makeDimsLookup`)는 이미지가 로드되면 측정 크기를 기록 크기보다 앞세운다. 기록 크기가 아직 null일 때를 메우려는 것이다.
+   그래서 PDF 쪽은 로드 전에는 가로, 로드 뒤에는 렌더 반올림 때문에 정사각이 될 수 있었다. **PDF 쪽은 기록 크기가 있으면 그것을 측정 크기보다 앞세운다.** 렌더 반올림은 측정값을 바꿀 뿐 쪽 모양을 바꾸지 않는다.
+   이미지 쪽은 지금처럼 측정 크기가 앞선다. 서버 기록과 같은 디코드 크기이고, 순서를 바꾸면 브라우저가 EXIF 회전을 적용한 실측과 어긋날 수 있다(45 지적, 25 판정).
+3. **유효 읽기 방향 = 책 지정 → 시리즈 지정 → 전역 기본.** 필드 단위로 내려간다(`book_prefs.reading_dir`가 NULL이면 시리즈로).
+   시리즈 지정은 전역 기본이 바뀌어도 그대로다. 그러려면 시리즈 방향이 서버에 있어야 하므로 **E-33 §2·C-9의 "씨앗은 클라이언트 전용"을 뒤집는다.**
+   시리즈 상세 `.seg`는 `PUT /api/series/{sid}/prefs`로 user.db에 쓰고, 뷰어도 같은 사다리로 방향을 연다. D-35의 "권 단위 기억"은 그대로다(책 지정이 시리즈 지정을 이긴다).
+   이 `.seg`는 세 값이다: `기본` · `L→R` · `R→L`. `기본`은 시리즈 값이 null인 상태이고, 이름에 지금의 전역 값을 붙인다(예: `기본 (R→L)`). `기본`을 고르면 `{reading_direction: null}`을 PUT한다.
+   두 값만 두면 전역과 같은 값은 이미 선택된 radio라서 고정할 수 없다. 선택된 radio를 다시 누르는 동작은 키보드와 스크린리더에 보이지 않는다(메인 권고, 25 결정).
+   표시 모드만 바꾼 책이 `is_override` 때문에 씨앗을 잃던 문제는 필드 단위 사다리에서 사라진다.
+   기존 씨앗(`shelf.seriesDir`)은 SPA가 첫 부팅 때 서버 값이 null인 시리즈에 한해 한 번 올리고 지운다.
+4. **지정 영역은 쪽 원본 기준 정규화 좌표 `{x, y, w, h}`(0~1)다. 화면의 선택 틀은 2:3으로 고정한다.** 카드가 2:3 칸이라 고른 것이 그대로 보인다.
+   서버는 비율을 강제하지 않는다(PDF 렌더 폭과 반올림 때문). 서버 검증은 다음과 같고, 어기면 `400 bad_request`다.
+   `0 ≤ x`, `0 ≤ y`, `w ≥ 0.05`, `h ≥ 0.05`, `x + w ≤ 1`, `y + h ≤ 1`, `page`는 `[1, page_count]`, 책 `status = ok`.
+   경계는 허용오차 없이 부동소수 그대로 비교한다. 그래서 보내는 쪽(편집기)이 `w = min(w, 1 − x)`, `h = min(h, 1 − y)`처럼 맞춰 경계를 넘지 않게 보낸다.
+5. **저장은 user.db다.** 지정은 파생 데이터가 아니다(NFR-DAT-001, NFR-DAT-004). 스키마 v3 단계로 두 테이블을 덧붙인다.
+   - `book_covers(book_id PK, series_id, root_name, book_path, page_no, page_count, x, y, w, h, updated_at)`. progress처럼 경로를 함께 둬서, 이름이 바뀐 뒤 id를 다시 만들 수 있게 한다.
+     `page_count`는 지정할 때의 그 책 쪽 수다. 11(b)의 분할 재부착이 E-48 §3 둘째 관문의 기준선으로 쓴다.
+   - `series_prefs(series_id PK, root_name, series_path, reading_dir, updated_at)`.
+   index.db로 가는 FK는 두지 않는다. 스캔 뒤 정리(E-49·E-50: 이동 이관 → 재부착 → series_id 교정 → 삭제)에서 두 테이블이 따르는 규칙은 11항이다.
+   원본이 바뀌어 cv가 바뀌어도(FR-THM-006) 지정은 지우지 않는다. 지정한 쪽이 없어졌거나 책이 ok가 아니면 2(b)를 쓰고 행은 남긴다. 쪽이 돌아오면 다시 쓰인다.
+   행을 지우는 것은 사용자의 `DELETE`와 위 정리뿐이다.
+6. **와이어(A-19, arch §7).** 새 본문에도 엄격 디코딩(§7.1)을 적용한다.
+   - `GET /api/books/{bid}/cover?w=&v=`(새 끝점)는 권 표지 JPEG다. 응답 의미는 §7.5 시리즈 표지와 같다(200, 202+`Retry-After`, 404, 409 `stale_version`, 422). `v`는 새 `BookSummary.cover_cv`다.
+   - `PUT /api/books/{bid}/cover`, 본문 `{page, x, y, w, h}` → `200 {cover_cv, cover}`.
+     `DELETE /api/books/{bid}/cover` → `204`(기본 표지로 되돌리기). 지정이 없어도 204다.
+   - `BookSummary`에 `cover_cv: string`과 `cover: {page, x, y, w, h} | null`(사용자 지정, null이면 기본)을 더한다.
+   - `GET /api/series/{sid}/cover`는 `cover_kind = 'page'`이면 표지 권의 권 표지를 내준다(2의 규칙 그대로). 그래서 첫 권에 지정한 표지가 시리즈 표지가 된다.
+     이때 시리즈 `cover_cv`는 표지 권의 `cover_cv`다. `cover_kind = 'file'`(cover.jpg 등)은 지금처럼 파일 그대로이고 절반 규칙도 쓰지 않는다. 사용자가 둔 표지 파일이기 때문이다.
+   - `PUT /api/series/{sid}/prefs`, 본문 `{reading_direction: ReadingDir | null}` → `200 {reading_direction: ReadingDir | null}`. `SeriesDetail`에 `reading_direction: ReadingDir | null`을 더한다.
+   - `BookPrefs.reading_direction`은 3의 사다리를 거친 유효값이다. `is_override`의 뜻(책 행이 있는가)은 그대로다.
+   - 본문 필드는 모두 필수다. `PUT /cover`의 다섯 필드 가운데 하나라도 빠지면 400이다(빠진 `x`가 0으로 통과하지 않게).
+     `PUT /series/{sid}/prefs`에서 `reading_direction`이 빠져도 400이다. "지정 없음"은 명시적 `null`뿐이다.
+   - 쪽이 하나도 없는 책의 `GET /books/{bid}/cover`는 404다. 쪽이 있으면 `status`가 ok가 아니어도 2(b)의 1쪽 자동 표지를 낸다.
+     시리즈 `cover_kind = 'page'`일 때 index의 `cover_page_no`는 스캐너가 고른 1로 남고, 실제 쪽과 영역은 생성할 때 그 권의 지정으로 정한다.
+     `cover_cv`의 문자열 형식은 이 판정이 정하지 않는다(arch §5.6).
+   - 지정이 적용되지 않을 때(§2.5: 쪽이 없어졌거나 책이 ok가 아님) `BookSummary.cover`는 저장된 행을 그대로 보인다. 사용자 설정이고, 편집기가 `기본 표지로 되돌리기`를 보일 근거다.
+     `cover_cv`는 실제로 쓰는 표지의 입력(1쪽 자동, 유효 방향)으로 계산한다. 그래서 쪽이 돌아오면 cv가 바뀌어 카드가 새로 받는다.
+7. **캐시 키(FR-THM-002 개정).** 권 표지는 새 도메인 `shelf-cover/1`로 키를 만든다. 입력은 book_id ‖ page_no ‖ 영역(지정이 없으면 `auto-ltr`·`auto-rtl`) ‖ width ‖ format ‖ quality ‖ cv다.
+   페이지 섬네일(`shelf-thumb/1`, 뷰어 띠)은 바뀌지 않는다. 그래서 1쪽 섬네일과 권 표지는 이제 다른 파일이다.
+   `cover_cv`는 같은 입력(width 제외)의 해시다. 지정이 없으면 1쪽이 가로인지 몰라도 방향을 늘 넣는다.
+   쪽 크기는 디코드 전에는 모를 수 있고(§5.8), 생성 뒤에 cv가 바뀌면 409가 돈다. 대가로 방향을 바꾸면 그 책의 표지 URL이 바뀐다. 전역이면 지정 없는 모든 책이고, 그 표지는 다시 만든다.
+   옛 시리즈 표지 캐시는 1쪽 섬네일 파일이라 띠가 계속 쓰므로 옮기거나 지울 것이 없다. 스캔 직후 선생성(FR-THM-003)은 표지 권의 권 표지(유효 방향 포함)를 네 폭 만든다.
+8. **화면(ui-spec).**
+   - 뷰어 상단 바와 명령 팔레트에 `표지로` 동작을 둔다. 지금 쪽으로 표지 편집 대화상자를 연다. 양면이면 두 쪽 가운데 고른다. 새 오버레이 종류 `cover`, `ds/Dialog`다.
+   - 대화상자는 쪽 이미지 위의 2:3 틀(포인터로 옮기기·크기 바꾸기, 키보드로는 화살표 이동, Shift+화살표 크기), 결과 미리보기, `표지로 지정`·`기본 표지로 되돌리기`(지정이 있을 때만)·`취소`로 이루어진다.
+     틀의 처음 위치는 지금 표지가 이 쪽이면 그 영역이고, 아니면 쪽 안에 들어가는 가장 큰 2:3을 가운데에 둔다.
+   - 성공하면 `books`·`series`·`continue` 질의를 무효화한다(E-68 §2.6과 같다). 오류 문장은 상태 코드로 고른다(E-68 §2.7과 같다).
+   - 권 카드(`VolumeTile`·`VolumeRow`)는 `/thumbs/1` 대신 권 표지 URL을 쓴다.
+   - 크롭 라이브러리는 들이지 않는다. 포인터 이벤트로 직접 만든다(바이너리 예산 여유 343 902 B).
+9. **내보내기 형식 `shelf-progress/2`.**
+   - 더하는 배열은 둘이다. `covers`는 book_covers 행(book_id, series_id, root_name, book_path, page, page_count, x, y, w, h, updated_at)이고, `series_prefs`는 (series_id, root_name, series_path, reading_direction)이다.
+   - 내보내기는 늘 /2를 쓴다. 가져오기는 /1과 /2를 받는다. /1에는 두 배열이 없다.
+   - 병합: `covers`는 `updated_at`이 새 쪽이 이기고, 같으면 로컬이다(items와 같다). `series_prefs`는 A-17의 prefs 규칙을 따른다(로컬 지정이 있으면 유지, replace는 덮어씀, null은 무시).
+     둘 다 `imported/skipped/conflicts`에 세지 않는다. 영역 검증은 6의 PUT과 같고, 어긋난 행이 하나라도 있으면 400으로 전체를 거절한다(한 트랜잭션).
+     가져오기는 책이 이 서버에 있는지 모르므로, `covers` 행은 그 행 안에서만 검사한다: `1 ≤ page ≤ page_count`와 4의 영역 규칙이다.
+     `format`이 /1인 파일에 `covers`나 `series_prefs`가 있으면 400이다. 빈 배열(`[]`)이어도 같다. /1에는 없는 필드이므로 엄격 디코딩을 따르고, 엄격 디코딩은 키가 있는지만 본다.
+     `?strategy=replace`에서는 `covers`도 items처럼 `updated_at`을 보지 않고 파일 쪽이 덮어쓴다. `series_prefs`는 A-17의 replace 규칙대로 덮어쓴다.
+     `format`이 빈 문자열이면 지금처럼 현재 형식(/2)으로 읽는다. 내보내기의 빈 배열은 `null`이 아니라 `[]`다.
+     `page_count ≤ 0`인 `covers` 행은 거절한다. 0은 "길이 모름"이라 쪽이 책 안에 있다고 증명할 수 없다.
+     `covers` 행은 병합 판단보다 먼저 검증한다. 그래서 로컬이 더 새로워 건너뛸 행이라도 잘못되었으면 파일 전체를 거절한다.
+     `covers` 행의 page·page_count·x·y·w·h 가운데 하나라도 없거나 null이면 디코드 단계에서 파일 전체를 거절한다(400, §2.6의 "본문 필드는 모두 필수"와 같다).
+     /2 문서에 `covers`·`series_prefs` 배열 자체가 없으면 빈 배열로 읽는다. 엄격 디코딩은 모르는 필드만 거른다.
+     저장하는 `updated_at`은 `covers`가 파일의 값 그대로(items와 같다), `series_prefs`가 가져온 시각이다(A-17의 prefs와 같다).
+   - E-69 이전 서버는 /2 파일을 거절한다(엄격 디코딩). 되돌려 설치할 때 주의할 점으로 HANDOFF에 적는다.
+10. **문서 개정.** prd FR-THM-002는 키 도메인 `shelf-cover/1`을 더한다. FR-THM-003의 "첫 권의 첫 페이지"는 "첫 권의 권 표지(§2.2)"로 읽는다.
+    arch A-19는 user.db 스키마, §4.10, §5.6, §7.5, §7.6, §7.11을 고친다. ui-spec은 뷰어 상단 바, 시리즈 상세 `.seg`(쓰기로 바뀜), 새 대화상자를 고친다.
+11. **스캔 뒤 정리에서 두 테이블이 따르는 규칙**(E-49·E-50 §2의 순서, ea 안을 받아 정함). 시작할 때는 이동 이관과 삭제를 돌리지 않는다(E-50 §2).
+    (a) 이동 이관(E-49, `content_version`으로 증명한 1:1 이동). `book_covers` 행을 새 book_id로 옮기고 series_id·root_name·book_path를 새 값으로 바꾼다.
+        쪽과 영역은 그대로다. 내용이 같으므로 쪽도 같다. 목적지에 행이 있으면 `updated_at`이 새 쪽이 이긴다(progress와 같다).
+    (b) 분할 재부착(E-48). E-48 §3의 세 관문을 `book_covers.page_count` 기준선으로 그대로 건다. 다 넘으면 쪽 P를, 누적 범위가 P를 포함하는 권 v의 `P − start(v) + 1`쪽으로 옮긴다. 영역은 그대로다.
+        하나라도 못 넘으면 손대지 않는다. 이름이나 휴리스틱으로 고르지 않는다. 남은 행은 (d)가 다룬다.
+    (c) series_id 교정. `book_covers.series_id`도 같은 단계에서 고친다.
+    (d) 삭제. 끝까지 걸은 root에서 사라진 책의 `book_covers` 행을 progress·book_prefs와 같은 트랜잭션에서 지운다. progress 행이 없는 책도 대상이다.
+        지울 id는 출처(root·경로 열)가 있는 progress와 `book_covers`에서 모으고, 그 id의 book_prefs도 함께 지운다.
+        book_prefs에는 root·경로 열이 없다. 그래서 progress도 표지도 없는 book_prefs 단독 행은 어느 root에서 사라졌는지 증명할 수 없으므로 지우지 않는다.
+        "index가 아는 root를 모두 완주했을 때"로 대신하면, root를 설정에서 빼고 index를 다시 만든 뒤 남은 root만 완주했을 때 뺀 root의 행을 지운다(A-11의 비파괴적 root 제거와 E-50 가드 위반, U1 codex 1사이클).
+        남는 행은 해가 없다. 같은 경로의 책이 돌아오면 다시 쓰인다(NFR-DAT-004와 같은 원칙).
+        한 id의 progress 행과 표지 행이 둘 다 있으면, 둘이 가리키는 root가 모두 완주했을 때만 그 id를 지운다. 한쪽이라도 완주하지 않은 root면 그 id의 행은 모두 남긴다.
+    (a)의 관문은 `content_version` 증명 하나다. progress 행의 길이 불일치로 이관이 거절되는 것은 progress에만 걸리고, 표지·prefs·시리즈 1:1 판단을 막지 않는다.
+    (e) `series_prefs`. 이동 증거가 책 단위밖에 없으므로 시리즈 수준 1:1일 때만 옮긴다. 옛 시리즈가 스캔 뒤 인덱스에 없고, 그 시리즈에서 이동 이관된 책이 모두 새 시리즈 하나로 갔을 때다.
+        목적지에 행이 있으면 `updated_at`이 새 쪽이 이긴다. 1:1이 아니면 그대로 두고, 끝까지 걸은 root에 그 시리즈가 없으면 지운다.
+12. **book_prefs 정리 구멍(출하 결함, 17c15c4에 있음)을 11항과 같은 함수에서 고친다.**
+    증상: 폴더 이름을 바꾸거나 옮긴 책은 진행률은 따라가는데, 읽기 방향·표시 모드·맞춤은 기본값으로 돌아갔다.
+    원인: 이동 이관과 재부착이 progress만 옮겼다.
+    판정: 이동 이관은 book_prefs도 옮긴다(옛 행은 progress 이관처럼 은퇴한다). 목적지에 행이 있으면 `updated_at`이 새 쪽이 이긴다.
+    분할 재부착은 progress 행이 E-48의 관문을 넘었을 때만, 그 책의 book_prefs를 자기 행이 없는 각 권에 **복사**한다. 원본은 남긴다.
+    prefs에는 쪽 수 기준선이 없어서 혼자서는 증명이 안 되고, 재부착은 시작할 때도 돌기 때문이다(E-50 §2: 시작할 때는 지우지 않는다).
+    삭제는 11(d)와 같다. 진행 기록도 표지도 없는 책이 사라졌을 때 그 book_prefs 행이 남는 것은 결함으로 보지 않는다(11(d)의 근거).
+13. **이동 증거는 이관이 성공할 때까지 남긴다**(U1 보류 ①, E-49부터 있던 구멍). 이동은 스윕 직전에만 증명된다(E-49 §3).
+    그래서 이관 쓰기가 실패하면 그 실행의 삭제를 건너뛰어도, 다음 스캔은 같은 이동을 다시 증명하지 못한다. 옛 행은 고아가 되어 다음 정리에서 지워질 수 있었다.
+    - 이관 트랜잭션이 실패하면, 증명된 짝(옛 id → 새 id, 새 series_id·root_name·book_path)을 user.db `pending_relocations`(v3 단계에 덧붙이는 테이블)에 적는다. 그 쓰기도 실패하면 프로세스 메모리에 둔다.
+    - 다음 스캔 뒤 정리는 새 짝보다 보류 짝을 먼저 적용하고, 성공하면 보류 행을 지운다. 새 id가 그때 index에 없으면 그 짝은 버린다. 옛 행은 일반 규칙을 따른다.
+    - 보류 짝이 남은 root는 삭제 단계를 건너뛴다. 시작할 때는 보류 짝을 적용하지 않는다(E-50 §2).
+    - 남는 위험: 이관 쓰기와 보류 쓰기가 둘 다 실패한 채 프로세스가 끝나면 짝을 잃는다. 쓰기 실패 두 번이 겹쳐야 일어난다.
+14. **행의 book_id를 바꾸는 단계는 그 행의 출처 열도 목적지 값으로 바꾼다**(U1 보류 ②). progress·book_covers 공통이다.
+    이동 이관과 분할 재부착이 행을 새 id로 옮기면 root_name·book_path·series_id를 그 id가 가리키는 책의 값으로 쓴다.
+    이 열들은 가져오기의 id 재유도(arch §7.11)와 삭제의 출처(§2.11(d))로 쓰이므로, 행이 가리키는 책을 설명해야 한다.
+    옛 값을 그대로 두면, 목적지 root를 설정에서 빼고 index를 다시 만든 뒤 옛 root만 완주했을 때 그 행이 지워진다(A-11 위반).
+    E-48은 이 열들의 값을 정하지 않았다(관문 1은 재부착 전 고아의 옛 경로를 입력으로 쓸 뿐이다). 그래서 `split_test`가 고정한 옛 값은 이 판정에 따라 목적지 값으로 바뀐다.
+
+### 3. 기각한 대안
+
+- **화면 CSS로만 절반을 보이기**(`object-position: right/left`). 120px 섬네일의 절반을 두 배로 늘려 흐려진다. 사용자 영역은 작은 섬네일에서 잘라 더 흐리다. 시리즈 카드는 방향도 모른다.
+- **지정 표지를 index.db `series.cover_*`에 두기.** 재구축 때 사라진다(NFR-DAT-001).
+- **영역을 `/thumbs/{n}`의 쿼리로 받기.** 띠와 캐시가 섞이고, 아무 영역이나 요청할 수 있어서 캐시가 끝없이 는다.
+- **비율 임계값(예: 1.2).** 제품 안에 "가로 페이지" 정의가 둘이 된다. FR-VWR-004의 `w > h` 하나로 둔다.
+- **시리즈 방향은 클라이언트에 두고 표지 방향만 클라이언트가 고르기.** 서버 선생성, 다른 브라우저와 어긋난다.
+- **책등 감지로 절반 경계를 찾기.** 가로 표본이 하나(`군계`, E-23)뿐이라 근거가 없다.
+
+### 4. 검증
+
+단위별로 적는다(분할 `handoffs/e69-split.md`). 아직 오지 않은 단위는 "(작성 예정)"이다.
+
+- **U2 표지 생성(45, 2026-10-29).**
+  - TDD: `ids`의 기지 답 벡터는 §2.7의 해시 입력을 python hashlib로 따로 계산했다. `thumbs`는 합성 가로 이미지의 왼쪽·오른쪽·가운데 색으로 rtl은 오른쪽, ltr은 왼쪽임을 단언한다. 가운데를 자르거나 자르지 않으면 실패한다.
+    홀수 폭(401→201, 1203 JPEG의 rtl 오프셋 601), 세로·정사각(`w > h`만 가로), 지정 영역, §2.4 경계값(w=0.05 통과·0.0499 거절, x+w=1 통과, NaN·Inf 거절)을 다룬다.
+    잘라도 기록되는 쪽 크기는 전체 크기다(FR-VWR-004). 띠 키(`shelf-thumb/1`)는 그대로이고 표지와 다른 파일이다. PDF는 렌더 폭을 넓혀 요청 폭을 내고, 상한에 걸려도 생성된다.
+  - 뮤테이션 22종이 모두 빨강이었다: 자르지 않음, 방향 뒤바꿈, 홀수 여분 반대쪽, `w >= h`, 잘린 크기 기록, 키에서 영역 뺌, cv에 width, PDF 미확대, 픽셀 상한 제거, 폭 맞춤 올림 생략 등.
+  - codex 2사이클: 1사이클 MAJOR 2·MINOR 2 수용. 2사이클 차단 0, MAJOR 1·MINOR 1 보류. 보류한 MAJOR(거의 정사각인 가로 PDF 쪽)는 §2.2 끝 문장대로 기록된 고유 크기로 판정하도록 고친다(새 사이클, 결과 작성 예정).
+  - 게이트: worktree에서 `make lint`, `make test`(0/3~3/3) 통과.
+- **U1 user.db v3(ea, 2026-10-29).**
+  - TDD: 먼저 쓴 테스트가 RED인 것을 확인했다(`TestOpen_schemaV3_*`, `TestValidateCoverRegion_boundariesOfE69`, `TestImport_v1RefusesTheV2KeysWhateverTheyHold`, `TestImport_aCoverRowMissingARegionFieldIsRefused` 등).
+    정리 단계는 app 수준의 `TestAfterScan_*`가 지킨다. 실제 index·user.db에 `os.Rename`·`Remove`와 `--rebuild-index`를 쓰고, root 행을 손으로 심지 않는다.
+  - 뮤테이션 45개(구현 18, 수정 1차 18, 수정 2차 9)가 모두 RED였다. E-48 관문 2·3·4를 하나씩 지우면 표지 테스트도 RED다(관문은 `repair.gate` 한 곳에 있다).
+    허용오차 1e-9를 넣어도 RED, "모든 root 완주"로 prefs를 지우는 규칙을 되살려도 RED다. `repair/split_test.go`와 기존 이동 이관 테스트는 바꾸지 않고 통과한다.
+  - codex 2사이클(gpt-6-astra high, 저장·정리 두 관점). 1차: 차단 6건 모두 수용, 판정이 필요한 셋은 §2.11(d)·§2.12로 정했다.
+    2차: 차단 3건 가운데 2건 수용(표지 행 필드 누락·null은 400, 삭제 전 progress·표지 출처 교차 확인), 1건 반박(/2 문서에 배열이 없는 경우 — §7.1은 모르는 필드만 거른다). 수정은 구현자가 아닌 에이전트가 했다.
+  - 게이트(worktree): 테스트 세 벌 `-race`에서 U1 패키지 다섯 개 ok, 레이스 0. 남은 실패는 다른 단위를 기다리는 것뿐이다: `make lint`의 contractcheck 2건(types.ts, U4a 대기), httpapi 골든 `progress_export`·`TestProgressExportImport`(U3 대기).
+  - §2.12 출하 결함을 지키는 테스트: `TestAfterScan_prefsFollowAMovedBookThatWasNeverRead`, `TestAfterScan_prefsFollowAMovedBookAlongWithItsProgress`, `TestApp_startup_reattachesAnOrphanedCoverAndPrefs`(`internal/app/cleanup_test.go`).
+- **U3 HTTP·앱 배선(20).** (작성 예정)
+- **U4a SPA 데이터(25).** (작성 예정)
+- **U4b 편집기 화면(45).** (작성 예정)
+- **U5 e2e·픽스처(54).** (작성 예정)
+- **마감(U6): 크기, `make gates`, 실브라우저.** (작성 예정)
+
+### 5. 바뀐 것
+
+(작성 예정.)

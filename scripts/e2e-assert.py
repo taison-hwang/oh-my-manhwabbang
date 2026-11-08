@@ -66,7 +66,7 @@ CURATED = [
     "펌프킨 시저스 1~13권",
     "바다의 무녀 (완결, 미번) (文月晃, 海の御先)",
 ]
-SYNTHETIC_EXTRA = ["암호화 테스트.zip", "ZIP64 테스트.zip", "솔리드 테스트.rar"]
+SYNTHETIC_EXTRA = ["암호화 테스트.zip", "ZIP64 테스트.zip", "솔리드 테스트.rar", "표지 테스트"]
 
 CLOVER, WOUNDS, SUICIDE, WHEEL = CURATED[0], CURATED[1], CURATED[2], CURATED[3]
 FMA, GUNGYE, DNANGEL, MISAENG = CURATED[4], CURATED[5], CURATED[6], CURATED[7]

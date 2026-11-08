@@ -1,7 +1,11 @@
 package main
 
 import (
+	"archive/zip"
+	"image"
+	"image/jpeg"
 	"io/fs"
+	"math"
 	"path/filepath"
 	"testing"
 
@@ -96,4 +100,129 @@ func TestShiftJISPages_areConvictedAsCP932(t *testing.T) {
 	for name := range want {
 		t.Errorf("never produced %q", name)
 	}
+}
+
+// 표지 테스트 is ruling E-69's sample (U5). §2.2 picks the half of a landscape
+// page 1 that the effective reading direction opens on, and the browser tier
+// tells the halves apart by comparing the card against each half of the page —
+// so the halves have to differ, and the difference has to be the one a
+// centre crop (the bug E-69 §1 is about) would also get wrong. 03권 is the
+// designation book: a portrait page 1, which §2.2 shows whole, and a page 2
+// whose quadrants differ, so a designated region is told from the whole page.
+func TestCoverSamples_haveTheShapesE69Asserts(t *testing.T) {
+	root := t.TempDir()
+	if err := build(root); err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	for _, vol := range []string{"표지 테스트 01권.zip", "표지 테스트 02권.zip"} {
+		pages := zipPages(t, filepath.Join(root, "표지 테스트", vol))
+		p1 := pages[0]
+		b := p1.Bounds()
+		if b.Dx() <= b.Dy() {
+			t.Fatalf("%s page 1 is %dx%d; E-69 §2.2 only halves a page with w > h", vol, b.Dx(), b.Dy())
+		}
+		left := meanRGB(p1, image.Rect(0, 0, b.Dx()/2, b.Dy()))
+		right := meanRGB(p1, image.Rect(b.Dx()/2, 0, b.Dx(), b.Dy()))
+		centre := meanRGB(p1, image.Rect(b.Dx()/4, 0, b.Dx()*3/4, b.Dy()))
+		if !(left[0] > 150 && left[2] < 90) {
+			t.Errorf("%s page 1 left half is %v, want red", vol, left)
+		}
+		if !(right[2] > 150 && right[0] < 90) {
+			t.Errorf("%s page 1 right half is %v, want blue", vol, right)
+		}
+		// A centre crop straddles both halves, so it must look like neither.
+		redLike := centre[0] > 150 && centre[2] < 90
+		blueLike := centre[2] > 150 && centre[0] < 90
+		if redLike || blueLike {
+			t.Errorf("%s page 1 centre is %v: a centre crop would pass for a half", vol, centre)
+		}
+		for i, p := range pages[1:] {
+			if pb := p.Bounds(); pb.Dx() > pb.Dy() {
+				t.Errorf("%s page %d is landscape; only page 1 is the sample", vol, i+2)
+			}
+		}
+	}
+
+	pages := zipPages(t, filepath.Join(root, "표지 테스트", "표지 테스트 03권.zip"))
+	if len(pages) < 2 {
+		t.Fatalf("03권 has %d pages; the designation needs a page 2", len(pages))
+	}
+	if b := pages[0].Bounds(); b.Dx() > b.Dy() {
+		t.Errorf("03권 page 1 is %dx%d; it is the portrait case, shown whole", b.Dx(), b.Dy())
+	} else {
+		// Shown whole, but its halves differ: the browser tier tells "whole"
+		// from "a half" on this page, which a flat page cannot do.
+		left := meanRGB(pages[0], image.Rect(0, 0, b.Dx()/2, b.Dy()))
+		right := meanRGB(pages[0], image.Rect(b.Dx()/2, 0, b.Dx(), b.Dy()))
+		if d := rgbDistance(left, right); d < 120 {
+			t.Errorf("03권 page 1 halves are %v and %v, %0.f apart: a halving bug would pass for the whole page", left, right, d)
+		}
+	}
+	p2 := pages[1]
+	b := p2.Bounds()
+	if b.Dx() > b.Dy() {
+		t.Errorf("03권 page 2 is %dx%d; the designation page is portrait", b.Dx(), b.Dy())
+	}
+	w, h := b.Dx(), b.Dy()
+	quads := [][3]float64{
+		meanRGB(p2, image.Rect(0, 0, w/2, h/2)),
+		meanRGB(p2, image.Rect(w/2, 0, w, h/2)),
+		meanRGB(p2, image.Rect(0, h/2, w/2, h)),
+		meanRGB(p2, image.Rect(w/2, h/2, w, h)),
+	}
+	for i := range quads {
+		for j := i + 1; j < len(quads); j++ {
+			if rgbDistance(quads[i], quads[j]) < 120 {
+				t.Errorf("03권 page 2 quadrants %d and %d are %v and %v: too alike to tell a region from the page", i, j, quads[i], quads[j])
+			}
+		}
+	}
+	if d := rgbDistance(meanRGB(pages[0], pages[0].Bounds()), meanRGB(p2, b)); d < 60 {
+		t.Errorf("03권 pages 1 and 2 average %0.f apart: the designated cover would look like the default", d)
+	}
+}
+
+func zipPages(t *testing.T, path string) []image.Image {
+	t.Helper()
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatalf("opening %s: %v", path, err)
+	}
+	defer zr.Close()
+	var out []image.Image
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("%s: %v", f.Name, err)
+		}
+		img, err := jpeg.Decode(rc)
+		_ = rc.Close()
+		if err != nil {
+			t.Fatalf("%s: decoding: %v", f.Name, err)
+		}
+		out = append(out, img)
+	}
+	if len(out) == 0 {
+		t.Fatalf("%s holds no page", path)
+	}
+	return out
+}
+
+func meanRGB(img image.Image, r image.Rectangle) [3]float64 {
+	var sum [3]float64
+	var n float64
+	for y := r.Min.Y; y < r.Max.Y; y++ {
+		for x := r.Min.X; x < r.Max.X; x++ {
+			cr, cg, cb, _ := img.At(x, y).RGBA()
+			sum[0] += float64(cr >> 8)
+			sum[1] += float64(cg >> 8)
+			sum[2] += float64(cb >> 8)
+			n++
+		}
+	}
+	return [3]float64{sum[0] / n, sum[1] / n, sum[2] / n}
+}
+
+func rgbDistance(a, b [3]float64) float64 {
+	return math.Abs(a[0]-b[0]) + math.Abs(a[1]-b[1]) + math.Abs(a[2]-b[2])
 }

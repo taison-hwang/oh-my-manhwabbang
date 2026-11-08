@@ -519,6 +519,12 @@ type Relocation struct {
 	// it, while the shelf percentage and the 읽는 중 filter group by series_id
 	// and cannot see it.
 	NewSeriesID string
+	// OldSeriesID is the series the vanishing row belonged to. The sweep deletes
+	// that series row in the same transaction when nothing else is left in it,
+	// so this is the last moment anything knows which series a moved book came
+	// from. The post-scan cleanup needs it to decide a series-level 1:1 move
+	// (ruling E-69 §2.11(e)): every book of one old series gone to one new one.
+	OldSeriesID string
 	// NewPageCount is the surviving row's length, so a caller can check it
 	// against whatever baseline it holds before trusting the pairing.
 	NewPageCount int
@@ -593,7 +599,7 @@ func (w *Writer) SweepRoot(ctx context.Context, rootName string, gen int64) (Swe
 func observeRelocations(ctx context.Context, tx *sql.Tx, rootName string, gen int64) ([]Relocation, error) {
 	rows, err := tx.QueryContext(ctx, `
 		WITH gone AS (
-			SELECT id, rel_path, content_version
+			SELECT id, series_id, rel_path, content_version
 			FROM books
 			WHERE root_name = ? AND scan_gen < ? AND content_version <> ''
 		), kept AS (
@@ -601,7 +607,8 @@ func observeRelocations(ctx context.Context, tx *sql.Tx, rootName string, gen in
 			FROM books
 			WHERE scan_gen >= ? AND content_version <> ''
 		)
-		SELECT g.id, k.id, g.rel_path, k.rel_path, k.root_name, k.series_id, k.page_count
+		SELECT g.id, k.id, g.rel_path, k.rel_path, k.root_name, k.series_id, k.page_count,
+		       g.series_id
 		FROM gone g
 		JOIN kept k ON k.content_version = g.content_version
 		WHERE (SELECT count(*) FROM gone g2 WHERE g2.content_version = g.content_version) = 1
@@ -617,7 +624,7 @@ func observeRelocations(ctx context.Context, tx *sql.Tx, rootName string, gen in
 		var r Relocation
 		var pc sql.NullInt64
 		if err := rows.Scan(&r.OldBookID, &r.NewBookID, &r.OldRelPath,
-			&r.NewRelPath, &r.NewRootName, &r.NewSeriesID, &pc); err != nil {
+			&r.NewRelPath, &r.NewRootName, &r.NewSeriesID, &pc, &r.OldSeriesID); err != nil {
 			return nil, fmt.Errorf("scanning a relocation in root %q: %w", rootName, err)
 		}
 		r.NewPageCount = int(pc.Int64)

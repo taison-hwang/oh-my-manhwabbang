@@ -51,7 +51,8 @@ import { PageStage, type PageStageProps } from './PageStage'
 /** `noUncheckedIndexedAccess` types an indexed read as `T | undefined`. */
 function at<T>(items: readonly T[], index: number): T {
   const item = items[index]
-  if (item === undefined) throw new Error(`expected an element at index ${String(index)}`)
+  if (item === undefined)
+    throw new Error(`expected an element at index ${String(index)}`)
   return item
 }
 
@@ -185,7 +186,9 @@ describe('stageStyle', () => {
   })
 
   it('pads the horizontal stage by 20px and drops the padding for 원본', () => {
-    expect(stageStyle('single', 'height', 'ltr').padding).toBe(`${String(STAGE_PADDING_PX)}px`)
+    expect(stageStyle('single', 'height', 'ltr').padding).toBe(
+      `${String(STAGE_PADDING_PX)}px`,
+    )
     expect(stageStyle('single', 'original', 'ltr').padding).toBe(0)
   })
 
@@ -199,17 +202,31 @@ describe('stageStyle', () => {
   })
 
   it('carries the reading direction into the flow', () => {
-    expect(stageStyle('spread', 'height', 'rtl').flexDirection).toBe('row-reverse')
+    expect(stageStyle('spread', 'height', 'rtl').flexDirection).toBe(
+      'row-reverse',
+    )
     expect(stageStyle('spread', 'height', 'ltr').flexDirection).toBe('row')
   })
 })
 
 describe('pageFitStyle', () => {
   it('implements the four sizings of ui-spec §6.2', () => {
-    expect(pageFitStyle('width')).toMatchObject({ width: '100%', height: 'auto' })
-    expect(pageFitStyle('height')).toMatchObject({ height: '100%', width: 'auto' })
-    expect(pageFitStyle('original')).toMatchObject({ width: 'auto', maxWidth: 'none' })
-    expect(pageFitStyle('contain')).toMatchObject({ maxWidth: '100%', maxHeight: '100%' })
+    expect(pageFitStyle('width')).toMatchObject({
+      width: '100%',
+      height: 'auto',
+    })
+    expect(pageFitStyle('height')).toMatchObject({
+      height: '100%',
+      width: 'auto',
+    })
+    expect(pageFitStyle('original')).toMatchObject({
+      width: 'auto',
+      maxWidth: 'none',
+    })
+    expect(pageFitStyle('contain')).toMatchObject({
+      maxWidth: '100%',
+      maxHeight: '100%',
+    })
   })
 })
 
@@ -232,8 +249,14 @@ describe('pageFrameStyle', () => {
   it('spans the stage width in 세로 and adds a height only where one is needed', () => {
     expect(pageFrameStyle('width', 'vertical')).toMatchObject({ width: '100%' })
     expect(pageFrameStyle('width', 'vertical').height).toBeUndefined()
-    expect(pageFrameStyle('height', 'vertical')).toMatchObject({ width: '100%', height: '100%' })
-    expect(pageFrameStyle('contain', 'vertical')).toMatchObject({ width: '100%', height: '100%' })
+    expect(pageFrameStyle('height', 'vertical')).toMatchObject({
+      width: '100%',
+      height: '100%',
+    })
+    expect(pageFrameStyle('contain', 'vertical')).toMatchObject({
+      width: '100%',
+      height: '100%',
+    })
   })
 })
 
@@ -304,7 +327,9 @@ describe('scrollTopForPage (세로 blank-stage blocker, FR-VWR-003)', () => {
 
   it('round-trips with pageAtScroll — the two must agree or the stage bounces', () => {
     for (const page of [1, 2, 42, 100, 213]) {
-      expect(pageAtScroll(tops, scrollTopForPage(tops, page, maxScrollTop))).toBe(page)
+      expect(
+        pageAtScroll(tops, scrollTopForPage(tops, page, maxScrollTop)),
+      ).toBe(page)
     }
   })
 
@@ -343,6 +368,21 @@ describe('makeDimsLookup', () => {
     expect(lookup(3)).toBeUndefined()
   })
 
+  it('keeps recorded PDF geometry ahead of rounded render dimensions', () => {
+    const lookup = makeDimsLookup(
+      [{ n: 1, name: '1', ext: '.pdf', size: 0, w: 4000, h: 3999 }],
+      new Map([[1, { w: 800, h: 800 }]]),
+      true,
+    )
+    expect(isLandscape(lookup(1))).toBe(true)
+    const unknown = makeDimsLookup(
+      pages,
+      new Map([[2, { w: 800, h: 800 }]]),
+      true,
+    )
+    expect(unknown(2)).toEqual({ w: 800, h: 800 })
+  })
+
   it('ignores a half-measured entry rather than reporting a null dimension', () => {
     const measured = new Map<number, PageDims>([[1, { w: 800, h: null }]])
     const lookup = makeDimsLookup(pages, measured)
@@ -369,17 +409,25 @@ const STAGE_H = 900
 const VERTICAL_PAGE_COUNT = 187
 
 /** 높이 fits a page to the stage height; 너비 gives 1 440 × (1 200/800). */
-const PAGE_H_HEIGHT_FIT = verticalPageHeight(PORTRAIT, 'height', STAGE_W, STAGE_H)
+const PAGE_H_HEIGHT_FIT = verticalPageHeight(
+  PORTRAIT,
+  'height',
+  STAGE_W,
+  STAGE_H,
+)
 const PAGE_H_WIDTH_FIT = verticalPageHeight(PORTRAIT, 'width', STAGE_W, STAGE_H)
 
-const VERTICAL_PAGES: PageInfo[] = Array.from({ length: VERTICAL_PAGE_COUNT }, (_, i) => ({
-  n: i + 1,
-  name: `page_${String(i + 1).padStart(3, '0')}.jpg`,
-  ext: '.jpg',
-  size: 180_000,
-  w: PORTRAIT.w,
-  h: PORTRAIT.h,
-}))
+const VERTICAL_PAGES: PageInfo[] = Array.from(
+  { length: VERTICAL_PAGE_COUNT },
+  (_, i) => ({
+    n: i + 1,
+    name: `page_${String(i + 1).padStart(3, '0')}.jpg`,
+    ext: '.jpg',
+    size: 180_000,
+    w: PORTRAIT.w,
+    h: PORTRAIT.h,
+  }),
+)
 
 /** The height every modelled page currently occupies; the tests move it. */
 let pageHeight = PAGE_H_HEIGHT_FIT
@@ -409,9 +457,13 @@ const scrollTops = new WeakMap<HTMLElement, number>()
 
 function stubLayout(name: string, descriptor: PropertyDescriptor): () => void {
   const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, name)
-  Object.defineProperty(HTMLElement.prototype, name, { configurable: true, ...descriptor })
+  Object.defineProperty(HTMLElement.prototype, name, {
+    configurable: true,
+    ...descriptor,
+  })
   return () => {
-    if (original === undefined) Reflect.deleteProperty(HTMLElement.prototype, name)
+    if (original === undefined)
+      Reflect.deleteProperty(HTMLElement.prototype, name)
     else Object.defineProperty(HTMLElement.prototype, name, original)
   }
 }
@@ -426,7 +478,10 @@ function installLayout(): () => void {
       get(this: HTMLElement): number {
         const stored = scrollTops.get(this) ?? 0
         if (!isStage(this)) return stored
-        const clamped = Math.min(stored, Math.max(0, this.scrollHeight - this.clientHeight))
+        const clamped = Math.min(
+          stored,
+          Math.max(0, this.scrollHeight - this.clientHeight),
+        )
         scrollTops.set(this, clamped)
         return clamped
       },
@@ -582,7 +637,9 @@ describe('PageStage 세로 alignment (the blocker, wired to the DOM)', () => {
 
     // The counter follows the scroll; the aligner must not answer by pulling the
     // scroller back to page 102's top edge.
-    rerender(createElement(PageStage, stageProps({ page: 102, onScrollToPage })))
+    rerender(
+      createElement(PageStage, stageProps({ page: 102, onScrollToPage })),
+    )
     expect(stage.scrollTop).toBe(100 * PAGE_H_HEIGHT_FIT + 1_400)
   })
 })

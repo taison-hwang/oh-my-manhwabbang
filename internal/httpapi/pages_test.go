@@ -442,19 +442,23 @@ func TestCover(t *testing.T) {
 		}
 	})
 
-	t.Run("a page cover carries the book's cv", func(t *testing.T) {
+	// Ruling E-69 §2.6 changed what this pins: a page cover is the cover
+	// book's BOOK cover now, so the series' cover_cv is that book's cover_cv
+	// (it was the book's content version, cvClover, before E-69).
+	t.Run("a page cover carries the cover book's cover_cv", func(t *testing.T) {
 		detail := decodeBody[SeriesDetail](t, e.get("/api/series/"+e.seriesCloverID), http.StatusOK)
 		if !detail.HasCover {
 			t.Fatal("has_cover = false for a series with cover_kind=page")
 		}
-		if detail.CoverCV == nil || *detail.CoverCV != cvClover {
-			t.Fatalf("cover_cv = %v, want %q", detail.CoverCV, cvClover)
+		book := e.wireBookOf(e.bookCloverID)
+		if detail.CoverCV == nil || *detail.CoverCV != book.CoverCV {
+			t.Fatalf("cover_cv = %v, want the cover book's cover_cv %q", detail.CoverCV, book.CoverCV)
 		}
 		// A stale ?v= is 409 here exactly as it is on a page.
 		w := e.get("/api/series/" + e.seriesCloverID + "/cover?v=stale")
 		body := errorBody(t, w, http.StatusConflict, CodeStaleVersion)
-		if body.Detail["cv"] != cvClover {
-			t.Errorf("detail.cv = %v, want %q", body.Detail["cv"], cvClover)
+		if body.Detail["cv"] != book.CoverCV {
+			t.Errorf("detail.cv = %v, want %q", body.Detail["cv"], book.CoverCV)
 		}
 	})
 

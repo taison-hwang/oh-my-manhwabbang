@@ -326,6 +326,8 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("/api/series", s.get(s.handleSeriesList))
 	mux.Handle("/api/series/{sid}", s.get(s.handleSeriesDetail))
 	mux.Handle("/api/series/{sid}/cover", s.get(s.handleSeriesCover))
+	mux.Handle("/api/series/{sid}/prefs", s.methods(map[string]handlerFunc{http.MethodPut: s.handlePutSeriesPrefs}))
+	mux.Handle("/api/books/{bid}/cover", s.methods(map[string]handlerFunc{http.MethodGet: s.handleBookCover, http.MethodPut: s.handlePutBookCover, http.MethodDelete: s.handleDeleteBookCover}))
 	mux.Handle("/api/series/{sid}/rescan", s.methods(map[string]handlerFunc{
 		http.MethodPost: s.handleSeriesRescan,
 	}))

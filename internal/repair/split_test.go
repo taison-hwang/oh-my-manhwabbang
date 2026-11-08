@@ -211,10 +211,8 @@ func TestPlan_rootChangeComposesWithASplit(t *testing.T) {
 	if n := pagesRead(rows); n != 11 {
 		t.Errorf("rolls up to %d pages read, want 11", n)
 	}
-	// The row keeps the root the reader's history was written under; the index
-	// is the authority on where the file is now, and the next write refreshes it.
-	if rows[0].RootName != testRoot {
-		t.Errorf("root_name %q, want the orphan's own %q", rows[0].RootName, testRoot)
+	if rows[0].RootName != otherRoot {
+		t.Errorf("root_name %q, want the destination %q", rows[0].RootName, otherRoot)
 	}
 }
 

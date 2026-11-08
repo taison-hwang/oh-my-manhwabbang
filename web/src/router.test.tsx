@@ -42,6 +42,8 @@ import {
   rootsResponse,
   scanStatusIdle,
   scanStatusRunning,
+  seriesDetail,
+  SERIES_ID,
   settings,
 } from './api/fixtures'
 import { createQueryClient } from './api/queries'
@@ -51,6 +53,7 @@ import { resetBasePath } from './api/urls'
 import { LibraryPage } from './features/library/LibraryPage'
 import { useShellData } from './lib/shellData'
 import { ShellDataProvider, router } from './router'
+import { SERIES_DIR_STORAGE_KEY, resetSeriesDirMigration } from './store/seriesDir'
 import { UI_STORAGE_KEY, defaultOrderFor, useUiStore } from './store/ui'
 import { failUnhandled } from './test/msw'
 
@@ -225,6 +228,39 @@ describe('ShellDataProvider — refreshing when a scan finishes (FR-IDX-004)', (
     expect(seriesQueries).toHaveLength(3)
     expect(rootsCalls).toBe(1)
   }, 10_000)
+})
+
+describe('ShellDataProvider — the old series-direction seed (ruling E-69 §2.3)', () => {
+  /**
+   * The upload has to be *mounted* to happen at all, and the shell is the one
+   * component every route boots through: a seed left by the pre-E-69 client is
+   * offered to the server on the first boot, whatever screen it starts on.
+   */
+  it('uploads a leftover seed on boot, where the server has no direction yet', async () => {
+    resetSeriesDirMigration()
+    localStorage.setItem(
+      SERIES_DIR_STORAGE_KEY,
+      JSON.stringify({ state: { bySeries: { [SERIES_ID]: 'rtl' } }, version: 0 }),
+    )
+    const puts: unknown[] = []
+    server.use(
+      http.get(`${ORIGIN}/api/series/${SERIES_ID}`, () =>
+        HttpResponse.json({ ...seriesDetail, reading_direction: null }),
+      ),
+      http.put(`${ORIGIN}/api/series/${SERIES_ID}/prefs`, async ({ request }) => {
+        puts.push(await request.json())
+        return HttpResponse.json({ reading_direction: 'rtl' })
+      }),
+    )
+    renderProvider()
+
+    await waitFor(() => {
+      expect(puts).toEqual([{ reading_direction: 'rtl' }])
+    })
+    await waitFor(() => {
+      expect(localStorage.getItem(SERIES_DIR_STORAGE_KEY)).toBeNull()
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------

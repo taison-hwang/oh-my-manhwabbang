@@ -14,6 +14,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 
 import {
   cancelScan,
+  deleteBookCover,
   deleteProgress,
   exportProgress,
   fetchImage,
@@ -34,8 +35,10 @@ import {
   logout,
   parseRetryAfter,
   purgeCache,
+  putBookCover,
   putBookPrefs,
   putProgress,
+  putSeriesPrefs,
   putSettings,
   rescanSeries,
   startScan,
@@ -57,6 +60,7 @@ import {
   ORIGIN,
   progress,
   progressExport,
+  progressExportV1,
   rootsResponse,
   scanLogResponse,
   scanStatusRunning,
@@ -65,7 +69,7 @@ import {
   seriesListResponse,
   settings,
 } from './fixtures'
-import { DISPLAY_MODES, FIT_MODES, READING_DIRS } from './types'
+import { DISPLAY_MODES, FIT_MODES, READING_DIRS, type ProgressExport } from './types'
 import { pageThumbUrl, resetBasePath, seriesCoverUrl, setBasePath } from './urls'
 import { failUnhandled } from '../test/msw'
 
@@ -299,7 +303,8 @@ describe('endpoints', () => {
       HttpResponse.json({ imported: 1, skipped: 0, conflicts: 0 }),
     )
     const exported = await exportProgress()
-    expect(exported.format).toBe('shelf-progress/1')
+    // E-69 §2.9: an export is always /2.
+    expect(exported.format).toBe('shelf-progress/2')
     expect(exported.id_version).toBe('shelf-id/1')
 
     await expect(importProgress(exported, 'replace')).resolves.toEqual({
@@ -753,5 +758,88 @@ describe('fetchImage', () => {
     const error = (await fetchImage(coverUrl).catch((e: unknown) => e)) as ApiError
     expect(error.status).toBe(404)
     expect(error.code).toBe('not_found')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Ruling E-69 §2.6 — the book cover and the series' reading direction
+// ---------------------------------------------------------------------------
+
+describe('book cover writes (E-69 §2.6)', () => {
+  const cover = { page: 3, x: 0.5, y: 0.125, w: 0.375, h: 0.75 }
+
+  it('PUT sends exactly {page, x, y, w, h} and returns {cover_cv, cover}', async () => {
+    const box = capture('put', `/api/books/${BOOK_ID}/cover`, () =>
+      HttpResponse.json({ cover_cv: 'c0ffee00b00c0002', cover }),
+    )
+    // A caller holding a wider object (a row, an editor state) must not leak its
+    // other fields: §7.1 strict decoding answers 400 for any of them.
+    const wider = { ...cover, aspect: 2 / 3, book_id: BOOK_ID }
+    const result = await putBookCover(BOOK_ID, wider)
+    expect(box.current?.method).toBe('PUT')
+    expect(await box.current?.json()).toEqual(cover)
+    expect(result).toEqual({ cover_cv: 'c0ffee00b00c0002', cover })
+  })
+
+  it('DELETE answers 204 with no body, and resolves', async () => {
+    const box = capture('delete', `/api/books/${BOOK_ID}/cover`, () => new HttpResponse(null, { status: 204 }))
+    await expect(deleteBookCover(BOOK_ID)).resolves.toBeUndefined()
+    expect(box.current?.method).toBe('DELETE')
+  })
+
+  it('a refused region is a typed 400 bad_request', async () => {
+    server.use(
+      http.put(`${ORIGIN}/api/books/${BOOK_ID}/cover`, () =>
+        HttpResponse.json(errorEnvelope('bad_request', 'cover region out of range', { field: 'w' }), {
+          status: 400,
+        }),
+      ),
+    )
+    const error = await putBookCover(BOOK_ID, { ...cover, w: 0.6 }).catch((e: unknown) => e)
+    expect(isApiError(error)).toBe(true)
+    expect((error as ApiError).status).toBe(400)
+    expect((error as ApiError).code).toBe('bad_request')
+  })
+})
+
+describe('series prefs writes (E-69 §2.6)', () => {
+  it('PUT sends {reading_direction} and returns the stored value', async () => {
+    const box = capture('put', `/api/series/${SERIES_ID}/prefs`, () =>
+      HttpResponse.json({ reading_direction: 'rtl' }),
+    )
+    await expect(putSeriesPrefs(SERIES_ID, { reading_direction: 'rtl' })).resolves.toEqual({
+      reading_direction: 'rtl',
+    })
+    expect(box.current?.method).toBe('PUT')
+    expect(await box.current?.json()).toEqual({ reading_direction: 'rtl' })
+  })
+
+  it('keeps an explicit null, which clears the series’ direction', async () => {
+    const box = capture('put', `/api/series/${SERIES_ID}/prefs`, () =>
+      HttpResponse.json({ reading_direction: null }),
+    )
+    await putSeriesPrefs(SERIES_ID, { reading_direction: null })
+    expect(await box.current?.json()).toEqual({ reading_direction: null })
+  })
+
+  it('sends nothing but reading_direction', async () => {
+    const box = capture('put', `/api/series/${SERIES_ID}/prefs`, () =>
+      HttpResponse.json({ reading_direction: 'ltr' }),
+    )
+    const wider = { reading_direction: 'ltr' as const, series_id: SERIES_ID }
+    await putSeriesPrefs(SERIES_ID, wider)
+    expect(await box.current?.json()).toEqual({ reading_direction: 'ltr' })
+  })
+})
+
+describe('importing a file written before E-69', () => {
+  it('posts a /1 document as it was read', async () => {
+    const box = capture('post', '/api/progress/import', () =>
+      HttpResponse.json({ imported: 1, skipped: 0, conflicts: 0 }),
+    )
+    // The panel sends a chosen file as read; a /1 file is not a `ProgressExport`
+    // any more, and the server — not this client — is what still accepts it.
+    await importProgress(progressExportV1 as unknown as ProgressExport)
+    expect(await box.current?.json()).toEqual(progressExportV1)
   })
 })

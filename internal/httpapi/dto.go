@@ -278,7 +278,8 @@ type SeriesDetail struct {
 	// Encoding is diagnostics, ruling E-56: one of kenc's Enc* labels —
 	// "utf-8" | "utf-8-invalid" | "cp949" | "cp932" | "unknown" — folded over
 	// the series' books by seriesEncoding, or null when no book has a verdict.
-	Encoding *string `json:"encoding"`
+	Encoding         *string `json:"encoding"`
+	ReadingDirection *string `json:"reading_direction"`
 }
 
 // BookSummary is one 권.
@@ -297,10 +298,12 @@ type BookSummary struct {
 	FileSize int64 `json:"file_size"`
 	Mtime    int64 `json:"mtime"`
 	// CV is the content version. Append it as ?v= to page and thumb URLs.
-	CV       string    `json:"cv"`
-	Status   string    `json:"status"`
-	Error    *string   `json:"error"`
-	Progress *Progress `json:"progress"`
+	CV       string     `json:"cv"`
+	CoverCV  string     `json:"cover_cv"`
+	Cover    *BookCover `json:"cover"`
+	Status   string     `json:"status"`
+	Error    *string    `json:"error"`
+	Progress *Progress  `json:"progress"`
 }
 
 // BookDetail is `GET /api/books/{bid}`, which ships every PageInfo in one
@@ -329,13 +332,13 @@ type PageInfo struct {
 	H    *int   `json:"h"`
 }
 
-// BookPrefs is the effective viewer configuration for a book: the per-book
-// override where one exists, the global default otherwise.
+// BookPrefs follows book → series → global for direction; the other fields
+// follow book → global (E-69 §2.3).
 type BookPrefs struct {
 	ReadingDirection string `json:"reading_direction"`
 	DisplayMode      string `json:"display_mode"`
 	FitMode          string `json:"fit_mode"`
-	// IsOverride false means these are the global defaults verbatim.
+	// IsOverride reports whether the book has overrides of its own.
 	IsOverride bool `json:"is_override"`
 }
 

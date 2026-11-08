@@ -6,6 +6,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getSettings, putSettings, type WriteOptions } from './client'
 import { ApiError } from './errors'
 import { settings as FIXTURE } from './fixtures'
+import {
+  BOOK_ID,
+  bookDetail,
+  bookPrefs,
+  cacheUsage,
+  continueResponse,
+  SERIES_ID,
+  seriesDetail,
+  seriesListResponse,
+} from './fixtures'
 import { queryKeys, useSettings } from './queries'
 import {
   disposeSettingsWriter,
@@ -1186,4 +1196,107 @@ describe('a GET meeting choices the server has not confirmed', () => {
       expect(cached()).toEqual(server)
     },
   )
+})
+
+// ---------------------------------------------------------------------------
+// Ruling E-69 — the global reading direction is the last rung of the ladder
+// ---------------------------------------------------------------------------
+
+/**
+ * E-69 §2.3: a book with no direction of its own and a series with none opens on
+ * the global default, and `BookPrefs.reading_direction` is already that answer —
+ * so a new global direction changes every such book's prefs and detail. §2.7: the
+ * effective direction is an input of every default cover, so it turns over the
+ * `cover_cv` the volume lists (`series`) and 이어보기 (`continue`) carry. A write
+ * of other fields moves none of that, and must not cost a re-read of all of it.
+ */
+describe('a confirmed global reading_direction re-reads what it moves (E-69 §2.3, §2.7)', () => {
+  function seedDirectionFamilies(): void {
+    client.setQueryData(queryKeys.series.detail(SERIES_ID), seriesDetail)
+    client.setQueryData(queryKeys.series.list({}), seriesListResponse)
+    client.setQueryData(queryKeys.books.detail(BOOK_ID), bookDetail)
+    client.setQueryData(queryKeys.books.prefs(BOOK_ID), bookPrefs)
+    client.setQueryData(queryKeys.continueReading.list(20), continueResponse)
+    client.setQueryData(queryKeys.cache.usage, cacheUsage)
+  }
+
+  function invalidated(): Record<string, boolean | undefined> {
+    const state = (key: readonly unknown[]) => client.getQueryState(key)?.isInvalidated
+    return {
+      'series.detail': state(queryKeys.series.detail(SERIES_ID)),
+      'series.list': state(queryKeys.series.list({})),
+      'books.detail': state(queryKeys.books.detail(BOOK_ID)),
+      'books.prefs': state(queryKeys.books.prefs(BOOK_ID)),
+      continue: state(queryKeys.continueReading.list(20)),
+      'cache.usage': state(queryKeys.cache.usage),
+    }
+  }
+
+  const MOVED = {
+    'series.detail': true,
+    'series.list': true,
+    'books.detail': true,
+    'books.prefs': true,
+    continue: true,
+    'cache.usage': false,
+  }
+  const NONE = Object.fromEntries(Object.keys(MOVED).map((key) => [key, false]))
+
+  it('invalidates series, books (detail and prefs) and 이어보기 once the server took it — not before', async () => {
+    seedDirectionFamilies()
+    const writer = mountWriter()
+    save(writer, { reading_direction: 'rtl' })
+    await advance(SETTINGS_SAVE_DEBOUNCE_MS)
+    expect(puts).toHaveLength(1)
+    expect(invalidated(), 'on the wire: nothing has moved yet').toEqual(NONE)
+
+    put(0).arrive()
+    await advance(0)
+    expect(invalidated()).toEqual(MOVED)
+  })
+
+  it('also when it rode with other fields', async () => {
+    seedDirectionFamilies()
+    const writer = mountWriter()
+    save(writer, { theme: 'dark', reading_direction: 'rtl' })
+    await advance(SETTINGS_SAVE_DEBOUNCE_MS)
+    put(0).arrive()
+    await advance(0)
+    expect(invalidated()).toEqual(MOVED)
+  })
+
+  it('also when a newer change kept its answer out of the cache — the server still applied it', async () => {
+    seedDirectionFamilies()
+    const writer = mountWriter()
+    save(writer, { reading_direction: 'rtl' })
+    await advance(SETTINGS_SAVE_DEBOUNCE_MS)
+    save(writer, { theme: 'dark' })
+    put(0).arrive()
+    await advance(0)
+    expect(invalidated()).toEqual(MOVED)
+  })
+
+  it.each([
+    ['theme', { theme: 'dark' }],
+    ['the library view', { library_view: 'list' }],
+    ['the display mode', { display_mode: 'spread' }],
+  ] as const)('a write of %s alone invalidates none of it', async (_label, update: SettingsUpdate) => {
+    seedDirectionFamilies()
+    const writer = mountWriter()
+    save(writer, update)
+    await advance(SETTINGS_SAVE_DEBOUNCE_MS)
+    put(0).arrive()
+    await advance(0)
+    expect(invalidated()).toEqual(NONE)
+  })
+
+  it('a refused reading_direction invalidates none of it', async () => {
+    seedDirectionFamilies()
+    const writer = mountWriter()
+    save(writer, { reading_direction: 'rtl' })
+    await advance(SETTINGS_SAVE_DEBOUNCE_MS)
+    put(0).fail(refusedFor('reading_direction'))
+    await advance(0)
+    expect(invalidated()).toEqual(NONE)
+  })
 })

@@ -16,10 +16,13 @@ import { listSeries } from './client'
 import { isApiError, isAuthError } from './errors'
 import {
   authStatus,
+  BOOK_COVER_CV,
   BOOK_CV,
   BOOK_ID,
   bookDetail,
   bookPrefs,
+  bookSummary,
+  brokenBookSummary,
   cacheUsage,
   continueResponse,
   COVER_CV,
@@ -44,6 +47,7 @@ import {
   SCAN_POLL_MS,
   useAuthStatus,
   useBook,
+  useBookCoverImage,
   useCacheUsage,
   useCancelScan,
   useContinue,
@@ -56,6 +60,7 @@ import {
   usePageThumbImage,
   usePurgeCache,
   useRescanSeries,
+  useResetBookCover,
   useRoots,
   useSaveProgress,
   useScanLog,
@@ -64,14 +69,16 @@ import {
   useSeriesList,
   useSeriesListInfinite,
   useScanCompletionRefresh,
+  useSetBookCover,
   useSetPrefs,
+  useSetSeriesDirection,
   useSettings,
   useStartScan,
 } from './queries'
 import { useSettingsWriter } from './settingsWriter'
-import type { ScanStatus, SettingsUpdate } from './types'
-import { resetBasePath } from './urls'
-import { failUnhandled } from '../test/msw'
+import type { ScanStatus, SeriesDetail, SettingsUpdate } from './types'
+import { bookCoverUrl, resetBasePath } from './urls'
+import { createCoverMock, failUnhandled, type CoverMock } from '../test/msw'
 
 const server = setupServer()
 
@@ -1131,5 +1138,520 @@ describe('progress export and import (FR-STT-004, ruling E-68)', () => {
     expect(client.getQueryState(queryKeys.books.detail(BOOK_ID))?.isInvalidated).toBe(false)
     expect(client.getQueryState(queryKeys.series.detail(SERIES_ID))?.isInvalidated).toBe(false)
     expect(client.getQueryState(queryKeys.continueReading.list(20))?.isInvalidated).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Ruling E-69 — the book cover image, its two writes, and the series direction
+// ---------------------------------------------------------------------------
+
+describe('useBookCoverImage (E-69 §2.6 — the series cover’s answers, on the book)', () => {
+  const coverPath = `${ORIGIN}/api/books/${BOOK_ID}/cover`
+
+  it('reports "queued" on 202 and becomes "ready" at the versioned cover url', async () => {
+    let requests = 0
+    const asked: string[] = []
+    server.use(
+      http.get(coverPath, ({ request }) => {
+        requests += 1
+        asked.push(new URL(request.url).search)
+        return requests < 3
+          ? new HttpResponse(null, { status: 202, headers: { 'Retry-After': '0' } })
+          : new HttpResponse('jpegbytes', { headers: { 'Content-Type': 'image/jpeg' } })
+      }),
+    )
+    const seen: string[] = []
+    const { result } = renderHook(
+      () => {
+        const state = useBookCoverImage(BOOK_ID, { w: 400, v: BOOK_COVER_CV })
+        seen.push(state.status)
+        return state
+      },
+      { wrapper: makeWrapper(makeClient()) },
+    )
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+    expect(seen).toContain('queued')
+    expect(result.current.url).toBe(`/api/books/${BOOK_ID}/cover?w=400&v=${BOOK_COVER_CV}`)
+    expect(requests).toBe(3)
+    expect(new Set(asked)).toEqual(new Set([`?w=400&v=${BOOK_COVER_CV}`]))
+  })
+
+  it('surfaces 404 as unavailable without retrying', async () => {
+    let requests = 0
+    server.use(
+      http.get(coverPath, () => {
+        requests += 1
+        return HttpResponse.json(errorEnvelope('not_found', 'no book'), { status: 404 })
+      }),
+    )
+    const { result } = renderHook(() => useBookCoverImage(BOOK_ID, { w: 120, v: BOOK_COVER_CV }), {
+      wrapper: makeWrapper(makeClient()),
+    })
+    await waitFor(() => {
+      expect(result.current.status).toBe('unavailable')
+    })
+    expect(requests).toBe(1)
+    expect(result.current.error?.code).toBe('not_found')
+  })
+
+  it('surfaces 422 as unavailable without retrying — the striped placeholder stays', async () => {
+    let requests = 0
+    server.use(
+      http.get(coverPath, () => {
+        requests += 1
+        return HttpResponse.json(errorEnvelope('thumb_unavailable', 'cannot decode', { reason: 'x' }), {
+          status: 422,
+        })
+      }),
+    )
+    const { result } = renderHook(() => useBookCoverImage(BOOK_ID, { w: 120, v: BOOK_COVER_CV }), {
+      wrapper: makeWrapper(makeClient()),
+    })
+    await waitFor(() => {
+      expect(result.current.status).toBe('unavailable')
+    })
+    expect(requests).toBe(1)
+    expect(result.current.error?.code).toBe('thumb_unavailable')
+  })
+
+  /**
+   * A stale `cover_cv` is re-read from wherever it came from. It turns over on
+   * changes this tab did not make — a global direction change, another browser's
+   * edit (E-69 §2.7) — so retrying the same url alone could never recover.
+   */
+  it('on 409 stale_version re-reads the book and its series, then retries exactly once', async () => {
+    let requests = 0
+    server.use(
+      http.get(coverPath, () => {
+        requests += 1
+        return HttpResponse.json(
+          errorEnvelope('stale_version', 'cover changed', { cv: 'freshcover000001' }),
+          { status: 409 },
+        )
+      }),
+    )
+    const client = makeClient()
+    client.setQueryData(queryKeys.books.detail(BOOK_ID), bookDetail)
+    client.setQueryData(queryKeys.series.detail(SERIES_ID), seriesDetail)
+    const { result } = renderHook(
+      () => useBookCoverImage(BOOK_ID, { w: 400, v: BOOK_COVER_CV, seriesId: SERIES_ID }),
+      { wrapper: makeWrapper(client) },
+    )
+    await waitFor(
+      () => {
+        expect(result.current.status).toBe('unavailable')
+      },
+      { timeout: 5_000 },
+    )
+    expect(requests).toBe(2)
+    expect(result.current.error?.code).toBe('stale_version')
+    expect(client.getQueryState(queryKeys.books.detail(BOOK_ID))?.isInvalidated).toBe(true)
+    expect(client.getQueryState(queryKeys.series.detail(SERIES_ID))?.isInvalidated).toBe(true)
+  })
+
+  /**
+   * The re-read a `409` asks for has to **start after** the `409`. One already on the
+   * wire began before it and may answer the very version the server just refused:
+   * joining it lands that version again, the retry is refused on it too, and the
+   * cover stays on the placeholder with nothing left to re-read the book.
+   */
+  it('on 409 while the book’s re-read is already out, reads the book once more after it and shows the new version', async () => {
+    const OLD = BOOK_COVER_CV
+    const NEW = 'freshcover000001'
+    let current = OLD
+    let bookGets = 0
+    let changed = (): void => undefined
+    const change = new Promise<void>((resolve) => {
+      changed = resolve
+    })
+    let release = (): void => undefined
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const asked: (string | null)[] = []
+    server.use(
+      http.get(`${ORIGIN}/api/books/${BOOK_ID}`, async () => {
+        bookGets += 1
+        // Answered as the server stood when it was asked…
+        const answer = { ...bookDetail, cover_cv: current }
+        if (bookGets === 1) {
+          // …and only then did the cover change (another browser chose one).
+          current = NEW
+          changed()
+          await held
+        }
+        return HttpResponse.json(answer)
+      }),
+      http.get(coverPath, async ({ request }) => {
+        await change
+        const v = new URL(request.url).searchParams.get('v')
+        asked.push(v)
+        if (v !== current) {
+          return HttpResponse.json(errorEnvelope('stale_version', 'cover changed', { cv: current }), {
+            status: 409,
+          })
+        }
+        return new HttpResponse('jpegbytes', { headers: { 'Content-Type': 'image/jpeg' } })
+      }),
+    )
+    const client = makeClient()
+    // Cached and stale (`staleTime` 0): the mount re-reads the book — that is the read on the wire.
+    client.setQueryData(queryKeys.books.detail(BOOK_ID), { ...bookDetail, cover_cv: OLD })
+    const { result } = renderHook(
+      () => {
+        const book = useBook(BOOK_ID)
+        return useBookCoverImage(BOOK_ID, { w: 400, v: book.data?.cover_cv ?? null })
+      },
+      { wrapper: makeWrapper(client) },
+    )
+    // Both of the cover's attempts are refused while that first read is still out.
+    await waitFor(
+      () => {
+        expect(asked).toEqual([OLD, OLD])
+      },
+      { timeout: 5_000 },
+    )
+    release()
+    await waitFor(
+      () => {
+        expect(result.current).toMatchObject({
+          status: 'ready',
+          url: bookCoverUrl(BOOK_ID, { w: 400, v: NEW }),
+        })
+      },
+      { timeout: 5_000 },
+    )
+    // The read that was out, and one after it.
+    expect(bookGets).toBe(2)
+   }, 15_000)
+
+  it('does not ask while disabled — a volume that cannot be opened', async () => {
+    let requests = 0
+    server.use(
+      http.get(coverPath, () => {
+        requests += 1
+        return new HttpResponse('jpegbytes', { headers: { 'Content-Type': 'image/jpeg' } })
+      }),
+    )
+    const { result } = renderHook(
+      () => useBookCoverImage(BOOK_ID, { w: 400, v: BOOK_COVER_CV, enabled: false }),
+      { wrapper: makeWrapper(makeClient()) },
+    )
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(requests).toBe(0)
+    expect(result.current.status).toBe('loading')
+  })
+})
+
+/** Seeds one entry per family E-69 §2.8 names, plus one it does not. */
+function seedCoverFamilies(client: QueryClient): void {
+  client.setQueryData(queryKeys.books.detail(BOOK_ID), bookDetail)
+  client.setQueryData(queryKeys.books.prefs(BOOK_ID), bookPrefs)
+  client.setQueryData(queryKeys.series.detail(SERIES_ID), seriesDetail)
+  client.setQueryData(queryKeys.series.list({}), seriesListResponse)
+  client.setQueryData(queryKeys.continueReading.list(20), continueResponse)
+  client.setQueryData(queryKeys.cache.usage, cacheUsage)
+}
+
+function expectCoverFamiliesInvalidated(client: QueryClient, invalidated: boolean): void {
+  const state = (key: readonly unknown[]) => client.getQueryState(key)?.isInvalidated
+  expect(state(queryKeys.books.detail(BOOK_ID)), 'books.detail').toBe(invalidated)
+  expect(state(queryKeys.books.prefs(BOOK_ID)), 'books.prefs').toBe(invalidated)
+  expect(state(queryKeys.series.detail(SERIES_ID)), 'series.detail').toBe(invalidated)
+  expect(state(queryKeys.series.list({})), 'series.list').toBe(invalidated)
+  expect(state(queryKeys.continueReading.list(20)), 'continue').toBe(invalidated)
+  // Nothing about the cache's size changed.
+  expect(state(queryKeys.cache.usage), 'cache.usage').toBe(false)
+}
+
+describe('choosing and resetting a book cover (E-69 §2.8)', () => {
+  const cover = { page: 3, x: 0.5, y: 0.125, w: 0.375, h: 0.75 }
+
+  it('useSetBookCover PUTs the region and invalidates books, series and 이어보기', async () => {
+    const bodies: unknown[] = []
+    server.use(
+      http.put(`${ORIGIN}/api/books/${BOOK_ID}/cover`, async ({ request }) => {
+        bodies.push(await request.json())
+        return HttpResponse.json({ cover_cv: 'c0ffee00b00c0002', cover })
+      }),
+    )
+    const client = makeClient()
+    seedCoverFamilies(client)
+    const { result } = renderHook(() => useSetBookCover(BOOK_ID), { wrapper: makeWrapper(client) })
+
+    result.current.mutate(cover)
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    expect(bodies).toEqual([cover])
+    expect(result.current.data).toEqual({ cover_cv: 'c0ffee00b00c0002', cover })
+    expectCoverFamiliesInvalidated(client, true)
+  })
+
+  it('useResetBookCover DELETEs and invalidates the same three families', async () => {
+    let deletes = 0
+    server.use(
+      http.delete(`${ORIGIN}/api/books/${BOOK_ID}/cover`, () => {
+        deletes += 1
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    const client = makeClient()
+    seedCoverFamilies(client)
+    const { result } = renderHook(() => useResetBookCover(BOOK_ID), { wrapper: makeWrapper(client) })
+
+    result.current.mutate()
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    expect(deletes).toBe(1)
+    expectCoverFamiliesInvalidated(client, true)
+  })
+
+  it('a refused region invalidates nothing', async () => {
+    server.use(
+      http.put(`${ORIGIN}/api/books/${BOOK_ID}/cover`, () =>
+        HttpResponse.json(errorEnvelope('bad_request', 'w out of range'), { status: 400 }),
+      ),
+    )
+    const client = makeClient()
+    seedCoverFamilies(client)
+    const { result } = renderHook(() => useSetBookCover(BOOK_ID), { wrapper: makeWrapper(client) })
+
+    result.current.mutate({ ...cover, w: 0.6 })
+
+    await waitFor(() => {
+      expect(result.current.isError).toBe(true)
+    })
+    expectCoverFamiliesInvalidated(client, false)
+  })
+
+  it('a cover the screen has open is fetched again under its new cover_cv', async () => {
+    let cv = BOOK_COVER_CV
+    const covers: string[] = []
+    server.use(
+      http.get(`${ORIGIN}/api/series/${SERIES_ID}`, () =>
+        HttpResponse.json({ ...seriesDetail, books: [{ ...bookSummary, cover_cv: cv }] }),
+      ),
+      http.get(`${ORIGIN}/api/books/${BOOK_ID}/cover`, ({ request }) => {
+        covers.push(new URL(request.url).searchParams.get('v') ?? '')
+        return new HttpResponse('jpegbytes', { headers: { 'Content-Type': 'image/jpeg' } })
+      }),
+      http.put(`${ORIGIN}/api/books/${BOOK_ID}/cover`, () => {
+        cv = 'c0ffee00b00c0002'
+        return HttpResponse.json({ cover_cv: cv, cover })
+      }),
+    )
+    const client = makeClient()
+    const { result } = renderHook(
+      () => {
+        const series = useSeries(SERIES_ID)
+        const v = series.data?.books[0]?.cover_cv ?? null
+        return {
+          series,
+          image: useBookCoverImage(BOOK_ID, { w: 400, v, enabled: v !== null }),
+          setCover: useSetBookCover(BOOK_ID),
+        }
+      },
+      { wrapper: makeWrapper(client) },
+    )
+    await waitFor(() => {
+      expect(result.current.image.status).toBe('ready')
+    })
+    result.current.setCover.mutate(cover)
+    await waitFor(() => {
+      expect(result.current.image.url).toBe(`/api/books/${BOOK_ID}/cover?w=400&v=c0ffee00b00c0002`)
+      expect(result.current.image.status).toBe('ready')
+    })
+    expect(covers).toEqual([BOOK_COVER_CV, 'c0ffee00b00c0002'])
+  })
+})
+
+/**
+ * E-69 §2.8's dialog has both writes — 표지로 지정 and 기본 표지로 되돌리기 — on one
+ * book. Two mutations without a shared scope are two independent requests: a
+ * DELETE sent while the PUT is still on its way can be applied first, and the
+ * PUT then lands last — the reader asked for the default cover and got the
+ * region back.
+ */
+describe('choosing and resetting one book’s cover go in the order they were asked (E-69 §2.8)', () => {
+  const cover = { page: 3, x: 0.5, y: 0.125, w: 0.375, h: 0.75 }
+  const OTHER_BOOK = 'otherbook2222222'
+
+  /** The mock, behind a gate that holds a `PUT` before the server applies it. */
+  function heldCoverServer(): { mock: CoverMock; order: string[]; release: () => void } {
+    const mock = createCoverMock(ORIGIN, {
+      books: [bookSummary, { ...bookSummary, id: OTHER_BOOK, cover_cv: 'b0000000000000a9' }],
+    })
+    let release = (): void => undefined
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const order: string[] = []
+    server.use(
+      // Both fall through to the mock once they return nothing.
+      http.put(`${ORIGIN}/api/books/:bid/cover`, async ({ params }) => {
+        order.push(`PUT ${String(params.bid)}`)
+        await held
+      }),
+      http.delete(`${ORIGIN}/api/books/:bid/cover`, ({ params }) => {
+        order.push(`DELETE ${String(params.bid)}`)
+      }),
+      ...mock.handlers,
+    )
+    return { mock, order, release }
+  }
+
+  it('a reset asked for while the choice is on its way waits for it, so the book ends on the default cover', async () => {
+    const { mock, order, release } = heldCoverServer()
+    const { result } = renderHook(
+      () => ({ set: useSetBookCover(BOOK_ID), reset: useResetBookCover(BOOK_ID) }),
+      { wrapper: makeWrapper(makeClient()) },
+    )
+
+    result.current.set.mutate(cover)
+    result.current.reset.mutate()
+    await waitFor(() => {
+      expect(order).toEqual([`PUT ${BOOK_ID}`])
+    })
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    // Queued behind the PUT, not beside it.
+    expect(order).toEqual([`PUT ${BOOK_ID}`])
+    release()
+
+    await waitFor(() => {
+      expect(result.current.reset.isSuccess).toBe(true)
+    })
+    expect(result.current.set.isSuccess).toBe(true)
+    expect(order).toEqual([`PUT ${BOOK_ID}`, `DELETE ${BOOK_ID}`])
+    expect(mock.covers.get(BOOK_ID)).toBeNull()
+    expect(mock.coverCvOf(BOOK_ID)).toBe(bookSummary.cover_cv)
+  })
+
+  it('another book’s write does not wait for this one — the queue is per book', async () => {
+    const { mock, order, release } = heldCoverServer()
+    const { result } = renderHook(
+      () => ({ set: useSetBookCover(BOOK_ID), resetOther: useResetBookCover(OTHER_BOOK) }),
+      { wrapper: makeWrapper(makeClient()) },
+    )
+
+    result.current.set.mutate(cover)
+    result.current.resetOther.mutate()
+    await waitFor(() => {
+      expect(result.current.resetOther.isSuccess).toBe(true)
+    })
+    expect(order).toEqual([`PUT ${BOOK_ID}`, `DELETE ${OTHER_BOOK}`])
+    release()
+    await waitFor(() => {
+      expect(result.current.set.isSuccess).toBe(true)
+    })
+    expect(mock.covers.get(BOOK_ID)).toEqual(cover)
+  })
+})
+
+describe('useSetSeriesDirection (E-69 §2.3)', () => {
+  const twoBooks: SeriesDetail = { ...seriesDetail, books: [bookSummary, brokenBookSummary] }
+
+  it('PUTs {reading_direction}, writes the answer into the series detail, and invalidates what it moves', async () => {
+    const bodies: unknown[] = []
+    server.use(
+      http.put(`${ORIGIN}/api/series/${SERIES_ID}/prefs`, async ({ request }) => {
+        bodies.push(await request.json())
+        return HttpResponse.json({ reading_direction: 'rtl' })
+      }),
+    )
+    const client = makeClient()
+    seedCoverFamilies(client)
+    client.setQueryData(queryKeys.series.detail(SERIES_ID), twoBooks)
+    client.setQueryData(queryKeys.books.prefs(brokenBookSummary.id), bookPrefs)
+    const { result } = renderHook(() => useSetSeriesDirection(), { wrapper: makeWrapper(client) })
+
+    result.current.mutate({ sid: SERIES_ID, reading_direction: 'rtl' })
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    expect(bodies).toEqual([{ reading_direction: 'rtl' }])
+    // The `.seg` reads this; it must not wait for the refetch to show the choice.
+    expect(client.getQueryData<SeriesDetail>(queryKeys.series.detail(SERIES_ID))?.reading_direction).toBe(
+      'rtl',
+    )
+    // Every book of the series now opens on another effective direction (§2.3)…
+    expect(client.getQueryState(queryKeys.books.prefs(brokenBookSummary.id))?.isInvalidated).toBe(true)
+    // …and every cover_cv without a chosen region turned over (§2.7).
+    expectCoverFamiliesInvalidated(client, true)
+  })
+
+  it('takes the server’s answer, not the request, as the new value', async () => {
+    server.use(
+      http.put(`${ORIGIN}/api/series/${SERIES_ID}/prefs`, () => HttpResponse.json({ reading_direction: null })),
+    )
+    const client = makeClient()
+    client.setQueryData(queryKeys.series.detail(SERIES_ID), { ...twoBooks, reading_direction: 'ltr' })
+    const { result } = renderHook(() => useSetSeriesDirection(), { wrapper: makeWrapper(client) })
+
+    result.current.mutate({ sid: SERIES_ID, reading_direction: 'rtl' })
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true)
+    })
+    expect(client.getQueryData<SeriesDetail>(queryKeys.series.detail(SERIES_ID))?.reading_direction).toBeNull()
+  })
+
+  it('a refused write changes nothing', async () => {
+    server.use(
+      http.put(`${ORIGIN}/api/series/${SERIES_ID}/prefs`, () =>
+        HttpResponse.json(errorEnvelope('not_found', 'no series'), { status: 404 }),
+      ),
+    )
+    const client = makeClient()
+    seedCoverFamilies(client)
+    const { result } = renderHook(() => useSetSeriesDirection(), { wrapper: makeWrapper(client) })
+
+    result.current.mutate({ sid: SERIES_ID, reading_direction: 'rtl' })
+
+    await waitFor(() => {
+      expect(result.current.isError).toBe(true)
+    })
+    expect(client.getQueryData<SeriesDetail>(queryKeys.series.detail(SERIES_ID))?.reading_direction).toBeNull()
+    expectCoverFamiliesInvalidated(client, false)
+  })
+
+  it('writes one series at a time, in the order they were asked for', async () => {
+    const order: string[] = []
+    let releaseFirst = (): void => undefined
+    const firstHeld = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    server.use(
+      http.put(`${ORIGIN}/api/series/${SERIES_ID}/prefs`, async ({ request }) => {
+        const body = (await request.json()) as { reading_direction: string }
+        order.push(`start ${body.reading_direction}`)
+        if (body.reading_direction === 'rtl') await firstHeld
+        order.push(`end ${body.reading_direction}`)
+        return HttpResponse.json(body)
+      }),
+    )
+    const client = makeClient()
+    client.setQueryData(queryKeys.series.detail(SERIES_ID), twoBooks)
+    const { result } = renderHook(() => useSetSeriesDirection(), { wrapper: makeWrapper(client) })
+
+    result.current.mutate({ sid: SERIES_ID, reading_direction: 'rtl' })
+    result.current.mutate({ sid: SERIES_ID, reading_direction: 'ltr' })
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    releaseFirst()
+
+    await waitFor(() => {
+      expect(order).toEqual(['start rtl', 'end rtl', 'start ltr', 'end ltr'])
+    })
+    await waitFor(() => {
+      expect(client.getQueryData<SeriesDetail>(queryKeys.series.detail(SERIES_ID))?.reading_direction).toBe(
+        'ltr',
+      )
+    })
   })
 })

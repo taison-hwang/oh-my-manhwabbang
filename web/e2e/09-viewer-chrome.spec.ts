@@ -1109,61 +1109,66 @@ for (const seg of VIEWER_SEGS) {
   })
 }
 
-/** `store/seriesDir.ts`'s `SERIES_DIR_STORAGE_KEY` — the key C-9 names. A copy. */
-const SERIES_DIR_STORAGE_KEY = 'shelf.seriesDir'
-
-/**
- * `ay` · the series screen's 읽기 방향 seed, by keyboard.
- *
- * Not a viewer control, and here rather than in 03-series-detail only because
- * that spec had another owner when this was written. It is the viewer's in
- * purpose: C-9 / D-35 make it a client-only seed for the direction books opened
- * from that screen start at, and E-33 §2 is the ruling that the seed reach the
- * viewer.
- *
- * Its effect is therefore `localStorage`, not the server: the zustand `persist`
- * envelope under `shelf.seriesDir`, keyed by series id. The last assertion is
- * the other half of C-9 — the seed **never writes the server** — read as the
- * global default being exactly what it was before the walk.
- *
- * shelf.ts rule 2 holds without a `finally`: the only state written is in this
- * test's own browser context, which Playwright discards with it.
- */
-test('ay · 시리즈 화면의 읽기 방향 씨앗도 화살표로 감기고, 서버에는 쓰지 않는다', async ({ page }) => {
+test('E-69 · 시리즈 읽기 방향의 기본·L→R·R→L을 키보드로 저장하고 초기화한다', async ({
+  page,
+}) => {
   const sid = await seriesId(page, SERIES.scars)
-  const before = (await (await page.request.get('/api/settings')).json()) as {
+  const before = (await (
+    await page.request.get(`/api/series/${sid}`)
+  ).json()) as { reading_direction: string | null }
+  const global = (await (await page.request.get('/api/settings')).json()) as {
     reading_direction: string
   }
-
-  await page.goto(`/series/${sid}`)
-  await expect(page.getByRole('heading', { level: 1, name: SERIES.scars })).toBeVisible()
-
-  const group = page.locator('header').locator('[aria-label="읽기 방향"]')
-  const seed = (): Promise<string | null> =>
-    page.evaluate(
-      ([key, id]) => {
-        const raw = window.localStorage.getItem(key)
-        if (raw === null) return null
-        const parsed = JSON.parse(raw) as { state?: { bySeries?: Record<string, string> } }
-        return parsed.state?.bySeries?.[id] ?? null
+  try {
+    await page.request.put(`/api/series/${sid}/prefs`, {
+      data: { reading_direction: null },
+    })
+    await page.goto(`/series/${sid}`)
+    await expect(
+      page.getByRole('heading', { level: 1, name: SERIES.scars }),
+    ).toBeVisible()
+    const settleCovers = async (): Promise<void> => {
+      const detail=await (await page.request.get(`/api/series/${sid}`)).json() as {books:{id:string;name:string;status:string;page_count:number;cover_cv:string}[]}
+      for (const book of detail.books.filter((book) => book.status==='ok' && book.page_count>0)) {
+        const image=page.locator('[data-testid="volume-tile"], [data-testid="volume-row"]').filter({has:page.getByText(book.name,{exact:true})}).locator('img').first()
+        await expect(image).toHaveAttribute('src',new RegExp(`v=${book.cover_cv}`))
+      }
+    }
+    await settleCovers()
+    const group = page.locator('header').locator('[aria-label="읽기 방향"]')
+    await walkSeg(
+      page,
+      group,
+      ['default', 'ltr', 'rtl'],
+      'E-69 · 시리즈 읽기 방향',
+      async (value, why) => {
+        await expect
+          .poll(
+            async () => {
+              const response = await page.request.get(`/api/series/${sid}`)
+              return (
+                (await response.json()) as { reading_direction: string | null }
+              ).reading_direction
+            },
+            { message: why },
+          )
+          .toBe(value === 'default' ? null : value)
+        await settleCovers()
       },
-      [SERIES_DIR_STORAGE_KEY, sid] as const,
     )
-
-  // No setup can put this one on L→R ahead of time — its starting value is the
-  // global default until something is stored — so the walker's click does it
-  // here when it has to. Either way the walk below starts on `ltr`.
-  await walkSeg(page, group, ['ltr', 'rtl'], 'C-9 · 읽기 방향 seed', async (value, why) => {
-    await expect.poll(seed, { message: `${why} — and the seed is stored for this series` }).toBe(value)
-  })
-
-  const after = (await (await page.request.get('/api/settings')).json()) as {
-    reading_direction: string
+    const after = (await (await page.request.get('/api/settings')).json()) as {
+      reading_direction: string
+    }
+    expect(
+      after.reading_direction,
+      '시리즈 설정은 전역 기본을 바꾸지 않는다',
+    ).toBe(global.reading_direction)
+  } finally {
+    await page.goto('about:blank')
+    await page.request.put(`/api/series/${sid}/prefs`, {
+      data: { reading_direction: before.reading_direction },
+    })
   }
-  expect(
-    after.reading_direction,
-    'C-9: the series-screen seed is client-only — arrowing it must not move the global default',
-  ).toBe(before.reading_direction)
 })
 
 /**

@@ -14,7 +14,10 @@ import (
 // file at version 2 is still readable by everything that mattered at version 1 —
 // but a build that only knows version 1 still refuses to open it
 // (ErrSchemaTooNew), which is correct: this file is never rebuilt.
-const schemaVersion = 2
+//
+// 3 adds `book_covers` and `series_prefs` (ruling E-69 §2.5), additive in the
+// same way.
+const schemaVersion = 3
 
 // IDVersion pins the identifier scheme of arch-backend §3.4. It is exported
 // because the progress export carries it and the importer refuses a mismatch:
@@ -26,8 +29,14 @@ const schemaVersion = 2
 // derives ids — a mismatch here is an error, never a rebuild.
 const IDVersion = "shelf-id/1"
 
-// ExportFormat is the envelope tag of arch §7.11.
-const ExportFormat = "shelf-progress/1"
+// ExportFormat is the envelope tag of arch §7.11. Version 2 adds the `covers`
+// and `series_prefs` arrays (ruling E-69 §2.9); every export is written at it.
+const ExportFormat = "shelf-progress/2"
+
+// ExportFormatV1 is the pre-E-69 envelope. Import still accepts it: a backup
+// taken by an older build must stay restorable. It has no covers and no
+// series_prefs.
+const ExportFormatV1 = "shelf-progress/1"
 
 const (
 	metaSchemaVersion = "schema_version"
@@ -49,6 +58,7 @@ type migration struct {
 var migrations = []migration{
 	{to: 1, sql: schemaV1},
 	{to: 2, sql: schemaV2},
+	{to: 3, sql: schemaV3},
 }
 
 // schemaV1 is the DDL of arch-backend §3.6, verbatim.
@@ -118,6 +128,51 @@ CREATE TABLE IF NOT EXISTS series_seen (
     first_seen_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_series_seen_first ON series_seen(first_seen_at DESC);
+`
+
+// schemaV3 is ruling E-69 §2.5: the user's choice of a book's cover, and the
+// series reading direction the server now has to know to honour it.
+//
+// Both are authored, not derived (NFR-DAT-001, NFR-DAT-004), so they live here
+// and survive --rebuild-index. A cover row carries the book's path the way a
+// progress row does, so an id can be re-derived after a rename, and page_count
+// is the book's length when the region was chosen — the baseline the split
+// reattach of E-69 §2.11(b) proves itself against. There are no foreign keys:
+// a row whose page has gone, or whose book is not ok, stays and is simply not
+// used (§2.5). Only the user's DELETE and the post-scan cleanup remove rows.
+//
+// ix_book_covers_series serves the series_id refile of the post-scan cleanup
+// (§2.11(c)), the same job ix_progress_series does for progress.
+//
+// Append-only and creates only, as every rung (arch §3.6 rule 8).
+const schemaV3 = `
+CREATE TABLE IF NOT EXISTS book_covers (
+    book_id     TEXT PRIMARY KEY,
+    series_id   TEXT NOT NULL,
+    root_name   TEXT NOT NULL,
+    book_path   TEXT NOT NULL,
+    page_no     INTEGER NOT NULL,
+    page_count  INTEGER NOT NULL,
+    x           REAL NOT NULL,
+    y           REAL NOT NULL,
+    w           REAL NOT NULL,
+    h           REAL NOT NULL,
+    updated_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_book_covers_series ON book_covers(series_id);
+
+CREATE TABLE IF NOT EXISTS series_prefs (
+    series_id   TEXT PRIMARY KEY,
+    root_name   TEXT NOT NULL,
+    series_path TEXT NOT NULL,
+    reading_dir TEXT,
+    updated_at  INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS pending_relocations (
+    old_book_id TEXT PRIMARY KEY,
+    evidence TEXT NOT NULL
+);
+
 `
 
 // migrate brings the file up to schemaVersion, creating it from empty when the

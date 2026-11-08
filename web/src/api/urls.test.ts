@@ -9,9 +9,11 @@
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { BOOK_CV, BOOK_ID, COVER_CV, SERIES_ID } from './fixtures'
+import { BOOK_COVER_CV, BOOK_CV, BOOK_ID, COVER_CV, SERIES_ID } from './fixtures'
 import {
   assertPageNumber,
+  bookCoverUrl,
+  bookCoverWriteUrl,
   bookPrefsUrl,
   bookProgressUrl,
   bookUrl,
@@ -32,6 +34,7 @@ import {
   scanStatusUrl,
   seriesCoverUrl,
   seriesListUrl,
+  seriesPrefsUrl,
   seriesRescanUrl,
   seriesUrl,
   setBasePath,
@@ -224,6 +227,10 @@ describe('thumbnail widths (A-1, A-6, impl-plan §0.4)', () => {
     expect(pageThumbUrl(BOOK_ID, 1, { w: THUMB_WIDTH_FOR[consumer], v: BOOK_CV })).toBe(
       `/api/books/${BOOK_ID}/thumbs/1?w=${String(want)}&v=${BOOK_CV}`,
     )
+    // E-69 §2.6: the book cover keeps the series cover's width discipline.
+    expect(bookCoverUrl(BOOK_ID, { w: THUMB_WIDTH_FOR[consumer], v: BOOK_COVER_CV })).toBe(
+      `/api/books/${BOOK_ID}/cover?w=${String(want)}&v=${BOOK_COVER_CV}`,
+    )
   })
 
   it('matches the widths the server reports in settings.server.thumbnail_widths', async () => {
@@ -292,6 +299,9 @@ describe('every endpoint of §7.13', () => {
       pageThumbUrl(id, 1, img),
       bookProgressUrl(id),
       bookPrefsUrl(id),
+      bookCoverUrl(id, img),
+      bookCoverWriteUrl(id),
+      seriesPrefsUrl(id),
     ]).toEqual([
       `/api/series/${e}`,
       `/api/series/${e}/rescan`,
@@ -301,6 +311,9 @@ describe('every endpoint of §7.13', () => {
       `/api/books/${e}/thumbs/1?w=240`,
       `/api/books/${e}/progress`,
       `/api/books/${e}/prefs`,
+      `/api/books/${e}/cover?w=240`,
+      `/api/books/${e}/cover`,
+      `/api/series/${e}/prefs`,
     ])
   })
 
@@ -313,5 +326,34 @@ describe('every endpoint of §7.13', () => {
   it('escapes a root name (A-11)', () => {
     expect(rootUrl('a/../b')).toBe('/api/roots/a%2F..%2Fb')
     expect(rootUrl('02.lanovel-2')).toBe('/api/roots/02.lanovel-2')
+  })
+})
+
+describe('book cover and series prefs urls (ruling E-69 §2.6)', () => {
+  it('GET /api/books/{bid}/cover carries ?w= and the book’s cover_cv as ?v=', () => {
+    expect(bookCoverUrl(BOOK_ID, { w: 400, v: BOOK_COVER_CV })).toBe(
+      `/api/books/${BOOK_ID}/cover?w=400&v=${BOOK_COVER_CV}`,
+    )
+  })
+
+  it('omits v only when there is none, exactly as the series cover does', () => {
+    expect(bookCoverUrl(BOOK_ID, { w: 120, v: null })).toBe(`/api/books/${BOOK_ID}/cover?w=120`)
+  })
+
+  it('PUT and DELETE go to the bare cover path, with no query', () => {
+    expect(bookCoverWriteUrl(BOOK_ID)).toBe(`/api/books/${BOOK_ID}/cover`)
+  })
+
+  it('PUT /api/series/{sid}/prefs', () => {
+    expect(seriesPrefsUrl(SERIES_ID)).toBe(`/api/series/${SERIES_ID}/prefs`)
+  })
+
+  it('prefixes all three with base_path once', () => {
+    setBasePath('/reader')
+    expect(bookCoverUrl(BOOK_ID, { w: 240, v: BOOK_COVER_CV })).toBe(
+      `/reader/api/books/${BOOK_ID}/cover?w=240&v=${BOOK_COVER_CV}`,
+    )
+    expect(bookCoverWriteUrl(BOOK_ID)).toBe(`/reader/api/books/${BOOK_ID}/cover`)
+    expect(seriesPrefsUrl(SERIES_ID)).toBe(`/reader/api/series/${SERIES_ID}/prefs`)
   })
 })

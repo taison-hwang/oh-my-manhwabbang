@@ -186,3 +186,68 @@ func (db *DB) ListPrefs(ctx context.Context) ([]Prefs, error) {
 	}
 	return out, nil
 }
+
+// GetPrefsMany returns the stored overrides of the given books, keyed by book
+// id. Books without a row are absent from the map.
+func (db *DB) GetPrefsMany(ctx context.Context, bookIDs []string) (map[string]Prefs, error) {
+	out := make(map[string]Prefs, len(bookIDs))
+	err := forEachIDChunk(bookIDs, func(args []any, ph string) error {
+		rows, err := db.sqldb.QueryContext(ctx,
+			`SELECT book_id, reading_dir, display_mode, fit_mode, updated_at
+			 FROM book_prefs WHERE book_id IN (`+ph+`)`, args...)
+		if err != nil {
+			return fmt.Errorf("reading prefs: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var p Prefs
+			if err := rows.Scan(&p.BookID, &p.ReadingDir, &p.DisplayMode, &p.FitMode,
+				&p.UpdatedAt); err != nil {
+				return fmt.Errorf("scanning prefs: %w", err)
+			}
+			out[p.BookID] = p
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("reading prefs: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// EffectiveReadingDir is the ladder of ruling E-69 §2.3: the book's choice,
+// else the series' choice, else the global default. It descends field by
+// field — a book row whose reading_dir is NULL (it overrides only the display
+// or fit mode) falls through to the series rather than to the default, which is
+// how a book stops losing its series' direction the moment its display mode is
+// touched.
+//
+// It decides the direction only. `is_override` keeps its meaning ("the book has
+// a row"); a series choice does not make it true.
+func EffectiveReadingDir(book, series *string, global string) string {
+	if book != nil {
+		return *book
+	}
+	if series != nil {
+		return *series
+	}
+	return global
+}
+
+// ReadingDirLadder reads the two stored rungs of EffectiveReadingDir for one
+// book in a single query: the book's reading_dir and its series'. Either is
+// nil when there is no choice at that rung. The global rung is the caller's
+// (settings over the YAML `reader:` block live in httpapi).
+func (db *DB) ReadingDirLadder(ctx context.Context, bookID, seriesID string) (book, series *string, err error) {
+	err = db.sqldb.QueryRowContext(ctx, `
+		SELECT (SELECT reading_dir FROM book_prefs   WHERE book_id   = ?),
+		       (SELECT reading_dir FROM series_prefs WHERE series_id = ?)`,
+		bookID, seriesID).Scan(&book, &series)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading the direction ladder for book %q: %w", bookID, err)
+	}
+	return book, series, nil
+}

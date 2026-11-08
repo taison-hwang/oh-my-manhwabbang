@@ -83,6 +83,7 @@ import { PageFrame } from './PageFrame'
  * aligned for.
  */
 export interface PageStageProps {
+  preferRecordedDims?: boolean
   bookId: string
   cv: string | null
   /** `BookDetail.pages`, natural-sorted, `n = 1..page_count`. */
@@ -115,7 +116,10 @@ interface StageSize {
  * that throws in the test environment is worse than one that reads its size on
  * mount and on `resize` — the only thing that changes it here is the viewport.
  */
-function useStageSize(ref: RefObject<HTMLDivElement | null>, active: boolean): StageSize {
+function useStageSize(
+  ref: RefObject<HTMLDivElement | null>,
+  active: boolean,
+): StageSize {
   const [size, setSize] = useState<StageSize>({ width: 0, height: 0 })
 
   useEffect(() => {
@@ -126,7 +130,9 @@ function useStageSize(ref: RefObject<HTMLDivElement | null>, active: boolean): S
       const width = el.clientWidth
       const height = el.clientHeight
       setSize((previous) =>
-        previous.width === width && previous.height === height ? previous : { width, height },
+        previous.width === width && previous.height === height
+          ? previous
+          : { width, height },
       )
     }
     measure()
@@ -156,6 +162,7 @@ function childTops(stage: HTMLElement): number[] {
 }
 
 export function PageStage({
+  preferRecordedDims = false,
   bookId,
   cv,
   pages,
@@ -184,14 +191,20 @@ export function PageStage({
    */
   const geomKey = `${bookId}|${fit}|${String(stageSize.width)}x${String(stageSize.height)}`
 
-  const dims = useMemo(() => makeDimsLookup(pages, measured), [pages, measured])
+  const dims = useMemo(
+    () => makeDimsLookup(pages, measured, preferRecordedDims),
+    [pages, measured, preferRecordedDims],
+  )
   const byNumber = useMemo(() => {
     const map = new Map<number, PageInfo>()
     for (const info of pages) map.set(info.n, info)
     return map
   }, [pages])
 
-  const nameOf = useCallback((n: number): string => byNumber.get(n)?.name ?? String(n), [byNumber])
+  const nameOf = useCallback(
+    (n: number): string => byNumber.get(n)?.name ?? String(n),
+    [byNumber],
+  )
 
   const onScroll = useCallback(
     (event: UIEvent<HTMLDivElement>): void => {
@@ -223,7 +236,8 @@ export function PageStage({
     }
     const stage = stageRef.current
     if (stage === null || pageCount <= 0) return
-    if (alignedGeomRef.current === geomKey && alignedPageRef.current === page) return
+    if (alignedGeomRef.current === geomKey && alignedPageRef.current === page)
+      return
     alignedGeomRef.current = geomKey
     alignedPageRef.current = page
     stage.scrollTop = scrollTopForPage(
@@ -256,7 +270,12 @@ export function PageStage({
           />,
         )
       } else {
-        const height = verticalPageHeight(dims(n), fit, stageSize.width, stageSize.height)
+        const height = verticalPageHeight(
+          dims(n),
+          fit,
+          stageSize.width,
+          stageSize.height,
+        )
         children.push(
           <div
             key={n}

@@ -45,6 +45,11 @@ func TestRoutes_everyEndpointOfSection713Answers(t *testing.T) {
 		{"delete progress", http.MethodDelete, "/api/books/{bid}/progress", "", 204},
 		{"get prefs", http.MethodGet, "/api/books/{bid}/prefs", "", 200},
 		{"put prefs", http.MethodPut, "/api/books/{bid}/prefs", `{"fit_mode":"width"}`, 200},
+		// Ruling E-69 §2.6 (amendment A-19).
+		{"book cover", http.MethodGet, "/api/books/{bid}/cover", "", 202},
+		{"put book cover", http.MethodPut, "/api/books/{bid}/cover", `{"page":1,"x":0,"y":0,"w":0.5,"h":0.5}`, 200},
+		{"delete book cover", http.MethodDelete, "/api/books/{bid}/cover", "", 204},
+		{"put series prefs", http.MethodPut, "/api/series/{sid}/prefs", `{"reading_direction":"rtl"}`, 200},
 		{"continue", http.MethodGet, "/api/continue", "", 200},
 		{"get settings", http.MethodGet, "/api/settings", "", 200},
 		{"put settings", http.MethodPut, "/api/settings", `{"theme":"dark"}`, 200},
@@ -96,6 +101,10 @@ func TestMethod_wrongVerb_is405WithAllowHeader(t *testing.T) {
 		{http.MethodPut, "/api/cache", "DELETE"},
 		{http.MethodGet, "/api/auth/login", "POST"},
 		{http.MethodPost, "/api/books/" + e.bookZipID + "/progress", "DELETE, PUT"},
+		// Ruling E-69 §2.6: the book cover is read, chosen and reset on one
+		// path; series prefs are write-only (SeriesDetail carries the value).
+		{http.MethodPost, "/api/books/" + e.bookZipID + "/cover", "DELETE, GET, HEAD, PUT"},
+		{http.MethodGet, "/api/series/" + e.seriesFolderID + "/prefs", "PUT"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.method+" "+tc.target, func(t *testing.T) {
@@ -172,6 +181,7 @@ func TestIDs_invalidIs400_wellFormedUnknownIs404(t *testing.T) {
 		"/api/books/aaaaaaaaaaaaaaaa/pages/1",
 		"/api/books/aaaaaaaaaaaaaaaa/thumbs/1",
 		"/api/books/aaaaaaaaaaaaaaaa/prefs",
+		"/api/books/aaaaaaaaaaaaaaaa/cover", // E-69 §2.6
 	} {
 		t.Run("unknown "+target, func(t *testing.T) {
 			errorBody(t, e.get(target), http.StatusNotFound, CodeNotFound)
@@ -188,11 +198,14 @@ func TestStrictDecoding_unknownBodyField_is400(t *testing.T) {
 		{"settings server block", http.MethodPut, "/api/settings", `{"server":{"port":1}}`, "server"},
 		{"progress", http.MethodPut, "/api/books/{bid}/progress", `{"page":1,"pages":2}`, "pages"},
 		{"prefs", http.MethodPut, "/api/books/{bid}/prefs", `{"direction":"rtl"}`, "direction"},
+		// Ruling E-69 §2.6: "새 본문에도 엄격 디코딩(§7.1)을 적용한다".
+		{"book cover", http.MethodPut, "/api/books/{bid}/cover", `{"page":1,"x":0,"y":0,"w":0.5,"h":0.5,"zoom":2}`, "zoom"},
+		{"series prefs", http.MethodPut, "/api/series/{sid}/prefs", `{"direction":"rtl"}`, "direction"},
 		{"scan", http.MethodPost, "/api/scan", `{"deep":true}`, "deep"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			target := strings.ReplaceAll(tc.target, "{bid}", e.bookZipID)
+			target := strings.NewReplacer("{bid}", e.bookZipID, "{sid}", e.seriesFolderID).Replace(tc.target)
 			w := e.jsonBody(tc.method, target, tc.body)
 			body := errorBody(t, w, http.StatusBadRequest, CodeBadRequest)
 			if body.Detail["field"] != tc.field {
@@ -1271,11 +1284,14 @@ func TestProgressExportImport(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &doc); err != nil {
 		t.Fatalf("decoding the export: %v", err)
 	}
-	if doc["format"] != "shelf-progress/1" || doc["id_version"] != "shelf-id/1" {
+	// Ruling E-69 §2.9: the export is always /2.
+	if doc["format"] != "shelf-progress/2" || doc["id_version"] != "shelf-id/1" {
 		t.Errorf("export envelope = %v", doc)
 	}
 
-	// Re-importing the document we just exported is a no-op merge.
+	// Re-importing the document we just exported — a /2 file since E-69 §2.9 —
+	// is a no-op merge: the round trip is what proves the importer takes the
+	// exporter's own format.
 	res := decodeBody[map[string]int](t, e.do(http.MethodPost, "/api/progress/import", strings.NewReader(w.Body.String())), http.StatusOK)
 	if _, ok := res["imported"]; !ok {
 		t.Errorf("import result = %v, want imported/skipped/conflicts", res)
@@ -1427,6 +1443,10 @@ func TestIDs_malformedBookIDIs400OnEveryBookRoute(t *testing.T) {
 		{http.MethodDelete, "/progress", ""},
 		{http.MethodGet, "/prefs", ""},
 		{http.MethodPut, "/prefs", `{}`},
+		// Ruling E-69 §2.6.
+		{http.MethodGet, "/cover", ""},
+		{http.MethodPut, "/cover", `{"page":1,"x":0,"y":0,"w":0.5,"h":0.5}`},
+		{http.MethodDelete, "/cover", ""},
 	}
 	for _, id := range []string{"NOT-AN-ID", "tooshort", "aaaaaaaaaaaaaaa1", "AAAAAAAAAAAAAAAA"} {
 		for _, rt := range routes {

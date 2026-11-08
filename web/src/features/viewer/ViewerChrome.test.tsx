@@ -217,6 +217,8 @@ const NEXT_VOLUME: BookSummary = {
   status: 'ok',
   error: null,
   progress: null,
+  cover_cv: 'cv1',
+  cover: null,
 }
 
 describe('the next-volume card’s title (open item `o`, ui-spec §6.5)', () => {

@@ -1,6 +1,7 @@
 // Package thumbs owns every picture SHELF derives rather than serves: JPEG
-// thumbnails of book pages, series covers, the cache those live in, and the
-// intrinsic page dimensions the viewer needs to lay out a spread (FR-VWR-004).
+// thumbnails of book pages, 권 covers cut from a page (E-69), series covers,
+// the cache those live in, and the intrinsic page dimensions the viewer needs
+// to lay out a spread (FR-VWR-004).
 //
 // It implements FR-THM-001..008 and the decode half of FR-IDX-011. Three
 // properties are worth stating up front because everything else follows from
@@ -44,8 +45,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -99,7 +103,8 @@ var (
 	ErrNotFound = errors.New("thumbs: no such book, page or cover file")
 
 	// ErrBadRequest reports a malformed [Request]: an empty id, a page number
-	// below 1, a file request with no root.
+	// below 1, a file request with no root, a cover region outside E-69 §2.4 or
+	// a cover direction that is neither ltr nor rtl.
 	ErrBadRequest = errors.New("thumbs: malformed request")
 
 	// ErrUnknownKind reports a purge naming something that is not a [Kind].
@@ -186,19 +191,25 @@ func (p Priority) String() string {
 // Request is one thumbnail to produce. It carries both halves of the job: the
 // identity the cache key is derived from, and where the pixels come from.
 //
-// There are exactly two shapes, matching the cover ladder of arch §4.10:
+// There are exactly three shapes — the two of arch §4.10's cover ladder and
+// the 권 cover of E-69 §2.2:
 //
-//   - a page thumbnail — ID is the book id, PageNo is 1-based, and RelPath is
-//     empty. This also covers `cover_kind='page'`, where the series cover is
-//     page 1 of the first readable book.
+//   - a page thumbnail — ID is the book id, PageNo is 1-based, RelPath is
+//     empty and Cover is nil. The viewer's strip; keyed `shelf-thumb/1`, which
+//     E-69 §2.7 leaves exactly as it was.
+//   - a 권 cover — ID is the book id, PageNo is 1-based, Cover is set and
+//     RelPath is empty (both set is ErrBadRequest). The picture is the page cut
+//     to the Cover's region or automatic half, keyed `shelf-cover/1` (E-69
+//     §2.7), so it never shares a file with that page's strip thumbnail. It is
+//     also what `cover_kind='page'` serves for a series (E-69 §2.6).
 //   - a loose-file cover — ID is the series id, RootName and RelPath name an
 //     image sitting in the series directory (`cover_kind='file'`), and PageNo
 //     is ignored. RelPath is relative to the ROOT, slash-separated, and is
-//     validated before it is joined.
+//     validated before it is joined. It is never cut (E-69 §2.6).
 type Request struct {
-	// ID is the cache identity: the book id for a page thumbnail, the series id
-	// for a loose-file cover. It is opaque here; the HTTP layer has already
-	// validated its syntax.
+	// ID is the cache identity: the book id for a page thumbnail or a 권
+	// cover, the series id for a loose-file cover. It is opaque here; the HTTP
+	// layer has already validated its syntax.
 	ID string
 	// PageNo is 1-based. There is no page 0 anywhere in this product; a
 	// loose-file cover is keyed with 0 because it has no page at all.
@@ -217,16 +228,115 @@ type Request struct {
 	// RootName and RelPath, both set, make this a loose-file request.
 	RootName string
 	RelPath  string
+
+	// Cover, when non-nil, makes this a 권 cover of page PageNo (E-69 §2.2).
+	// It is copied when the request is accepted, so the caller may reuse it.
+	// The caller checks PageNo against the index first: [Service.Get] queues a
+	// page past the end like any cold miss and never answers ErrNotFound for it.
+	Cover *Cover
 }
 
 // fromFile reports the loose-file shape.
 func (r Request) fromFile() bool { return r.RelPath != "" }
 
+// minRegionSide is E-69 §2.4's smallest frame side, as a fraction of the page.
+const minRegionSide = 0.05
+
+// Region is a part of one page in coordinates normalised to the ORIGINAL page:
+// (0, 0) is its top-left corner and (1, 1) its bottom-right, whatever size the
+// page was decoded or rendered at (E-69 §2.4). That is what lets one stored
+// choice cut the same picture out of a 120 px cover and a 4 000 px PDF render.
+//
+// The frame the viewer draws is 2:3, but the server does not hold a region to
+// that ratio: a PDF render width and the pixel rounding would make an exact
+// check reject what the client honestly drew.
+type Region struct{ X, Y, W, H float64 }
+
+// Valid applies E-69 §2.4 exactly: 0 ≤ x, 0 ≤ y, w ≥ 0.05, h ≥ 0.05, x+w ≤ 1,
+// y+h ≤ 1. A violation is [ErrBadRequest], which the HTTP layer answers 400.
+//
+// NaN and the infinities are refused first and by name. Every comparison with
+// NaN is false, so a test written as "reject when x < 0" waves a NaN straight
+// into the cache key; and an infinity would satisfy x+w ≤ 1 with x = -Inf.
+func (r Region) Valid() error {
+	for _, v := range [...]float64{r.X, r.Y, r.W, r.H} {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return fmt.Errorf("%w: cover region %+v is not a finite number", ErrBadRequest, r)
+		}
+	}
+	switch {
+	case r.X < 0 || r.Y < 0:
+		return fmt.Errorf("%w: cover region %+v starts outside the page", ErrBadRequest, r)
+	case r.W < minRegionSide || r.H < minRegionSide:
+		return fmt.Errorf("%w: cover region %+v is smaller than %g of the page", ErrBadRequest, r, minRegionSide)
+	case r.X+r.W > 1 || r.Y+r.H > 1:
+		return fmt.Errorf("%w: cover region %+v ends outside the page", ErrBadRequest, r)
+	}
+	return nil
+}
+
+// Reading directions a [Cover] accepts, spelled as the wire's ReadingDir.
+const (
+	dirLTR = "ltr"
+	dirRTL = "rtl"
+)
+
+// Cover makes a [Request] a 권 cover (E-69 §2.2): a picture cut from one page
+// of a book rather than the whole page.
+//
+// With Region set, the cover is that region of the page and Dir is used for
+// nothing — not the key, not the cut. With Region nil the cover is automatic:
+// a landscape page (w > h, FR-VWR-004's definition, no ratio threshold) gives
+// the half that is read first in Dir — the right half for "rtl", the left for
+// "ltr" — and any other page is used whole. Dir must then be "ltr" or "rtl".
+//
+// Which page and which Dir to ask for — the user's choice if its page still
+// exists, page 1 otherwise, the effective reading direction — is the caller's
+// ladder (E-69 §2.2, §2.3). This package makes the picture it is asked for.
+type Cover struct {
+	Region *Region
+	Dir    string
+}
+
+// validate is the request-time check of a Cover.
+func (c Cover) validate() error {
+	if c.Region != nil {
+		return c.Region.Valid()
+	}
+	if c.Dir != dirLTR && c.Dir != dirRTL {
+		return fmt.Errorf("%w: cover direction %q is neither %q nor %q", ErrBadRequest, c.Dir, dirLTR, dirRTL)
+	}
+	return nil
+}
+
+// area is the <area> field of the cover key and of `cover_cv` (E-69 §2.7):
+// `auto-<dir>` when automatic — the direction goes in even when the page turns
+// out not to be landscape, because that is not known before the decode (arch
+// §5.8) — and otherwise the region's four numbers, each in Go's shortest
+// round-trip spelling ('g', -1), comma-joined. A negative zero is spelled 0:
+// it is the same frame, and two spellings would be two cache files.
+func (c Cover) area() string {
+	if c.Region == nil {
+		return "auto-" + c.Dir
+	}
+	r := c.Region
+	parts := [...]float64{r.X, r.Y, r.W, r.H}
+	out := make([]string, len(parts))
+	for i, v := range parts {
+		if v == 0 {
+			v = 0 // folds -0 into +0
+		}
+		out[i] = strconv.FormatFloat(v, 'g', -1, 64)
+	}
+	return strings.Join(out[:], ",")
+}
+
 // Result describes a thumbnail that exists on disk.
 type Result struct {
 	// Key is the 16-character cache key. The HTTP strong ETag is `"t1-<Key>"`
 	// (arch §5.3) — the key already covers book, page, width, format, quality
-	// and content version, so nothing else needs to go in the tag.
+	// and content version, and for a 권 cover the cut, so nothing else needs to
+	// go in the tag.
 	Key string
 	// Path is the absolute path of the JPEG. The HTTP layer opens it directly.
 	Path string
@@ -234,8 +344,9 @@ type Result struct {
 	Size    int64
 	ModTime time.Time
 	// SourceWidth and SourceHeight are the intrinsic dimensions of the page the
-	// thumbnail was made from (FR-VWR-004). They are zero on a cache hit, where
-	// nothing was decoded; the persisted values live in pages.width/height.
+	// thumbnail was made from (FR-VWR-004) — of the whole page, never of a 권
+	// cover's cut. They are zero on a cache hit, where nothing was decoded; the
+	// persisted values live in pages.width/height.
 	SourceWidth  int
 	SourceHeight int
 }

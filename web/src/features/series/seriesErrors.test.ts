@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { ApiError } from '../../api/errors'
 import { scanStartErrorMessage } from '../roots/scanErrors'
-import { rescanErrorMessage, seriesErrorMessage } from './seriesErrors'
+import { rescanErrorMessage, seriesDirectionErrorMessage, seriesErrorMessage } from './seriesErrors'
 
 /**
  * The envelope `message` given to each error below is the English the real
@@ -78,5 +78,68 @@ describe('rescanErrorMessage', () => {
     const error = new ApiError({ status, code, message })
     expect(rescanErrorMessage(error)).toBe(scanStartErrorMessage(error))
     expect(rescanErrorMessage(error)).not.toContain(message)
+  })
+})
+
+/**
+ * A refused `PUT /api/series/{sid}/prefs` — the 읽기 방향 `.seg` (ruling E-69
+ * §2.3, §2.6). The messages are the English the endpoint's envelopes carry
+ * (`not_found`, a strict-decoding `bad_request`, a busy `user.db`); none of it
+ * may reach the reader.
+ */
+describe('seriesDirectionErrorMessage', () => {
+  it.each([
+    [404, 'not_found', 'no series with id aaaaaaaaaaaaaaaa', null],
+    [400, 'bad_request', 'sid must be 16 characters of [a-z2-7]', { param: 'sid' }],
+  ] as const)('says the series is gone on a %i about the series', (status, code, message, detail) => {
+    const error = new ApiError({ status, code, message, detail })
+    expect(seriesDirectionErrorMessage(error)).toBe(
+      '라이브러리에 없는 시리즈라 읽기 방향을 저장하지 못했습니다. 화면을 새로 고친 뒤 다시 시도하세요.',
+    )
+  })
+
+  it('does not blame the series for a body the server refused — the series is there', () => {
+    // A strict-decoding 400 names the body, not the sid: reloading would not help.
+    const error = new ApiError({
+      status: 400,
+      code: 'bad_request',
+      message: 'json: unknown field "extra"',
+      detail: { field: 'extra' },
+    })
+    const sentence = seriesDirectionErrorMessage(error)
+    expect(sentence).toBe('읽기 방향을 저장하지 못했습니다. 잠시 후 다시 시도하세요.')
+    expect(sentence).not.toContain('없는 시리즈')
+  })
+
+  it('says the server cannot save it on a 503', () => {
+    const error = new ApiError({ status: 503, code: 'unavailable', message: 'user store is not open' })
+    expect(seriesDirectionErrorMessage(error)).toBe(
+      '서버가 지금 읽기 방향을 저장할 수 없습니다. 서버 상태를 확인한 뒤 다시 시도하세요.',
+    )
+  })
+
+  it.each([
+    [500, 'internal', 'database is locked'],
+    [409, 'conflict', 'conflict'],
+  ] as const)('falls back to a plain failure on a %i, without the envelope message', (status, code, message) => {
+    const sentence = seriesDirectionErrorMessage(new ApiError({ status, code, message }))
+    expect(sentence).toBe('읽기 방향을 저장하지 못했습니다. 잠시 후 다시 시도하세요.')
+    expect(sentence).not.toContain(message)
+  })
+
+  it('reports a request that got no answer as a connection failure', () => {
+    expect(seriesDirectionErrorMessage(new TypeError('Failed to fetch'))).toBe(
+      '서버에 연결하지 못해 읽기 방향을 저장하지 못했습니다. 잠시 후 다시 시도하세요.',
+    )
+  })
+
+  it('never returns an empty sentence', () => {
+    for (const status of [400, 401, 403, 404, 408, 413, 429, 500, 502, 503, 504]) {
+      const sentence = seriesDirectionErrorMessage(
+        new ApiError({ status, code: 'internal', message: 'opaque envelope text' }),
+      )
+      expect(sentence.length).toBeGreaterThan(0)
+      expect(sentence).not.toContain('opaque envelope text')
+    }
   })
 })

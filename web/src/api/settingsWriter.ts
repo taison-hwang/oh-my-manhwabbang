@@ -32,6 +32,10 @@ import type { Settings, SettingsUpdate, UserSettings } from './types'
  *    rest of a body a 400 named a field of was not applied: it goes again at once,
  *    and a body with several such fields costs a round trip each. Every final
  *    failure re-reads the settings.
+ *  - a `reading_direction` the server took re-reads what it moves (E-69 §2.3,
+ *    §2.7): `series`, `books` (details and prefs) and 이어보기 — whether or not
+ *    the answer itself was taken, since the server applied it either way. A
+ *    write of other fields re-reads none of them.
  *
  * Known limit, held: a `PUT` that never settles holds the queue behind it.
  *
@@ -73,6 +77,16 @@ export const SETTINGS_RETRY_BASE_MS = 250
 
 /** The settings query key. It lives here so `queries.ts` can import the writer without a cycle. */
 export const SETTINGS_QUERY_KEY = ['settings'] as const
+
+/**
+ * What a new global reading direction moves (E-69): every book without a direction
+ * of its own in a series without one now opens the other way — `BookPrefs` and the
+ * `BookDetail` carrying it are the server's ladder (§2.3) — and every default
+ * cover's `cover_cv` turned over (§2.7), which the volume lists (`series`) and
+ * 이어보기 (`continue`) carry. The prefixes of `queryKeys.series.all`, `.books.all`
+ * and `.continueReading.all`, written out for the same reason as the key above.
+ */
+const READING_DIRECTION_FAMILIES = [['series'], ['books'], ['continue']] as const
 
 type Field = keyof UserSettings
 type Value = UserSettings[Field]
@@ -260,6 +274,11 @@ function confirmed(w: Writer, sub: Submission, settings: Settings): void {
       if (!w.pending.has(field)) w.known.set(field, settings[field])
     }
     w.client.setQueryData<Settings>(SETTINGS_QUERY_KEY, settings)
+  }
+  if (sub.revs.has('reading_direction')) {
+    for (const queryKey of READING_DIRECTION_FAMILIES) {
+      void w.client.invalidateQueries({ queryKey })
+    }
   }
   pump(w)
 }
