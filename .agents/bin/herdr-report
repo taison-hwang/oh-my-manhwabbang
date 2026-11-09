@@ -66,4 +66,15 @@ meta="$meta · compact $compacts"
 
 hc send "$target" "$message ($meta)" >/dev/null || { echo "$target 에 보내지 못했다." >&2; exit 1; }
 date +%s >"$dir/.$HERDR_ROLE.reported"
+# 사용량 집계(herdr-usage)가 사용량을 작업에 붙이도록 보낸 보고의 경계를 남긴다. 실패해도 보고는 이미 갔다.
+{
+  tag="${message#\[}"; tag="${tag%%\]*}"
+  task="${message#*\] }"; task="${task%% *}"
+  [[ "$message" == "["*"] "* ]] || { tag=""; task=""; }
+  tag="${tag//$'\t'/ }"; task="${task//$'\t'/ }"; task="${task%%$'\n'*}"
+  sha=""; [[ "$message" =~ 검사\ PASS\ ([0-9a-f]+) ]] && sha="${BASH_REMATCH[1]}"
+  [[ -s "$dir/reports.tsv" ]] || printf 'epoch\ttime\trole\tsession_id\ttag\ttask\tsha\n' >"$dir/reports.tsv"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$(date +%Y-%m-%dT%H:%M:%S%z)" "$HERDR_ROLE" \
+    "$(cat "$dir/.$HERDR_ROLE.session" 2>/dev/null)" "$tag" "$task" "$sha" | tr -d '\r' >>"$dir/reports.tsv"
+} 2>/dev/null || true
 echo "보냄: $want($target)"

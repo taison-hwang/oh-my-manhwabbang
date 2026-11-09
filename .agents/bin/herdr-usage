@@ -1,0 +1,275 @@
+#!/usr/bin/env python3
+"""하네스 세션의 토큰 사용량을 역할·모델·작업·일자별로 집계한다. 기록 파일은 읽기만 한다.
+
+  herdr-usage                         # 역할·모델별
+  herdr-usage --by task               # 작업별 (herdr-report의 보고 경계 기준)
+  herdr-usage --by role,day --since 2026-11-09
+  herdr-usage --tsv                   # 기계용 출력
+
+세션 장부(session-start hook이 남김)로 session_id를 역할에 잇고, 대화 기록에서 usage를 읽는다.
+  Claude: transcript jsonl과 <세션>/subagents/*.jsonl, message.id로 중복 제거(응답 하나가 줄 여러 개로 남는다)
+  Codex:  rollout jsonl의 token_usage_record, response_id로 중복 제거. 모델은 직전 turn_context에서 읽는다
+작업 대응: 같은 세션에서 그 사용 시각 뒤의 첫 보고에 적힌 작업. 마지막 보고 뒤는 "(보고 없음)".
+비용은 단가표가 있는 모델만 API 단가로 환산한다. 구독 사용이면 실제 청구액이 아니다.
+"""
+import argparse
+import bisect
+import datetime as dt
+import glob
+import json
+import os
+import subprocess
+import sys
+
+KEYS = ("role", "tool", "model", "task", "day", "session")
+FIELDS = ("input", "cache_write_5m", "cache_write_1h", "cache_read", "output")
+NO_REPORT = "(보고 없음)"
+
+
+def die(msg):
+    print(msg, file=sys.stderr)
+    sys.exit(1)
+
+
+def project_name():
+    if os.environ.get("HERDR_PROJECT"):
+        return os.environ["HERDR_PROJECT"]
+    try:
+        common = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                                capture_output=True, text=True, check=True).stdout.strip()
+        return os.path.basename(os.path.dirname(common))
+    except (OSError, subprocess.CalledProcessError):
+        return os.path.basename(os.getcwd())
+
+
+def read_tsv(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return []
+    if not lines:
+        return []
+    head = lines[0].split("\t")
+    return [dict(zip(head, line.split("\t"))) for line in lines[1:] if line.strip()]
+
+
+def parse_ts(text):
+    try:
+        t = dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except (AttributeError, ValueError):
+        return None
+    return t if t.tzinfo else t.astimezone()
+
+
+def jsonl(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    yield json.loads(line)
+                except ValueError:
+                    continue
+    except OSError:
+        return
+
+
+def claude_records(path, seen):
+    files = [path] + sorted(glob.glob(os.path.join(path[:-len(".jsonl")], "subagents", "*.jsonl")))
+    for f in files:
+        for d in jsonl(f):
+            msg = d.get("message") if d.get("type") == "assistant" else None
+            usage = msg.get("usage") if isinstance(msg, dict) else None
+            if not isinstance(usage, dict) or msg.get("model") == "<synthetic>":
+                continue
+            key = msg.get("id") or d.get("uuid")
+            if key in seen:
+                continue
+            seen.add(key)
+            ts = parse_ts(d.get("timestamp", ""))
+            if ts is None:
+                continue
+            cc = usage.get("cache_creation") or {}
+            w5, w1 = cc.get("ephemeral_5m_input_tokens"), cc.get("ephemeral_1h_input_tokens")
+            if w5 is None and w1 is None:  # TTL 구분이 없는 기록은 5분 단가로 본다
+                w5, w1 = usage.get("cache_creation_input_tokens", 0), 0
+            yield ts, msg.get("model", ""), {
+                "input": usage.get("input_tokens", 0) or 0,
+                "cache_write_5m": w5 or 0,
+                "cache_write_1h": w1 or 0,
+                "cache_read": usage.get("cache_read_input_tokens", 0) or 0,
+                "output": usage.get("output_tokens", 0) or 0,
+            }
+
+
+def codex_records(path, seen):
+    model = ""
+    for d in jsonl(path):
+        payload = d.get("payload") or {}
+        if d.get("type") == "turn_context":
+            model = payload.get("model") or model
+            continue
+        if d.get("type") != "token_usage_record":
+            continue
+        key = payload.get("response_id")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        ts = parse_ts(d.get("timestamp", ""))
+        usage = payload.get("usage") or {}
+        if ts is None:
+            continue
+        total_in = usage.get("input_tokens", 0) or 0
+        cached = usage.get("cached_input_tokens", 0) or 0  # OpenAI 방식: cached는 input의 부분집합
+        yield ts, model, {
+            "input": max(total_in - cached, 0),
+            "cache_write_5m": usage.get("cache_write_input_tokens", 0) or 0,
+            "cache_write_1h": 0,
+            "cache_read": cached,
+            "output": usage.get("output_tokens", 0) or 0,  # reasoning 포함
+        }
+
+
+def find_transcript(sess, codex_home):
+    path = sess.get("transcript", "")
+    if path and os.path.isfile(path):
+        return path
+    if sess.get("tool") == "codex" and sess["session_id"]:
+        hits = glob.glob(os.path.join(codex_home, "sessions", "*", "*", "*", f"rollout-*-{sess['session_id']}.jsonl"))
+        if hits:
+            return sorted(hits)[0]
+    return None
+
+
+def load_prices(path):
+    prices = {}
+    for d in read_tsv(path):
+        if d.get("model", "").startswith("#"):
+            continue
+        try:
+            prices[d["model"]] = {k: float(d[k]) for k in FIELDS}
+        except (KeyError, ValueError):
+            continue
+    return prices
+
+
+def price_for(model, prices):
+    hits = [p for p in prices if p and p in model]
+    return prices[max(hits, key=len)] if hits else None
+
+
+def main():
+    ap = argparse.ArgumentParser(description="하네스 세션의 토큰 사용량 집계")
+    ap.add_argument("--project", help="프로젝트 이름(기본: HERDR_PROJECT 또는 메인 체크아웃 폴더 이름)")
+    ap.add_argument("--by", default="role,model", help=f"묶기 기준, 쉼표로 여러 개: {', '.join(KEYS)}")
+    ap.add_argument("--since", help="이 시각 이후만(ISO, 시간대가 없으면 현지 시각). 예: 2026-11-09T13:00")
+    ap.add_argument("--prices", help="단가표 TSV(USD/MTok). 기본: .agents/config/usage-prices.tsv")
+    ap.add_argument("--tsv", action="store_true", help="탭 구분 출력(머리글 포함, 비용은 단가 없으면 빈칸)")
+    a = ap.parse_args()
+
+    by = [k.strip() for k in a.by.split(",") if k.strip()]
+    bad = [k for k in by if k not in KEYS]
+    if bad or not by:
+        die(f"알 수 없는 묶기 기준: {', '.join(bad) or '(없음)'}. 쓸 수 있는 것: {', '.join(KEYS)}")
+    since = parse_ts(a.since) if a.since else None
+    if a.since and since is None:
+        die(f"--since 형식을 읽지 못했다: {a.since}")
+
+    home = os.path.expanduser("~")
+    project = a.project or project_name()
+    handoff = os.path.join(home, ".claude", "herdr", "handoff", project)
+    sessions = read_tsv(os.path.join(handoff, "sessions.tsv"))
+    if not sessions:
+        die(f"세션 장부가 없다: {handoff}/sessions.tsv\n하네스 session-start hook이 세션을 시작할 때마다 남긴다. 하네스를 sync한 뒤 새로 띄운 세션부터 쌓인다.")
+    prices_path = a.prices or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config", "usage-prices.tsv")
+    prices = load_prices(prices_path)
+    codex_home = os.environ.get("CODEX_HOME") or os.path.join(home, ".codex")
+
+    by_sid = {}
+    for s in sessions:
+        sid = s.get("session_id", "")
+        if not sid:
+            continue
+        cur = by_sid.setdefault(sid, dict(s))
+        if not cur.get("transcript") and s.get("transcript"):
+            cur["transcript"] = s["transcript"]
+    reports = {}
+    for r in read_tsv(os.path.join(handoff, "reports.tsv")):
+        try:
+            reports.setdefault(r.get("session_id", ""), []).append((int(r["epoch"]), r.get("task") or "(작업 없음)"))
+        except (KeyError, ValueError):
+            continue
+    for v in reports.values():
+        v.sort()
+
+    groups, missing, seen, models = {}, [], set(), set()
+    for sid, sess in by_sid.items():
+        path = find_transcript(sess, codex_home)
+        if not path:
+            missing.append(f"{sess.get('role', '?')}({sid[:8]})")
+            continue
+        records = codex_records(path, seen) if sess.get("tool") == "codex" or "/.codex/" in path else claude_records(path, seen)
+        marks = reports.get(sid, [])
+        epochs = [e for e, _ in marks]
+        for ts, model, usage in records:
+            if since and ts < since:
+                continue
+            models.add(model or "?")
+            i = bisect.bisect_left(epochs, ts.timestamp())
+            values = {
+                "role": sess.get("role", ""), "tool": sess.get("tool", ""), "model": model or "?",
+                "task": marks[i][1] if i < len(marks) else NO_REPORT,
+                "day": ts.astimezone().strftime("%Y-%m-%d"), "session": sid,
+            }
+            g = groups.setdefault(tuple(values[k] for k in by), {"responses": 0, "cost": 0.0, "priced": True, **dict.fromkeys(FIELDS, 0)})
+            g["responses"] += 1
+            for k in FIELDS:
+                g[k] += usage[k]
+            p = price_for(model, prices)
+            if p is None:
+                g["priced"] = False
+            else:
+                g["cost"] += sum(usage[k] * p[k] for k in FIELDS) / 1e6
+
+    def total(g):
+        return sum(g[k] for k in FIELDS)
+
+    rows = sorted(groups.items(), key=lambda kv: -total(kv[1]))
+    if a.tsv:
+        unpriced = sorted({m for m in models if price_for(m, prices) is None})
+        print("# 비용(cost_usd)은 단가표 모델만 API 단가로 환산한 추정값이다. 구독 사용이면 실제 청구액이 아니다. "
+              f"단가표: {os.path.abspath(prices_path)}. 단가 없는 모델: {', '.join(unpriced) or '없음'} (그 몫은 cost_usd에 없고, 단가 없는 모델만 있는 줄은 빈칸)")
+        print("\t".join(by + ["responses", "input", "cache_write", "cache_read", "output", "cost_usd"]))
+        for key, g in rows:
+            cost = f"{g['cost']:.6f}" if g["priced"] else ""
+            print("\t".join(list(key) + [str(g["responses"]), str(g["input"]), str(g["cache_write_5m"] + g["cache_write_1h"]),
+                                          str(g["cache_read"]), str(g["output"]), cost]))
+        return
+
+    print(f"프로젝트 {project} · 세션 {len(by_sid)}개 중 기록 있음 {len(by_sid) - len(missing)}개"
+          + (f" · 기록 없음 {len(missing)}개: {', '.join(missing)}" if missing else ""))
+    if since:
+        print(f"기간: {since.isoformat(timespec='minutes')} 이후")
+    head = [k for k in by] + ["응답", "입력", "캐시 쓰기", "캐시 읽기", "출력", "합계", "비용(USD)"]
+    table = []
+    sums = {"responses": 0, "cost": 0.0, "priced": True, **dict.fromkeys(FIELDS, 0)}
+    for key, g in rows:
+        for k in list(FIELDS) + ["responses", "cost"]:
+            sums[k] += g[k]
+        sums["priced"] &= g["priced"]
+        table.append(list(key) + fmt(g, total(g)))
+    table.append(["합계"] + [""] * (len(by) - 1) + fmt(sums, total(sums)))
+    widths = [max(len(str(r[i])) for r in [head] + table) for i in range(len(head))]
+    for r in [head] + table:
+        print("  ".join(str(c).ljust(w) if i < len(by) else str(c).rjust(w) for i, (c, w) in enumerate(zip(r, widths))).rstrip())
+    print("비용은 단가표 모델만 API 단가로 환산한 값이다. '-'는 단가 없음, '?'는 단가 없는 모델이 섞여 그 몫이 빠진 값. 구독 사용이면 실제 청구액이 아니다.")
+
+
+def fmt(g, tot):
+    cost = f"{g['cost']:.2f}" if g["priced"] else (f"{g['cost']:.2f}?" if g["cost"] else "-")
+    return [f"{g['responses']:,}", f"{g['input']:,}", f"{g['cache_write_5m'] + g['cache_write_1h']:,}",
+            f"{g['cache_read']:,}", f"{g['output']:,}", f"{tot:,}", cost]
+
+
+if __name__ == "__main__":
+    main()

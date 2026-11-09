@@ -1,0 +1,5 @@
+model	input	cache_write_5m	cache_write_1h	cache_read	output
+# USD/MTok. 모델 이름에 model 칸이 들어 있으면 그 줄을 쓴다(여럿이면 긴 것). 없는 모델은 비용을 비운다.
+# 출처: https://platform.claude.com/docs/en/about-claude/pricing (2026-11-09 조회). Codex 단가는 출처를 확보하지 못해 넣지 않았다.
+claude-opus-5-5	4	5	8	0.20	20
+claude-sonnet-5-5	2	2.50	4	0.10	10

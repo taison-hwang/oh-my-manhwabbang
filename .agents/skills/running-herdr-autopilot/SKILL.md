@@ -55,7 +55,7 @@ description: herdr 자율주행 운영 규칙(Codex·Claude 공통). Commander·
 
 ## 세션 라벨과 찾기
 
-세션은 반드시 실행기로 띄운다. 실행기가 `role`·`project` 라벨, 모델, 환경 변수를 맞춘다. 사용법은 `.agents/bin/herdr-session`을 인자 없이 실행하면 나온다.
+세션은 반드시 실행기로 띄운다. 실행기가 `role`·`project` 라벨, 모델, 환경 변수를 맞춘다. 실행기로 띄운 세션은 띄운 세션이 끝나도 남는다. 그래서 Orchestrator를 교체하려고 꺼도 워커는 계속 돈다. 세션을 끝내려면 그 세션을 `hc kill`로 직접 끈다. 사용법은 `.agents/bin/herdr-session`을 인자 없이 실행하면 나온다.
 
 도구(codex|claude)는 적지 않는다. 실행기가 `.agents/harness.env`의 `HERDR_<역할>_TOOL`(역할: COMMANDER, ORCHESTRATOR, WORKER, VERIFIER)과 그 모델·effort를 쓴다. `verifier-<n>` 역할은 VERIFIER 설정을 쓰고, 비어 있으면 WORKER 설정을 쓴다. 자기 도구와 같은 도구를 고르지 않는다. 도구를 적는 경우는 셋뿐이다: 설정이 비어 실행기가 거부할 때, `HERDR_VERIFIER_TOOL`이 비어 검증자를 작성자와 다른 도구로 띄울 때, 도구 오류로 바꿀 때.
 

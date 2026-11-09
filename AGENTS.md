@@ -26,6 +26,7 @@ Codex는 이 파일을 직접 읽고, Claude Code는 `CLAUDE.md`의 `@AGENTS.md`
 | role이 있는 세션의 역할 수행, 세션 띄우기, 배정·보고, 서브에이전트 사용 판단 | `running-herdr-autopilot` |
 | 컨텍스트 알림 대응, `/clear`, compact 복구, 재개 | `managing-session-context` |
 | `docs/` 문서를 읽거나 쓰기, 결정 기록, 작업 계획·상태판 | `writing-project-docs` |
+| 코드·테스트를 작성하거나 고치기(TDD, 뮤테이션 확인) | `implementing-with-tdd` |
 <!-- harness:end -->
 
 ## 프로젝트 규칙

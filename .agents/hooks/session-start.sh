@@ -15,6 +15,24 @@ case "$source_name" in
   *) rm -f "$compacts" "$dir/.$HERDR_ROLE.ctx" ;;
 esac
 
+# 사용량 집계(herdr-usage)가 세션을 역할에 잇도록 세션 장부를 남긴다. /clear마다 session_id가 바뀌므로
+# 시작·clear·compact 때마다 한 줄씩 쓴다. 메타데이터만 쓰고, 실패해도 역할 주입은 계속한다.
+sid="$(printf '%s' "$input" | jq -r '.session_id // ""' 2>/dev/null)"
+case "$sid" in '' | *[!A-Za-z0-9_.-]*) ;; *)
+  {
+    transcript="$(printf '%s' "$input" | jq -r '.transcript_path // ""')"
+    model="$(printf '%s' "$input" | jq -r '.model // ""')"
+    tool="${HERDR_TOOL:-}"
+    if [ -z "$tool" ]; then case "$transcript" in */.codex/*) tool=codex ;; ?*) tool=claude ;; esac; fi
+    ledger="$dir/sessions.tsv"
+    [ -s "$ledger" ] || printf 'epoch\ttime\trole\ttool\tmodel\tsession_id\tsource\ttranscript\n' >"$ledger"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$(date +%Y-%m-%dT%H:%M:%S%z)" "$HERDR_ROLE" "$tool" \
+      "$model" "$sid" "$source_name" "$transcript" | tr -d '\r' >>"$ledger"
+    printf '%s\n' "$sid" >"$dir/.$HERDR_ROLE.session"
+  } 2>/dev/null
+  ;;
+esac
+
 case "$HERDR_ROLE" in
   commander | orchestrator) role_file="$HERDR_ROLE" ;;
   *) role_file=worker ;;

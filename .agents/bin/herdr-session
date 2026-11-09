@@ -42,19 +42,19 @@ usage() {
   --task <내용>      첫 임무. 부팅 중인 세션에 hc send로 보내면 유실될 수 있으니 이것으로 넘긴다
   --model <모델>     기본 모델 대신 쓸 모델(예: 명세가 정해진 구현은 sonnet)
   --here             사용자가 herdr 화면에서 연 패널에서 그 자리에 실행한다. hc 터미널이 아니면 hc 터미널을 열어 실행한다
-  --outlive-parent   부모 세션이 끝나도 살아 있게 한다
+  --outlive-parent   (기본값) 부모 세션이 끝나도 살아 있게 한다. 예전 명령과 맞추려고 받기만 한다
   --full             Claude의 기본 맥락 축소(claude.ai 커넥터·Chrome·플러그인 끔)를 하지 않는다
   --dry-run          실행하지 않고 명령만 출력한다
 EOF
   exit 2
 }
 
-HERE=0 DRY=0 OUTLIVE=0 FULL=0 TASK="" MODEL_OVERRIDE=""
+HERE=0 DRY=0 FULL=0 TASK="" MODEL_OVERRIDE=""
 while [[ $# -gt 0 && "$1" == --* ]]; do
   case "$1" in
     --here) HERE=1 ;;
     --dry-run) DRY=1 ;;
-    --outlive-parent) OUTLIVE=1 ;;
+    --outlive-parent) ;;
     --full) FULL=1 ;;
     --task) [[ $# -ge 2 ]] || usage; TASK="$2"; shift ;;
     --model) [[ $# -ge 2 ]] || usage; MODEL_OVERRIDE="$2"; shift ;;
@@ -99,6 +99,7 @@ EFFORT="${EFFORT_OVERRIDE:-${ENV_EFFORT:-$EFFORT}}"
 # 전역 herdr-context-guard는 비율 기준의 정리 알림을 보내므로 끄고, 프로젝트 hook의 소프트 신호만 쓴다.
 ENVS=(
   "HERDR_ROLE=$ROLE"
+  "HERDR_TOOL=$TOOL"
   "HERDR_PROJECT=$PROJECT"
   "HERDR_HOME=$ROOT"
   "PATH=$ROOT/.agents/bin:$PATH"
@@ -168,8 +169,9 @@ if [[ $HERE -eq 1 ]]; then
   exec "${CMD[@]}"
 fi
 
-RUN=(hc run --bg --json --label "role=$ROLE" --label "project=$PROJECT" --cwd "$ROOT")
-[[ $OUTLIVE -eq 1 ]] && RUN+=(--outlive-parent)
+# hc는 --outlive-parent 없이 띄운 터미널을 부모와 함께 끝낸다. Orchestrator를 교체하려고 끄면 그가 띄운
+# 워커·검증자가 모두 같이 꺼지므로(zip-viewer 2026-11-09 사고) 항상 붙인다. 끝내기는 hc kill로 따로 한다.
+RUN=(hc run --bg --json --outlive-parent --label "role=$ROLE" --label "project=$PROJECT" --cwd "$ROOT")
 if [[ $DRY -eq 1 ]]; then
   echo "${RUN[*]} -- ${CMD[*]}"
   exit 0

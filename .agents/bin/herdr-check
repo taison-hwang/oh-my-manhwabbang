@@ -32,7 +32,7 @@ case "${1:-}" in
   --status)
     [[ -n "$HERDR_CHECK_CMD" ]] || { echo UNSET; exit 0; }
     key="$(tree_key)" || { echo NONE; exit 0; }
-    read -r status rkey _ <"$record" 2>/dev/null || { echo NONE; exit 0; }
+    [[ -f "$record" ]] && read -r status rkey _ <"$record" || { echo NONE; exit 0; }
     if [[ "$rkey" == "$key" ]]; then echo "$status $key"; else echo NONE; fi
     exit 0
     ;;
