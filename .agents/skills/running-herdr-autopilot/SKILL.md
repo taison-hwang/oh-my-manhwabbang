@@ -82,14 +82,16 @@ hc ls --label "project=$HERDR_PROJECT" --label role=worker-1 | jq -r '.terminals
 | `[병합]` | Orchestrator → 워커 | 대상 작업 ID와 병합 순서. 독립 검증을 받았으면 판정 SHA |
 | `[검증]` | Orchestrator → 검증자 | 묶음 이름, 분기점 SHA와 head SHA, 완료 조건과 수용 기준, 확인 방법. 작성자의 설명과 worktree 경로는 넣지 않는다 |
 | `[판정]` | 검증자 → Orchestrator | `PASS`·`ISSUES`·`BLOCKED`, head SHA, 기록 경로 |
-| `[완료]` | 워커 → Orchestrator, Orchestrator → Commander | 작업 ID, 변경 파일, 커밋, 검증(실행 확인·추론·미확인 구분), 위험 |
+| `[완료]` | 워커 → Orchestrator, Orchestrator → Commander | 작업 ID, 변경 파일, 커밋, 검증(실행 확인·추론·미확인 구분, 실제 사용 경로의 확인), 위험. `herdr-report`가 `검사 PASS <SHA>`를 붙인다 |
+| `[병합완료]` | 워커 → Orchestrator | 작업 ID, 기본 브랜치에 들어간 SHA. `herdr-report`가 그 SHA가 들어갔는지와 검사 PASS 기록을 확인해 붙인다 |
 | `[진행]` | 워커 → Orchestrator | 기다릴 대상이 있어 턴을 끝내는 이유, 다시 움직일 조건 |
+| `[답변]` | 워커 → Orchestrator | Orchestrator가 물은 것에 대한 답. 작업 상태를 바꾸지 않는다 |
 | `[차단]` | 워커 → Orchestrator, Orchestrator → Commander | 막힌 이유, 필요한 결정, 선택지, 추천안 |
 | `[미보고]` | hook → Orchestrator | 워커가 보고 없이 턴을 끝냈다 |
 | `[CLEAR 요청]` | 워커 → Orchestrator, Orchestrator → Commander | 워커: 작업 중 복구가 안 되는 예외 상황. Orchestrator: 소프트 신호에 따른 자기 정리 요청 |
 | `재개` | 정리한 쪽 → 정리된 세션 | 작업 상태 파일을 읽고 이어 간다 |
 
-- 보고는 `herdr-report "[완료] <요약>"`로 한다. 실행기가 PATH에 넣어 둔 명령으로, 받는 세션을 찾아 보내고 맥락 크기와 compact 횟수를 자동으로 붙인다. 긴 내용은 파일로 남기고 경로만 보낸다.
+- 보고는 `herdr-report "[완료] <요약>"`로 한다. 말머리는 지금 상태 그대로 고른다. 받는 쪽은 말머리로 완료를 판단하므로, 검사를 피하려고 다른 말머리로 대신하거나 `hc send`로 직접 보내지 않는다. 실행기가 PATH에 넣어 둔 명령으로, 받는 세션을 찾아 보내고 맥락 크기와 compact 횟수를 자동으로 붙인다. 긴 내용은 파일로 남기고 경로만 보낸다.
 - 배정·병합 지시는 `hc send <t> "[배정] <내용>"`로 한다. 답이 필요 없는 메시지는 워커에게 보내지 않는다. 받는 쪽은 매 턴 맥락 전체를 다시 읽으므로 메시지 한 건도 비용이다.
 - **세션 화면에 쓴 글은 아무도 읽지 않는다.** 전할 내용은 반드시 위 명령으로 보낸다. 워커의 턴은 모두 보고로 끝나고, Orchestrator·Commander는 답이 필요 없는 보고에 답장하지 않는다.
 - 메시지와 보고는 한국어로 쓴다.

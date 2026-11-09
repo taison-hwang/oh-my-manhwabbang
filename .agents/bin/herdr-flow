@@ -13,7 +13,7 @@
 작업별 구간:
   작업       [배정]을 받고 첫 [완료]까지
   관문 대기  첫 [완료]부터 [병합]을 받을 때까지. 검사·독립 검증·병합 순서를 기다린 시간이다
-  병합       [병합]을 받고 그 뒤 마지막 [완료]까지
+  병합       [병합]을 받고 [병합완료]까지(예전 기록은 그 뒤 마지막 [완료]까지)
 검사는 [완료]·[판정]에 적힌 SHA로 작업에 붙인다. 작업 ID는 말머리 바로 뒤 첫 낱말이다.
 """
 import argparse
@@ -99,7 +99,7 @@ def main():
     def task(name):
         if name not in tasks:
             tasks[name] = {"assigned": None, "first_done": None, "merge_order": None, "last_done": None,
-                           "verdicts": [], "checks": 0, "check_s": 0}
+                           "verdicts": [], "checks": 0, "check_s": 0, "merged": None}
             order.append(name)
         return tasks[name]
 
@@ -112,7 +112,7 @@ def main():
         elif r["tag"] == "병합" and t["merge_order"] is None:
             t["merge_order"] = r["epoch"]
     for r in reports:
-        if not r["task"] or r["tag"] not in ("완료", "판정"):
+        if not r["task"] or r["tag"] not in ("완료", "판정", "병합완료"):
             continue
         t = task(r["task"])
         if r["sha"]:
@@ -122,6 +122,9 @@ def main():
                 t["verdicts"].append(r["result"])
             continue
         if r["role"].startswith("verifier"):
+            continue
+        if r["tag"] == "병합완료":
+            t["merged"] = r["epoch"]
             continue
         if t["first_done"] is None:
             t["first_done"] = r["epoch"]
@@ -164,7 +167,7 @@ def main():
     for name in order:
         t = tasks[name]
         rows.append((name, t, span(t["assigned"], t["first_done"]), span(t["first_done"], t["merge_order"]),
-                     span(t["merge_order"], t["last_done"])))
+                     span(t["merge_order"], t["merged"] or t["last_done"])))
 
     if a.tsv:
         print("task\twork_s\tgate_wait_s\tmerge_s\tchecks\tcheck_s\tverdicts")

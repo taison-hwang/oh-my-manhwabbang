@@ -33,12 +33,14 @@ case "${1:-}" in
     reported="$(cat "$reported_file" 2>/dev/null)"
     [ "${reported:-0}" -ge "${started:-0}" ] && exit 0
     if [ "$(printf '%s' "$input" | jq -r '.stop_hook_active // false')" = true ]; then
-      target="$(hc ls --json --label "project=$HERDR_PROJECT" --label role=orchestrator | jq -r '.terminals[0].address // empty')"
+      # Orchestrator가 둘이면(교체 중) 가장 최근에 띄운 세션에 보낸다
+      target="$(hc ls --json --label "project=$HERDR_PROJECT" --label role=orchestrator | jq -r '.terminals[].address' |
+        while read -r t; do printf '%s %s\n' "$(hc get "$t" --json | jq -r '.created_ms // 0')" "$t"; done | sort -n | tail -n 1 | cut -d' ' -f2)"
       [ -n "$target" ] && hc send "$target" "[미보고] $HERDR_ROLE ${HC_TERMINAL_ID:-}: 보고 없이 턴을 끝냈다. hc read로 화면을 확인한다." >/dev/null
       date +%s >"$reported_file"
       exit 0
     fi
-    jq -nc --arg r '보고 없이 턴을 끝낼 수 없다. 화면에 쓴 글은 아무도 읽지 않는다. herdr-report "[완료] <작업 ID> <변경 파일, 커밋, 검증 결과, 위험>" 를 실행한다. 끝나지 않았으면 [차단] 또는 [진행]으로 이유와 다시 움직일 조건을 보낸다.' \
+    jq -nc --arg r '보고 없이 턴을 끝낼 수 없다. 화면에 쓴 글은 아무도 읽지 않는다. 작업을 끝냈으면 herdr-report "[완료] <작업 ID> <변경 파일, 커밋, 검증 결과, 위험>", 병합을 끝냈으면 "[병합완료] <작업 ID> <병합한 SHA>", 질문에 답하는 턴이면 "[답변] <내용>"을 보낸다. 끝나지 않았으면 [진행](기다릴 대상과 다시 움직일 조건) 또는 [차단](필요한 결정)을 보낸다. 다른 말머리로 대신하거나 hc send로 직접 보내지 않는다.' \
       '{decision: "block", reason: $r}'
     ;;
 esac

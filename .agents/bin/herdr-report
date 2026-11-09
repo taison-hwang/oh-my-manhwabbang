@@ -2,6 +2,8 @@
 # 보고 대상에게 메시지를 보내고 보고 기록을 남긴다. 실행기가 PATH에 넣으므로 어느 폴더에서나 쓴다.
 #   herdr-report "[완료] A-01 <요약>"
 #   herdr-report --bg "[완료] A-01 <요약>"   검사를 뒤에서 돌리고 PASS면 [완료]를 자동으로 보낸다
+#   herdr-report "[병합완료] A-01 <SHA> <요약>"   기본 브랜치에 들어간 SHA를 알린다. 그 SHA의 검사 PASS 기록을 붙이고,
+#                                                기록이 없으면 그 SHA를 뒤에서 검사해 PASS면 보낸다
 # 보고 대상: 워커 → Orchestrator, Orchestrator → Commander. 찾지 못하면 실패로 끝낸다.
 # 맥락 크기와 compact 횟수는 hook이 남긴 값을 자동으로 붙인다. Orchestrator가 세션 장부에 옮겨 적는다.
 # 워커의 [완료]는 보내기 전에 관문을 거친다: 커밋 안 된 변경이 없고 검사(herdr-check)가 지금 HEAD에서
@@ -9,6 +11,8 @@
 # --bg: 지금 HEAD를 역할별 검사용 worktree에서 뒤에서 검사한다. 곧바로 "[진행] <작업> 커밋 <SHA> 검사 중(뒤에서) 예상 …"을
 # 보내고, PASS면 그 SHA로 [완료]를 보낸다. FAIL이면 [완료]를 보내지 않고 이 세션과 Orchestrator에 알린다.
 # 그동안 이 worktree에서 같은 묶음의 다음 작업을 이어 할 수 있다(검사는 커밋된 SHA만 본다).
+# 메인 체크아웃에서 보내는 워커의 [완료]는 커밋된 HEAD만 본다. 다른 세션의 변경이 섞여 있으므로 그 자리에서 검사하지 않고,
+# PASS 기록이 없으면 --bg처럼 깨끗한 검사용 worktree에서 검사한다.
 set -uo pipefail
 BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 mode=fg
@@ -16,11 +20,20 @@ case "${1:-}" in
   --bg) mode=bg; shift ;;
   --bg-run) mode=run; bg_sha="${2:-}"; shift 2 ;;
 esac
-[[ $# -eq 1 && -n "$1" ]] || { echo '사용법: herdr-report [--bg] "[완료|판정|진행|차단|CLEAR 요청] <내용>"' >&2; exit 2; }
+[[ $# -eq 1 && -n "$1" ]] || { echo '사용법: herdr-report [--bg] "[완료|병합완료|판정|진행|답변|차단|CLEAR 요청] <내용>"' >&2; exit 2; }
 : "${HERDR_ROLE:?HERDR_ROLE이 없다. herdr-session으로 띄운 세션에서 쓴다}"
 : "${HERDR_PROJECT:?HERDR_PROJECT가 없다. herdr-session으로 띄운 세션에서 쓴다}"
 
-find_role() { hc ls --json --label "project=$HERDR_PROJECT" --label "role=$1" | jq -r '.terminals[0].address // empty'; }
+find_role() { # 같은 역할이 둘 이상이면(교체 중) 가장 최근에 띄운 세션
+  local all t best="" bestms=-1 ms
+  all="$(hc ls --json --label "project=$HERDR_PROJECT" --label "role=$1" | jq -r '.terminals[].address')"
+  [[ "$(printf '%s\n' "$all" | grep -c .)" -le 1 ]] && { printf '%s' "$all"; return; }
+  for t in $all; do
+    ms="$(hc get "$t" --json 2>/dev/null | jq -r '.created_ms // 0')"
+    [[ "${ms:-0}" -gt "$bestms" ]] && { best="$t"; bestms="${ms:-0}"; }
+  done
+  printf '%s' "$best"
+}
 
 case "$HERDR_ROLE" in
   commander) echo "Commander의 보고 대상은 사용자다. 화면에 직접 답한다." >&2; exit 2 ;;
@@ -52,7 +65,8 @@ send() { # 메시지. 보고 대상에게 보내고 보고 기록을 남긴다
   meta="$meta · compact $compacts"
 
   hc send "$target" "$message ($meta)" >/dev/null || { echo "$target 에 보내지 못했다." >&2; return 1; }
-  date +%s >"$dir/.$HERDR_ROLE.reported"
+  # 턴 종료 hook이 이 턴의 보고로 센다. 뒤에서 도는 검사의 자동 보고는 세지 않는다(그사이 세션이 하던 턴의 보고가 아니다)
+  [[ $mode == run ]] || date +%s >"$dir/.$HERDR_ROLE.reported"
   # 사용량 집계(herdr-usage)가 사용량을 작업에 붙이도록 보낸 보고의 경계를 남긴다. 실패해도 보고는 이미 갔다.
   {
     tag="${message#\[}"; tag="${tag%%\]*}"
@@ -61,6 +75,7 @@ send() { # 메시지. 보고 대상에게 보내고 보고 기록을 남긴다
     tag="${tag//$'\t'/ }"; task="${task//$'\t'/ }"; task="${task%%$'\n'*}"
     sha=""; result=""
     [[ "$message" =~ 검사\ PASS\ ([0-9a-f]+) ]] && sha="${BASH_REMATCH[1]}"
+    [[ "$tag" == 병합완료 && -z "$sha" && "$message" =~ ^\[병합완료\]\ [^\ ]+\ ([0-9a-f]{7,40}) ]] && sha="${BASH_REMATCH[1]}"
     # [판정] <묶음> PASS|ISSUES|BLOCKED <head SHA> <기록 경로>
     if [[ "$tag" == 판정 && "$message" =~ ^\[판정\]\ [^\ ]+\ (PASS|ISSUES|BLOCKED)(\ ([0-9a-f]{7,40}))? ]]; then
       result="${BASH_REMATCH[1]}"; sha="${BASH_REMATCH[3]}"
@@ -105,7 +120,8 @@ if [[ $mode == run ]]; then
     0) state="$(cd "$wt" && "$check" --status)"
        send "$message · 검사 PASS ${state#PASS }" ;;
     3) send "$message · 검사 미설정" ;;
-    *) note="[검사 FAIL] $task 커밋 $short — [완료]를 보내지 않았다. 로그: $HERDR_CHECK_LOG"
+    *) tag="${message%%\]*}]"
+       note="[검사 FAIL] $task 커밋 $short — $tag를 보내지 않았다. 로그: $HERDR_CHECK_LOG"
        note="$note. 고친 뒤 커밋해 herdr-report --bg로 다시 보낸다. 이 커밋 위에 쌓은 작업이 있으면 worker.md의 '쌓은 작업 옮기기'를 따른다."
        [[ -n "${HC_TERMINAL_ID:-}" ]] && hc send "$HC_TERMINAL_ID" "$note" >/dev/null
        send "[진행] $task 커밋 $short 검사 FAIL, 작성 세션이 고치는 중" ;;
@@ -113,30 +129,51 @@ if [[ $mode == run ]]; then
   exit 0
 fi
 
-if [[ "$message" == "[완료]"* && "$HERDR_ROLE" != orchestrator ]]; then
-  git rev-parse --show-toplevel >/dev/null 2>&1 || { echo "[완료]는 작업한 git 작업 트리(worktree) 안에서 보낸다." >&2; exit 1; }
-  # 커밋 안 된 변경은 worktree에서만 막는다. 병합 뒤 메인 체크아웃에서 보내는 [완료]는 다른 세션(상태판 등)의
-  # 변경이 섞여 있을 수 있으므로 막지 않고, 병합된 결과에 전체 검사만 돌린다.
+start_bg() { # SHA. 그 SHA를 뒤에서 검사하고 결과대로 보낸다
+  local sha="$1" task ahead detach
+  task="$(task_of "$message")"
+  ahead="$("$BIN/herdr-queue" ahead 2>/dev/null || echo 0)"
+  send "[진행] $task 커밋 ${sha:0:12} 검사 중(뒤에서) 예상 $(predict) · 대기열 ${ahead}건" || exit 1
+  detach=(nohup); command -v setsid >/dev/null && detach=(setsid nohup) # 턴이 끝나도 검사가 살아 있게 한다
+  "${detach[@]}" "$BIN/herdr-report" --bg-run "$sha" "$message" >"$dir/.$HERDR_ROLE.bg-${sha:0:12}.out" 2>&1 </dev/null &
+  echo "검사를 뒤에서 돌린다(${sha:0:12}). PASS면 ${message%%\]*}]가 자동으로 가고, FAIL이면 이 세션에 알림이 온다."
+}
+
+gated=0
+[[ ("$message" == "[완료]"* || "$message" == "[병합완료]"*) && "$HERDR_ROLE" != orchestrator ]] && gated=1
+if [[ $gated -eq 1 ]]; then
+  git rev-parse --show-toplevel >/dev/null 2>&1 || { echo "${message%%\]*}]는 작업한 git 저장소 안에서 보낸다." >&2; exit 1; }
+  common="$(git rev-parse --path-format=absolute --git-common-dir)"
   linked=0
-  [[ "$(git rev-parse --path-format=absolute --git-dir)" != "$(git rev-parse --path-format=absolute --git-common-dir)" ]] && linked=1
-  if [[ $linked -eq 1 && -n "$(git status --porcelain)" ]]; then
-    echo "커밋 안 된 변경이 있어 [완료]를 보내지 않았다. 커밋하거나 정리한 뒤 다시 보낸다:" >&2
-    git status --short >&2
-    exit 1
+  [[ "$(git rev-parse --path-format=absolute --git-dir)" != "$common" ]] && linked=1
+  if [[ "$message" == "[병합완료]"* ]]; then
+    # 병합한 SHA가 메인 체크아웃의 HEAD에 들어갔는지 보고, 그 SHA의 검사 기록을 붙인다
+    rest="${message#\[병합완료\] }"; rest="${rest#* }"; given="${rest%% *}"
+    [[ "$given" =~ ^[0-9a-f]{7,40}$ ]] || { echo '사용법: herdr-report "[병합완료] <작업 ID> <병합한 SHA> <요약>"' >&2; exit 2; }
+    target_sha="$(git rev-parse --verify --quiet "$given^{commit}")" || { echo "커밋을 찾지 못했다: $given" >&2; exit 1; }
+    main_head="$(git -C "$(dirname "$common")" rev-parse HEAD)"
+    git merge-base --is-ancestor "$target_sha" "$main_head" || {
+      echo "$given 이 메인 체크아웃의 HEAD(${main_head:0:12})에 없다. 병합한 뒤 보낸다." >&2; exit 1; }
+  else
+    if [[ $linked -eq 1 && -n "$(git status --porcelain)" ]]; then
+      echo "커밋 안 된 변경이 있어 [완료]를 보내지 않았다. 커밋하거나 정리한 뒤 다시 보낸다:" >&2
+      git status --short >&2
+      exit 1
+    fi
+    target_sha="$(git rev-parse HEAD)"
+    if [[ $linked -eq 0 ]]; then
+      [[ -n "$(git status --porcelain)" ]] && echo "메인 체크아웃의 커밋 안 된 변경은 검사와 보고에 들어가지 않는다. 커밋된 HEAD ${target_sha:0:12}만 본다." >&2
+      [[ $mode == fg ]] && mode=bg # 메인 체크아웃에서는 그 자리에서 검사하지 않는다
+    fi
   fi
-  state="$("$check" --status)"
+  if [[ $linked -eq 1 && "$message" == "[완료]"* ]]; then state="$("$check" --status)"; else state="$("$check" --status-of "$target_sha")"; fi
   case "$state" in
     UNSET) message="$message · 검사 미설정" ;;
     PASS\ *) message="$message · 검사 PASS ${state#PASS }" ;;
     *)
-      if [[ $mode == bg ]]; then
-        sha="$(git rev-parse HEAD)" task="$(task_of "$message")"
-        ahead="$("$BIN/herdr-queue" ahead 2>/dev/null || echo 0)"
-        send "[진행] $task 커밋 ${sha:0:12} 검사 중(뒤에서) 예상 $(predict) · 대기열 ${ahead}건" || exit 1
-        detach=(nohup); command -v setsid >/dev/null && detach=(setsid nohup) # 턴이 끝나도 검사가 살아 있게 한다
-        "${detach[@]}" "$BIN/herdr-report" --bg-run "$sha" "$message" >"$dir/.$HERDR_ROLE.bg-${sha:0:12}.out" 2>&1 </dev/null &
-        echo "검사를 뒤에서 돌린다(${sha:0:12}). PASS면 [완료]가 자동으로 가고, FAIL이면 이 세션에 알림이 온다."
-        echo "그동안 같은 묶음의 다음 작업을 이 커밋 위에서 이어 해도 된다. 이 커밋은 고치거나 rebase하지 않는다."
+      if [[ $mode == bg || "$message" == "[병합완료]"* ]]; then
+        start_bg "$target_sha"
+        [[ "$message" == "[완료]"* && $linked -eq 1 ]] && echo "그동안 같은 묶음의 다음 작업을 이 커밋 위에서 이어 해도 된다. 이 커밋은 고치거나 rebase하지 않는다."
         exit 0
       fi
       "$check"; rc=$?
