@@ -35,13 +35,14 @@ usage() {
   role     commander | orchestrator | 워커 이름(예: worker-1) | verifier-<n>
   도구     생략하면 .agents/harness.env의 HERDR_<역할>_TOOL을 쓴다. 둘 다 없으면 실패한다
            (역할: COMMANDER, ORCHESTRATOR, WORKER, VERIFIER. VERIFIER_TOOL이 비면 WORKER 설정)
-  effort   기본값 대신 쓸 effort(low, medium, high, xhigh)
+  effort   기본값 대신 쓸 effort(low, medium, high, xhigh). harness.env에 effort가 있으면 쓰지 않는다
 
-  모델·effort는 인자 > harness.env(HERDR_<역할>_MODEL·_EFFORT) > 기본 표 순으로 정한다.
+  모델·effort는 harness.env(HERDR_<역할>_MODEL·_EFFORT)에 값이 있으면 그 값으로 고정한다. 다른 값을
+  인자로 주면 거부한다. harness.env가 비어 있을 때만 인자 > 기본 표 순으로 정한다.
   harness.env의 모델·effort는 도구가 HERDR_<역할>_TOOL과 같을 때만 쓴다.
 
   --task <내용>      첫 임무. 부팅 중인 세션에 hc send로 보내면 유실될 수 있으니 이것으로 넘긴다
-  --model <모델>     기본 모델 대신 쓸 모델(예: 명세가 정해진 구현은 sonnet)
+  --model <모델>     기본 모델 대신 쓸 모델. harness.env에 모델이 있으면 쓰지 않는다
   --here             사용자가 herdr 화면에서 연 패널에서 그 자리에 실행한다. hc 터미널이 아니면 hc 터미널을 열어 실행한다
   --outlive-parent   (기본값) 부모 세션이 끝나도 살아 있게 한다. 예전 명령과 맞추려고 받기만 한다
   --full             Claude의 기본 맥락 축소(claude.ai 커넥터·Chrome·플러그인 끔)를 하지 않는다
@@ -86,6 +87,14 @@ ENV_MODEL="" ENV_EFFORT=""
 if [[ -n "$ENV_TOOL" && "$TOOL" == "$ENV_TOOL" ]]; then
   ENV_MODEL="${!ENV_MODEL_VAR:-}" ENV_EFFORT="${!ENV_EFFORT_VAR:-}"
 fi
+# harness.env에 적힌 모델·effort는 사용자가 정한 값이다. 띄우는 세션이 인자로 바꾸지 못한다.
+locked() { # 이름 설정값 인자 설정변수
+  echo "거부: .agents/harness.env가 $ROLE의 $1을 $2로 정했다(사용자 설정). 인자 $3을 받지 않는다." >&2
+  echo "인자 없이 다시 띄운다. 이 값을 바꾸는 것은 사용자다: harness.env의 $4를 고치거나 비운다." >&2
+  exit 2
+}
+[[ -n "$MODEL_OVERRIDE" && -n "$ENV_MODEL" && "$MODEL_OVERRIDE" != "$ENV_MODEL" ]] && locked 모델 "$ENV_MODEL" "--model $MODEL_OVERRIDE" "$ENV_MODEL_VAR"
+[[ -n "$EFFORT_OVERRIDE" && -n "$ENV_EFFORT" && "$EFFORT_OVERRIDE" != "$ENV_EFFORT" ]] && locked effort "$ENV_EFFORT" "$EFFORT_OVERRIDE" "$ENV_EFFORT_VAR"
 case "$TOOL:$KIND" in
   codex:commander | codex:orchestrator) MODEL=gpt-6.1-terra EFFORT=medium ;;
   codex:worker) MODEL=gpt-6.1-sol EFFORT=high ;;
