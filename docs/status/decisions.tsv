@@ -77,3 +77,4 @@ ts	작업	결정	이유	증거	결과
 2026-11-09T10:26:25+09:00	U-D	재검증 PASS c33927b → 병합 지시	verifier-1 PASS	/tmp/verify-ud/2026-11-09T10-26-09+0900--verify-ud2.md	worker-1 병합
 2026-11-09T10:27:09+09:00	U-D	main 병합 c68fd0b(rebase 무충돌, ff). worker-1 /clear	worker-1 [병합 완료]	c68fd0b	U-E는 P-70·P-71b 병합과 크기 예산 결정 뒤
 2026-11-09T10:39:26+09:00	P-71b	[완료] 0fdb531 검사 PASS → 독립 검증 배정(verifier-1)	worker-4 [완료]	0fdb5318ea02131f241521001422140b87da94cb	verifier-1 P-71b
+2026-11-09T10:44:48+09:00	P-71b	독립 검증 PASS 0fdb531 → 병합 지시. rar4 패닉 노출 증가 없음(RAR5 시그니처만 분기) 확인	verifier-1 PASS	/tmp/verify-p71b/2026-11-09T10-44-16+0900--verify-p71b.md	worker-4 병합
