@@ -1,16 +1,16 @@
 # 상태판
 
-갱신: 2026-11-09T19:12:24+09:00 (Orchestrator t7c)
+갱신: 2026-11-09T19:31:26+09:00 (Orchestrator t7c, [CLEAR 요청] 보냄)
 
 | 작업 ID | 묶음 | 담당(role·터미널) | 상태 | 의존 | 근거 |
 | --- | --- | --- | --- | --- | --- |
-| U-R3 | U-R3 | worker-3(t93), verifier-1(t7h) | U-R3a 병합 128a0f6, U-R3b 진행(uni-auth 갱신·DNS·컨테이너 경로·사용자 명령) | 없음 | 시작 계약 3: 운영 주소 books.betterax.net. a 저장소 → b 운영 준비(uni-auth 갱신·DNS·사용자 명령) → 사용자 적용 → c 공개 검증. U-R2b(library)는 이것으로 대체 |
+| U-R3 | U-R3 | worker-3(t93), verifier-1(t7h) | U-R3a 병합 128a0f6, U-R3b 병합 a4da3b4, U-R3c는 사용자 적용 대기. 사용자 명령: docs/progress/2026-11-09T18-34-31+0900--e74-books-ops-prep.md §5 A~F | 없음 | 시작 계약 3: 운영 주소 books.betterax.net. a 저장소 → b 운영 준비(uni-auth 갱신·DNS·사용자 명령) → 사용자 적용 → c 공개 검증. U-R2b(library)는 이것으로 대체 |
 
 ## 대기
 
 | 작업 ID | 기다리는 것 | 시작 | 풀릴 조건 | 만료 | 만료 시 |
 | --- | --- | --- | --- | --- | --- |
-| U-R3 | 작업: worker-3(t93) U-R3a·b | 17:4x | [완료] U-R3b(사용자 명령 블록) | 20:00 (예측 1h20m: 문서·스크립트 수정+lint, 외부 확인·갱신, 근거 U-R1·U-R2a 소요) | hc read t93 |
+| U-R3c | 사용자 결정·실행: §5 A~F(설정·:9909 중지·9910 기동·sudo ingress·재시작·verify·첫 로그인 allowed_subs) | 19:2x | 사용자가 적용 알림 → worker-3 U-R3c 공개 검증 + verifier-1(정리 후) 독립 검증 | 만료 없음(사용자 결정) | 결정 없이 할 일: 없음 |
 
 ## 세션 사고와 교체 (2026-11-09)
 
@@ -18,12 +18,12 @@
 - 새 Orchestrator t7c(--outlive-parent로 기동). 이후 워커는 모두 `--outlive-parent`로 띄운다 — Orchestrator를 다시 교체해도 진행 중 작업이 살아남게.
 - 옛 세션 정리 끝: t1j·t1m·t20·t3g·t5h·t6v 모두 종료 상태. worker-2 교체(기록 저장 세션)는 재기동으로 함께 끝났다.
 
-## 새 Orchestrator가 이어 갈 다음 행동
+## 새 Orchestrator가 이어 갈 다음 행동 (19:3x, t7c [CLEAR 요청] 직전)
 
-1. (끝남 9377a14) U-E [완료]가 오면 검사 PASS SHA를 확인하고 verifier-1(새로 띄움)에 독립 검증을 배정한다. 확인 항목: 가짜 uni-auth가 제품 바이너리에 링크되지 않음(go list -deps ./cmd/shelf), 제품 코드에 테스트용 우회 없음, 가짜 공급자의 aud 또는 nonce를 틀리게 하면 로그인 실패, oidc spec (a)~(h) 단정, 직접 뮤테이션 1개, make e2e-synthetic-oidc 1회, 예산 세 곳(Makefile·impl-plan·README) 33,816,576 일치와 정식 측정. PASS면 [병합](보고는 hc로만).
-2. T-U 병합 완료(main 51178af).
-3. U-E 병합 뒤 E-74 완료 조건 6(운영 공개) 준비: 사용자 실행 단계 U-R2b — 런북 docs/progress/2026-11-09T03-39-10+0900--e74-library-deploy-runbook.md와 scripts/deploy/library/. 사용자에게 적용 명령과 중단 시점을 요청한다(:9909 중지, user.db 백업, 9910 oidc 인스턴스, dns-route, tunnel-apply --restart는 auth·ohmyassets가 몇 초 끊김, verify-public, 첫 로그인 403 화면의 sub를 allowed_subs에). sudo·재시작·cloudflared는 사용자가 한다.
-4. (17:2x Commander에 알림) '개발완료!!!'는 U-E 병합(E-74 조건 1~5)과 T-U 병합 뒤 Commander에 알릴 수 있다. 운영 공개(조건 6, 실제 로그인 1회)는 사용자 실행이 필요하다고 함께 밝힌다. 미완료를 완료로 쓰지 않는다.
+1. (끝남 a4da3b4) U-R3b 병합·기록 커밋.
+2. 사용자가 §5(docs/progress/2026-11-09T18-34-31+0900--e74-books-ops-prep.md) A~F 적용을 알리면: worker-3에 U-R3c(공개 검증 verify-public --public 결과 확인, 비인증 401·allowed 밖 403·평문 우회 없음·실제 로그인 1회는 사용자 브라우저) 배정, verifier-1(t7h, 재사용 전 /clear — hc keys)에 독립 공개 검증 배정(읽기 전용 GET만, uni-auth·터널 쓰기 금지). 둘 다 PASS면 시작 계약 3 완료 → E-74 전체 완료 보고.
+3. 사용자 결정 대기(Commander에 보냄): 공개 시점, main push(130+커밋), 옛 worktree 5개·.backup-harness/·damaged-zip-salvage 삭제, Codex 단가 기준, E-70 실기기 확인, §5 A의 allow_root_editing 유지 여부.
+4. 하네스 규칙은 1967a2f 기준: 무거운 검사는 공용 대기열 herdr-queue, herdr-report --bg의 '검사 중(뒤에서)'도 병행 검증 계기. 워커는 모두 --outlive-parent.
 
 ## 미확정 사항
 
