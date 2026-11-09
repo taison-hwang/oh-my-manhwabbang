@@ -4,7 +4,7 @@
 
 | 작업 ID | 묶음 | 담당(role·터미널) | 상태 | 의존 | 근거 |
 | --- | --- | --- | --- | --- | --- |
-| U-R3 | U-R3 | worker-3(t93), verifier-1(t7h) | U-R3a 판정 PASS e0d8af9 · 작성자 검사 대기 → 병합, U-R3b 진행 | 없음 | 시작 계약 3: 운영 주소 books.betterax.net. a 저장소 → b 운영 준비(uni-auth 갱신·DNS·사용자 명령) → 사용자 적용 → c 공개 검증. U-R2b(library)는 이것으로 대체 |
+| U-R3 | U-R3 | worker-3(t93), verifier-1(t7h) | U-R3a [병합] 진행(PASS e0d8af9), U-R3b 진행 | 없음 | 시작 계약 3: 운영 주소 books.betterax.net. a 저장소 → b 운영 준비(uni-auth 갱신·DNS·사용자 명령) → 사용자 적용 → c 공개 검증. U-R2b(library)는 이것으로 대체 |
 
 ## 대기
 
