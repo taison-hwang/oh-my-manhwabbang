@@ -95,22 +95,48 @@ class UsageReportTest(unittest.TestCase):
         rep = self.report()
         by = {tuple(e["key"]): e for e in rep["claude_by_role_model"]}
         opus = by[("worker-9", "claude-opus-5-5")]
-        self.assertEqual(opus["responses"], 3)  # m1(중복 제거), far, s1 — old는 기준 시점 전
+        self.assertEqual(opus["responses"], 2)  # m1(중복 제거), s1 — old는 기준 시점 전, far는 저장소 밖
         self.assertEqual(opus["cache_1h"], 50)
         self.assertEqual(opus["cache_5m"], 5)
         self.assertEqual(by[("worker-9", "claude-sonnet-5-5")]["cache_read"], 7)
 
     def test_dedup_counts_reported(self):
         gap = next(g for g in self.report()["gaps"] if g.startswith("Claude 중복 제거"))
-        self.assertEqual(gap, "Claude 중복 제거: assistant usage 줄 7 → message.id 고유 6")
+        self.assertEqual(gap, "Claude 중복 제거: assistant usage 줄 6 → message.id 고유 5")
 
     def test_task_mapping_from_cwd(self):
         rep = self.report()
         tasks = {tuple(e["key"]) for e in rep["claude_by_task"]}
         self.assertIn(("worker-9", "job-a"), tasks)
         self.assertIn(("worker-9", ur.MAIN_CHECKOUT), tasks)
-        self.assertIn(("worker-9", ur.OUTSIDE), tasks)
+        self.assertNotIn(ur.OUTSIDE, {k[1] for k in tasks})
         self.assertIn((ur.UNKNOWN_ROLE, ur.MAIN_CHECKOUT), tasks)  # 역할 문구가 없는 sess2
+
+    def test_outside_cwd_excluded_and_counted(self):
+        rep = self.report()
+        total = sum(e["responses"] for e in rep["claude_by_day"])
+        self.assertEqual(total, 5)
+        self.assertIn("저장소 밖 cwd라 집계에서 제외한 응답: Claude 1, Codex 0", rep["gaps"])
+
+    def test_cost_notice_in_every_format(self):
+        base = [a for a in self.args if a not in ("json", "--format")]
+        js = self.report()["cost_notice"]
+        self.assertEqual(js["claude"]["status"], "estimate")
+        self.assertIn("구독이면 실제 청구액 아님", js["claude"]["meaning"])
+        self.assertEqual(js["claude"]["price_source"], "https://platform.claude.com/docs/en/about-claude/pricing")
+        self.assertEqual(js["claude"]["price_retrieved"], "2026-11-09")
+        self.assertEqual(js["claude"]["unpriced_models"], ["claude-mystery-9"])
+        self.assertIn("공식 단가를 확인하지 못해", js["claude"]["unpriced_reason"])
+        self.assertEqual(js["codex"]["status"], "not_computed")
+        self.assertIn("Codex 단가 미확인 — 비용 미산출", js["codex"]["reason"])
+        tsv = run(base + ["--format", "tsv"])
+        head = [l for l in tsv.splitlines() if l.startswith("#")][:6]
+        joined = "\n".join(head)
+        for needle in ("구독이면 실제 청구액 아님", "claude-mystery-9", "공식 단가를 확인하지 못해",
+                       "Codex 단가 미확인 — 비용 미산출", "platform.claude.com"):
+            self.assertIn(needle, joined)
+        self.assertTrue(tsv.startswith("# "))
+        self.assertTrue(all(l.startswith("#") for l in tsv.split("\n# gaps\n")[1].splitlines() if l))
 
     def test_gaps_show_missing_roles_and_traces(self):
         text = "\n".join(self.report()["gaps"])
@@ -127,8 +153,8 @@ class UsageReportTest(unittest.TestCase):
         self.assertIsNone(mystery[0]["cost_usd"])
         self.assertEqual(rep["claude_unpriced_models"], ["claude-mystery-9"])
         opus = next(e for e in rep["claude_by_role_model"] if e["key"][1] == "claude-opus-5-5")
-        # opus: input 3*4 + output 30*20 + 5m 5*5 + 1h 50*8 + read 300*0.2, 모두 /1e6
-        self.assertAlmostEqual(opus["cost_usd"], (3 * 4 + 30 * 20 + 5 * 5 + 50 * 8 + 300 * 0.2) / 1e6)
+        # opus: input 2*4 + output 20*20 + 5m 5*5 + 1h 50*8 + read 200*0.2, 모두 /1e6
+        self.assertAlmostEqual(opus["cost_usd"], (2 * 4 + 20 * 20 + 5 * 5 + 50 * 8 + 200 * 0.2) / 1e6)
         text = run([a for a in self.args if a not in ("json", "--format")])
         self.assertIn("claude-mystery-9", text)
         self.assertIn("API 단가 환산 추정, 구독이면 실제 청구액 아님", text)

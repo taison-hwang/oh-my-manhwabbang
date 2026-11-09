@@ -24,6 +24,9 @@ UNKNOWN_ROLE = "미상"
 ROLE_RE = re.compile(r"이 세션의 역할은 ([^,\s]+), 프로젝트는")
 WORKTREE_RE = re.compile(r"/\.worktrees/([^/]+)")
 
+COST_ESTIMATE_NOTE = "API 단가 환산 추정, 구독이면 실제 청구액 아님"
+UNPRICED_NOTE = "단가표에 없는 모델은 공식 단가를 확인하지 못해 비용 칸을 비우고 합계에서 제외"
+CODEX_NOTE = "Codex 단가 미확인 — 비용 미산출"
 CLAUDE_FIELDS = ("input", "output", "cache_5m", "cache_1h", "cache_unsplit", "cache_read")
 CODEX_FIELDS = ("input", "cached", "output", "reasoning")
 
@@ -79,11 +82,13 @@ class Claude:
         self.traces_only = []
         self.sessions = {}
         self.orphan_meta = 0
+        self.outside = 0
 
 
 def scan_claude(proj_dir, repo, since):
     out = Claude()
     seen = set()
+    outside_seen = set()
     mains = sorted(glob.glob(os.path.join(proj_dir, "*.jsonl")))
     for path in mains:
         sid = os.path.basename(path)[:-6]
@@ -108,8 +113,14 @@ def scan_claude(proj_dir, repo, since):
                 ts = parse_ts(d["timestamp"])
                 if ts < since:
                     continue
-                out.raw += 1
+                task = task_of(d.get("cwd") or last_cwd, repo)
                 key = msg.get("id") or d.get("uuid")
+                if task == OUTSIDE:
+                    if key not in outside_seen:
+                        outside_seen.add(key)
+                        out.outside += 1
+                    continue
+                out.raw += 1
                 if key in seen:
                     continue
                 seen.add(key)
@@ -128,7 +139,7 @@ def scan_claude(proj_dir, repo, since):
                     "cache_read": u.get("cache_read_input_tokens") or 0,
                 }
                 out.rows.append({"session": sid, "role_ref": sid, "model": msg.get("model") or "(모델 없음)",
-                                 "day": kst_day(ts), "task": task_of(d.get("cwd") or last_cwd, repo),
+                                 "day": kst_day(ts), "task": task,
                                  "sub": sub, "ts": ts, "tok": tok})
         out.sessions[sid] = {"role": role or UNKNOWN_ROLE}
     for r in out.rows:
@@ -153,6 +164,7 @@ class Codex:
         self.rollouts = []  # dict: file, start, checked, match
         self.cross_checked = 0
         self.cross_match = 0
+        self.outside = 0
 
 
 def codex_tok(u):
@@ -199,6 +211,12 @@ def scan_codex(codex_dir, repo, since, role_map):
                 ts = parse_ts(d["timestamp"]) if "timestamp" in d else None
                 if ts is None or ts < since:
                     continue
+                task = task_of(cwd, repo)
+                if task == OUTSIDE:
+                    if rid not in seen:
+                        seen.add(rid)
+                        out.outside += 1
+                    continue
                 out.raw += 1
                 if rid in seen:
                     continue
@@ -208,7 +226,7 @@ def scan_codex(codex_dir, repo, since, role_map):
                 m = model or "(모델 없음)"
                 role = role_map.get(m)
                 out.rows.append({"session": sid, "role": ("추정:" + role) if role else UNKNOWN_ROLE, "model": m,
-                                 "day": kst_day(ts), "task": task_of(cwd, repo), "ts": ts, "tok": tok})
+                                 "day": kst_day(ts), "task": task, "ts": ts, "tok": tok})
         if last_total is not None and file_seen:
             out.cross_checked += 1
             out.cross_match += dict(file_sum) == last_total
@@ -326,7 +344,19 @@ def build_report(a):
     rep["claude_unpriced_models"] = sorted(unpriced)
     rep["claude_price_source"] = prices.get("claude", {}).get("source")
     rep["claude_price_retrieved"] = prices.get("claude", {}).get("retrieved")
-    rep["codex_price"] = prices.get("codex")
+    rep["cost_notice"] = {
+        "claude": {
+            "status": "estimate",
+            "meaning": COST_ESTIMATE_NOTE,
+            "price_source": rep["claude_price_source"],
+            "price_retrieved": rep["claude_price_retrieved"],
+            "unit": prices.get("claude", {}).get("unit"),
+            "total_usd": cost_total,
+            "unpriced_models": sorted(unpriced),
+            "unpriced_reason": UNPRICED_NOTE if unpriced else None,
+        },
+        "codex": {"status": "not_computed", "reason": CODEX_NOTE},
+    }
 
     gaps = []
     claude_roles = {r["role"] for r in cl.rows}
@@ -362,6 +392,7 @@ def build_report(a):
     if UNKNOWN_ROLE in claude_roles:
         gaps.append("Claude 역할을 SessionStart 문구에서 읽지 못한 세션의 사용량이 '미상'에 있다.")
     gaps.append("Claude 중복 제거: assistant usage 줄 %d → message.id 고유 %d" % (cl.raw, cl.unique))
+    gaps.append("저장소 밖 cwd라 집계에서 제외한 응답: Claude %d, Codex %d" % (cl.outside, cx.outside))
     gaps.append("Codex 중복 제거: token_usage_record %d → response_id 고유 %d; rollout 합계 vs 마지막 total_token_usage 일치 %d/%d" % (
         cx.raw, cx.unique, cx.cross_match, cx.cross_checked))
     gaps.append("Codex rollout %d개 집계(cwd가 이 저장소)." % len(cx.rollouts)
@@ -427,11 +458,11 @@ def render_text(rep):
     o += ["", "### 세션별",
           fmt_table(["세션", "역할", "응답", "첫 기록", "마지막 기록"],
                     [[s["session"], s["role"], n(s["responses"]), s["first"], s["last"]] for s in rep["claude_sessions"]], 2)]
-    o += ["", "비용: API 단가 환산 추정, 구독이면 실제 청구액 아님. 단가 출처 %s (조회 %s)." % (
+    o += ["", "비용: " + COST_ESTIMATE_NOTE + ". 단가 출처 %s (조회 %s)." % (
         rep["claude_price_source"], rep["claude_price_retrieved"]),
         "단가 확인된 응답의 환산 합계 $%.2f." % rep["claude_cost_total_usd"]]
     if rep["claude_unpriced_models"]:
-        o.append("단가표에 없는 모델(비용 칸 비움, 합계 제외): %s — 공식 단가를 확인하지 못했다." % ", ".join(rep["claude_unpriced_models"]))
+        o.append("단가표에 없는 모델: %s — %s." % (", ".join(rep["claude_unpriced_models"]), UNPRICED_NOTE))
     o += ["", "## Codex (input에 cached 포함, output에 reasoning 포함 — OpenAI 방식, Claude와 합산하지 않음)"]
     for title, key, head in (("역할·모델별", "codex_by_role_model", ["역할", "모델"]),
                              ("역할·작업별(cwd 근사)", "codex_by_task", ["역할", "작업"]),
@@ -439,12 +470,18 @@ def render_text(rep):
         rows = [e["key"] + [n(e["responses"]), n(e["input"]), n(e["cached"]), n(e["output"]), n(e["reasoning"])]
                 for e in rep[key]]
         o += ["", "### " + title, fmt_table(head + CX_HEAD, rows, len(head))]
-    o += ["", "비용: Codex 단가 미확인 — 비용 미산출."]
+    o += ["", "비용: " + CODEX_NOTE + "."]
     return "\n".join(o) + "\n"
 
 
 def render_tsv(rep):
-    o = []
+    cn = rep["cost_notice"]["claude"]
+    o = ["# 기준 시점 %s, KST" % rep["since"],
+         "# Claude 비용(cost_usd): %s. 단가 출처 %s (조회 %s), 단위 %s" % (
+             COST_ESTIMATE_NOTE, cn["price_source"], cn["price_retrieved"], cn["unit"]),
+         "# 단가 없는 모델: %s" % (("%s — %s" % (", ".join(cn["unpriced_models"]), UNPRICED_NOTE)) if cn["unpriced_models"] else "없음"),
+         "# Codex: " + CODEX_NOTE,
+         "# Claude와 Codex 토큰은 합산하지 않는다. 한계는 맨 끝 gaps 절"]
     for sec in ("claude_by_role_model", "claude_by_task", "claude_by_day"):
         o.append("# " + sec)
         o.append("\t".join(["key", "responses", *CLAUDE_FIELDS, "cost_usd"]))
@@ -462,7 +499,7 @@ def render_tsv(rep):
 
 
 def g_lines(rep):
-    return [g.replace("\t", " ") for g in rep["gaps"]]
+    return ["# " + g.replace("\t", " ") for g in rep["gaps"]]
 
 
 def main(argv=None):
