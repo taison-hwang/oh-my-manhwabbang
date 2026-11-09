@@ -1,0 +1,300 @@
+#!/usr/bin/env python3
+"""무거운 검사(테스트·e2e)의 공용 대기열. 이 기계의 모든 프로젝트가 함께 쓴다.
+
+  herdr-queue                                  대기열을 보여 준다
+  herdr-queue urgent <역할> [--project P]      그 역할의 검사를 대기열 맨 앞으로. 대기 중인 검사가 없으면 다음 검사 한 번에 건다
+  herdr-queue normal <역할> [--project P]      급함 표시를 푼다
+  herdr-queue ahead                            지금 실행·대기 중인 검사 수
+  herdr-queue run --role R --sha S [--timeout 초] [--log 파일] [--wait-file 파일] -- <명령…>
+                                               자리를 얻으면 명령을 돌리고 끝나면 자리를 내놓는다(herdr-check가 쓴다)
+
+자리: HERDR_HEAVY_SLOTS(기본 1)개가 동시에 돈다. 순서는 급함, 들어온 순이다.
+시작 가드: 자리를 얻은 뒤 가용 메모리가 HERDR_HEAVY_MIN_MEM_GB 이상, 1분 부하가 HERDR_HEAVY_MAX_LOAD 미만이 될 때까지
+기다린다(0이면 보지 않는다). 기다리는 동안 자리를 쥐고 있으므로 뒤 검사도 함께 기다린다.
+시간 제한은 명령의 실행 시간에만 건다. 대기열과 가드에서 기다린 시간은 세지 않고, 기다리는 동안 순번을 알린다.
+명령은 새 프로세스 묶음으로 돌리고, 시간 초과나 중단 때 묶음째 끝낸다(고아 검사가 남지 않는다).
+기록 위치: HERDR_HEAVY_DIR(기본 ~/.claude/herdr/heavy). 프로세스가 죽은 표는 다음 사람이 치운다.
+"""
+import argparse
+import fcntl
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+import uuid
+
+BASE = os.environ.get("HERDR_HEAVY_DIR") or os.path.join(os.path.expanduser("~"), ".claude", "herdr", "heavy")
+TICKETS = os.path.join(BASE, "tickets")
+URGENT = os.path.join(BASE, "urgent")
+POLL = float(os.environ.get("HERDR_HEAVY_POLL", "2"))
+NOTICE_EVERY = 300  # 순번이 그대로여도 이 간격(초)마다 다시 알린다
+
+
+def env_num(name, default):
+    try:
+        return float(os.environ.get(name) or default)
+    except ValueError:
+        return float(default)
+
+
+class Mutex:
+    def __enter__(self):
+        os.makedirs(TICKETS, exist_ok=True)
+        os.makedirs(URGENT, exist_ok=True)
+        self.f = open(os.path.join(BASE, ".mutex"), "a")
+        fcntl.flock(self.f, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *exc):
+        fcntl.flock(self.f, fcntl.LOCK_UN)
+        self.f.close()
+
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def write(ticket):
+    path = os.path.join(TICKETS, ticket["id"] + ".json")
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(ticket, f)
+    os.replace(tmp, path)
+
+
+def load():
+    """살아 있는 표만 돌려준다. 죽은 프로세스의 표는 지운다(뮤텍스 안에서 부른다)."""
+    out = []
+    for name in os.listdir(TICKETS):
+        if not name.endswith(".json"):
+            continue
+        path = os.path.join(TICKETS, name)
+        try:
+            with open(path) as f:
+                t = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if alive(int(t.get("pid", 0))):
+            out.append(t)
+        else:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+    return out
+
+
+def ordered(tickets):
+    running = sorted((t for t in tickets if t["state"] == "run"), key=lambda t: t.get("started", 0))
+    waiting = sorted((t for t in tickets if t["state"] == "wait"), key=lambda t: (t["prio"], t["created"]))
+    return running, waiting
+
+
+def ago(epoch):
+    s = int(time.time() - epoch)
+    h, rest = divmod(s, 3600)
+    m, s = divmod(rest, 60)
+    return f"{h}h{m:02d}m" if h else (f"{m}m{s:02d}s" if m else f"{s}s")
+
+
+def who(t):
+    return f"{t['project']}/{t['role']}"
+
+
+def guard_reason():
+    min_gb, max_load = env_num("HERDR_HEAVY_MIN_MEM_GB", 0), env_num("HERDR_HEAVY_MAX_LOAD", 0)
+    if min_gb > 0:
+        try:
+            with open("/proc/meminfo") as f:
+                kb = next(int(line.split()[1]) for line in f if line.startswith("MemAvailable:"))
+            if kb / 1048576 < min_gb:
+                return f"가용 메모리 {kb / 1048576:.1f}GB < {min_gb:g}GB"
+        except (OSError, StopIteration, ValueError):
+            pass
+    if max_load > 0:
+        try:
+            load1 = os.getloadavg()[0]
+            if load1 >= max_load:
+                return f"1분 부하 {load1:.1f} ≥ {max_load:g}"
+        except OSError:
+            pass
+    return None
+
+
+def say(msg):
+    print(f"[대기열] {msg}", file=sys.stderr, flush=True)
+
+
+def cmd_run(a):
+    if not a.command:
+        sys.exit("돌릴 명령이 없다: herdr-queue run … -- <명령>")
+    project = a.project or os.environ.get("HERDR_PROJECT") or os.path.basename(os.getcwd())
+    slots = max(int(env_num("HERDR_HEAVY_SLOTS", 1)), 1)
+    me = {"id": f"{time.time_ns()}-{uuid.uuid4().hex[:6]}", "project": project, "role": a.role, "sha": a.sha,
+          "pid": os.getpid(), "prio": 5, "created": time.time(), "state": "wait"}
+    child = None
+
+    def cleanup():
+        try:
+            os.remove(os.path.join(TICKETS, me["id"] + ".json"))
+        except OSError:
+            pass
+
+    def stop(signum, _frame):
+        if child is not None and child.poll() is None:
+            try:
+                os.killpg(child.pid, signal.SIGTERM)
+            except OSError:
+                pass
+        cleanup()
+        sys.exit(128 + signum)
+
+    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(s, stop)
+
+    with Mutex():
+        flag = os.path.join(URGENT, f"{project}__{a.role}")
+        if os.path.exists(flag):
+            me["prio"] = 0
+            os.remove(flag)
+        write(me)
+    entered, last_note, last_said = time.time(), None, 0
+    try:
+        while True:
+            with Mutex():
+                running, waiting = ordered(load())
+                mine = next((t for t in waiting if t["id"] == me["id"]), None)
+                me["prio"] = mine["prio"] if mine else me["prio"]
+                pos = waiting.index(mine) if mine else 0
+                if len(running) < slots and pos < slots - len(running):
+                    reason = guard_reason()
+                    me["state"], me["started"] = "run", time.time()
+                    write(me)
+                    break
+            ahead = ", ".join(f"{who(t)} 실행 {ago(t['started'])}" for t in running)
+            note = f"{pos + 1}번째로 기다린다" + (" (급함)" if me["prio"] == 0 else "") + (f" · 앞: {ahead}" if ahead else "")
+            if note != last_note or time.time() - last_said >= NOTICE_EVERY:
+                say(f"{note} · 대기 {ago(entered)}")
+                last_note, last_said = note, time.time()
+            time.sleep(POLL)
+        while reason:
+            if reason != last_note or time.time() - last_said >= NOTICE_EVERY:
+                say(f"자리를 얻었지만 {reason}라 시작을 미룬다 · 대기 {ago(entered)}")
+                last_note, last_said = reason, time.time()
+            time.sleep(POLL)
+            reason = guard_reason()
+        waited = int(time.time() - entered)
+        if a.wait_file:
+            with open(a.wait_file, "w") as f:
+                f.write(f"{waited}\n")
+        if waited >= 1:
+            say(f"자리를 얻었다(기다린 시간 {ago(entered)})")
+        out = open(a.log, "a") if a.log else None
+        child = subprocess.Popen(a.command, start_new_session=True, stdout=out, stderr=subprocess.STDOUT if out else None)
+        try:
+            return child.wait(timeout=a.timeout if a.timeout and a.timeout > 0 else None)
+        except subprocess.TimeoutExpired:
+            say(f"실행 시간이 {a.timeout}초를 넘어 끊는다(대기 시간은 세지 않았다)")
+            try:
+                os.killpg(child.pid, signal.SIGTERM)
+                child.wait(timeout=10)
+            except (OSError, subprocess.TimeoutExpired):
+                try:
+                    os.killpg(child.pid, signal.SIGKILL)
+                except OSError:
+                    pass
+                child.wait()
+            return 124
+    finally:
+        cleanup()
+
+
+def cmd_mark(a, prio):
+    project = a.project or os.environ.get("HERDR_PROJECT") or os.path.basename(os.getcwd())
+    with Mutex():
+        running, waiting = ordered(load())
+        hit = [t for t in waiting if t["project"] == project and t["role"] == a.role]
+        for t in hit:
+            t["prio"] = prio
+            write(t)
+        flag = os.path.join(URGENT, f"{project}__{a.role}")
+        if prio == 0 and not hit:
+            open(flag, "w").close()
+        if prio != 0 and os.path.exists(flag):
+            os.remove(flag)
+    target = f"{project}/{a.role}"
+    if prio == 0:
+        print(f"급함: {target} 대기 중인 검사 {len(hit)}건을 맨 앞으로 옮겼다" if hit
+              else f"급함: {target}의 다음 검사 한 번을 맨 앞에 세운다(지금 대기 중인 검사 없음)")
+    else:
+        print(f"보통: {target} 급함 표시를 풀었다")
+
+
+def cmd_list():
+    if not os.path.isdir(TICKETS):
+        print("대기열이 비었다")
+        return
+    with Mutex():
+        running, waiting = ordered(load())
+        flags = sorted(os.listdir(URGENT))
+    if not running and not waiting:
+        print("대기열이 비었다")
+    rows = [["순번", "상태", "프로젝트/역할", "SHA", "급함", "경과"]]
+    rows += [["-", "실행", who(t), t["sha"][:12], "", ago(t["started"])] for t in running]
+    rows += [[str(i + 1), "대기", who(t), t["sha"][:12], "급함" if t["prio"] == 0 else "", ago(t["created"])]
+             for i, t in enumerate(waiting)]
+    if len(rows) > 1:
+        widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]
+        for r in rows:
+            print("  ".join(c.ljust(w) for c, w in zip(r, widths)).rstrip())
+    for f in flags:
+        print(f"다음 검사 급함 예약: {f.replace('__', '/', 1)}")
+
+
+def main():
+    argv = sys.argv[1:]
+    command = []
+    if "--" in argv:
+        i = argv.index("--")
+        argv, command = argv[:i], argv[i + 1:]
+    ap = argparse.ArgumentParser(description="무거운 검사의 공용 대기열")
+    sub = ap.add_subparsers(dest="cmd")
+    r = sub.add_parser("run")
+    r.add_argument("--role", required=True)
+    r.add_argument("--sha", default="")
+    r.add_argument("--project")
+    r.add_argument("--timeout", type=int, default=0)
+    r.add_argument("--log")
+    r.add_argument("--wait-file")
+    for name in ("urgent", "normal"):
+        p = sub.add_parser(name)
+        p.add_argument("role")
+        p.add_argument("--project")
+    sub.add_parser("ahead")
+    sub.add_parser("list")
+    a = ap.parse_args(argv)
+    if a.cmd == "run":
+        a.command = command
+        sys.exit(cmd_run(a))
+    if a.cmd in ("urgent", "normal"):
+        cmd_mark(a, 0 if a.cmd == "urgent" else 5)
+    elif a.cmd == "ahead":
+        if not os.path.isdir(TICKETS):
+            print(0)
+            return
+        with Mutex():
+            print(len(load()))
+    else:
+        cmd_list()
+
+
+if __name__ == "__main__":
+    main()

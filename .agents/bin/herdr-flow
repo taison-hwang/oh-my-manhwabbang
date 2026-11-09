@@ -8,7 +8,7 @@
 기록(~/.claude/herdr/handoff/<프로젝트>/):
   received.tsv  워커가 [배정]·[병합]·[검증]을 받은 시각(worker-turn hook)
   reports.tsv   보낸 보고(herdr-report). [판정]은 결과와 SHA
-  checks.tsv    전체 검사의 시작·걸린 시간·결과(herdr-check). 이어받음은 INHERIT
+  checks.tsv    전체 검사의 결과·실행 시간·대기열에서 기다린 시간(herdr-check). 이어받음은 INHERIT
 
 작업별 구간:
   작업       [배정]을 받고 첫 [완료]까지
@@ -25,7 +25,7 @@ import sys
 SCHEMAS = {
     "received": ("epoch", "time", "role", "session_id", "tag", "task"),
     "reports": ("epoch", "time", "role", "session_id", "tag", "task", "sha", "result"),
-    "checks": ("epoch", "time", "role", "session_id", "sha", "result", "seconds"),
+    "checks": ("epoch", "time", "role", "session_id", "sha", "result", "seconds", "queue_s"),
 }
 
 
@@ -140,7 +140,12 @@ def main():
             secs = int(c["seconds"] or 0)
         except ValueError:
             secs = 0
-        s = by_role.setdefault(c["role"], {"n": 0, "PASS": 0, "FAIL": 0, "INHERIT": 0, "total": 0, "max": 0})
+        try:
+            queued = int(c["queue_s"] or 0)
+        except ValueError:
+            queued = 0
+        s = by_role.setdefault(c["role"], {"n": 0, "PASS": 0, "FAIL": 0, "INHERIT": 0, "total": 0, "max": 0, "queue": 0})
+        s["queue"] += queued
         s["n"] += 1
         s[c["result"]] = s.get(c["result"], 0) + 1
         s["total"] += secs
@@ -177,13 +182,15 @@ def main():
     if gates:
         print(f"관문 대기 합계 {dur(sum(gates))} · 평균 {dur(sum(gates) / len(gates))} · 최대 {dur(max(gates))} ({len(gates)}개 작업)")
     print()
-    head = ["역할", "검사", "PASS", "FAIL", "이어받음", "합계", "평균", "최대"]
+    head = ["역할", "검사", "PASS", "FAIL", "이어받음", "합계", "평균", "최대", "대기열"]
     table = [[role, str(s["n"]), str(s["PASS"]), str(s["FAIL"]), str(s["INHERIT"]), dur(s["total"]),
-              dur(s["total"] / max(s["n"] - s["INHERIT"], 1)), dur(s["max"])] for role, s in sorted(by_role.items())]
+              dur(s["total"] / max(s["n"] - s["INHERIT"], 1)), dur(s["max"]), dur(s["queue"])]
+             for role, s in sorted(by_role.items())]
     if table:
         show(head, table, left=1)
     notes = ["'-'는 기록이 없는 구간이다. [배정]·[병합] 수신은 이 기능이 들어간 하네스로 띄운 워커부터 남는다.",
-             "검사 평균은 이어받음을 뺀 실제 실행의 평균이다. 검사 시간에는 프로젝트 검사 명령 안의 잠금 대기가 들어 있다."]
+             "검사 시간은 실행 시간이고 평균은 이어받음을 뺀 실제 실행의 평균이다. 공용 대기열(herdr-queue)에서 기다린 시간은 '대기열'에 따로 센다.",
+             "프로젝트 검사 명령 안에서 직접 잡는 잠금의 대기는 검사 시간에 들어 있다."]
     if unmatched:
         notes.append(f"작업에 붙이지 못한 검사 {unmatched}회(그 SHA로 보낸 [완료]·[판정]이 없다).")
     print("\n".join(notes))

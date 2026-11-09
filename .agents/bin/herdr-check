@@ -1,25 +1,40 @@
 #!/usr/bin/env bash
 # 프로젝트 검사 실행기. 검사 명령은 .agents/harness.env에서 읽는다(하네스는 언어별 설정을 담지 않는다).
-#   herdr-check                전체 검사(HERDR_CHECK_CMD)를 지금 폴더의 git 작업 트리 최상위에서 돌리고 결과를 기록한다
+#   herdr-check                전체 검사를 지금 폴더의 git 작업 트리 최상위에서 돌리고 결과를 기록한다
 #   herdr-check --files <파일…>  빠른 파일 검사(HERDR_CHECK_FILE_CMD). 기록하지 않는다. 편집 hook이 쓴다
 #   herdr-check --status       지금 HEAD의 기록을 출력한다: PASS <sha> [이어받음 <sha>] | FAIL <sha> | NONE | UNSET
 # 끝 코드: 0 통과, 1 실패, 3 검사 명령 미설정. 기록은 HEAD SHA와 커밋 안 된 변경 유무에 묶인다.
+# 전체 검사 = 가벼운 단계(HERDR_CHECK_CMD, 잠금 없음) 다음 무거운 단계(HERDR_CHECK_HEAVY_CMD, 공용 대기열 herdr-queue 아래).
+# 시간 제한(HERDR_CHECK_TIMEOUT)은 두 단계의 실행 시간 합에만 건다. 대기열에서 기다린 시간은 세지 않는다.
 # 마지막 PASS 이후 바뀐 파일이 모두 HERDR_CHECK_SKIP_PATHS에 맞으면 다시 돌리지 않고 그 PASS를 이어받는다.
 set -uo pipefail
 
 SELF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-HERDR_CHECK_CMD="" HERDR_CHECK_FILE_CMD="" HERDR_CHECK_TIMEOUT=3600 HERDR_CHECK_SKIP_PATHS=""
+HERDR_CHECK_CMD="" HERDR_CHECK_HEAVY_CMD="" HERDR_CHECK_FILE_CMD="" HERDR_CHECK_TIMEOUT=3600 HERDR_CHECK_SKIP_PATHS=""
+HERDR_HEAVY_SLOTS=1 HERDR_HEAVY_MIN_MEM_GB=0 HERDR_HEAVY_MAX_LOAD=0
 # shellcheck disable=SC1091
 [[ -f "$SELF_ROOT/.agents/harness.env" ]] && . "$SELF_ROOT/.agents/harness.env"
+export HERDR_HEAVY_SLOTS HERDR_HEAVY_MIN_MEM_GB HERDR_HEAVY_MAX_LOAD
+configured() { [[ -n "$HERDR_CHECK_CMD" || -n "$HERDR_CHECK_HEAVY_CMD" ]]; }
 
 project="${HERDR_PROJECT:-$(basename "$SELF_ROOT")}"
 role="${HERDR_ROLE:-solo}"
 dir="$HOME/.claude/herdr/handoff/$project"
 record="$dir/.$role.check"
-log="$dir/.$role.check.log"
+log="${HERDR_CHECK_LOG:-$dir/.$role.check.log}" # 뒤에서 도는 검사는 SHA별 로그를 넘긴다
 
-run_limited() { # 명령 문자열을 시간 제한 안에서 돌린다
-  if command -v timeout >/dev/null; then timeout "$HERDR_CHECK_TIMEOUT" bash -c "$1"; else bash -c "$1"; fi
+run_limited() { # 명령 문자열 [제한초]. 시간 제한 안에서 돌린다
+  local limit="${2:-$HERDR_CHECK_TIMEOUT}"
+  if command -v timeout >/dev/null; then timeout "$limit" bash -c "$1"; else bash -c "$1"; fi
+}
+
+# 기록 파일은 한 줄에 "결과 키 시각 [이어받은 키]"이고 뒤에 붙인다. 뒤에서 도는 검사와 앞의 검사가 함께 써도 된다.
+record_add() { # 결과 키 [이어받은 키]
+  printf '%s %s %s%s\n' "$1" "$2" "$(date +%s)" "${3:+ $3}" >>"$record"
+  if [[ $(wc -l <"$record") -gt 200 ]]; then tail -n 100 "$record" >"$record.tmp" && mv "$record.tmp" "$record"; fi
+}
+record_get() { # 키 → 그 키의 마지막 줄 "결과 키 시각 [이어받은 키]"
+  [[ -f "$record" ]] && awk -v k="$1" '$2 == k { line = $0 } END { if (line != "") print line }' "$record"
 }
 
 tree_key() { # HEAD SHA. 커밋 안 된 변경이 있으면 +dirty
@@ -29,13 +44,13 @@ tree_key() { # HEAD SHA. 커밋 안 된 변경이 있으면 +dirty
   printf '%s' "$sha"
 }
 
-log_check() { # 결과 sha 걸린초. 흐름 측정(herdr-flow)용. 실패해도 검사 결과는 그대로다
+log_check() { # 결과 sha 실행초 [대기열초]. 흐름 측정(herdr-flow)용. 실패해도 검사 결과는 그대로다
   {
     local tsv="$dir/checks.tsv"
     mkdir -p "$dir"
-    [[ -s "$tsv" ]] || printf 'epoch\ttime\trole\tsession_id\tsha\tresult\tseconds\n' >"$tsv"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$(date +%Y-%m-%dT%H:%M:%S%z)" "$role" \
-      "$(cat "$dir/.$role.session" 2>/dev/null)" "$2" "$1" "$3" >>"$tsv"
+    [[ -s "$tsv" ]] || printf 'epoch\ttime\trole\tsession_id\tsha\tresult\tseconds\tqueue_s\n' >"$tsv"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$(date +%Y-%m-%dT%H:%M:%S%z)" "$role" \
+      "$(cat "$dir/.$role.session" 2>/dev/null)" "$2" "$1" "$3" "${4:-0}" >>"$tsv"
   } 2>/dev/null || true
 }
 
@@ -51,26 +66,28 @@ skippable() { # 경로가 HERDR_CHECK_SKIP_PATHS의 glob 하나에 맞는가. ca
 }
 
 inherit() { # 기록된 PASS에서 바뀐 파일이 모두 건너뛸 경로면 지금 HEAD의 PASS로 이어받는다
-  local status rkey f changed
+  local rkey f changed
   [[ -n "$HERDR_CHECK_SKIP_PATHS" && -f "$record" && "$key" != *+dirty ]] || return 1
-  read -r status rkey _ <"$record"
-  [[ "$status" == PASS && -n "$rkey" && "$rkey" != *+dirty && "$rkey" != "$key" ]] || return 1
-  git merge-base --is-ancestor "$rkey" HEAD 2>/dev/null || return 1
+  # 지금 HEAD의 조상 중 가장 최근에 깨끗한 트리로 통과한 기록
+  rkey="$(awk '$1 == "PASS" && $2 !~ /[+]dirty$/ { k[n++] = $2 } END { while (n) print k[--n] }' "$record" | while read -r k; do
+    [[ "$k" != "$key" ]] && git merge-base --is-ancestor "$k" HEAD 2>/dev/null && { echo "$k"; break; }; done)"
+  [[ -n "$rkey" ]] || return 1
   changed="$(git diff --no-renames --name-only "$rkey" HEAD 2>/dev/null)" || return 1
   [[ -n "$changed" ]] || return 1
   while IFS= read -r f; do skippable "$f" || return 1; done <<<"$changed"
-  printf 'PASS %s %s %s\n' "$key" "$(date +%s)" "$rkey" >"$record"
+  record_add PASS "$key" "$rkey"
   log_check INHERIT "$key" 0
 }
 
 case "${1:-}" in
   --status)
-    [[ -n "$HERDR_CHECK_CMD" ]] || { echo UNSET; exit 0; }
+    configured || { echo UNSET; exit 0; }
     key="$(tree_key)" || { echo NONE; exit 0; }
     [[ -f "$record" ]] || { echo NONE; exit 0; }
-    inherit || true
-    read -r status rkey _ from <"$record"
-    if [[ "$rkey" == "$key" ]]; then echo "$status $key${from:+ 이어받음 ${from:0:12}}"; else echo NONE; fi
+    line="$(record_get "$key")"
+    [[ -n "$line" ]] || { inherit || true; line="$(record_get "$key")"; }
+    read -r status rkey _ from <<<"$line"
+    if [[ -n "$line" ]]; then echo "$status $key${from:+ 이어받음 ${from:0:12}}"; else echo NONE; fi
     exit 0
     ;;
   --files)
@@ -91,22 +108,35 @@ case "${1:-}" in
   *) sed -n '2,6p' "${BASH_SOURCE[0]}" | sed 's/^# *//' >&2; exit 2 ;;
 esac
 
-[[ -n "$HERDR_CHECK_CMD" ]] || { echo "검사 명령이 없다. .agents/harness.env에 HERDR_CHECK_CMD를 둔다" >&2; exit 3; }
+configured || { echo "검사 명령이 없다. .agents/harness.env에 HERDR_CHECK_CMD(와 HERDR_CHECK_HEAVY_CMD)를 둔다" >&2; exit 3; }
 top="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "git 작업 트리 안에서 실행한다" >&2; exit 1; }
 cd "$top" || exit 1
 key="$(tree_key)"
 mkdir -p "$dir"
-from=""; [[ -f "$record" ]] && read -r status rkey _ from <"$record"
-if [[ "${status:-}" == PASS && "${rkey:-}" == "$key" && -n "$from" ]] || inherit; then
+status="" from=""; read -r status _ _ from <<<"$(record_get "$key")"
+if [[ "$status" == PASS && -n "$from" ]] || inherit; then
   echo "검사 PASS ${key:0:12} (바뀐 파일이 모두 HERDR_CHECK_SKIP_PATHS라 앞 PASS를 이어받음)" >&2
   exit 0
 fi
-echo "검사: $HERDR_CHECK_CMD ($top)" >&2
-started=$(date +%s)
-run_limited "$HERDR_CHECK_CMD" >"$log" 2>&1; rc=$?
+started=$(date +%s) rc=0 queued=0
+: >"$log"
+if [[ -n "$HERDR_CHECK_CMD" ]]; then
+  echo "검사: $HERDR_CHECK_CMD ($top)" >&2
+  run_limited "$HERDR_CHECK_CMD" >>"$log" 2>&1; rc=$?
+fi
+if [[ $rc -eq 0 && -n "$HERDR_CHECK_HEAVY_CMD" ]]; then
+  left=$((HERDR_CHECK_TIMEOUT - ($(date +%s) - started)))
+  ((left > 0)) || left=1
+  echo "무거운 검사: $HERDR_CHECK_HEAVY_CMD (공용 대기열, 순서는 herdr-queue로 본다)" >&2
+  wait_file="$(mktemp)"
+  "$(dirname "${BASH_SOURCE[0]}")/herdr-queue" run --project "$project" --role "$role" --sha "$key" \
+    --timeout "$left" --log "$log" --wait-file "$wait_file" -- bash -c "$HERDR_CHECK_HEAVY_CMD"; rc=$?
+  queued="$(cat "$wait_file" 2>/dev/null)"; queued="${queued:-0}"
+  rm -f "$wait_file"
+fi
 if [[ $rc -eq 0 ]]; then status=PASS; else status=FAIL; fi
-printf '%s %s %s\n' "$status" "$key" "$(date +%s)" >"$record"
-log_check "$status" "$key" "$(($(date +%s) - started))"
+record_add "$status" "$key"
+log_check "$status" "$key" "$(($(date +%s) - started - queued))" "$queued"
 if [[ $status == PASS ]]; then
   echo "검사 PASS ${key:0:12}" >&2
   exit 0

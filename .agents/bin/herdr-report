@@ -1,12 +1,22 @@
 #!/usr/bin/env bash
 # 보고 대상에게 메시지를 보내고 보고 기록을 남긴다. 실행기가 PATH에 넣으므로 어느 폴더에서나 쓴다.
 #   herdr-report "[완료] A-01 <요약>"
+#   herdr-report --bg "[완료] A-01 <요약>"   검사를 뒤에서 돌리고 PASS면 [완료]를 자동으로 보낸다
 # 보고 대상: 워커 → Orchestrator, Orchestrator → Commander. 찾지 못하면 실패로 끝낸다.
 # 맥락 크기와 compact 횟수는 hook이 남긴 값을 자동으로 붙인다. Orchestrator가 세션 장부에 옮겨 적는다.
 # 워커의 [완료]는 보내기 전에 관문을 거친다: 커밋 안 된 변경이 없고 검사(herdr-check)가 지금 HEAD에서
 # 통과해야 보내며, 결과를 "검사 PASS <SHA>"로 붙인다. 검사 명령이 없으면 막지 않고 "검사 미설정"을 붙인다.
+# --bg: 지금 HEAD를 역할별 검사용 worktree에서 뒤에서 검사한다. 곧바로 "[진행] <작업> 커밋 <SHA> 검사 중(뒤에서) 예상 …"을
+# 보내고, PASS면 그 SHA로 [완료]를 보낸다. FAIL이면 [완료]를 보내지 않고 이 세션과 Orchestrator에 알린다.
+# 그동안 이 worktree에서 같은 묶음의 다음 작업을 이어 할 수 있다(검사는 커밋된 SHA만 본다).
 set -uo pipefail
-[[ $# -eq 1 && -n "$1" ]] || { echo '사용법: herdr-report "[완료|판정|진행|차단|CLEAR 요청] <내용>"' >&2; exit 2; }
+BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+mode=fg
+case "${1:-}" in
+  --bg) mode=bg; shift ;;
+  --bg-run) mode=run; bg_sha="${2:-}"; shift 2 ;;
+esac
+[[ $# -eq 1 && -n "$1" ]] || { echo '사용법: herdr-report [--bg] "[완료|판정|진행|차단|CLEAR 요청] <내용>"' >&2; exit 2; }
 : "${HERDR_ROLE:?HERDR_ROLE이 없다. herdr-session으로 띄운 세션에서 쓴다}"
 : "${HERDR_PROJECT:?HERDR_PROJECT가 없다. herdr-session으로 띄운 세션에서 쓴다}"
 
@@ -18,9 +28,92 @@ case "$HERDR_ROLE" in
   *) want=orchestrator ;;
 esac
 message="$1"
+dir="$HOME/.claude/herdr/handoff/$HERDR_PROJECT"
+mkdir -p "$dir"
+check="$BIN/herdr-check"
+
+send() { # 메시지. 보고 대상에게 보내고 보고 기록을 남긴다
+  local message="$1" target parent tokens compacts meta tag task sha result
+  target="$(find_role "$want")"
+  if [[ -z "$target" ]]; then
+    parent="$(hc get "${HC_TERMINAL_ID:-}" 2>/dev/null | jq -r '.parent // empty')"
+    [[ -n "$parent" ]] && target="$parent"
+  fi
+  if [[ -z "$target" && "$want" == orchestrator ]]; then
+    target="$(find_role commander)"
+    [[ -n "$target" ]] && message="[차단] Orchestrator 없음. 원래 보고: $message"
+  fi
+  [[ -n "$target" ]] || { echo "보고 대상($want)을 찾지 못했다." >&2; return 1; }
+
+  tokens="$(cat "$dir/.$HERDR_ROLE.ctx" 2>/dev/null || true)"
+  compacts="$(cat "$dir/.$HERDR_ROLE.compacts" 2>/dev/null || echo 0)"
+  meta="$HERDR_ROLE ${HC_TERMINAL_ID:-}"
+  [[ -n "$tokens" ]] && meta="$meta · ctx $((tokens / 1000))k"
+  meta="$meta · compact $compacts"
+
+  hc send "$target" "$message ($meta)" >/dev/null || { echo "$target 에 보내지 못했다." >&2; return 1; }
+  date +%s >"$dir/.$HERDR_ROLE.reported"
+  # 사용량 집계(herdr-usage)가 사용량을 작업에 붙이도록 보낸 보고의 경계를 남긴다. 실패해도 보고는 이미 갔다.
+  {
+    tag="${message#\[}"; tag="${tag%%\]*}"
+    task="${message#*\] }"; task="${task%% *}"
+    [[ "$message" == "["*"] "* ]] || { tag=""; task=""; }
+    tag="${tag//$'\t'/ }"; task="${task//$'\t'/ }"; task="${task%%$'\n'*}"
+    sha=""; result=""
+    [[ "$message" =~ 검사\ PASS\ ([0-9a-f]+) ]] && sha="${BASH_REMATCH[1]}"
+    # [판정] <묶음> PASS|ISSUES|BLOCKED <head SHA> <기록 경로>
+    if [[ "$tag" == 판정 && "$message" =~ ^\[판정\]\ [^\ ]+\ (PASS|ISSUES|BLOCKED)(\ ([0-9a-f]{7,40}))? ]]; then
+      result="${BASH_REMATCH[1]}"; sha="${BASH_REMATCH[3]}"
+    fi
+    [[ -s "$dir/reports.tsv" ]] || printf 'epoch\ttime\trole\tsession_id\ttag\ttask\tsha\tresult\n' >"$dir/reports.tsv"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$(date +%Y-%m-%dT%H:%M:%S%z)" "$HERDR_ROLE" \
+      "$(cat "$dir/.$HERDR_ROLE.session" 2>/dev/null)" "$tag" "$task" "$sha" "$result" | tr -d '\r' >>"$dir/reports.tsv"
+  } 2>/dev/null || true
+  echo "보냄: $want($target)"
+}
+
+task_of() { local t="${1#*\] }"; printf '%s' "${t%% *}"; }
+
+predict() { # 지난 실제 검사(PASS) 시간으로 예상을 만든다
+  awk -F'\t' 'NR > 1 && $6 == "PASS" && $7 + 0 > 0 { s[n++] = $7 + 0 }
+    END {
+      if (!n) { print "미상(지난 검사 기록 없음)"; exit }
+      from = n > 20 ? n - 20 : 0; m = 0
+      for (i = from; i < n; i++) if (s[i] > m) m = s[i]
+      printf "최대 %dm(지난 PASS %d회 중)", int((m + 59) / 60), n - from
+    }' "$dir/checks.tsv" 2>/dev/null || echo "미상(지난 검사 기록 없음)"
+}
+
+if [[ $mode == run ]]; then
+  # 뒤에서 도는 검사. 역할별 검사용 worktree를 그 SHA로 맞춰 검사하고 결과대로 보낸다.
+  wt="${XDG_CACHE_HOME:-$HOME/.cache}/herdr/check/$HERDR_PROJECT/$HERDR_ROLE"
+  short="${bg_sha:0:12}" task="$(task_of "$message")"
+  export HERDR_CHECK_LOG="$dir/.$HERDR_ROLE.check-$short.log"
+  mkdir -p "$(dirname "$wt")"
+  exec 9>"$wt.lock"
+  command -v flock >/dev/null && flock 9 # 같은 역할의 뒤 검사는 차례로 돈다
+  git worktree prune 2>/dev/null
+  if [[ -e "$wt/.git" ]]; then
+    git -C "$wt" checkout -q --force --detach "$bg_sha" && git -C "$wt" clean -fdq
+  else
+    rm -rf "$wt" && git worktree add -q --detach "$wt" "$bg_sha"
+  fi || { echo "검사용 worktree를 $bg_sha 로 맞추지 못했다" >"$HERDR_CHECK_LOG"; rc=1; }
+  if [[ -z "${rc:-}" ]]; then
+    (cd "$wt" && "$check"); rc=$?
+  fi
+  case $rc in
+    0) state="$(cd "$wt" && "$check" --status)"
+       send "$message · 검사 PASS ${state#PASS }" ;;
+    3) send "$message · 검사 미설정" ;;
+    *) note="[검사 FAIL] $task 커밋 $short — [완료]를 보내지 않았다. 로그: $HERDR_CHECK_LOG"
+       note="$note. 고친 뒤 커밋해 herdr-report --bg로 다시 보낸다. 이 커밋 위에 쌓은 작업이 있으면 worker.md의 '쌓은 작업 옮기기'를 따른다."
+       [[ -n "${HC_TERMINAL_ID:-}" ]] && hc send "$HC_TERMINAL_ID" "$note" >/dev/null
+       send "[진행] $task 커밋 $short 검사 FAIL, 작성 세션이 고치는 중" ;;
+  esac
+  exit 0
+fi
 
 if [[ "$message" == "[완료]"* && "$HERDR_ROLE" != orchestrator ]]; then
-  check="$(dirname "${BASH_SOURCE[0]}")/herdr-check"
   git rev-parse --show-toplevel >/dev/null 2>&1 || { echo "[완료]는 작업한 git 작업 트리(worktree) 안에서 보낸다." >&2; exit 1; }
   # 커밋 안 된 변경은 worktree에서만 막는다. 병합 뒤 메인 체크아웃에서 보내는 [완료]는 다른 세션(상태판 등)의
   # 변경이 섞여 있을 수 있으므로 막지 않고, 병합된 결과에 전체 검사만 돌린다.
@@ -36,6 +129,16 @@ if [[ "$message" == "[완료]"* && "$HERDR_ROLE" != orchestrator ]]; then
     UNSET) message="$message · 검사 미설정" ;;
     PASS\ *) message="$message · 검사 PASS ${state#PASS }" ;;
     *)
+      if [[ $mode == bg ]]; then
+        sha="$(git rev-parse HEAD)" task="$(task_of "$message")"
+        ahead="$("$BIN/herdr-queue" ahead 2>/dev/null || echo 0)"
+        send "[진행] $task 커밋 ${sha:0:12} 검사 중(뒤에서) 예상 $(predict) · 대기열 ${ahead}건" || exit 1
+        detach=(nohup); command -v setsid >/dev/null && detach=(setsid nohup) # 턴이 끝나도 검사가 살아 있게 한다
+        "${detach[@]}" "$BIN/herdr-report" --bg-run "$sha" "$message" >"$dir/.$HERDR_ROLE.bg-${sha:0:12}.out" 2>&1 </dev/null &
+        echo "검사를 뒤에서 돌린다(${sha:0:12}). PASS면 [완료]가 자동으로 가고, FAIL이면 이 세션에 알림이 온다."
+        echo "그동안 같은 묶음의 다음 작업을 이 커밋 위에서 이어 해도 된다. 이 커밋은 고치거나 rebase하지 않는다."
+        exit 0
+      fi
       "$check"; rc=$?
       case $rc in
         0) message="$message · 검사 PASS $(git rev-parse HEAD)" ;;
@@ -44,42 +147,8 @@ if [[ "$message" == "[완료]"* && "$HERDR_ROLE" != orchestrator ]]; then
       esac
       ;;
   esac
+elif [[ $mode == bg ]]; then
+  echo "--bg는 워커의 [완료]에만 쓴다." >&2
+  exit 2
 fi
-target="$(find_role "$want")"
-if [[ -z "$target" ]]; then
-  parent="$(hc get "${HC_TERMINAL_ID:-}" 2>/dev/null | jq -r '.parent // empty')"
-  [[ -n "$parent" ]] && target="$parent"
-fi
-if [[ -z "$target" && "$want" == orchestrator ]]; then
-  target="$(find_role commander)"
-  [[ -n "$target" ]] && message="[차단] Orchestrator 없음. 원래 보고: $message"
-fi
-[[ -n "$target" ]] || { echo "보고 대상($want)을 찾지 못했다." >&2; exit 1; }
-
-dir="$HOME/.claude/herdr/handoff/$HERDR_PROJECT"
-mkdir -p "$dir"
-tokens="$(cat "$dir/.$HERDR_ROLE.ctx" 2>/dev/null || true)"
-compacts="$(cat "$dir/.$HERDR_ROLE.compacts" 2>/dev/null || echo 0)"
-meta="$HERDR_ROLE ${HC_TERMINAL_ID:-}"
-[[ -n "$tokens" ]] && meta="$meta · ctx $((tokens / 1000))k"
-meta="$meta · compact $compacts"
-
-hc send "$target" "$message ($meta)" >/dev/null || { echo "$target 에 보내지 못했다." >&2; exit 1; }
-date +%s >"$dir/.$HERDR_ROLE.reported"
-# 사용량 집계(herdr-usage)가 사용량을 작업에 붙이도록 보낸 보고의 경계를 남긴다. 실패해도 보고는 이미 갔다.
-{
-  tag="${message#\[}"; tag="${tag%%\]*}"
-  task="${message#*\] }"; task="${task%% *}"
-  [[ "$message" == "["*"] "* ]] || { tag=""; task=""; }
-  tag="${tag//$'\t'/ }"; task="${task//$'\t'/ }"; task="${task%%$'\n'*}"
-  sha=""; result=""
-  [[ "$message" =~ 검사\ PASS\ ([0-9a-f]+) ]] && sha="${BASH_REMATCH[1]}"
-  # [판정] <묶음> PASS|ISSUES|BLOCKED <head SHA> <기록 경로>
-  if [[ "$tag" == 판정 && "$message" =~ ^\[판정\]\ [^\ ]+\ (PASS|ISSUES|BLOCKED)(\ ([0-9a-f]{7,40}))? ]]; then
-    result="${BASH_REMATCH[1]}"; sha="${BASH_REMATCH[3]}"
-  fi
-  [[ -s "$dir/reports.tsv" ]] || printf 'epoch\ttime\trole\tsession_id\ttag\ttask\tsha\tresult\n' >"$dir/reports.tsv"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$(date +%Y-%m-%dT%H:%M:%S%z)" "$HERDR_ROLE" \
-    "$(cat "$dir/.$HERDR_ROLE.session" 2>/dev/null)" "$tag" "$task" "$sha" "$result" | tr -d '\r' >>"$dir/reports.tsv"
-} 2>/dev/null || true
-echo "보냄: $want($target)"
+send "$message" || exit 1
