@@ -1,6 +1,6 @@
 # 작업 계획
 
-갱신: 2026-11-09T02:55:45+09:00
+갱신: 2026-11-09T18:09:29+09:00
 
 ## 시작 계약 (E-74 계정 기능, 2026-11-09)
 
@@ -17,6 +17,20 @@
   6. uni-auth 클라이언트 등록(사용자 승인, 운영 주소 https://library.betterax.net)과 Cloudflare 터널 ingress: 등록은 바로, 터널 공개는 oidc 서버의 인증·접근 제한·우회 경로 검증 뒤. 실제 로그인 1회 확인. 기존 서비스 설정 보존.
 - 허용 범위: zip-viewer 코드·테스트·docs(intent 포함, 위 승인 범위), 새 Go 의존성 없이 표준 라이브러리. uni-auth는 읽기·GET만, 클라이언트 등록 1건만 사용자 URL 확정 뒤. 금지: push, :9909 재시작·쓰기, 다른 3차 기능, 크기 예산 상향, uni-auth 설정 변경·로그인 시도(등록 전).
 - 탈출 조건: 계약이 승인안 밖의 결정을 요구할 때, 크기 예산 초과, 재배정 2번+재계획 실패, uni-auth 쓰기가 등록 1건을 넘을 때.
+
+## 시작 계약 3 (운영 주소 books.betterax.net, 2026-11-09)
+
+요청(사용자, Commander t1h 경유 17:3x): "운영 주소 library.betterax.net을 https://books.betterax.net으로 변경, Cloudflare 터널링은 Cloudflare CLI로. uni-auth 등록의 redirect·audience와 프로젝트 설정·런북도 새 주소로 일관되게. CLI 권한과 기존 터널을 확인해 인증된 서비스만 안전하게 공개·검증. 기존 서비스 보호, 운영 서버 재시작은 프로젝트 사용자만. Cloudflare CLI DNS/터널 변경 승인. root·사용자 재시작이 필요하면 정확한 명령과 결과를 보고. 작업·독립 검증·보기 패널 유지."
+E-74 완료 조건 6을 대체한다(주소만 바뀜, 나머지 조건 그대로).
+
+- 완료 조건:
+  1. 저장소에서 운영 주소 값이 books.betterax.net으로 일관된다: scripts/deploy/library/*·예시 설정·런북·방향 문서(decisions.md E-74, arch-backend.md)의 현재 값. 지난 진행 기록(docs/progress 옛 파일)은 고치지 않고 새 기록이 대체를 밝힌다. `git grep library.betterax`가 지난 기록·상태 기록 밖에서 0건, make lint PASS, 독립 검증 PASS 뒤 병합.
+  2. uni-auth 클라이언트 zip-viewer의 redirect_uris·post_logout_redirect_uris·audience가 https://books.betterax.net 기준으로 갱신되고(게이트웨이 관리 API, Hydra 직접 쓰기 금지), GET·Hydra 투영 대조가 일치한다. 다른 클라이언트는 무변경.
+  3. books.betterax.net DNS가 기존 터널(gift4me-tunnel)로 연결되고(cloudflared CLI), 기존 레코드·호스트(auth·ohmyassets 등)는 무변경임을 전후 대조로 보인다. ingress 규칙이 생기기 전까지 catch-all 404로 아무것도 노출되지 않는다.
+  4. ingress 적용·cloudflared 재시작·:9909 중지·9910 oidc 인스턴스 기동은 사용자 실행: 백업·검증·복구를 포함한 정확한 명령과 기대 출력을 보고한다. 사용자 적용 뒤 공개 검증: 비인증 요청은 모든 데이터 경로에서 401/로그인, 허용 목록 밖 403, 평문 우회 경로 없음, 실제 로그인 1회 성공 — 독립 검증 PASS.
+- 허용 범위: zip-viewer 저장소(위 파일), cloudflared CLI의 DNS route(books 1건), uni-auth 게이트웨이 관리 API로 zip-viewer 클라이언트 갱신 1건(운영 가이드 절차로 토큰 획득). 금지: sudo·/etc 쓰기·systemctl·:9909 조작(사용자 몫), 다른 DNS 레코드·다른 클라이언트·uni-auth 설정 변경, 옛 library 레코드 삭제(있으면 보고만), push.
+- 탈출 조건: cert.pem이 betterax.net 영역 권한이 없을 때, 관리 API 갱신이 등록 1건 범위를 넘을 때, 기존 서비스에 영향이 생길 때 → [차단].
+- 묶음 U-R3: U-R3a 저장소 주소 변경 → U-R3b 운영 준비(CLI 권한·터널 확인, uni-auth 갱신, DNS route, 사용자 명령 준비) → (사용자 적용) → U-R3c 공개 검증. 같은 워커(worker-3)에 순서대로.
 
 ## 시작 계약 2 (3차 E-70·E-71·E-72, 2026-11-09)
 
@@ -57,3 +71,6 @@
 | P-71b | P-71 | E-71 범위 구현 | 완료 조건 3 | P-D, P-71a | internal/archive/**, internal/scan, scripts/mkfixture |
 | P-70 | P-70 | 모바일 제스처 | 완료 조건 2 | P-D | web/src/features/viewer/** |
 | P-72 | P-72 | Docker 로컬 | 완료 조건 4 | P-D | Dockerfile, .dockerignore, Makefile, README |
+| U-R3a | U-R3 | 운영 주소 library → books.betterax.net 저장소 반영 | 시작 계약 3 완료 조건 1 | 없음 | scripts/deploy/library/*, docs/decisions.md, docs/arch-backend.md, 런북(새 진행 기록으로 대체) |
+| U-R3b | U-R3 | CLI 권한·터널 확인, uni-auth 클라이언트 갱신, DNS route, 사용자 실행 명령 준비 | 시작 계약 3 완료 조건 2·3·4(명령) | U-R3a | docs/progress 새 파일(외부 상태: uni-auth 클라이언트 1건, DNS 1건) |
+| U-R3c | U-R3 | 사용자 적용 뒤 공개 검증·실제 로그인 | 시작 계약 3 완료 조건 4(검증) | U-R3b, 사용자 적용 | docs/progress |
