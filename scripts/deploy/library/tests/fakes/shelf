@@ -1,0 +1,61 @@
+#!/usr/bin/python3
+# Test double for dist/shelf: serves the unauthenticated surface of auth.mode
+# "oidc" closely enough for verify-public.sh, and holds data_dir/user.db open
+# the way the real server holds its databases.
+#   FAKE_SHELF_MODE=good (default) | open (no auth: verify FAILs) | die (exit 2)
+import http.server
+import json
+import os
+import sys
+
+import yaml
+
+if "--version" in sys.argv:
+    print("shelf fake (test double)")
+    sys.exit(0)
+mode = os.environ.get("FAKE_SHELF_MODE", "good")
+if mode == "die":
+    print("config: fake startup failure", file=sys.stderr)
+    sys.exit(2)
+cfg = yaml.safe_load(open(sys.argv[sys.argv.index("--config") + 1]))
+data_dir = os.path.abspath(cfg["storage"]["data_dir"])
+os.makedirs(data_dir, exist_ok=True)
+held = open(os.path.join(data_dir, "user.db"), "ab")
+
+
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def send(self, code, body, ctype="application/json", extra=()):
+        b = body.encode()
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(b)))
+        self.send_header("Cache-Control", "no-store")
+        for k, v in extra:
+            self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(b)
+
+    def do_GET(self):
+        p = self.path.split("?")[0]
+        if mode == "open":
+            return self.send(200, "<html><script src=/assets/index.js></script></html>", "text/html")
+        if p == "/api/health":
+            return self.send(200, json.dumps({"ok": True}))
+        if p == "/api/auth/status":
+            return self.send(200, json.dumps({"mode": "oidc", "authenticated": False, "end_session_available": False}))
+        if p == "/api/auth/oidc/start":
+            return self.send(302, "", extra=[("Location", "https://auth.betterax.net/authorize?client_id=zip-viewer"),
+                                             ("Set-Cookie", "shelf_oidc_state=x; Path=/; Secure; HttpOnly; SameSite=Lax")])
+        return self.send(401, "<html><body>login</body></html>", "text/html")
+
+    def do_POST(self):
+        if mode == "open":
+            return self.send(200, "{}")
+        return self.send(403, json.dumps({"error": "cross_origin"}))
+
+
+srv = http.server.HTTPServer((cfg["server"]["listen"], int(cfg["server"]["port"])), H)
+srv.serve_forever()

@@ -1,4 +1,5 @@
 # common.sh — shared helpers for the books.betterax.net deployment scripts.
+# shellcheck shell=bash disable=SC2034 # the constants are read by the scripts that source this file
 # Sourced, never run. Nothing here writes outside the paths a script is given.
 
 LIB_HOST="books.betterax.net"

@@ -1,0 +1,4 @@
+#!/bin/sh
+# Test double for sudo: logs the call and runs it unprivileged.
+echo "sudo $*" >>"$FAKE_CALLS"
+exec "$@"

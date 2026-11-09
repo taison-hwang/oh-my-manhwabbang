@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # preflight.sh — unprivileged checks before the books.betterax.net rollout.
 #
-#   preflight.sh --config shelf.library.yaml [--bin dist/shelf] [--port 9910]
+#   preflight.sh --config shelf.library.yaml [--bin dist/shelf] [--port 9910] [--own-pid PID]
+#
+# --own-pid: the port may be held by that process (books.sh restart/tunnel on a
+# running instance).
 #
 # Reads only. Starts nothing, writes nothing, needs no sudo. Exit 1 on any FAIL.
 set -euo pipefail
@@ -9,13 +12,14 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 . "$here/common.sh"
 
-config="" bin="" port=""
+config="" bin="" port="" own_pid=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --config) config="$2"; shift 2 ;;
     --bin) bin="$2"; shift 2 ;;
     --port) port="$2"; shift 2 ;;
-    -h|--help) sed -n '2,7p' "$0"; exit 0 ;;
+    --own-pid) own_pid="$2"; shift 2 ;;
+    -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -85,7 +89,9 @@ else
 fi
 
 # 4. port and listeners
-if ss -ltnH "sport = :$port" | grep -q .; then
+if [ -n "$own_pid" ] && ss -ltnpH "sport = :$port" | grep -q "pid=$own_pid,"; then
+  rec PASS P13 "port $port is held by the running instance" "pid $own_pid"
+elif ss -ltnH "sport = :$port" | grep -q .; then
   rec FAIL P13 "port $port is free" "$(ss -ltnH "sport = :$port" | head -1 | awk '{print $4}') is listening"
 else
   rec PASS P13 "port $port is free" ""

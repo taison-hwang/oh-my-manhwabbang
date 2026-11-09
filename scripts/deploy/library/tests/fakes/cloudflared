@@ -1,0 +1,31 @@
+#!/usr/bin/python3
+# Test double for cloudflared: `tunnel --config F ingress validate|rule URL`
+# answers from F the way the real binary prints it. Every call is logged.
+import os
+import sys
+from urllib.parse import urlparse
+
+import yaml
+
+with open(os.environ["FAKE_CALLS"], "a") as log:
+    log.write("cloudflared " + " ".join(sys.argv[1:]) + "\n")
+a = sys.argv[1:]
+cfg = a[a.index("--config") + 1] if "--config" in a else "/etc/cloudflared/config.yml"
+doc = yaml.safe_load(open(cfg))
+rules = doc.get("ingress") or []
+if "validate" in a:
+    if not rules or "hostname" in rules[-1]:
+        print("error: the last ingress rule must match all URLs")
+        sys.exit(1)
+    print("Validating rules from " + cfg)
+    print("OK")
+    sys.exit(0)
+if "rule" in a:
+    host = urlparse(a[a.index("rule") + 1]).hostname
+    for i, r in enumerate(rules, 1):
+        if r.get("hostname") in (None, host):
+            print("Using rules from " + cfg)
+            print("Matched rule #%d" % i)
+            print("\tservice: " + str(r["service"]))
+            sys.exit(0)
+sys.exit(1)

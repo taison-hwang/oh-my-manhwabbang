@@ -15,7 +15,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 . "$here/common.sh"
 
-port="$DEFAULT_PORT" do_local=0 do_public=0 url="https://$LIB_HOST" base="" iface_check=1
+port="$DEFAULT_PORT" do_local=0 do_public=0 url="https://$LIB_HOST" base=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --local) do_local=1; shift ;;

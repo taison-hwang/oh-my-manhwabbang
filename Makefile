@@ -302,6 +302,8 @@ test:
 	@echo ">> test 0/3: the E2E gate's own assertions (no server, ~1 s)"
 	@python3 scripts/e2e-assert-rescan-test.py
 	@python3 -I -B -m unittest discover -s scripts/usage -p 'test_*.py'
+	@echo ">> test 0/3: books.sh against fake shelf/cloudflared/systemctl/sudo on loopback (~2 min)"
+	@python3 -I -B -m unittest discover -s scripts/deploy/library/tests -p 'test_*.py'
 	@echo ">> test 1/3: untagged (the superset — includes the live AVIF decode path)"
 	$(GOENV) CGO_ENABLED=1 $(GO) test ./... $(RACE) -count=1 -timeout=30m
 	@echo ">> test 2/3: the SHIPPED tag set (-tags \"$(TAGS)\")"
