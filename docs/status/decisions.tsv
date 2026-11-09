@@ -86,3 +86,5 @@ ts	작업	결정	이유	증거	결과
 2026-11-09T11:46:55+09:00	하네스 운영	worker-3(정리 후)의 잔여 herdr-report가 메인 체크아웃에서 잠금 없이 make test -race를 돌려 R-B 검사와 겹침(가용 2 GiB) → Orchestrator가 그 프로세스 묶음만 중지(종료 144). 규칙: 병합 뒤·대기 중 보고는 hc로만, herdr-report는 배정된 작업에서 잠금 아래서만	ps 부모 추적: herdr-report→herdr-check→make test(cwd 메인 체크아웃)	—	배정문에 반영
 2026-11-09T11:54:46+09:00	R-B	herdr-check 1회차 FAIL은 thumbs.test 전역 OOM kill(anon-rss 4.7 GB, 잠금 밖 다른 프로젝트 부하). 문서만(decisions·intent·AGENTS.md)·make lint 0이라 재검사 없이 병합 지시. 후속 후보: thumbs 테스트 4.7 GB 메모리 사용	worker-4 [진행], git diff --stat	2fcf0d4	worker-4 병합
 2026-11-09T11:55:43+09:00	R-B	main 병합 64d21f1	worker-4 [병합 완료]	64d21f1	—
+2026-11-09T12:06:43+09:00	U-E	최종 게이트 1회차 시스템 메모리 부족으로 강제 종료(다른 프로젝트 부하) → 재실행 승인: main rebase 후, 단계마다 MemAvailable ≥ 10 GB·load1 < 20 가드, 메모리 실패 시 단계별 1회 재시도	worker-2 [차단]	66b6000	worker-2 재실행
+2026-11-09T12:06:50+09:00	R-T	main 병합 fda2c35, 결과 Commander 보고(사용자 결정 질문 3개: A 먼저, B 적용, Codex 단가 기준)	worker-1 [병합 완료]	fda2c35	사용자 답 대기
