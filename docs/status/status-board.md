@@ -1,10 +1,17 @@
 # 상태판
 
-갱신: 2026-11-09T14:33:48+09:00 (Orchestrator t7c)
+갱신: 2026-11-09T15:22:41+09:00 (Orchestrator t7c)
 
 | 작업 ID | 묶음 | 담당(role·터미널) | 상태 | 의존 | 근거 |
 | --- | --- | --- | --- | --- | --- |
-| U-E | U-E | worker-2(새로 띄움) | 최종 게이트 재실행 | 없음 | work/u-e-finish 2c189a2(main d7bfc0b 위, 깨끗). 14:11 세션 사고로 final-gates4가 단계 시작 전 소실 → 새 worker-2가 herdr-check → e2e-synthetic → release 재실행 → [완료] → 독립 검증(orchestrator-drafts/verify-ue.txt) |
+| U-E | U-E | worker-2(t7f), verifier-1(t7h) | 11c 갈림길 실험 + 독립 검증 병행 | 없음 | 5차: check PASS 2c189a2, synthetic 11c 2장 실패(렌더=4a7e798 이전 기준), release 33,681,570 B. 4a7e798 되돌림 뒤 synthetic 1회로 흔들림/R-F2 복구 판정(decisions.tsv 15:2x). verifier-1은 2c189a2 검증 중 — 새 커밋은 바뀐 부분만 재검증 |
+
+## 대기
+
+| 작업 ID | 기다리는 것 | 시작 | 풀릴 조건 | 만료 | 만료 시 |
+| --- | --- | --- | --- | --- | --- |
+| U-E | 검사: worker-2(t7f) 되돌림 커밋의 synthetic+herdr-check | 15:22 | [완료](분기 a/b) 또는 [차단] | 17:30 (예측 1h20m: synthetic 1541s+check 1132s+잠금 대기 ~30m, 근거 5차 기록) | hc read t7f로 진행 확인 → 정상이면 연장, 멈췄으면 4절 |
+| U-E | 판정: verifier-1(t7h) 2c189a2 독립 검증 | 14:2x | [판정] | 16:45 (예측 1h30m: oidc e2e·정식 측정·뮤테이션, 잠금 대기 포함, 근거 R-F2·T-U 검증 기록) | hc read t7h로 진행 확인 |
 
 ## 세션 사고와 교체 (2026-11-09)
 
