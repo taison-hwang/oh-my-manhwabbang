@@ -26,4 +26,4 @@
 | R-T | R-T | main fda2c35. 하네스 이후 토큰 사용량 조사(읽기 전용): Claude는 worker-3·4(02:57 이후)만 기록, Orchestrator·worker-1·2는 CLAUDE_CODE_CHILD_SESSION 상속으로 기록 없음. message.id·response_id 중복 제거 집계, Claude 공식 단가 환산 기록분 약 $39.15, Codex 단가 미확인. 방안 A(집계 스크립트)·B(워커 기록 켜기, 승인 필요)·C(보고에 usage). 문서만, make lint 0 |
 
 - R-F2 thumbs 중복 제거 틈(제품 결함) — main 8a54e64(2026-11-09 14:2x). 독립 검증 PASS /tmp/verify-rf2/2026-11-09T13-31-32+0900--verify-rf2.md, herdr-check PASS 5c98365(990초). -race 최대 RSS 8,047,052 KB → 1,429,228 KB, PDF 테스트 공유 렌더러로 2.74 GB → 364 MB(비race). 로그 handoffs/r-f2-race-rss.log.
-- T-U 토큰 사용량 집계(scripts/usage, 읽기 전용) — main 51178af(2026-11-09 14:4x). 독립 검증 ISSUES 2회 보완 뒤 PASS 6f13fe1(/tmp/verify-tu/2026-11-09T14-11-27+0900--verify-tu3.md), herdr-check PASS 51178af. Claude는 공식 단가 추정 표시, Codex는 미산출(사용자 질문 3 답 대기).
+- T-U 토큰 사용량 집계(scripts/usage, 읽기 전용) — main 51178af(2026-11-09 14:3x). 독립 검증 ISSUES 2회 보완 뒤 PASS 6f13fe1(/tmp/verify-tu/2026-11-09T14-11-27+0900--verify-tu3.md), herdr-check PASS 51178af. Claude는 공식 단가 추정 표시, Codex는 미산출(사용자 질문 3 답 대기).
