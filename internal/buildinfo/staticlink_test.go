@@ -645,6 +645,11 @@ func TestDefaultBuildIsConfiguredStatic(t *testing.T) {
 			t.Errorf("a `test` pass has lost `-count=1`:\n  %s\nWithout it `go test` "+
 				"replays cached results, and a gate that reads the cache did not run.", l)
 		}
+		if !r.has("-timeout=30m") {
+			t.Errorf("a `test` pass has lost `-timeout=30m`:\n  %s\nUnder load the default "+
+				"10-minute limit fails the gate with a panic and no defect (see the Makefile "+
+				"comment above `test`).", l)
+		}
 	}
 	if !strings.Contains(testRecipe, "$(if $(NOPDF_PKGS),,$(error") {
 		t.Errorf("the `test` recipe no longer stops on an empty NOPDF_PKGS. `go test` " +

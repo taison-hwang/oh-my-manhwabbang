@@ -287,9 +287,15 @@ NOPDF_PKGS  := $(call tagged_pkgs,^[[:space:]]*//go:build(.*[^A-Za-z0-9_.])?nopd
 # 2 is the defect above; dropping pass 1 would delete the AVIF decode coverage
 # entirely. Pass 3 is NOT the whole suite a third time: a package with no nopdf
 # constraint compiles to the same code under it, and `make test` is already the
-# job most likely to run the machine out of memory. Every pass carries $(RACE)
-# and -count=1. internal/buildinfo/staticlink_test.go asserts all three passes,
-# line by line, and that RACE defaults to -race through `?=`.
+# job most likely to run the machine out of memory. Every pass carries $(RACE),
+# -count=1 and -timeout=30m. internal/buildinfo/staticlink_test.go asserts all
+# three passes, line by line, and that RACE defaults to -race through `?=`.
+#
+# -timeout=30m: go test's default 10-minute limit per package binary is about
+# 2.3x what internal/source needs on a quiet machine (264 s, its pdfium WASM
+# compile under -race), and a busy one ran past it three times (2026-11-09:
+# U-B and U-C in internal/httpapi, U-E in internal/source), failing the gate
+# with a panic and no defect behind it. A real hang still fails, later.
 RACE ?= -race
 test:
 	@$(if $(NOPDF_PKGS),,$(error NOPDF_PKGS is empty: no package has a nopdf build constraint. Pass 3 would test the current directory and pass. See the comment above INT_PKGS))
@@ -297,11 +303,11 @@ test:
 	@python3 scripts/e2e-assert-rescan-test.py
 	@python3 -I -B -m unittest discover -s scripts/usage -p 'test_*.py'
 	@echo ">> test 1/3: untagged (the superset — includes the live AVIF decode path)"
-	$(GOENV) CGO_ENABLED=1 $(GO) test ./... $(RACE) -count=1
+	$(GOENV) CGO_ENABLED=1 $(GO) test ./... $(RACE) -count=1 -timeout=30m
 	@echo ">> test 2/3: the SHIPPED tag set (-tags \"$(TAGS)\")"
-	$(GOENV) CGO_ENABLED=1 $(GO) test -tags "$(TAGS)" ./... $(RACE) -count=1
+	$(GOENV) CGO_ENABLED=1 $(GO) test -tags "$(TAGS)" ./... $(RACE) -count=1 -timeout=30m
 	@echo ">> test 3/3: the nopdf build, in the packages it changes (-tags \"$(TAGS) nopdf\")"
-	$(GOENV) CGO_ENABLED=1 $(GO) test -tags "$(TAGS) nopdf" $(NOPDF_PKGS) $(RACE) -count=1
+	$(GOENV) CGO_ENABLED=1 $(GO) test -tags "$(TAGS) nopdf" $(NOPDF_PKGS) $(RACE) -count=1 -timeout=30m
 
 ## test-int — the integration suite of impl-plan §6.2, on a deterministic SAMPLE
 ## of the media volume (E-66). Gate 5/5 runs it; `test-int-full` is the whole set.
