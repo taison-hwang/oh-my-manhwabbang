@@ -6,7 +6,7 @@
 | --- | --- | --- | --- | --- | --- |
 | U-R3 | U-R3 | worker-3(t93), verifier-1(t9f) | U-R3a 병합 128a0f6, U-R3b 병합 a4da3b4, U-R3c는 사용자 적용 대기. 사용자 명령: books.sh 런북 docs/progress/2026-11-09T23-37-06+0900--e74-books-ops-script.md(권장) 또는 docs/progress/2026-11-09T18-34-31+0900--e74-books-ops-prep.md §5 A~F | 없음 | 시작 계약 3: 운영 주소 books.betterax.net. a 저장소 → b 운영 준비(uni-auth 갱신·DNS·사용자 명령) → 사용자 적용 → c 공개 검증. U-R2b(library)는 이것으로 대체 |
 | U-R5 | U-R5 | worker-3(t93, 보기 w6:pR) | 진행: 배정 00:4x(.worktrees/u-r5), 진입점 scripts/start.sh·stop.sh·build.sh | U-R4(병합됨) | 시작 계약 5. 커밋·검사 중이 오면 verifier-1(t9f, /clear 후) 독립 검증 |
-| U-R6 | U-R6 | worker-3(예약: 이어서) | 대기: U-R5 병합 뒤 배정 | U-R5 | 시작 계약 6: scripts 최상위 → 주제별 하위 폴더, 참조 전부 갱신 |
+| U-R6 | U-R6 | worker-3(예약: 이어서) | 대기: U-R5 병합 뒤 배정 | U-R5 | 시작 계약 6: 도구 프로그램 → tools/, 실행·운영 스크립트 → scripts/<주제>/, 참조 전부 갱신 |
 
 ## 대기
 

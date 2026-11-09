@@ -31,6 +31,8 @@
   5. 사용자 변경 보존: 메인 체크아웃의 미커밋·추적 안 된 파일(.backup-harness/ 등)과 scripts/media-root 내용을 바꾸지 않는다.
 - 허용 범위: scripts/**(이동), 참조 파일(Makefile·.agents/harness.env·AGENTS.md 프로젝트 규칙 절·README·docs 현재 문서·테스트·코드의 경로 문자열·.gitignore), docs/progress 새 기록. 금지: 스크립트 동작 변경(경로 외), AGENTS.md harness 표시 사이, push, 운영 서버 조작.
 - 탈출 조건: 하네스가 덮어쓰는 파일을 바꿔야 할 때, 이동이 동작을 바꿀 때 → [차단].
+사용자 추가 지시(01:2x, 앞 요청과 통합): "scripts에 도구 성격의 프로그램과 스크립트가 혼재 → 도구 성격의 프로그램은 저장소 최상위 tools/ 아래로. scripts에는 실행·운영·자동화 스크립트를 주제별 하위 폴더로, scripts/start.sh·stop.sh·build.sh만 최상위 진입점. 파일별 역할을 실제 확인해 분류, imports·Makefile·CI·테스트·하네스·문서 참조 함께 갱신, 주요 사용 경로 실행 검증."
+→ 완료 조건 1을 바꾼다: 도구 성격 프로그램(후보: Go 프로그램 contractcheck·fakeoidc·mkfixture·pixelbaseline·precompress, mkfonts·usage 등 — 실제 역할을 읽어 정한다)은 tools/<이름>/로, 실행·운영·자동화 스크립트는 scripts/<주제>/로 git mv. scripts/ 바로 아래는 start.sh·stop.sh·build.sh와 하위 폴더만. 완료 조건 2에 Go import 경로·`go run`/`go build` 대상·go vet/staticcheck 패키지 목록·contractcheck 등 도구의 경로 상수를 더한다. 완료 조건 4에 이동한 각 도구의 주요 사용 경로(예: make fixture·precompress·pixel baseline·usage 보고·fakeoidc를 쓰는 e2e-synthetic-oidc) 실행 검증을 더한다.
 - 묶음 U-R6: U-R5와 같은 파일(Makefile, scripts/ 최상위)을 바꾸므로 의존 → worker-3에 U-R5 병합 뒤 이어서.
 
 ## 시작 계약 5 (books 대화형 설치·운영 마법사, 2026-11-10)
@@ -126,4 +128,4 @@ E-74 완료 조건 6을 대체한다(주소만 바뀜, 나머지 조건 그대�
 | U-R3c | U-R3 | 사용자 적용 뒤 공개 검증·실제 로그인 | 시작 계약 3 완료 조건 4(검증) | U-R3b, 사용자 적용 | docs/progress |
 | U-R4 | U-R4 | books 운영 실행 스크립트(check·status·start·stop·restart·tunnel·rollback·verify)·자동 테스트·런북 | 시작 계약 4 완료 조건 1~5 | 없음(U-R3a 스크립트 재사용) | scripts/deploy/library/**, docs/progress 새 런북 |
 | U-R5 | U-R5 | books 대화형 설치·운영 마법사(books.sh 위)·pty 자동 테스트·런북 | 시작 계약 5 완료 조건 1~6 | U-R4(병합됨) | scripts/deploy/library/**, docs/progress 새 런북 |
-| U-R6 | U-R6 | scripts 최상위 스크립트를 주제별 하위 폴더로 이동, 모든 참조 갱신 | 시작 계약 6 완료 조건 1~5 | U-R5(Makefile·scripts 최상위) | scripts/**, Makefile, .agents/harness.env, AGENTS.md(프로젝트 규칙), README, docs 현재 문서, 테스트·코드 경로 문자열 |
+| U-R6 | U-R6 | scripts 정리: 도구 프로그램 → tools/, 실행·운영 스크립트 → scripts/<주제>/, 모든 참조 갱신 | 시작 계약 6 완료 조건 1~5 | U-R5(Makefile·scripts 최상위) | scripts/**, tools/**(새), Makefile, .agents/harness.env, AGENTS.md(프로젝트 규칙), README, docs 현재 문서, 테스트·코드 경로 문자열 |
