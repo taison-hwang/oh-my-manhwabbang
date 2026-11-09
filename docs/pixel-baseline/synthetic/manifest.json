@@ -55,10 +55,8 @@
     "step-06-3-library-chosung-search-laptop-1024.png": "b9dad8be997659e42c56235d4ff50d8decc7a48f48f0176b619c3318f07c87b5",
     "step-06-3-library-chosung-search-mobile-400.png": "aa60383c5c323ed24aa84c35ae56899fc6468890c437a42c16325b13d41e46bf",
     "step-06-3-library-chosung-search-tablet-768.png": "a02dc9d814548adddf0b8f2efdc00647db045f118b11c7f417985f863b85c92d",
-    "step-06-4a-palette-open-laptop-1024.png": "1449abac97cb6a4372c2c5c0d72d8ee7e050657f426d8f1576233b500dfd2760",
     "step-06-4a-palette-open-mobile-400.png": "d3ca30143ea747d02c609d189e5226ec6dbc90532afe78e60530b71f12fd08cc",
     "step-06-4a-palette-open-tablet-768.png": "b0e9b1acfa98e8822dda10300daa583b0588acbd730cc0588e4d392355a6b96f",
-    "step-06-4b-palette-chosung-laptop-1024.png": "d4840cc19a091a88e87d5cd04b15708fb555831db1f28e4aaa6f6f870fe5dde0",
     "step-06-4b-palette-chosung-mobile-400.png": "c9687762926b1b5346a668d53381fe0805bcb6b6958a005d03fd865ec4096603",
     "step-06-4b-palette-chosung-tablet-768.png": "53ccc971cec9291dabf4ba93059d7cd1088b0cd2a3b347bbbca0ad790b49f386",
     "step-06-4c-palette-opened-series-desktop-1440.png": "5610d451176ad16820e37b8466d51fb782655451d476df24c5e5e63aa638e938",
@@ -128,6 +126,8 @@
     "step-06-10b-settings-dark-mobile-400.png": "content changes every round (max channel delta 222): a clock-bearing or size-bearing value is on this frame",
     "step-06-10b-settings-dark-tablet-768.png": "content changes every round (max channel delta 222): a clock-bearing or size-bearing value is on this frame",
     "step-06-4a-palette-open-desktop-1440.png": "image decode / resampling variance (max channel delta 1): same content, different pixels",
-    "step-06-4b-palette-chosung-desktop-1440.png": "image decode / resampling variance (max channel delta 1): same content, different pixels"
+    "step-06-4a-palette-open-laptop-1024.png": "render alternates between two states on the same tree (palette over the blurred dialog backdrop; the cover behind it may or may not be ready): seen as 30b926f5… and 1449abac… on base d7bfc0b. Watch again once the shot waits for the background covers",
+    "step-06-4b-palette-chosung-desktop-1440.png": "image decode / resampling variance (max channel delta 1): same content, different pixels",
+    "step-06-4b-palette-chosung-laptop-1024.png": "render alternates between two states on the same tree (palette over the blurred dialog backdrop; the cover behind it may or may not be ready): seen as bb9ceaae… and d4840cc1… on base d7bfc0b. Watch again once the shot waits for the background covers"
   }
 }
