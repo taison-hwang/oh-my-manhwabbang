@@ -1,19 +1,17 @@
 # 상태판
 
-갱신: 2026-11-10T01:07:09+09:00 (Orchestrator t7c, U-R5 배정)
+갱신: 2026-11-10T02:05:48+09:00 (Orchestrator t7c, U-R6 병합, [CLEAR 요청] 직전)
 
 | 작업 ID | 묶음 | 담당(role·터미널) | 상태 | 의존 | 근거 |
 | --- | --- | --- | --- | --- | --- |
 | U-R3 | U-R3 | worker-3(t93), verifier-1(t9f) | U-R3a 병합 128a0f6, U-R3b 병합 a4da3b4, U-R3c는 사용자 적용 대기. 사용자 명령: books.sh 런북 docs/progress/2026-11-09T23-37-06+0900--e74-books-ops-script.md(권장) 또는 docs/progress/2026-11-09T18-34-31+0900--e74-books-ops-prep.md §5 A~F | 없음 | 시작 계약 3: 운영 주소 books.betterax.net. a 저장소 → b 운영 준비(uni-auth 갱신·DNS·사용자 명령) → 사용자 적용 → c 공개 검증. U-R2b(library)는 이것으로 대체 |
 | U-R5 | U-R5 | worker-3(t9n sonnet, 보기 w6:p16), verifier-1(t9f) | 판정 ISSUES 61dce12(안전 2건) → 보완 1(02:0x). t9g는 01:51 exit로 종료 | U-R4(병합됨) | 시작 계약 5. 보완 커밋에서 2건만 재검증 → PASS·검사 PASS면 [병합] |
-| U-R6 | U-R6 | worker-1(t9h sonnet, 보기 w6:pV) | 진행: 병행 배정 01:4x(.worktrees/u-r6) | Makefile 다른 hunk만(U-R5 build-go) | 시작 계약 6: 도구 → tools/, 운영 스크립트 → scripts/<주제>/. scripts/deploy/**·start/stop/build·build-go 규칙 불가침, 나중 병합 쪽 rebase |
 
 ## 대기
 
 | 작업 ID | 기다리는 것 | 시작 | 풀릴 조건 | 만료 | 만료 시 |
 | --- | --- | --- | --- | --- | --- |
 | U-R5 | 세션: worker-3(t9n) 보완 1 | 02:0x | 보완 커밋 [진행]/[완료] | 03:00 (예측 30m+검사 25m) | hc read t9n로 진행 확인 |
-| U-R6 | 세션: worker-1(t9h) U-R6 구현 | 01:4x | [진행] 검사 중 또는 [완료] | 05:00 (예측 2h: 이동·참조·e2e 두 라운드 포함 검사, 1.5배 넘게) | hc read t9h로 진행 확인 → 연장 또는 4절 |
 | U-R3c | 사용자 결정·실행: books.sh 1~7단계 또는 §5 A~F(설정·:9909 중지·9910 기동·sudo ingress·재시작·verify·첫 로그인 allowed_subs) | 19:2x | 사용자가 적용 알림 → worker-3 U-R3c 공개 검증 + verifier-1(정리 후) 독립 검증 | 만료 없음(사용자 결정) | 결정 없이 할 일: 없음 |
 | 회원관리 | 사용자 결정: 회원관리 확장 A(현 구조 유지+후속 2건)/B(스크립트 허용 목록 편집)/C(앱 내 회원관리, E-74 변경) | 22:0x | Commander 경유 답 | 만료 없음(사용자 결정) | 결정 없이 할 일: 없음(빈틈 2건은 A 확정 뒤 배정) |
 
@@ -23,14 +21,12 @@
 - 새 Orchestrator t7c(--outlive-parent로 기동). 이후 워커는 모두 `--outlive-parent`로 띄운다 — Orchestrator를 다시 교체해도 진행 중 작업이 살아남게.
 - 옛 세션 정리 끝: t1j·t1m·t20·t3g·t5h·t6v 모두 종료 상태. worker-2 교체(기록 저장 세션)는 재기동으로 함께 끝났다.
 
-## 새 Orchestrator가 이어 갈 다음 행동 (19:3x, t7c [CLEAR 요청] 직전)
+## 새 Orchestrator가 이어 갈 다음 행동 (02:2x, t7c [CLEAR 요청] 직전)
 
-1. (끝남 a4da3b4) U-R3b 병합·기록 커밋.
-2. (끝남 0bd88f7) U-R4 병합, 시작 계약 4 완료 보고.
-2-0. U-R5(scripts/start.sh) 진행 중: 커밋 오면 verifier-1 /clear 후 [검증], 같은 SHA 검사·판정 PASS면 [병합], 병합 뒤 시작 계약 5 완료 보고. U-R3c 사용자 안내는 start.sh 기준으로 바뀐다.
-2-1. 사용자가 books.sh 런북(docs/progress/2026-11-09T23-37-06+0900--e74-books-ops-script.md 1~7단계) 또는 §5(docs/progress/2026-11-09T18-34-31+0900--e74-books-ops-prep.md) A~F 적용을 알리면: worker-3에 U-R3c(공개 검증 verify-public --public 결과 확인, 비인증 401·allowed 밖 403·평문 우회 없음·실제 로그인 1회는 사용자 브라우저) 배정, verifier-1(t9f, 재사용 전 /clear)에 독립 공개 검증 배정(읽기 전용 GET만, uni-auth·터널 쓰기 금지). 둘 다 PASS면 시작 계약 3 완료 → E-74 전체 완료 보고.
-3. 사용자 결정 대기(Commander에 보냄): 공개 시점, main push(130+커밋), 옛 worktree 5개·.backup-harness/·damaged-zip-salvage 삭제, Codex 단가 기준, E-70 실기기 확인, §5 A의 allow_root_editing 유지 여부.
-4. 하네스 규칙은 1967a2f 기준: 무거운 검사는 공용 대기열 herdr-queue, herdr-report --bg의 '검사 중(뒤에서)'도 병행 검증 계기. 워커는 모두 --outlive-parent.
+1. U-R5(start/stop/build, worker-3 t9n sonnet, .worktrees/u-r5): 판정 ISSUES 61dce12 안전 2건(이후 실행 start의 바이너리 설정 검사 누락, build.sh --release 실패 시 바이너리 교체) 보완 중. 사용자 지시(02:1x): 관련 테스트 1회만, herdr-report 쓰지 않고 hc로 "[완료] U-R5 보완 1 커밋 <SHA>" 한 줄. 오면 verifier-1(t9f, `hc keys t9f / c l e a r enter` 후)에 그 2건만 짧게 재확인 [검증](기록 /tmp/verify-ur5/…, 앞 기록 /tmp/verify-ur5/2026-11-10T01-55-01+0900--verify-ur5.md) → PASS면 [병합](main e805e91 위 rebase: U-R6이 Makefile·README 경로를 바꿨으므로 충돌 해결이 생기면 바뀐 부분만 확인) → 시작 계약 5 완료를 Commander에 [완료]. 전체 검사(herdr-report)는 사용자 지시로 생략.
+2. 사용자 결정 대기: 회원관리 확장 A/B/C(~/.claude/herdr/handoff/zip-viewer/member-access-report-2026-11-09.md), U-R3c 사용자 적용(이제 scripts/start.sh 기준), 기존 목록(push·옛 worktree 삭제·Codex 단가·E-70 실기기·allow_root_editing).
+3. 규칙: 구현 워커는 실행기 기본(sonnet), 모델 인자 금지. 검증은 위험에 비례: 단순 래퍼·경로 이동은 quick-check+표적 테스트, 전체 게이트는 릴리스·공개 계약 변경에만. 워커에게 진행 확인 메시지 금지. Commander에는 완료·차단만.
+4. 후속 후보: harness.env:46 quick-check 경로(scripts/check/)를 다음 harness sync 뒤 확인, tunnel-apply.sh 단독 호출의 grep "이미 있음" 검사.
 
 ## 미확정 사항
 
