@@ -11,6 +11,13 @@
 # --bg: 지금 HEAD를 역할별 검사용 worktree에서 뒤에서 검사한다. 곧바로 "[진행] <작업> 커밋 <SHA> 검사 중(뒤에서) 예상 …"을
 # 보내고, PASS면 그 SHA로 [완료]를 보낸다. FAIL이면 [완료]를 보내지 않고 이 세션과 Orchestrator에 알린다.
 # 그동안 이 worktree에서 같은 묶음의 다음 작업을 이어 할 수 있다(검사는 커밋된 SHA만 본다).
+# 영향 검사(HERDR_CHECK_AFFECTED_CMD가 있을 때): 일반 작업의 [완료] 관문은 기본 브랜치와 갈라진 뒤 바뀐 파일에 영향을 받는
+# 검사만 돌린다(herdr-check --affected). 붙는 표시는 "영향 검사 PASS <SHA>"다. 명령이 없으면 전체 검사다.
+# 경량 작업([배정]에 `등급: 경량`): [완료]는 바뀐 파일만 빠르게 검사(herdr-check --light)하고 보낸다. 바뀐 줄이
+# HERDR_LIGHT_MAX_LINES를 넘거나 HERDR_LIGHT_DENY_PATHS의 경로를 바꿨으면 일반 관문으로 돌린다.
+# 영향·경량 검사만 거친 SHA의 [병합완료]는 바로 보내고, 기본 브랜치 HEAD의 전체 검사(전체 회귀)를 뒤에서 돌린다.
+# 병합 뒤 전체 검사는 프로젝트에 하나씩 차례로 돌고, 차례가 왔을 때 기본 브랜치 HEAD를 검사하므로 연달은 병합은 한 번에 덮는다.
+# 실패하면 Orchestrator에 "[진행] <작업> 병합 뒤 전체 검사 FAIL <SHA>"를 보낸다. 기록은 역할 merged에 남는다.
 # 메인 체크아웃에서 보내는 워커의 [완료]는 커밋된 HEAD만 본다. 다른 세션의 변경이 섞여 있으므로 그 자리에서 검사하지 않고,
 # PASS 기록이 없으면 --bg처럼 깨끗한 검사용 worktree에서 검사한다.
 set -uo pipefail
@@ -44,6 +51,8 @@ message="$1"
 dir="$HOME/.claude/herdr/handoff/$HERDR_PROJECT"
 mkdir -p "$dir"
 check="$BIN/herdr-check"
+HERDR_LIGHT_MAX_LINES=150 HERDR_LIGHT_DENY_PATHS=""
+eval "$( [[ -f "$BIN/../harness.env" ]] && . "$BIN/../harness.env" >/dev/null 2>&1; declare -p HERDR_LIGHT_MAX_LINES HERDR_LIGHT_DENY_PATHS 2>/dev/null)"
 
 send() { # 메시지. 보고 대상에게 보내고 보고 기록을 남긴다
   local message="$1" target parent tokens compacts meta tag task sha result
@@ -89,6 +98,42 @@ send() { # 메시지. 보고 대상에게 보내고 보고 기록을 남긴다
 
 task_of() { local t="${1#*\] }"; printf '%s' "${t%% *}"; }
 
+state_label() { # 검사 기록 → 보고에 붙일 표시
+  case "$1" in
+    AFFECTED\ *) printf '영향 검사 PASS %s' "${1#AFFECTED }" ;;
+    LIGHT\ *) printf '가벼운 검사 PASS %s(경량)' "${1#LIGHT }" ;;
+    *) printf '검사 PASS %s' "${1#PASS }" ;;
+  esac
+}
+
+after_merge() { # 병합한 SHA. 기본 브랜치의 전체 검사를 뒤에서 돌린다
+  local detach=(nohup)
+  command -v setsid >/dev/null && detach=(setsid nohup)
+  HERDR_BG_AFTER_MERGE=1 "${detach[@]}" "$BIN/herdr-report" --bg-run "$1" "$message" \
+    >"$dir/.$HERDR_ROLE.merged-${1:0:12}.out" 2>&1 </dev/null &
+}
+
+grade_of() { # 작업 ID → 이 역할이 받은 마지막 [배정]의 등급(경량|일반)
+  local g
+  g="$(awk -F'\t' -v r="$HERDR_ROLE" -v t="$1" '$3 == r && $5 == "배정" && $6 == t { g = $7 } END { print g }' "$dir/received.tsv" 2>/dev/null)"
+  printf '%s' "${g:-일반}"
+}
+
+light_over() { # 기준 커밋. 경량 기준을 넘으면 이유를 출력한다
+  local mb lines f glob
+  mb="$(git merge-base "$1" HEAD)" || { echo "기준과 갈라진 곳을 찾지 못함"; return; }
+  lines="$(git diff --numstat "$mb" HEAD | awk '{ n += $1 + $2 } END { print n + 0 }')"
+  [[ "$lines" -le "$HERDR_LIGHT_MAX_LINES" ]] || { echo "바뀐 줄 ${lines}줄 > HERDR_LIGHT_MAX_LINES ${HERDR_LIGHT_MAX_LINES}"; return; }
+  set -f
+  while IFS= read -r f; do
+    for glob in $HERDR_LIGHT_DENY_PATHS; do
+      # shellcheck disable=SC2254
+      case "$f" in $glob) set +f; echo "경량 금지 경로 $f($glob)"; return ;; esac
+    done
+  done < <(git diff --no-renames --name-only "$mb" HEAD)
+  set +f
+}
+
 predict() { # 지난 실제 검사(PASS) 시간으로 예상을 만든다
   awk -F'\t' 'NR > 1 && $6 == "PASS" && $7 + 0 > 0 { s[n++] = $7 + 0 }
     END {
@@ -99,26 +144,56 @@ predict() { # 지난 실제 검사(PASS) 시간으로 예상을 만든다
     }' "$dir/checks.tsv" 2>/dev/null || echo "미상(지난 검사 기록 없음)"
 }
 
+prepare_wt() { # 경로 SHA. 이 저장소의 검사용 worktree를 그 SHA로 맞춘다. 다른 저장소의 것이 남아 있으면 새로 만든다
+  local wt="$1" sha="$2" mine
+  mine="$(git rev-parse --path-format=absolute --git-common-dir)"
+  git worktree prune 2>/dev/null
+  if [[ -e "$wt/.git" && "$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" == "$mine" ]]; then
+    git -C "$wt" checkout -q --force --detach "$sha" && git -C "$wt" clean -fdq
+  else
+    rm -rf "$wt" && git worktree add -q --detach "$wt" "$sha"
+  fi
+}
+
 if [[ $mode == run ]]; then
   # 뒤에서 도는 검사. 역할별 검사용 worktree를 그 SHA로 맞춰 검사하고 결과대로 보낸다.
   wt="${XDG_CACHE_HOME:-$HOME/.cache}/herdr/check/$HERDR_PROJECT/$HERDR_ROLE"
   short="${bg_sha:0:12}" task="$(task_of "$message")"
+  if [[ -n "${HERDR_BG_AFTER_MERGE:-}" ]]; then
+    # 병합 뒤 전체 검사: 프로젝트에 하나씩, 차례가 오면 기본 브랜치 HEAD를 검사한다(그 사이 병합도 함께 덮는다)
+    wt="${XDG_CACHE_HOME:-$HOME/.cache}/herdr/check/$HERDR_PROJECT/_merged"
+    mkdir -p "$(dirname "$wt")"
+    exec 9>"$wt.lock"
+    command -v flock >/dev/null && flock 9
+    main="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
+    head="$(git -C "$main" rev-parse HEAD)"
+    git merge-base --is-ancestor "$bg_sha" "$head" || head="$bg_sha" # 기본 브랜치가 되돌려졌으면 병합한 SHA를 본다
+    state="$(HERDR_ROLE=merged "$check" --status-of "$head")"
+    # 이미 전체 검사를 통과했거나, 병합 뒤 검사가 이미 실패를 알린 SHA면 다시 돌지 않는다
+    if [[ "$state" == PASS\ * ]] || awk -v k="$head" '$1 == "FAIL" && $2 == k { f = 1 } END { exit !f }' "$dir/.merged.check" 2>/dev/null; then
+      echo "병합 뒤 전체 검사 생략: ${head:0:12}에 이미 기록이 있다($state)"; exit 0
+    fi
+    export HERDR_CHECK_LOG="$dir/.merged.check-${head:0:12}.log"
+    prepare_wt "$wt" "$head" || { echo "검사용 worktree를 $head 로 맞추지 못했다" >"$HERDR_CHECK_LOG"; rc=1; }
+    [[ -n "${rc:-}" ]] || { (cd "$wt" && HERDR_ROLE=merged "$check"); rc=$?; }
+    case $rc in
+      0 | 3) echo "병합 뒤 전체 검사 끝(${head:0:12}, 끝 코드 $rc)" ;;
+      *) send "[진행] $task 병합 뒤 전체 검사 FAIL ${head:0:12}(기본 브랜치, $short 포함). 기본 브랜치가 깨졌을 수 있다. 로그: $HERDR_CHECK_LOG" ;;
+    esac
+    exit 0
+  fi
   export HERDR_CHECK_LOG="$dir/.$HERDR_ROLE.check-$short.log"
   mkdir -p "$(dirname "$wt")"
   exec 9>"$wt.lock"
   command -v flock >/dev/null && flock 9 # 같은 역할의 뒤 검사는 차례로 돈다
-  git worktree prune 2>/dev/null
-  if [[ -e "$wt/.git" ]]; then
-    git -C "$wt" checkout -q --force --detach "$bg_sha" && git -C "$wt" clean -fdq
-  else
-    rm -rf "$wt" && git worktree add -q --detach "$wt" "$bg_sha"
-  fi || { echo "검사용 worktree를 $bg_sha 로 맞추지 못했다" >"$HERDR_CHECK_LOG"; rc=1; }
+  prepare_wt "$wt" "$bg_sha" || { echo "검사용 worktree를 $bg_sha 로 맞추지 못했다" >"$HERDR_CHECK_LOG"; rc=1; }
   if [[ -z "${rc:-}" ]]; then
-    (cd "$wt" && "$check"); rc=$?
+    # 작업 worktree의 [완료]는 기본 브랜치와 갈라진 뒤의 변경만 영향 검사한다(설정이 없으면 전체 검사)
+    if [[ -n "${HERDR_BG_BASE:-}" ]]; then (cd "$wt" && "$check" --affected "$HERDR_BG_BASE"); else (cd "$wt" && "$check"); fi; rc=$?
   fi
   case $rc in
     0) state="$(cd "$wt" && "$check" --status)"
-       send "$message · 검사 PASS ${state#PASS }" ;;
+       send "$message · $(state_label "$state")" ;;
     3) send "$message · 검사 미설정" ;;
     *) tag="${message%%\]*}]"
        note="[검사 FAIL] $task 커밋 $short — $tag를 보내지 않았다. 로그: $HERDR_CHECK_LOG"
@@ -129,13 +204,13 @@ if [[ $mode == run ]]; then
   exit 0
 fi
 
-start_bg() { # SHA. 그 SHA를 뒤에서 검사하고 결과대로 보낸다
+start_bg() { # SHA [영향 검사 기준]. 그 SHA를 뒤에서 검사하고 결과대로 보낸다. 기준이 없으면 전체 검사
   local sha="$1" task ahead detach
   task="$(task_of "$message")"
   ahead="$("$BIN/herdr-queue" ahead 2>/dev/null || echo 0)"
   send "[진행] $task 커밋 ${sha:0:12} 검사 중(뒤에서) 예상 $(predict) · 대기열 ${ahead}건" || exit 1
   detach=(nohup); command -v setsid >/dev/null && detach=(setsid nohup) # 턴이 끝나도 검사가 살아 있게 한다
-  "${detach[@]}" "$BIN/herdr-report" --bg-run "$sha" "$message" >"$dir/.$HERDR_ROLE.bg-${sha:0:12}.out" 2>&1 </dev/null &
+  HERDR_BG_BASE="${2:-}" "${detach[@]}" "$BIN/herdr-report" --bg-run "$sha" "$message" >"$dir/.$HERDR_ROLE.bg-${sha:0:12}.out" 2>&1 </dev/null &
   echo "검사를 뒤에서 돌린다(${sha:0:12}). PASS면 ${message%%\]*}]가 자동으로 가고, FAIL이면 이 세션에 알림이 온다."
 }
 
@@ -167,18 +242,42 @@ if [[ $gated -eq 1 ]]; then
     fi
   fi
   if [[ $linked -eq 1 && "$message" == "[완료]"* ]]; then state="$("$check" --status)"; else state="$("$check" --status-of "$target_sha")"; fi
+  grade="$(grade_of "$(task_of "$message")")"
+  main_head="${main_head:-$(git -C "$(dirname "$common")" rev-parse HEAD)}"
+  if [[ "$message" == "[병합완료]"* && ( "$state" == LIGHT\ * || "$state" == AFFECTED\ * ) ]]; then
+    # 영향·경량 검사만 거친 SHA는 병합을 막지 않는다. 기본 브랜치의 전체 검사를 뒤에서 돌린다
+    send "$message · $(state_label "$state") · 전체 검사는 뒤에서" || exit 1
+    after_merge "$target_sha"
+    exit 0
+  fi
+  base=""; [[ $linked -eq 1 && "$message" == "[완료]"* ]] && base="$main_head"
+  if [[ "$grade" == 경량 && "$state" != PASS\ * && "$state" != UNSET ]]; then
+    if [[ "$message" == "[완료]"* && $linked -eq 1 ]]; then
+      over="$(light_over "$main_head")"
+      if [[ -z "$over" ]]; then
+        if [[ "$state" == LIGHT\ * ]]; then rc=0; else "$check" --light "$main_head"; rc=$?; fi
+        case $rc in
+          0) send "$message · 가벼운 검사 PASS $target_sha(경량)" || exit 1; exit 0 ;;
+          3) send "$message · 가벼운 검사 미설정(경량, HERDR_CHECK_FILE_CMD 없음)" || exit 1; exit 0 ;;
+          *) echo "경량 검사가 실패해 [완료]를 보내지 않았다. 고친 뒤 커밋하고 다시 보낸다." >&2; exit 1 ;;
+        esac
+      fi
+      echo "경량 기준을 넘어 일반 관문(전체 검사)으로 보낸다: $over" >&2
+      message="$message · 경량 기준 초과($over)"
+    fi
+  fi
   case "$state" in
     UNSET) message="$message · 검사 미설정" ;;
-    PASS\ *) message="$message · 검사 PASS ${state#PASS }" ;;
+    PASS\ * | AFFECTED\ *) message="$message · $(state_label "$state")" ;;
     *)
       if [[ $mode == bg || "$message" == "[병합완료]"* ]]; then
-        start_bg "$target_sha"
+        start_bg "$target_sha" "$base"
         [[ "$message" == "[완료]"* && $linked -eq 1 ]] && echo "그동안 같은 묶음의 다음 작업을 이 커밋 위에서 이어 해도 된다. 이 커밋은 고치거나 rebase하지 않는다."
         exit 0
       fi
-      "$check"; rc=$?
+      if [[ -n "$base" ]]; then "$check" --affected "$base"; else "$check"; fi; rc=$?
       case $rc in
-        0) message="$message · 검사 PASS $(git rev-parse HEAD)" ;;
+        0) message="$message · $(state_label "$("$check" --status)")" ;;
         3) message="$message · 검사 미설정" ;;
         *) echo "검사가 실패해 [완료]를 보내지 않았다. 고친 뒤 커밋하고 다시 보낸다. 고칠 수 없으면 [차단]으로 이유를 보낸다." >&2; exit 1 ;;
       esac

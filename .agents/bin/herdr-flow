@@ -8,7 +8,7 @@
 기록(~/.claude/herdr/handoff/<프로젝트>/):
   received.tsv  워커가 [배정]·[병합]·[검증]을 받은 시각(worker-turn hook)
   reports.tsv   보낸 보고(herdr-report). [판정]은 결과와 SHA
-  checks.tsv    전체 검사의 결과·실행 시간·대기열에서 기다린 시간(herdr-check). 이어받음은 INHERIT
+  checks.tsv    전체 검사의 결과·실행 시간·대기열에서 기다린 시간(herdr-check). 이어받음은 INHERIT, 경량 관문은 LIGHT
 
 작업별 구간:
   작업       [배정]을 받고 첫 [완료]까지
@@ -23,7 +23,7 @@ import subprocess
 import sys
 
 SCHEMAS = {
-    "received": ("epoch", "time", "role", "session_id", "tag", "task"),
+    "received": ("epoch", "time", "role", "session_id", "tag", "task", "grade"),
     "reports": ("epoch", "time", "role", "session_id", "tag", "task", "sha", "result"),
     "checks": ("epoch", "time", "role", "session_id", "sha", "result", "seconds", "queue_s"),
 }
@@ -147,7 +147,7 @@ def main():
             queued = int(c["queue_s"] or 0)
         except ValueError:
             queued = 0
-        s = by_role.setdefault(c["role"], {"n": 0, "PASS": 0, "FAIL": 0, "INHERIT": 0, "total": 0, "max": 0, "queue": 0})
+        s = by_role.setdefault(c["role"], {"n": 0, "PASS": 0, "FAIL": 0, "INHERIT": 0, "LIGHT": 0, "total": 0, "max": 0, "queue": 0})
         s["queue"] += queued
         s["n"] += 1
         s[c["result"]] = s.get(c["result"], 0) + 1
@@ -185,8 +185,8 @@ def main():
     if gates:
         print(f"관문 대기 합계 {dur(sum(gates))} · 평균 {dur(sum(gates) / len(gates))} · 최대 {dur(max(gates))} ({len(gates)}개 작업)")
     print()
-    head = ["역할", "검사", "PASS", "FAIL", "이어받음", "합계", "평균", "최대", "대기열"]
-    table = [[role, str(s["n"]), str(s["PASS"]), str(s["FAIL"]), str(s["INHERIT"]), dur(s["total"]),
+    head = ["역할", "검사", "PASS", "FAIL", "이어받음", "경량", "합계", "평균", "최대", "대기열"]
+    table = [[role, str(s["n"]), str(s["PASS"]), str(s["FAIL"]), str(s["INHERIT"]), str(s["LIGHT"]), dur(s["total"]),
               dur(s["total"] / max(s["n"] - s["INHERIT"], 1)), dur(s["max"]), dur(s["queue"])]
              for role, s in sorted(by_role.items())]
     if table:

@@ -78,11 +78,11 @@ hc ls --label "project=$HERDR_PROJECT" --label role=worker-1 | jq -r '.terminals
 
 | 말머리 | 보내는 쪽 → 받는 쪽 | 내용 |
 | --- | --- | --- |
-| `[배정]` | Orchestrator → 워커 | 작업 ID, 목표, 범위·담당 파일, 의존성, 수용 기준(행동과 확인 방법), 검증 명령, worktree 경로 |
+| `[배정]` | Orchestrator → 워커 | 작업 ID, 등급(`등급: 경량`, 적지 않으면 일반), 목표, 범위·담당 파일, 의존성, 수용 기준(행동과 확인 방법), 검증 명령, worktree 경로 |
 | `[병합]` | Orchestrator → 워커 | 대상 작업 ID와 병합 순서. 독립 검증을 받았으면 판정 SHA |
 | `[검증]` | Orchestrator → 검증자 | 묶음 이름, 분기점 SHA와 head SHA, 완료 조건과 수용 기준, 확인 방법. 작성자의 설명과 worktree 경로는 넣지 않는다 |
 | `[판정]` | 검증자 → Orchestrator | `PASS`·`ISSUES`·`BLOCKED`, head SHA, 기록 경로 |
-| `[완료]` | 워커 → Orchestrator, Orchestrator → Commander | 작업 ID, 변경 파일, 커밋, 검증(실행 확인·추론·미확인 구분, 실제 사용 경로의 확인), 위험. `herdr-report`가 `검사 PASS <SHA>`를 붙인다 |
+| `[완료]` | 워커 → Orchestrator, Orchestrator → Commander | 작업 ID, 변경 파일, 커밋, 검증(실행 확인·추론·미확인 구분, 실제 사용 경로의 확인), 위험. `herdr-report`가 `검사 PASS <SHA>`(경량은 `가벼운 검사 PASS <SHA>(경량)`)를 붙인다 |
 | `[병합완료]` | 워커 → Orchestrator | 작업 ID, 기본 브랜치에 들어간 SHA. `herdr-report`가 그 SHA가 들어갔는지와 검사 PASS 기록을 확인해 붙인다 |
 | `[진행]` | 워커 → Orchestrator | 기다릴 대상이 있어 턴을 끝내는 이유, 다시 움직일 조건 |
 | `[답변]` | 워커 → Orchestrator | Orchestrator가 물은 것에 대한 답. 작업 상태를 바꾸지 않는다 |

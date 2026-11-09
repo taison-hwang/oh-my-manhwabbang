@@ -4,14 +4,19 @@
 #   herdr-check --files <파일…>  빠른 파일 검사(HERDR_CHECK_FILE_CMD). 기록하지 않는다. 편집 hook이 쓴다
 #   herdr-check --status       지금 HEAD의 기록을 출력한다: PASS <sha> [이어받음 <sha>] | FAIL <sha> | NONE | UNSET
 #   herdr-check --status-of <SHA>  그 커밋의 기록을 출력한다. 작업 트리의 커밋 안 된 변경은 보지 않는다(병합 확인용)
+#   herdr-check --affected <기준>  일반 작업의 관문: 기준과 갈라진 뒤 바뀐 파일을 HERDR_CHECK_AFFECTED_CMD에 넘겨 그 파일에
+#                              영향을 받는 검사만 돌리고 AFFECTED로 기록한다. 명령이 없거나 끝 코드 4(범위를 정할 수 없음)면 전체 검사를 돈다
+#   herdr-check --light <기준>  경량 작업의 관문: 바뀐 파일에 빠른 파일 검사(HERDR_CHECK_FILE_CMD)만 돌리고 LIGHT로 기록한다
+#                              --affected·--light는 커밋된 상태에서만 돈다. 전체 회귀는 병합 뒤 기본 브랜치에서 돈다(herdr-report)
 # 끝 코드: 0 통과, 1 실패, 3 검사 명령 미설정. 기록은 HEAD SHA와 커밋 안 된 변경 유무에 묶인다.
+# --status-of는 이 역할의 기록에 없으면 같은 프로젝트의 다른 역할 기록(병합 뒤 검사 merged 포함)에서 찾는다.
 # 전체 검사 = 가벼운 단계(HERDR_CHECK_CMD, 잠금 없음) 다음 무거운 단계(HERDR_CHECK_HEAVY_CMD, 공용 대기열 herdr-queue 아래).
 # 시간 제한(HERDR_CHECK_TIMEOUT)은 두 단계의 실행 시간 합에만 건다. 대기열에서 기다린 시간은 세지 않는다.
 # 마지막 PASS 이후 바뀐 파일이 모두 HERDR_CHECK_SKIP_PATHS에 맞으면 다시 돌리지 않고 그 PASS를 이어받는다.
 set -uo pipefail
 
 SELF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-HERDR_CHECK_CMD="" HERDR_CHECK_HEAVY_CMD="" HERDR_CHECK_FILE_CMD="" HERDR_CHECK_TIMEOUT=3600 HERDR_CHECK_SKIP_PATHS=""
+HERDR_CHECK_CMD="" HERDR_CHECK_HEAVY_CMD="" HERDR_CHECK_FILE_CMD="" HERDR_CHECK_AFFECTED_CMD="" HERDR_CHECK_TIMEOUT=3600 HERDR_CHECK_SKIP_PATHS=""
 HERDR_HEAVY_SLOTS=1 HERDR_HEAVY_MIN_MEM_GB=0 HERDR_HEAVY_MAX_LOAD=0
 # shellcheck disable=SC1091
 [[ -f "$SELF_ROOT/.agents/harness.env" ]] && . "$SELF_ROOT/.agents/harness.env"
@@ -36,6 +41,53 @@ record_add() { # 결과 키 [이어받은 키]
 }
 record_get() { # 키 → 그 키의 마지막 줄 "결과 키 시각 [이어받은 키]"
   [[ -f "$record" ]] && awk -v k="$1" '$2 == k { line = $0 } END { if (line != "") print line }' "$record"
+}
+
+record_get_any() { # 키 → 이 역할 기록, 없으면 프로젝트의 모든 역할 기록 중 그 키의 가장 늦은 줄
+  local line
+  line="$(record_get "$1")"
+  [[ -n "$line" ]] || line="$(cat "$dir"/.*.check 2>/dev/null | awk -v k="$1" '$2 == k && $3 + 0 >= t { t = $3 + 0; line = $0 } END { if (line != "") print line }')"
+  printf '%s' "$line"
+}
+
+with_files() { # 명령 틀 파일… → {files} 자리(없으면 끝)에 따옴표 친 파일 목록을 넣은 명령
+  local tmpl="$1" quoted; shift
+  quoted="$(printf '%q ' "$@")"
+  if [[ "$tmpl" == *"{files}"* ]]; then printf '%s' "${tmpl//\{files\}/$quoted}"; else printf '%s %s' "$tmpl" "$quoted"; fi
+}
+
+partial() { # 종류(LIGHT|AFFECTED) 명령틀 기준. 바뀐 파일만 검사한다. AFFECTED의 끝 코드 4는 기록 없이 4로 돌려준다
+  local kind="$1" tmpl="$2" base="$3" top key mb st files=() f cmd started rc=0 name
+  name=$([[ $kind == LIGHT ]] && echo 경량 || echo 영향)
+  top="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "git 작업 트리 안에서 실행한다" >&2; exit 1; }
+  cd "$top" || exit 1
+  key="$(tree_key)"
+  [[ "$key" != *+dirty ]] || { echo "커밋 안 된 변경이 있다. 커밋한 뒤 돌린다" >&2; exit 1; }
+  read -r st _ <<<"$(record_get "$key")"
+  case "$st" in PASS | AFFECTED | "$kind") echo "$name 검사 생략: ${key:0:12}에 이미 $st 기록이 있다" >&2; exit 0 ;; esac
+  mb="$(git merge-base "$base" HEAD)" || { echo "기준 $base 와 갈라진 곳을 찾지 못했다" >&2; exit 1; }
+  # 경량의 빠른 검사는 있는 파일만 본다. 영향 검사는 지운 파일도 넘긴다(지운 파일에 기대던 코드가 영향을 받는다)
+  while IFS= read -r f; do [[ -n "$f" ]] && files+=("$f"); done < <(git diff --name-only $([[ $kind == LIGHT ]] && echo --diff-filter=d) "$mb" HEAD)
+  started=$(date +%s)
+  mkdir -p "$dir"
+  : >"$log"
+  if [[ ${#files[@]} -gt 0 ]]; then
+    cmd="$(with_files "$tmpl" "${files[@]}")"
+    echo "$name 검사: 바뀐 파일 ${#files[@]}개 ($top)" >&2
+    run_limited "$cmd" >>"$log" 2>&1; rc=$?
+  fi
+  if [[ $kind == AFFECTED && $rc -eq 4 ]]; then
+    echo "영향 범위를 정할 수 없다고 했다(끝 코드 4). 전체 검사를 돈다" >&2
+    tail -n 5 "$log" >&2
+    return 4
+  fi
+  if [[ $rc -eq 0 ]]; then st=$kind; else st=FAIL; fi
+  record_add "$st" "$key"
+  log_check "$st" "$key" "$(($(date +%s) - started))"
+  [[ $rc -eq 0 ]] && { echo "$name 검사 PASS ${key:0:12}" >&2; exit 0; }
+  echo "$name 검사 FAIL (끝 코드 $rc). 출력 끝부분, 전체는 $log" >&2
+  tail -n 60 "$log" >&2
+  exit 1
 }
 
 tree_key() { # HEAD SHA. 커밋 안 된 변경이 있으면 +dirty
@@ -91,12 +143,23 @@ case "${1:-}" in
     else
       key="$(tree_key)" || { echo NONE; exit 0; }
     fi
-    [[ -f "$record" ]] || { echo NONE; exit 0; }
+    [[ -f "$record" || "$1" == --status-of ]] || { echo NONE; exit 0; }
     line="$(record_get "$key")"
     [[ -n "$line" ]] || { inherit || true; line="$(record_get "$key")"; }
+    [[ -n "$line" || "$1" != --status-of ]] || line="$(record_get_any "$key")"
     read -r status rkey _ from <<<"$line"
     if [[ -n "$line" ]]; then echo "$status $key${from:+ 이어받음 ${from:0:12}}"; else echo NONE; fi
     exit 0
+    ;;
+  --light)
+    [[ -n "${2:-}" ]] || { echo "사용법: herdr-check --light <기준 커밋>" >&2; exit 2; }
+    [[ -n "$HERDR_CHECK_FILE_CMD" ]] || exit 3
+    partial LIGHT "$HERDR_CHECK_FILE_CMD" "$2"
+    ;;
+  --affected)
+    [[ -n "${2:-}" ]] || { echo "사용법: herdr-check --affected <기준 커밋>" >&2; exit 2; }
+    # 영향 검사 명령이 없거나 범위를 정할 수 없으면 아래 전체 검사로 이어진다
+    [[ -n "$HERDR_CHECK_AFFECTED_CMD" ]] && partial AFFECTED "$HERDR_CHECK_AFFECTED_CMD" "$2"
     ;;
   --files)
     shift
@@ -105,15 +168,14 @@ case "${1:-}" in
     for f in "$@"; do [[ -f "$f" ]] && files+=("$f"); done
     [[ ${#files[@]} -gt 0 ]] || exit 0
     top="$(git -C "$(dirname "${files[0]}")" rev-parse --show-toplevel 2>/dev/null)" || top="$(dirname "${files[0]}")"
-    quoted="$(printf '%q ' "${files[@]}")"
-    if [[ "$HERDR_CHECK_FILE_CMD" == *"{files}"* ]]; then cmd="${HERDR_CHECK_FILE_CMD//\{files\}/$quoted}"; else cmd="$HERDR_CHECK_FILE_CMD $quoted"; fi
+    cmd="$(with_files "$HERDR_CHECK_FILE_CMD" "${files[@]}")"
     out="$(cd "$top" && run_limited "$cmd" 2>&1)"; rc=$?
     [[ $rc -eq 0 ]] && exit 0
     printf '빠른 검사 실패: %s\n%s\n' "$cmd" "$(printf '%s\n' "$out" | tail -n 40)" >&2
     exit 1
     ;;
   '') ;;
-  *) sed -n '2,6p' "${BASH_SOURCE[0]}" | sed 's/^# *//' >&2; exit 2 ;;
+  *) sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# *//' >&2; exit 2 ;;
 esac
 
 configured || { echo "검사 명령이 없다. .agents/harness.env에 HERDR_CHECK_CMD(와 HERDR_CHECK_HEAVY_CMD)를 둔다" >&2; exit 3; }
