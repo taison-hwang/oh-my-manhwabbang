@@ -1,11 +1,11 @@
 # 상태판
 
-갱신: 2026-11-09T14:09:06+09:00
+갱신: 2026-11-09T14:10:07+09:00
 
 | 작업 ID | 묶음 | 담당(role·터미널) | 상태 | 의존 | 근거 |
 | --- | --- | --- | --- | --- | --- |
 | U-E | U-E | worker-2(t1m) | 대기 | R-F2 병합 | work/u-e-finish 521876e: 팔레트 2장 기준 갱신(454e434, 원인 미확인 명시), make test -timeout=30m(521876e). 1차 oidc 7/7·release 여유 139,102 B 통과. R-F2 병합 뒤 rebase → herdr-check·e2e-synthetic·release 재실행 → [완료] → 독립 검증(지시문 orchestrator-drafts/verify-ue.txt) |
-| T-U | T-U | worker-1(t6v) | 보완 2 | 없음 | Codex 밖 ID dedupe 분리, python 13 OK, lint 후 [완료] → 재검증(orchestrator-drafts/verify-tu3.txt) |
+| T-U | T-U | verifier-1(t20) | 재검증 | 없음 | 보완 2 6f13fe1(밖·안 ID 집합 분리), python 13 OK·lint 통과. 지시문 orchestrator-drafts/verify-tu3.txt |
 | R-F2 | R-F2 | worker-4(t3g) | 병합 대기 | herdr-check 5c98365(14:08 web-gates 단계, 잠금 보유) | 독립 검증 PASS. -race 최대 RSS 수정 전 8,047,052 KB → 후 1,429,228 KB. 검사 PASS면 ff 병합 |
 
 ## 세션 교체 (사용자 승인 2026-11-09, 세션 기록 저장)
