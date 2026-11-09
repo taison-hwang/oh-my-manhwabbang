@@ -10,7 +10,7 @@
 
 | 작업 ID | 기다리는 것 | 시작 | 풀릴 조건 | 만료 | 만료 시 |
 | --- | --- | --- | --- | --- | --- |
-| U-E | 검사: worker-2(t7f) 되돌림 커밋의 synthetic+herdr-check | 15:22 | [완료](분기 a/b) 또는 [차단] | 17:30 (예측 1h20m: synthetic 1541s+check 1132s+잠금 대기 ~30m, 근거 5차 기록) | hc read t7f로 진행 확인 → 정상이면 연장, 멈췄으면 4절 |
+| U-E | 검사: worker-2(t7f) 분기 (b) 제외 커밋의 synthetic+herdr-check | 15:22 | [완료] 또는 [차단] | 17:30 (예측 1h20m: synthetic 1541s+check 1132s+잠금 대기 ~30m, 근거 5차 기록) | hc read t7f로 진행 확인 → 정상이면 연장, 멈췄으면 4절 |
 | U-E | 판정: verifier-1(t7h) 독립 검증, head 094e568로 확장(11c는 final6 결과) | 14:2x | [판정] 최종 head | 17:45 (final6 약 45분 뒤 잠금 차례 t85 2분+판정 작성, final6 만료 17:30 이후) | hc read t7h로 진행 확인 |
 
 ## 세션 사고와 교체 (2026-11-09)
@@ -32,6 +32,6 @@
 - 승인 대기: main 미push(origin/main c2e1dfd 대비 다수 커밋), 옛 worktree 5개(.worktrees/e2e-54·e69-20/25/45/ea), `.backup-harness/`, `damaged-zip-salvage` 삭제.
 - 사용자 확인 항목: E-70 실기기 핀치·더블탭 체감(CDP 에뮬레이션만 확인).
 - 전량 test-int-full 미실행(사용자 결정으로 생략). 대신 유형별 대표 15건 격리 읽기 검증(f452721).
-- 후속 후보(배정 안 함): salvage 잘린 마지막 엔트리(docs/progress/2026-11-08T22-59-30+0900--targeted-read-verification.md), docs/impl-plan.md:277 RAR 문장, 픽셀 기준이 썸네일만 남겨 원인 추적 불가(e45·palette 4a/4b), 13-gesture waitForTimeout(400) 2곳·양면 경계 영구 테스트, rar4 압축 경로 패닉 방어, Any.pick 8 B 추가 읽기, 응답 헤더 상한 분리, kbd 키 이름 시스템 monospace, U-C 실패·재시도 회귀 테스트 편입, 스캔 정리 N+1, fontTools 버전 고정, uni-auth post_logout 투영 결함(사용자에게 보고함).
+- 후속 후보(배정 안 함): 11c laptop-1024 팔레트 4a·4b 흔들림(같은 base에서 렌더 두 상태, U-E에서 감시 제외) — 배경 표지 준비를 기다려 결정적으로 만든 뒤 감시 복귀, salvage 잘린 마지막 엔트리(docs/progress/2026-11-08T22-59-30+0900--targeted-read-verification.md), docs/impl-plan.md:277 RAR 문장, 픽셀 기준이 썸네일만 남겨 원인 추적 불가(e45·palette 4a/4b), 13-gesture waitForTimeout(400) 2곳·양면 경계 영구 테스트, rar4 압축 경로 패닉 방어, Any.pick 8 B 추가 읽기, 응답 헤더 상한 분리, kbd 키 이름 시스템 monospace, U-C 실패·재시도 회귀 테스트 편입, 스캔 정리 N+1, fontTools 버전 고정, uni-auth post_logout 투영 결함(사용자에게 보고함).
 - 운영 메모: herdr-report는 herdr-check(약 13분)를 돌리는 무거운 명령이라 heavy.lock 아래서만 부른다. 병합 완료·대기 보고는 hc로만(메인 체크아웃에서 herdr-report를 부르면 잠금 없이 전체 검사가 돈다 — 12:1x 사고). 보고 프로세스를 죽이면 자식 검사가 고아로 남으니 프로세스 묶음째 정리한다. 다른 프로젝트(ohmystock·uni-auth) 세션이 잠금 밖에서 무거운 검사를 돌려 메모리가 출렁인다 — 시작 가드를 MemAvailable ≥ 10 GB·load1 < 20로 둔다.
 - 하네스 메모: 일부 워커가 Orchestrator 주소를 t1j로 잡아 hc 답장이 실패한다(ListAgents에 없음). 쉬는 워커에 메시지를 보내면 턴 종료 훅 때문에 보고가 되돌아오므로 배정 없이는 보내지 않는다.
