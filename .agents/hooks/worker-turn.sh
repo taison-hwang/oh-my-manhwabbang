@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 워커의 보고 누락을 막는다. 워커 화면은 아무도 읽지 않으므로 보고 없이 턴이 끝나면 자율 진행이 조용히 멈춘다.
-#   worker-turn.sh start   UserPromptSubmit: 턴 시작 시각을 기록한다
+#   worker-turn.sh start   UserPromptSubmit: 턴 시작 시각을 기록한다. 입력이 [배정]·[병합]·[검증]이면
+#                          받은 시각과 작업 ID를 received.tsv에 남긴다(흐름 측정 herdr-flow용)
 #   worker-turn.sh stop    Stop: 이 턴에 herdr-report를 보내지 않았으면 한 번 막는다.
 #                          그래도 보내지 않으면 Orchestrator에 [미보고]를 직접 보내고 끝낸다.
 case "${HERDR_ROLE:-}" in '' | commander | orchestrator) exit 0 ;; esac
@@ -15,6 +16,16 @@ reported_file="$dir/.$HERDR_ROLE.reported"
 case "${1:-}" in
   start)
     mkdir -p "$dir" && date +%s >"$start_file"
+    prompt="$(printf '%s' "$input" | jq -r '.prompt // ""' | head -c 2000)"
+    if [[ "$prompt" =~ \[(배정|병합|검증)\][[:space:]]+([^[:space:]]+) ]]; then
+      tag="${BASH_REMATCH[1]}"
+      task="${BASH_REMATCH[2]}"
+      task="${task%%[,.:;—)(]*}"
+      tsv="$dir/received.tsv"
+      [ -s "$tsv" ] || printf 'epoch\ttime\trole\tsession_id\ttag\ttask\n' >"$tsv"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$(date +%Y-%m-%dT%H:%M:%S%z)" "$HERDR_ROLE" \
+        "$(cat "$dir/.$HERDR_ROLE.session" 2>/dev/null)" "$tag" "$task" >>"$tsv"
+    fi
     ;;
   stop)
     [ -f "$start_file" ] || exit 0

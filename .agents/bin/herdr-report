@@ -72,9 +72,14 @@ date +%s >"$dir/.$HERDR_ROLE.reported"
   task="${message#*\] }"; task="${task%% *}"
   [[ "$message" == "["*"] "* ]] || { tag=""; task=""; }
   tag="${tag//$'\t'/ }"; task="${task//$'\t'/ }"; task="${task%%$'\n'*}"
-  sha=""; [[ "$message" =~ 검사\ PASS\ ([0-9a-f]+) ]] && sha="${BASH_REMATCH[1]}"
-  [[ -s "$dir/reports.tsv" ]] || printf 'epoch\ttime\trole\tsession_id\ttag\ttask\tsha\n' >"$dir/reports.tsv"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$(date +%Y-%m-%dT%H:%M:%S%z)" "$HERDR_ROLE" \
-    "$(cat "$dir/.$HERDR_ROLE.session" 2>/dev/null)" "$tag" "$task" "$sha" | tr -d '\r' >>"$dir/reports.tsv"
+  sha=""; result=""
+  [[ "$message" =~ 검사\ PASS\ ([0-9a-f]+) ]] && sha="${BASH_REMATCH[1]}"
+  # [판정] <묶음> PASS|ISSUES|BLOCKED <head SHA> <기록 경로>
+  if [[ "$tag" == 판정 && "$message" =~ ^\[판정\]\ [^\ ]+\ (PASS|ISSUES|BLOCKED)(\ ([0-9a-f]{7,40}))? ]]; then
+    result="${BASH_REMATCH[1]}"; sha="${BASH_REMATCH[3]}"
+  fi
+  [[ -s "$dir/reports.tsv" ]] || printf 'epoch\ttime\trole\tsession_id\ttag\ttask\tsha\tresult\n' >"$dir/reports.tsv"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$(date +%Y-%m-%dT%H:%M:%S%z)" "$HERDR_ROLE" \
+    "$(cat "$dir/.$HERDR_ROLE.session" 2>/dev/null)" "$tag" "$task" "$sha" "$result" | tr -d '\r' >>"$dir/reports.tsv"
 } 2>/dev/null || true
 echo "보냄: $want($target)"

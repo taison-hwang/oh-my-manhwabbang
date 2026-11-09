@@ -14,6 +14,7 @@ PROJECT="$(basename "$ROOT")"
 
 HERDR_AUTONOMOUS=1
 HERDR_MAX_WORKERS=3
+HERDR_MAX_VERIFIERS=1
 HERDR_SOFT_SIGNAL_TOKENS=300000
 HERDR_COMPACT_TOKENS=400000
 # 역할별 에이전트·모델·effort. 비어 있으면 띄울 때 준 인자와 아래 기본 표를 쓴다.
@@ -71,7 +72,7 @@ if [[ $# -gt 0 ]]; then EFFORT_OVERRIDE="$1"; shift; fi
 [[ $# -eq 0 ]] || usage
 
 case "$ROLE" in commander | orchestrator) KIND=$ROLE ;; *) KIND=worker ;; esac
-# 설정 이름: 검증자는 따로 둔다. 기본 표와 워커 수 상한은 워커와 같다.
+# 설정 이름: 검증자는 따로 둔다. 기본 표는 워커와 같고, 수 상한은 HERDR_MAX_VERIFIERS로 따로 센다.
 SETTING="$KIND"
 [[ "$ROLE" == verifier* && -n "$HERDR_VERIFIER_TOOL" ]] && SETTING=verifier
 KIND_UPPER="$(printf '%s' "$SETTING" | tr '[:lower:]' '[:upper:]')"
@@ -171,19 +172,29 @@ fi
 
 # hc는 --outlive-parent 없이 띄운 터미널을 부모와 함께 끝낸다. Orchestrator를 교체하려고 끄면 그가 띄운
 # 워커·검증자가 모두 같이 꺼지므로(zip-viewer 2026-11-09 사고) 항상 붙인다. 끝내기는 hc kill로 따로 한다.
-RUN=(hc run --bg --json --outlive-parent --label "role=$ROLE" --label "project=$PROJECT" --cwd "$ROOT")
+# kind 라벨로 검증자를 워커와 따로 센다. hc ls 출력에는 라벨이 없어 라벨 필터로만 셀 수 있다.
+KIND_LABEL="$KIND"; [[ "$ROLE" == verifier* ]] && KIND_LABEL=verifier
+RUN=(hc run --bg --json --outlive-parent --label "role=$ROLE" --label "project=$PROJECT" --label "kind=$KIND_LABEL" --cwd "$ROOT")
 if [[ $DRY -eq 1 ]]; then
   echo "${RUN[*]} -- ${CMD[*]}"
   exit 0
 fi
 
 if [[ "$KIND" == worker ]]; then
-  # hc ls 출력에는 라벨이 없으므로 라벨 필터로 세어 뺀다.
+  # 워커 = 전체 - Commander - Orchestrator - 검증자. kind 라벨 없이 예전 실행기로 띄운 검증자는 워커로 센다.
   count_terminals() { hc ls --json --label "project=$PROJECT" "$@" | jq '.terminals | length'; }
-  count=$(($(count_terminals) - $(count_terminals --label role=commander) - $(count_terminals --label role=orchestrator)))
-  if [[ "$count" -ge "$HERDR_MAX_WORKERS" ]]; then
-    echo "워커가 이미 ${count}개다(HERDR_MAX_WORKERS=$HERDR_MAX_WORKERS). 쉬는 세션을 정리해 재사용한다." >&2
-    exit 1
+  verifiers=$(count_terminals --label kind=verifier)
+  if [[ "$KIND_LABEL" == verifier ]]; then
+    if [[ "$verifiers" -ge "$HERDR_MAX_VERIFIERS" ]]; then
+      echo "검증자가 이미 ${verifiers}개다(HERDR_MAX_VERIFIERS=$HERDR_MAX_VERIFIERS). 판정을 마친 검증자를 정리해 재사용한다." >&2
+      exit 1
+    fi
+  else
+    count=$(($(count_terminals) - $(count_terminals --label role=commander) - $(count_terminals --label role=orchestrator) - verifiers))
+    if [[ "$count" -ge "$HERDR_MAX_WORKERS" ]]; then
+      echo "워커가 이미 ${count}개다(HERDR_MAX_WORKERS=$HERDR_MAX_WORKERS). 쉬는 세션을 정리해 재사용한다." >&2
+      exit 1
+    fi
   fi
 fi
 addr="$("${RUN[@]}" -- "${CMD[@]}" | jq -r '.address // empty')"
