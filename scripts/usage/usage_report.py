@@ -116,9 +116,7 @@ def scan_claude(proj_dir, repo, since):
                 task = task_of(d.get("cwd") or last_cwd, repo)
                 key = msg.get("id") or d.get("uuid")
                 if task == OUTSIDE:
-                    if key not in outside_seen:
-                        outside_seen.add(key)
-                        out.outside += 1
+                    outside_seen.add(key)
                     continue
                 out.raw += 1
                 if key in seen:
@@ -153,6 +151,7 @@ def scan_claude(proj_dir, repo, since):
             for meta in glob.glob(os.path.join(p, "subagents", "*.meta.json")):
                 if not os.path.exists(meta[: -len(".meta.json")] + ".jsonl") and os.path.getmtime(meta) >= since.timestamp():
                     out.orphan_meta += 1
+    out.outside = len(outside_seen - seen)
     return out
 
 
@@ -175,6 +174,7 @@ def codex_tok(u):
 def scan_codex(codex_dir, repo, since, role_map):
     out = Codex()
     seen = set()
+    outside_seen = set()
     for path in sorted(glob.glob(os.path.join(codex_dir, "**", "rollout-*.jsonl"), recursive=True)):
         if os.path.getmtime(path) < since.timestamp():
             continue
@@ -213,9 +213,7 @@ def scan_codex(codex_dir, repo, since, role_map):
                     continue
                 task = task_of(cwd, repo)
                 if task == OUTSIDE:
-                    if rid not in seen:
-                        seen.add(rid)
-                        out.outside += 1
+                    outside_seen.add(rid)
                     continue
                 out.raw += 1
                 if rid in seen:
@@ -231,6 +229,7 @@ def scan_codex(codex_dir, repo, since, role_map):
             out.cross_checked += 1
             out.cross_match += dict(file_sum) == last_total
         out.rollouts.append({"session": sid, "first_ts": first_ts})
+    out.outside = len(outside_seen - seen)
     return out
 
 

@@ -118,6 +118,37 @@ class UsageReportTest(unittest.TestCase):
         self.assertEqual(total, 5)
         self.assertIn("저장소 밖 cwd라 집계에서 제외한 응답: Claude 1, Codex 0", rep["gaps"])
 
+    def test_same_claude_id_outside_then_inside_counts_inside(self):
+        wt = REPO + "/.worktrees/job-b"
+        write_jsonl(os.path.join(self.claude, "sess3.jsonl"), [
+            role_line("worker-7"),
+            asst("dupid", AFTER1, "/elsewhere", out=11),
+            asst("dupid", AFTER2, wt, out=11),
+            asst("onlyout", AFTER2, "/elsewhere"),
+        ])
+        rep = self.report()
+        row = next(e for e in rep["claude_by_task"] if e["key"] == ["worker-7", "job-b"])
+        self.assertEqual((row["responses"], row["output"]), (1, 11))
+        self.assertIn("저장소 밖 cwd라 집계에서 제외한 응답: Claude 2, Codex 0", rep["gaps"])  # far, onlyout; dupid는 안쪽으로 집계
+
+    def test_same_codex_id_outside_then_inside_counts_inside(self):
+        rollout(os.path.join(self.codex, "2026", "11", "09", "rollout-b.jsonl"), REPO, "gpt-y",
+                [("shared", AFTER1, (30, 10, 3, 1))], (30, 10, 3, 1))
+        # 같은 response_id가 먼저 저장소 밖 cwd로 기록된 rollout (이름순으로 rollout-a보다 앞)
+        rollout(os.path.join(self.codex, "2026", "11", "09", "rollout-0.jsonl"), REPO, "gpt-y",
+                [("shared", AFTER1, (30, 10, 3, 1))], (30, 10, 3, 1))
+        p = os.path.join(self.codex, "2026", "11", "09", "rollout-0.jsonl")
+        with open(p, encoding="utf-8") as fh:
+            lines = [json.loads(x) for x in fh]
+        for d in lines:
+            if d["type"] == "turn_context":
+                d["payload"]["cwd"] = "/elsewhere"
+        write_jsonl(p, lines)
+        rep = self.report()
+        row = next(e for e in rep["codex_by_role_model"] if e["key"][1] == "gpt-y")
+        self.assertEqual((row["responses"], row["input"]), (1, 30))
+        self.assertIn("Codex 0", next(g for g in rep["gaps"] if g.startswith("저장소 밖")))
+
     def test_cost_notice_in_every_format(self):
         base = [a for a in self.args if a not in ("json", "--format")]
         js = self.report()["cost_notice"]
