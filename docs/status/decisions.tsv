@@ -74,3 +74,5 @@ ts	작업	결정	이유	증거	결과
 2026-11-09T10:14:51+09:00	P-70	작성자 검증 끝(384dac7, e2e 277 통과, 11c palette 2장만) → 잠금 대기열(U-D·P-71b·P-70 검사 약 40분) 때문에 herdr-check 결과를 기다리지 않고 독립 검증을 병행 배정. 병합은 검사 PASS 384dac7 + 판정 PASS 둘 다 확인 뒤	worker-3 [진행]	384dac7	verifier-1 P-70
 2026-11-09T10:19:51+09:00	P-70	독립 검증 PASS 384dac7 → 검사 PASS 확인 조건부 병합 지시. 비차단 관찰: 13-gesture 본문 waitForTimeout(400) 2곳(무변화 관찰용), 양면·경계 사례 영구 회귀 테스트는 후속 후보	verifier-1 vitest 311·임시 통합 8	/tmp/verify-p70/2026-11-09T10-19-23+0900--verify-p70.md	worker-3 조건부 병합
 2026-11-09T10:21:15+09:00	U-D	보완 c33927b(ec5493a 위 rebase 무충돌) 검사 PASS → 재검증 배정	worker-1 [완료]	c33927b3320bde8279c14928c840b54391fa9a25	verifier-1 U-D 재검증
+2026-11-09T10:26:25+09:00	U-D	재검증 PASS c33927b → 병합 지시	verifier-1 PASS	/tmp/verify-ud/2026-11-09T10-26-09+0900--verify-ud2.md	worker-1 병합
+2026-11-09T10:27:09+09:00	U-D	main 병합 c68fd0b(rebase 무충돌, ff). worker-1 /clear	worker-1 [병합 완료]	c68fd0b	U-E는 P-70·P-71b 병합과 크기 예산 결정 뒤
