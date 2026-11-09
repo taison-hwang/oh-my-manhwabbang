@@ -14,4 +14,3 @@
 - 후속 후보: docs/impl-plan.md:277 RAR 문장이 D-71 이후 틀림.
 - 운영 메모: herdr-report는 herdr-check(약 13분)를 돌리는 무거운 명령이라 heavy.lock 아래서만 부른다. 보고 프로세스를 죽이면 자식 검사가 고아로 남으니 프로세스 묶음째 정리한다.
 | P-70 | P-70 | worker-3(t5h) | 병합 대기 | herdr-check 384dac7 | 독립 검증 PASS, 검사 PASS 뒤 조건부 병합 |
-| P-71b | P-71 | worker-4(t3g) | 병합 | 없음 | 독립 검증 PASS 0fdb531 |
