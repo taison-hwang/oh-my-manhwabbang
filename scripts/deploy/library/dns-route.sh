@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# dns-route.sh — create the library.betterax.net CNAME on the gift4me-tunnel.
+# dns-route.sh — create the books.betterax.net CNAME on the gift4me-tunnel.
 #
 #   dns-route.sh [--yes]
 #
 # This is the step that makes the hostname resolve to Cloudflare. Run it only
 # after the local verify-public.sh passes. It prints the command and asks first.
-# Undo: delete the `library` CNAME in the Cloudflare dashboard (DNS records stay
+# Undo: delete the `books` CNAME in the Cloudflare dashboard (DNS records stay
 # harmless while the catch-all returns 404, but delete it to be clean).
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,4 +23,4 @@ if [ "$yes" != 1 ]; then
 fi
 "${cmd[@]}"
 echo "done. If cloudflared reports a permission error, create the CNAME in the dashboard:"
-echo "  library -> 178647b8-b76b-49a3-8b8f-3ca06f191226.cfargotunnel.com (proxied)"
+echo "  books -> 178647b8-b76b-49a3-8b8f-3ca06f191226.cfargotunnel.com (proxied)"

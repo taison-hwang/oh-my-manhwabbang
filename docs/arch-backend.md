@@ -433,10 +433,10 @@ auth:                        # NFR-SEC-002. Omit the whole block to disable auth
   oidc:                      # AMENDMENT A-20 (ruling E-74 §2.19). oidc mode only.
     issuer: "https://auth.betterax.net"    # uni-auth. Discovery = issuer + /.well-known/openid-configuration
     client_id: ""            # required. Production: "zip-viewer" (registered with uni-auth, E-74 §2.19)
-    audience: ""             # required. Production: "https://library.betterax.net/api"
+    audience: ""             # required. Production: "https://books.betterax.net/api"
     redirect_url: ""         # required, https (http only for a loopback host, E-74 §2.19),
                              #   path {base_path}/api/auth/oidc/callback.
-                             #   Production: "https://library.betterax.net/api/auth/oidc/callback"
+                             #   Production: "https://books.betterax.net/api/auth/oidc/callback"
                              #   Never built from the Host header.
     post_logout_redirect_url: ""   # optional, https. Default empty: end-session stops at uni-auth's own page.
                              #   Set it only once uni-auth honours it (E-74 §2.12 operating note).
@@ -3161,7 +3161,7 @@ This also settles `scan.follow_symlinks: false` — a symlink out of the root is
 * Sessions are **server-side** in `auth.db` (§3.6): the cookie `shelf_sid` holds a random id only, and allow-list
   and admin membership are decided on **every request** from the current configuration, never carried in the
   cookie. `Secure` is always set, because the mode requires https (the public address is
-  `https://library.betterax.net` through a Cloudflare tunnel, E-74 §2.18).
+  `https://books.betterax.net` through a Cloudflare tunnel, E-74 §2.18).
 * **Same-origin check.** Every `POST`/`PUT`/`DELETE` must carry an `Origin` equal to the origin of
   `auth.oidc.redirect_url`, or, with no `Origin`, `Sec-Fetch-Site: same-origin`; otherwise `403 forbidden`,
   `detail.reason: "cross_origin"`, before authentication. `SameSite=Lax` alone does not stop a neighbouring

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tunnel-apply.sh — add the library.betterax.net ingress rule to the cloudflared
+# tunnel-apply.sh — add the books.betterax.net ingress rule to the cloudflared
 # configuration.
 #
 #   sudo tunnel-apply.sh [--service http://127.0.0.1:9910] [--restart]

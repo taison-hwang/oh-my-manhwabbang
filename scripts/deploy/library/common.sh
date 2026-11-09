@@ -1,7 +1,7 @@
-# common.sh — shared helpers for the library.betterax.net deployment scripts.
+# common.sh — shared helpers for the books.betterax.net deployment scripts.
 # Sourced, never run. Nothing here writes outside the paths a script is given.
 
-LIB_HOST="library.betterax.net"
+LIB_HOST="books.betterax.net"
 TUNNEL_NAME="gift4me-tunnel"
 DEFAULT_PORT=9910
 CF_CONFIG_DEFAULT="/etc/cloudflared/config.yml"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# preflight.sh — unprivileged checks before the library.betterax.net rollout.
+# preflight.sh — unprivileged checks before the books.betterax.net rollout.
 #
 #   preflight.sh --config shelf.library.yaml [--bin dist/shelf] [--port 9910]
 #

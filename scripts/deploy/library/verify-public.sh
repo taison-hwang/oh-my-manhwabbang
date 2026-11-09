@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# verify-public.sh — bypass-path check for the library.betterax.net rollout
+# verify-public.sh — bypass-path check for the books.betterax.net rollout
 # (E-74 §2.18). Every request is made WITHOUT a session. Run it twice: before the
 # DNS/tunnel steps against the local port, and after them against the public URL.
 #
 #   verify-public.sh --local  [--port 9910]
-#   verify-public.sh --public [--url https://library.betterax.net]
+#   verify-public.sh --public [--url https://books.betterax.net]
 #   verify-public.sh --local --public            # both
 #   verify-public.sh --base http://127.0.0.1:8791  # any one target (testing the script)
 #

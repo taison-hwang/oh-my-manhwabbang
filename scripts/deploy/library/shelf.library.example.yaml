@@ -1,4 +1,4 @@
-# shelf.library.example.yaml — production configuration for https://library.betterax.net
+# shelf.library.example.yaml — production configuration for https://books.betterax.net
 #
 # Copy to the real location, fill the <...> placeholders, then run
 #   scripts/deploy/library/preflight.sh --config <your copy>
@@ -30,8 +30,8 @@ auth:
   oidc:
     issuer: "https://auth.betterax.net"
     client_id: "zip-viewer"
-    audience: "https://library.betterax.net/api"
-    redirect_url: "https://library.betterax.net/api/auth/oidc/callback"
+    audience: "https://books.betterax.net/api"
+    redirect_url: "https://books.betterax.net/api/auth/oidc/callback"
     post_logout_redirect_url: ""          # open item: the projector drops this field (U-R1 record)
     allowed_subs: []                      # <add your sub after the first 403 screen, then restart>
     admin_subs: []                        # subset of allowed_subs

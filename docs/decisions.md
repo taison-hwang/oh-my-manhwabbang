@@ -4546,7 +4546,7 @@ impl-plan §1.3도 같은 내용을 적었다. 그래서 백업을 만들려면 
 - 호환: E-69 이전 서버는 `/2` 내보내기 파일을 거절한다. 되돌려 설치할 때 주의한다.
 - 남은 일: `make test-int-full` 미실행, 옛 작업 트리 정리와 푸시는 사용자 승인 대기(HANDOFF 맨 앞).
 
-## E-74 — **계정은 uni-auth에 맡긴다. `auth.mode: oidc`는 허용 목록에 든 소수 사용자가 각자 진행률을 갖게 하고, 컬렉션 전체에 닿는 쓰기는 관리자만 재인증 뒤에 한다** (사용자 결정 "계정 시스템은 이 기계에서 돌고 있는 uni-auth를 쓴다" 2026-11-08 23:2x, 추천안 Q1~Q12와 프로젝트 경계 변경 승인 2026-11-09 01:4x, Q9 보정 "운영 주소 https://library.betterax.net, Cloudflare 터널로 공개" 2026-11-09 01:5x, 모두 Commander t1h 경유 · worker-2 초안 — 인증·HTTP 계약·user.db 스키마가 바뀐다, 개정 A-20) — BINDING
+## E-74 — **계정은 uni-auth에 맡긴다. `auth.mode: oidc`는 허용 목록에 든 소수 사용자가 각자 진행률을 갖게 하고, 컬렉션 전체에 닿는 쓰기는 관리자만 재인증 뒤에 한다** (사용자 결정 "계정 시스템은 이 기계에서 돌고 있는 uni-auth를 쓴다" 2026-11-08 23:2x, 추천안 Q1~Q12와 프로젝트 경계 변경 승인 2026-11-09 01:4x, Q9 보정 "운영 주소를 Cloudflare 터널로 공개" 2026-11-09 01:5x, 운영 주소 변경 "https://books.betterax.net" 2026-11-09 17:3x(작업 계획 시작 계약 3), 모두 Commander t1h 경유 · worker-2 초안 — 인증·HTTP 계약·user.db 스키마가 바뀐다, 개정 A-20) — BINDING
 
 ### 1. 문제
 
@@ -4559,7 +4559,7 @@ impl-plan §1.3도 같은 내용을 적었다. 그래서 백업을 만들려면 
 ### 2. 판정
 
 1. **사용자 결정.** 계정은 uni-auth를 쓴다(2026-11-08). 초안 e절 Q1~Q12의 추천안과 프로젝트 경계 변경을 승인한다(2026-11-09). 승인안: Q1 비밀번호 모드와 배타 선택, Q2 설정 허용 목록, Q3 짧은 TTL과 `prompt=none` 재인가, Q4 관리자는 설정 목록만, Q5 관리자 쓰기 전 재인증, Q6 별도 파일 `auth.db`의 서버 측 세션, Q7 `sub` 축약 표시와 `scope=openid`, Q8 표지·시리즈 방향은 공유하고 누구나 고치며 스캔 로그·설정 경로는 관리자만, Q9 LAN 전용 https(아래 보정으로 바뀜), Q10 uni-auth 클라이언트 등록은 별도 작업(2026-11-09 등록됨, §2.19), Q11 계정 삭제는 허용 목록에서 빼서 처리, Q12 역복사 명령을 둔다.
-   **Q9 보정(2026-11-09 01:5x).** 운영 주소는 `https://library.betterax.net`이고 Cloudflare 터널로 인터넷에 공개한다. LAN 전용 가안을 공개 터널로 바꾸는 명시적 승인이다. 나머지 승인안은 그대로다(§2.18). **3차 로드맵의 다른 기능(E-70~E-73, E-75~E-77 초안)은 이 승인에 들지 않는다.**
+   **Q9 보정(2026-11-09 01:5x).** 운영 주소는 `https://books.betterax.net`이고 Cloudflare 터널로 인터넷에 공개한다(01:5x에 승인한 주소는 `library` 하위 도메인이었고, 2026-11-09 17:3x 사용자 요청으로 `books`로 바꿨다. 바뀐 것은 주소뿐이다). LAN 전용 가안을 공개 터널로 바꾸는 명시적 승인이다. 나머지 승인안은 그대로다(§2.18). **3차 로드맵의 다른 기능(E-70~E-73, E-75~E-77 초안)은 이 승인에 들지 않는다.**
 2. **모드는 셋이고 설정으로 하나를 고른다.** `auth` 블록이 없으면 인증 없음(지금과 같다). `auth.mode: "password"`(생략하면 `password`)는 지금의 단일 비밀번호다. `auth.mode: "oidc"`는 uni-auth 로그인이다. 두 방식을 함께 켜지 않는다. 로그인 경로가 둘이 되고, 비밀번호 사용자에게 줄 `sub`가 없기 때문이다. uni-auth 장애 때의 비상 경로는 운영자가 `mode: password`로 바꿔 재시작하는 것이다. **단, 공개 터널은 oidc 모드 서버에만 잇는다.** password 모드나 인증 없음으로 바꾸려면 먼저 터널을 끊고 LAN에서만 쓴다(§2.18 공개 금지 조건). password 모드에는 같은 출처 검사가 없고, 터널 뒤에서는 비밀번호 시도 제한이 전체 버킷 하나가 되며, `Secure`도 빠지기 때문이다.
 3. **zip-viewer 서버가 BFF가 된다.** 인가 코드와 PKCE(S256)로 로그인하고, 토큰은 서버만 본다. 브라우저에는 세션 ID 쿠키만 간다. uni-auth 연동 클라이언트는 `client_secret`이 없는 public 클라이언트다.
 4. **oidc 모드는 서버 측 세션을 쓴다.** 세션 표는 새 파일 `<data_dir>/auth.db`(모드 `0600`)의 `oidc_sessions`다. 열은 `id_hash`(쿠키 값의 SHA-256, 원문은 저장하지 않는다)·`user_sub`·`uni_sid`·`id_token`·`created_at`·`last_seen_at`·`reauth_at`·`expires_at`·`logged_out_at`이다.
@@ -4651,8 +4651,8 @@ impl-plan §1.3도 같은 내용을 적었다. 그래서 백업을 만들려면 
     - `/api/health`는 uni-auth 상태와 무관하다.
     - 계정 삭제(uni-auth의 `user.deleted` webhook)는 받지 않는다. 운영자가 `allowed_subs`에서 빼면 접근이 끊긴다. 그 사용자의 `user_*` 행은 남는다.
 17. **세션 없이 보이는 화면은 서버가 그린다.** 인증 관문이 정적 자산까지 막으므로(§8.2 all-or-nothing) SPA는 세션 없이 뜨지 않는다. 로그인 화면(`uni-auth로 로그인` 버튼), 403 안내(`sub` 표시), 로그아웃 완료 화면은 지금의 비밀번호 로그인 화면처럼 서버가 렌더하는 HTML이다(`internal/httpapi/loginpage.go`). 문구는 한국어다.
-18. **노출 — 공개 터널.** 운영 주소는 `https://library.betterax.net`이고, Cloudflare 터널이 TLS를 끝내고 zip-viewer로 넘긴다(zip-viewer는 TLS를 내장하지 않는다, impl-plan §1.3). uni-auth는 `https://` 콜백만 받으므로 이 주소가 콜백 호스트다. oidc 모드에서 `http://NAS:포트`로 직접 쓰는 길은 없다(`Secure` 쿠키, https 콜백).
-    - **터널은 검증 뒤에만 켠다.** oidc 모드 서버에서 인증, 허용 목록 403, 관리자·재인증 403, 같은 출처 403, 아래 "세션 없이 닿는 표면" 밖으로 새는 길이 없음(정적 자산·`/api/*` 우회, `/api/auth/../` 같은 경로 조작, password 모드 쿠키, 만료·로그아웃 세션)을 확인하기 전에는 `library.betterax.net`을 이 서버에 잇지 않는다. 공개 URL을 거쳐서도 확인한다: 인증된 상태로 받은 정적 자산·쪽·썸네일 URL을 세션 없이 다시 요청하면 `401`이어야 하고 응답의 `cf-cache-status`가 `HIT`가 아니어야 한다. 이 확인은 마감 작업(U-E)의 수용 기준이고, 터널을 잇는 일 자체는 외부에 보이는 작업이라 사용자 승인을 받는다.
+18. **노출 — 공개 터널.** 운영 주소는 `https://books.betterax.net`이고, Cloudflare 터널이 TLS를 끝내고 zip-viewer로 넘긴다(zip-viewer는 TLS를 내장하지 않는다, impl-plan §1.3). uni-auth는 `https://` 콜백만 받으므로 이 주소가 콜백 호스트다. oidc 모드에서 `http://NAS:포트`로 직접 쓰는 길은 없다(`Secure` 쿠키, https 콜백).
+    - **터널은 검증 뒤에만 켠다.** oidc 모드 서버에서 인증, 허용 목록 403, 관리자·재인증 403, 같은 출처 403, 아래 "세션 없이 닿는 표면" 밖으로 새는 길이 없음(정적 자산·`/api/*` 우회, `/api/auth/../` 같은 경로 조작, password 모드 쿠키, 만료·로그아웃 세션)을 확인하기 전에는 `books.betterax.net`을 이 서버에 잇지 않는다. 공개 URL을 거쳐서도 확인한다: 인증된 상태로 받은 정적 자산·쪽·썸네일 URL을 세션 없이 다시 요청하면 `401`이어야 하고 응답의 `cf-cache-status`가 `HIT`가 아니어야 한다. 이 확인은 마감 작업(U-E)의 수용 기준이고, 터널을 잇는 일 자체는 외부에 보이는 작업이라 사용자 승인을 받는다.
     - **세션 없이 닿는 표면**(oidc 모드, 이것이 전부다). 인증 예외는 정확한 경로 일치로만 정한다(접두어 일치는 우회가 된다).
       - `GET /api/health`: `ok`·`version`·`commit`·`started_at`·`uptime_ms`·`pdf_enabled`·`avif_enabled`. oidc 모드에서 세션 없는 `?verbose=1`은 `verbose`를 빼고 답한다(풀·큐 카운터는 내부 상태다).
       - `GET /api/auth/status`: `auth_required`·`authenticated`·`mode`·`end_session_available`. 세션이 없으면 `user`가 없다.
@@ -4676,8 +4676,8 @@ impl-plan §1.3도 같은 내용을 적었다. 그래서 백업을 만들려면 
       oidc:
         issuer: "https://auth.betterax.net"
         client_id: "zip-viewer"    # 필수. uni-auth 등록값
-        audience: "https://library.betterax.net/api"   # 필수. 등록값
-        redirect_url: "https://library.betterax.net/api/auth/oidc/callback"   # 필수. 등록값(base_path ""일 때)
+        audience: "https://books.betterax.net/api"   # 필수. 등록값
+        redirect_url: "https://books.betterax.net/api/auth/oidc/callback"   # 필수. 등록값(base_path ""일 때)
         post_logout_redirect_url: ""   # 선택. 기본값 빈 값(§2.12 운영 주의)
         allowed_subs: []
         admin_subs: []             # allowed_subs의 부분집합
@@ -4686,7 +4686,7 @@ impl-plan §1.3도 같은 내용을 적었다. 그래서 백업을 만들려면 
 
     기동 실패(exit 2): `mode: oidc`인데 `issuer`·`client_id`·`audience`·`redirect_url` 중 하나가 비었을 때, `issuer`나 `redirect_url`이 `https://`가 아닐 때, `post_logout_redirect_url`이 있는데 `https://`가 아닐 때, `redirect_url`의 경로가 `{base_path}/api/auth/oidc/callback`이 아닐 때, `password`·`password_hash`와 `mode: oidc`를 함께 줬을 때, `admin_subs`가 `allowed_subs` 밖일 때, `legacy_owner_sub`가 있는데 `allowed_subs` 밖일 때, oidc 모드의 `session_ttl`이 `24h`보다 길 때(짧은 TTL이 Q3의 전제다), 모르는 `mode` 값일 때.
     **루프백 http 예외.** `issuer`·`redirect_url`·`post_logout_redirect_url`은 호스트가 `127.0.0.1`·`::1`·`localhost`일 때만 `http://`를 받는다(uni-auth의 `dev_mode` 루프백 예외와 같은 모양). 테스트와 합성 e2e가 TLS 없이 가짜 공급자로 실제 바이너리를 돌리기 위한 것이다. 같은 출처 검사는 이때도 `redirect_url`의 출처로 한다. 운영 설정은 https다. `password`·`password_hash`·`session_key_file`은 password 모드만 쓴다.
-    **세 키는 코드 기본값이 없다(설정 파일에 적어야 한다).** 운영 값은 uni-auth 등록(2026-11-09, uni-auth 커밋 c2fe475, 기록 `docs/progress/2026-11-09T02-17-19+0900--e74-uni-auth-tunnel-env.md`)으로 확정됐다: `client_id = zip-viewer`, `redirect_url = https://library.betterax.net/api/auth/oidc/callback`(운영 `base_path`는 빈 값), `audience = https://library.betterax.net/api`. 클라이언트는 public·PKCE다. 등록된 scope는 `openid`·`offline_access`지만 요청은 `scope=openid`만 한다(§2.5, §2.7: refresh token을 받지 않는다). `base_path`를 바꾸면 `redirect_url`도 바뀌므로 uni-auth 등록을 고쳐야 한다. 등록 항목은 `client_id`·`name`·`redirect_uris`·`post_logout_redirect_uris`(쓸 때)·`audiences`·`scopes`(`openid`)다. 등록은 uni-auth에 쓰는 일이라 따로 승인받는다.
+    **세 키는 코드 기본값이 없다(설정 파일에 적어야 한다).** 운영 값은 uni-auth 등록(2026-11-09, uni-auth 커밋 c2fe475, 기록 `docs/progress/2026-11-09T02-17-19+0900--e74-uni-auth-tunnel-env.md`)으로 확정됐다: `client_id = zip-viewer`, `redirect_url = https://books.betterax.net/api/auth/oidc/callback`(운영 `base_path`는 빈 값), `audience = https://books.betterax.net/api`. 처음 등록은 `library` 하위 도메인 값이었고, 주소 변경(2026-11-09 17:3x)에 맞춘 등록 갱신은 묶음 U-R3(작업 계획 시작 계약 3)이 한다. 클라이언트는 public·PKCE다. 등록된 scope는 `openid`·`offline_access`지만 요청은 `scope=openid`만 한다(§2.5, §2.7: refresh token을 받지 않는다). `base_path`를 바꾸면 `redirect_url`도 바뀌므로 uni-auth 등록을 고쳐야 한다. 등록 항목은 `client_id`·`name`·`redirect_uris`·`post_logout_redirect_uris`(쓸 때)·`audiences`·`scopes`(`openid`)다. 등록은 uni-auth에 쓰는 일이라 따로 승인받는다.
 20. **HTTP 계약 — 개정 A-20.** 새 끝점: `GET /api/auth/oidc/start`, `GET /api/auth/oidc/callback`(302 또는 서버 렌더 HTML), `POST /api/auth/oidc/end-session`(302). 셋 다 `/api/auth/*` 인증 예외에 든다.
     바뀌는 것:
     - `GET /api/auth/status`에 `mode: "none" | "password" | "oidc"`, `user?: {sub: string, is_admin: boolean}`(oidc 모드에서 인증됐을 때), `end_session_available: boolean`을 더한다.
@@ -4711,7 +4711,7 @@ impl-plan §1.3도 같은 내용을 적었다. 그래서 백업을 만들려면 
 - **refresh token 보관(15분마다 갱신).** 회전과 재사용 탐지(재사용하면 토큰 패밀리 전체 폐기) 때문에 동시 갱신을 직렬화해야 하고, 토큰을 저장해야 한다.
 - **표지·시리즈 방향을 사용자별로.** 컬렉션의 성질이고 가족이 함께 고친다(Q8). 서버 선생성과 캐시 키(E-69 §2.7)도 사용자 수만큼 는다.
 - **내보내기 형식을 `/3`으로 올리기.** 모양이 그대로이므로 옛 서버가 새 파일을 거절하게 만들 이유가 없다.
-- **LAN 전용 https(01:4x 승인안의 Q9).** 사용자가 01:5x에 공개 터널(`library.betterax.net`)로 바꿨다. 그래서 공개 노출의 대가(터널 활성화 관문, 세션 없는 표면의 명시, 터널 경유 응답 시간 측정)를 §2.18에 둔다.
+- **LAN 전용 https(01:4x 승인안의 Q9).** 사용자가 01:5x에 공개 터널(지금 주소 `books.betterax.net`)로 바꿨다. 그래서 공개 노출의 대가(터널 활성화 관문, 세션 없는 표면의 명시, 터널 경유 응답 시간 측정)를 §2.18에 둔다.
 - **`CF-Connecting-IP`로 IP별 제한.** 그 헤더를 붙일 수 있는 출발지를 제한하는 키가 없으면 누구나 꾸밀 수 있다.
 - **계정 삭제 webhook 처리.** 수신 끝점과 서명 검증이 새로 필요하고 uni-auth 쪽도 P1 기능이다. 허용 목록 제거로 충분하다.
 
