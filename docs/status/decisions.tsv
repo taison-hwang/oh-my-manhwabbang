@@ -83,3 +83,4 @@ ts	작업	결정	이유	증거	결과
 2026-11-09T10:57:29+09:00	P-70	main 병합 456ec9b(rebase 무충돌, 재검사 생략 — 규칙, 파일 겹침 없음). worker-3 /clear. E-70·E-71·E-72 코드 전부 main	worker-3 [병합 완료]	456ec9b	U-E만 남음
 2026-11-09T11:35:06+09:00	크기 예산	사용자 승인: 예산 33,554,432 → 33,816,576(32.25 MiB). 이후 64 MiB 미만 조정은 자율(정식 측정 근거·판정 기록·세 곳 동시 변경), 64 MiB 이상은 사용자 승인. 기록: R-B(worker-4, decisions E-78·intent :30·AGENTS.md 한 줄), 숫자 변경: U-E(worker-2, Makefile·impl-plan·README)	Commander t1h 사용자 승인	—	worker-4 R-B, worker-2 U-E
 2026-11-09T11:44:02+09:00	R-T	사용자 질문(토큰 사용량 통계 방안) → 읽기 전용 조사 배정(worker-1). 기준 0461718(11-08 22:13). 워커 세션 'Transcript saving is off' 표시를 핵심 한계 후보로 확인 지시	Commander t1h 사용자 질문	—	worker-1 R-T
+2026-11-09T11:46:55+09:00	하네스 운영	worker-3(정리 후)의 잔여 herdr-report가 메인 체크아웃에서 잠금 없이 make test -race를 돌려 R-B 검사와 겹침(가용 2 GiB) → Orchestrator가 그 프로세스 묶음만 중지(종료 144). 규칙: 병합 뒤·대기 중 보고는 hc로만, herdr-report는 배정된 작업에서 잠금 아래서만	ps 부모 추적: herdr-report→herdr-check→make test(cwd 메인 체크아웃)	—	배정문에 반영
