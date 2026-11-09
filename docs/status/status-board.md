@@ -4,13 +4,12 @@
 
 | 작업 ID | 묶음 | 담당(role·터미널) | 상태 | 의존 | 근거 |
 | --- | --- | --- | --- | --- | --- |
-| U-E | U-E | worker-2(t7f), verifier-1(t7h) | 11c 갈림길 실험 + 독립 검증 병행 | 없음 | 5차: check PASS 2c189a2, synthetic 11c 2장 실패(렌더=4a7e798 이전 기준), release 33,681,570 B. 4a7e798 되돌림 뒤 synthetic 1회로 흔들림/R-F2 복구 판정(decisions.tsv 15:2x). verifier-1은 2c189a2 검증 중 — 새 커밋은 바뀐 부분만 재검증 |
+| U-E | U-E | worker-2(t7f), verifier-1(t7h) | 판정 대기 → 병합 | 없음 | [완료] 2251ebb 수락: synthetic rc=0(11c PASS, laptop 4a·4b 감시 제외), herdr-check PASS 2251ebb, release 33,681,570 B(여유 135,006). verifier-1 판정(head 2251ebb) PASS면 [병합] |
 
 ## 대기
 
 | 작업 ID | 기다리는 것 | 시작 | 풀릴 조건 | 만료 | 만료 시 |
 | --- | --- | --- | --- | --- | --- |
-| U-E | 검사: worker-2(t7f) 분기 (b) 제외 커밋의 synthetic+herdr-check | 15:22 | [완료] 또는 [차단] | 17:30 (예측 1h20m: synthetic 1541s+check 1132s+잠금 대기 ~30m, 근거 5차 기록) | hc read t7f로 진행 확인 → 정상이면 연장, 멈췄으면 4절 |
 | U-E | 판정: verifier-1(t7h) 독립 검증, head 094e568로 확장(11c는 final6 결과) | 14:2x | [판정] 최종 head | 17:45 (final6 약 45분 뒤 잠금 차례 t85 2분+판정 작성, final6 만료 17:30 이후) | hc read t7h로 진행 확인 |
 
 ## 세션 사고와 교체 (2026-11-09)
