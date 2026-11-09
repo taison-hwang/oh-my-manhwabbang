@@ -79,6 +79,10 @@ for name in os.listdir("/proc"):
         print(name)
 PY
 )"
+if [ "$release" = 1 ]; then
+  echo ">> make release ..."
+  make -C "$repo" release GO="$GO" PNPM="$PNPM" || { echo ">> make release failed (above); $out was kept as it was"; exit 1; }
+fi
 mv -f -- "$tmp" "$out"
 trap - EXIT
 echo ">> built $out: $version, $(wc -c <"$out") bytes"
@@ -87,8 +91,4 @@ if [ -n "$users" ]; then
   echo ">> restart it yourself when it suits you: scripts/start.sh --restart"
 else
   echo ">> next: scripts/start.sh"
-fi
-if [ "$release" = 1 ]; then
-  echo ">> make release ..."
-  make -C "$repo" release GO="$GO" PNPM="$PNPM" || { echo ">> make release failed (above); $out is already the new build"; exit 1; }
 fi

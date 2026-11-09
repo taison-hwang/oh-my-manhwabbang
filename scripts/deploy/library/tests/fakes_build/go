@@ -2,12 +2,14 @@
 # Test double for go as the Makefile calls it: `build -o OUT` writes a stand-in
 # binary (FAKE_GO_FAIL=1: writes half a file, then fails like a compile error;
 # FAKE_GO_FAIL=2: writes a working binary, then fails; FAKE_GO_BAD=1: succeeds
-# with a binary that does not answer --version);
+# with a binary that does not answer --version; FAKE_GO_FAIL=3: fails only a release
+# target, an output named shelf-<os>-<arch>);
 # every other subcommand succeeds.
 echo "go $*" >>"${FAKE_CALLS:-/dev/null}"
 [ "$1" = build ] || exit 0
 out="" prev=""
 for a in "$@"; do [ "$prev" = -o ] && out="$a"; prev="$a"; done
+case "$out" in */shelf-*-*) [ "${FAKE_GO_FAIL:-0}" = 3 ] && { echo "release link failed (fake)" >&2; exit 1; } ;; esac
 if [ "${FAKE_GO_BAD:-0}" = 1 ]; then
   printf '#!/bin/sh\nexit 3\n' >"$out"
   chmod +x "$out"

@@ -687,6 +687,14 @@ class RealBinaryConfigCheck(Env):
         self.assertTrue(self.listening())
         self.assertEqual(glob.glob(self.real_data + ".bak-*"), [])
 
+    def test_start_with_a_config_the_binary_rejects_changes_nothing(self):
+        self.ttl_25h()
+        r = self.run_books("--yes", "start", binary=self.bin)
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+        self.assertIsNone(self.pidfile_pid())
+        self.assertFalse(self.listening())
+        self.assertEqual(glob.glob(self.real_data + ".bak-*"), [])
+
 
 class Help(unittest.TestCase):
     def test_help_names_sudo_steps_and_the_services_a_restart_drops(self):

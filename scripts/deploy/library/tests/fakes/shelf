@@ -2,7 +2,7 @@
 # Test double for dist/shelf: serves the unauthenticated surface of auth.mode
 # "oidc" closely enough for verify-public.sh, and holds data_dir/user.db open
 # the way the real server holds its databases.
-#   FAKE_SHELF_MODE=good (default) | open (no auth: verify FAILs) | die (exit 2)
+#   FAKE_SHELF_MODE=good (default) | open (no auth: verify FAILs) | die (exit 2, except for the binary-check throwaway)
 #   FAKE_SHELF_DIE_SUB=S: exit 2 when allowed_subs holds S, except for the
 #   throwaway copy books.sh's binary check starts (a config under books-check.*)
 import http.server
@@ -16,10 +16,10 @@ if "--version" in sys.argv:
     print("shelf fake (test double)")
     sys.exit(0)
 mode = os.environ.get("FAKE_SHELF_MODE", "good")
-if mode == "die":
+cfg_path = sys.argv[sys.argv.index("--config") + 1]
+if mode == "die" and "books-check." not in cfg_path:
     print("config: fake startup failure", file=sys.stderr)
     sys.exit(2)
-cfg_path = sys.argv[sys.argv.index("--config") + 1]
 cfg = yaml.safe_load(open(cfg_path))
 die_sub = os.environ.get("FAKE_SHELF_DIE_SUB")
 if die_sub and "books-check." not in cfg_path and \

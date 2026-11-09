@@ -226,6 +226,7 @@ do_start() {
   local d bak pid
   [ -z "$(instance_pid || true)" ] || { say "already running: pid $(instance_pid)"; exit 1; }
   gate
+  [ "${checked:-}" = 1 ] || binary_check
   d="$(data_dir)"
   refuse_if_data_in_use "$d"
   if [ "$dry" = 1 ]; then
@@ -295,7 +296,7 @@ do_restart() {
   if [ "$dry" = 1 ]; then plan "stop pid $pid, then start (backup, health, local verify)"; return 0; fi
   confirm "Restart pid $pid with $config?"
   do_stop confirmed
-  yes=1 do_start
+  yes=1 checked=1 do_start
 }
 
 routes_books() { python3 -I "$here/books_proc.py" routes "$1" "$LIB_HOST"; }

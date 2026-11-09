@@ -83,6 +83,13 @@ class Build(unittest.TestCase):
         self.assertEqual(sha(self.out), before)
         self.assertEqual(self.leftovers(), [])
 
+    def test_a_failing_release_keeps_the_old_binary(self):
+        before = sha(self.out)
+        r = self.run_build("--skip-web", "--release", env=self.env(FAKE_GO_FAIL="3"))
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(sha(self.out), before)
+        self.assertEqual(self.leftovers(), [])
+
     def test_a_binary_that_does_not_answer_version_is_not_installed(self):
         before = sha(self.out)
         r = self.run_build("--skip-web", env=self.env(FAKE_GO_BAD="1"))
