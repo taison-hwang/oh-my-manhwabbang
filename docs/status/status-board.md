@@ -4,7 +4,7 @@
 
 | 작업 ID | 묶음 | 담당(role·터미널) | 상태 | 의존 | 근거 |
 | --- | --- | --- | --- | --- | --- |
-| U-D | U-D | verifier-1(t20) | 검증 | 없음 | rebase 513c3a8 검사 PASS, 독립 검증 |
+| U-D | U-D | worker-1(t1k) | 보완 | 없음 | ISSUES U-D-1(열린 관리자 UI 잔존), 최신 main rebase 포함 |
 
 ## 미확정 사항
 
