@@ -5,7 +5,7 @@
 | 작업 ID | 묶음 | 담당(role·터미널) | 상태 | 의존 | 근거 |
 | --- | --- | --- | --- | --- | --- |
 | U-E | U-E | worker-2(t1m) | 진행 | 없음 | E-74 마감: 가짜 공급자 oidc e2e·최종 gates·크기 재측정, 예산 33,816,576(E-78) 반영. 브랜치 work/u-e-finish 4f7a279(main 7bc50a9 위). 게이트는 hc 터미널 ue-gates(t6r)에서 단계마다 MemAvailable ≥ 10 GB·load1 < 20 가드. 1단계 herdr-check는 thumbs flake로 rc=1, 나머지 단계 뒤 재실행 예정. [완료] 뒤 독립 검증(지시문 초안 ~/.claude/herdr/handoff/zip-viewer/orchestrator-drafts/verify-ue.txt, BASESHA·HEADSHA 채워 보냄) |
-| T-U | T-U | worker-1(t6v) | 보완 | 없음 | ISSUES 2(저장소 밖 cwd 집계, TSV·JSON 고지) |
+| T-U | T-U | verifier-1(t20) | 재검증 | 없음 | 보완 14acda8, python 11 OK·lint 통과 |
 | R-F2 | R-F2 | worker-4(t3g) | 병합 대기 | herdr-check cb23cf0 | 독립 검증 PASS, 검사 PASS 뒤 조건부 병합 |
 
 ## 세션 교체 (사용자 승인 2026-11-09, 세션 기록 저장)
