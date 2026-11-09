@@ -1,6 +1,6 @@
 # 작업 계획
 
-갱신: 2026-11-09T18:09:29+09:00
+갱신: 2026-11-09T21:51 (Orchestrator t7c, 시작 계약 4 추가)
 
 ## 시작 계약 (E-74 계정 기능, 2026-11-09)
 
@@ -17,6 +17,21 @@
   6. uni-auth 클라이언트 등록(사용자 승인, 운영 주소 https://library.betterax.net)과 Cloudflare 터널 ingress: 등록은 바로, 터널 공개는 oidc 서버의 인증·접근 제한·우회 경로 검증 뒤. 실제 로그인 1회 확인. 기존 서비스 설정 보존.
 - 허용 범위: zip-viewer 코드·테스트·docs(intent 포함, 위 승인 범위), 새 Go 의존성 없이 표준 라이브러리. uni-auth는 읽기·GET만, 클라이언트 등록 1건만 사용자 URL 확정 뒤. 금지: push, :9909 재시작·쓰기, 다른 3차 기능, 크기 예산 상향, uni-auth 설정 변경·로그인 시도(등록 전).
 - 탈출 조건: 계약이 승인안 밖의 결정을 요구할 때, 크기 예산 초과, 재배정 2번+재계획 실패, uni-auth 쓰기가 등록 1건을 넘을 때.
+
+## 시작 계약 4 (books 운영 실행 스크립트, 2026-11-09)
+
+요청(사용자, Commander t1h 경유 21:4x): "상용 실행 스크립트. books.betterax.net + uni-auth 운영을 기존 수동 절차(§5 A~F)보다 쉽게 시작·재시작·상태 확인하도록 실행 스크립트와 사용법을 구현·검증. 기존 데이터 보존, 인증 없는 공개 방지, Cloudflare 변경과 sudo·기존 서비스 영향은 명시적 단계로, 실패 시 안전한 중단과 복구. 사용자 설정값은 검증하고 임의로 덮어쓰지 않는다. 운영 서버 재시작은 사용자가 직접, 현재 실행 환경은 건드리지 않는다. 독립 검증·보이는 패널 유지."
+읽기 확인(21:4x): :9909·:9910 listen 없음, dist/shelf 프로세스 없음, shelf.books.yaml 없음(shelf.yaml만), uni-auth 127.0.0.1:8443 listen.
+
+- 완료 조건:
+  1. 한 진입점 스크립트(scripts/deploy/library/ 아래)가 check·status·start·stop·restart·tunnel(적용·재시작)·rollback·verify를 제공하고 `--help`에 각 단계의 영향(sudo 여부, 끊기는 기존 서비스)을 적는다. 기존 preflight·tunnel-apply·tunnel-rollback·verify-public을 재사용한다.
+  2. 인증 없는 공개 방지: auth.mode≠oidc, listen이 루프백이 아님, issuer·client_id·audience·redirect가 books 값과 다름 중 하나면 start·restart·tunnel이 아무것도 바꾸지 않고 0이 아닌 코드로 멈춘다. tunnel은 로컬 verify-public FAIL 0일 때만 진행한다.
+  3. 데이터·설정 보존: 스크립트는 사용자 설정 파일을 쓰지 않는다(초기 생성은 파일이 없을 때만, 있으면 거부). start 전 data_dir 백업, 백업·데이터 삭제 없음. 같은 data_dir을 쓰는 다른 shelf(:9909 등)가 돌면 start 거부.
+  4. 실패 시 안전 중단·복구: 기동 뒤 헬스·로컬 verify FAIL이면 새 인스턴스를 멈추고 복구 명령을 출력, 공개 verify FAIL이면 ingress 백업으로 되돌린다. stop은 pidfile·포트·명령줄이 모두 맞는 프로세스만 끈다. 변경 단계는 확인(대화형 또는 명시 플래그)이 필요하고 sudo 단계는 따로 확인한다. --dry-run은 아무것도 바꾸지 않는다.
+  5. 자동 테스트가 임시 포트·임시 설정·임시 data_dir·가짜 cloudflared/systemctl/sudo로 위 2~4를 실행해 보이고, :9909·:9910·/etc·실제 cloudflared·uni-auth를 건드리지 않는다. 사용법은 새 런북(docs/progress)과 --help. make lint PASS, 독립 검증 PASS 뒤 병합.
+- 허용 범위: scripts/deploy/library/**, 테스트, docs/progress 새 런북. 읽기 전용 status·check를 현재 환경에 실행하는 것은 허용. 금지: 실제 start·stop·restart·tunnel 실행, :9909·:9910 조작, sudo·/etc·systemctl, shelf.yaml·shelf.books.yaml 생성·수정, uni-auth·DNS 쓰기, push.
+- 탈출 조건: 안전 조건을 지키려면 shelf 바이너리 변경이 필요할 때, 사용자 환경 쓰기 없이 검증할 수 없을 때 → [차단].
+- 묶음 U-R4: worker-3(U-R3a·b 맥락, 같은 파일). U-R3c와 독립(사용자 적용은 이 스크립트로 해도 되고 §5로 해도 된다).
 
 ## 시작 계약 3 (운영 주소 books.betterax.net, 2026-11-09)
 
@@ -74,3 +89,4 @@ E-74 완료 조건 6을 대체한다(주소만 바뀜, 나머지 조건 그대�
 | U-R3a | U-R3 | 운영 주소 library → books.betterax.net 저장소 반영 | 시작 계약 3 완료 조건 1 | 없음 | scripts/deploy/library/*, docs/decisions.md, docs/arch-backend.md, 런북(새 진행 기록으로 대체) |
 | U-R3b | U-R3 | CLI 권한·터널 확인, uni-auth 클라이언트 갱신, DNS route, 사용자 실행 명령 준비 | 시작 계약 3 완료 조건 2·3·4(명령) | U-R3a | docs/progress 새 파일(외부 상태: uni-auth 클라이언트 1건, DNS 1건) |
 | U-R3c | U-R3 | 사용자 적용 뒤 공개 검증·실제 로그인 | 시작 계약 3 완료 조건 4(검증) | U-R3b, 사용자 적용 | docs/progress |
+| U-R4 | U-R4 | books 운영 실행 스크립트(check·status·start·stop·restart·tunnel·rollback·verify)·자동 테스트·런북 | 시작 계약 4 완료 조건 1~5 | 없음(U-R3a 스크립트 재사용) | scripts/deploy/library/**, docs/progress 새 런북 |
