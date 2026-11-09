@@ -36,6 +36,7 @@ internal/…          seventeen single-responsibility packages; see docs/arch-ba
 web/                simultaneously the Vite project and the Go package go:embed reads
 integration/        -tags integration, gated on SHELF_TEST_ROOT (impl-plan §6.2)
 scripts/            the E2E runner, the static guards, the contract gate, the fixture builder
+scripts/usage/      token-usage report over Claude/Codex session logs (read-only, stdlib Python)
 test/               the E2E configuration template
 ```
 
@@ -156,6 +157,20 @@ each dependency nothing imports *yet* — seven of the nine, at the time of
 writing. The target therefore snapshots `go.mod`/`go.sum`, tidies, checks all
 nine pins survived at their exact versions, and rolls back and exits non-zero if
 any did not. Once the importing package lands, tidy passes normally.
+
+Token-usage report (read-only; reads `~/.claude/projects/<this repo>` and the
+Codex rollouts whose `session_meta.cwd` is this repo, never writes them):
+
+```bash
+python3 -I scripts/usage/usage_report.py                  # text tables, since the harness install commit
+python3 -I scripts/usage/usage_report.py --format tsv     # or json; --since <ISO time>; --codex-role gpt-x=role
+python3 -I -B -m unittest discover -s scripts/usage          # its tests (also run by make test)
+```
+
+Claude and Codex counts are never added together. Cost is a Claude-only API-price
+estimate from `scripts/usage/prices.json` (source URL and retrieval date inside);
+models without a confirmed price, and all of Codex, show no cost. The "gaps"
+section at the top lists what the logs cannot cover.
 
 Frontend-only loop, from `web/`: `pnpm dev` (Vite on :5173, proxying `/api` to
 :8790), `pnpm build`, `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm e2e`.

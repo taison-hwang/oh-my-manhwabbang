@@ -293,6 +293,7 @@ test:
 	@$(if $(NOPDF_PKGS),,$(error NOPDF_PKGS is empty: no package has a nopdf build constraint. Pass 3 would test the current directory and pass. See the comment above INT_PKGS))
 	@echo ">> test 0/3: the E2E gate's own assertions (no server, ~1 s)"
 	@python3 scripts/e2e-assert-rescan-test.py
+	@python3 -I -B -m unittest discover -s scripts/usage -p 'test_*.py'
 	@echo ">> test 1/3: untagged (the superset — includes the live AVIF decode path)"
 	$(GOENV) CGO_ENABLED=1 $(GO) test ./... $(RACE) -count=1
 	@echo ">> test 2/3: the SHIPPED tag set (-tags \"$(TAGS)\")"
