@@ -246,6 +246,21 @@ test.describe('E-74 oidc mode', () => {
     expect(Math.abs(ttl - 2_592_000), 'Max-Age=2592000 (E-74 §2.4)').toBeLessThan(120)
     expect((await context.cookies()).map((c) => c.name)).not.toContain(LOGIN_COOKIE)
 
+    // The same live session, carried by a write from another origin (E-74 §2.11).
+    const forged = await fetch(`${BASE}/api/scan`, {
+      method: 'POST',
+      headers: {
+        Cookie: `${SID_COOKIE}=${cookie?.value ?? ''}`,
+        Origin: 'http://evil.example',
+        'Content-Type': 'application/json',
+      },
+      body: '{"full":false}',
+    })
+    const forgedBody = (await forged.json()) as { error?: { detail?: { reason?: string } } }
+    expect(`${String(forged.status)} ${forgedBody.error?.detail?.reason ?? '-'}`, 'cross_origin with a session').toBe(
+      '403 cross_origin',
+    )
+
     const status = await apiGet<{
       mode: string
       authenticated: boolean
@@ -271,6 +286,7 @@ test.describe('E-74 oidc mode', () => {
     const cover = await api(page, 'PUT', `/api/books/${cloverBook}/cover`, { page: 2, x: 0, y: 0, w: 0.5, h: 0.5 })
     expect(cover.status, 'PUT …/cover is open to every allowed user (E-74 §2.10)').toBe(200)
     const aliceBook = await book(page, cloverBook)
+    expect(aliceBook.cover, 'the chosen cover took').toMatchObject({ page: 2 })
 
     const bob = await otherUser(browser, 'bob')
     const bobBook = await book(bob.page, cloverBook)
@@ -323,6 +339,7 @@ test.describe('E-74 oidc mode', () => {
       await expect(dialog.getByRole('button', { name: '전체 삭제' }), who).toHaveCount(n)
       await expect(dialog.getByTestId('root-row-mangga').getByRole('button', { name: '재스캔' }), who).toHaveCount(n)
       const roots = await apiGet<{ items: { path: string }[] }>(p, '/api/roots')
+      expect(roots.items.length, `${who}: GET /api/roots lists the root`).toBe(1)
       expect(roots.items[0]?.path !== '', `${who}: Root.path is admin information (E-74 §2.10)`).toBe(admin)
     }
 
@@ -365,9 +382,13 @@ test.describe('E-74 oidc mode', () => {
       outcome: 'page',
     })
 
+    answer = rescanResponse()
+    await rescan.click()
+    expect((await answer).ok(), 'right after the re-authentication the admin write goes through').toBe(true)
+
     const hash = await sessionHash(context)
     setReauthAgo(hash, 14)
-    await expect(rescan).toBeEnabled()
+    await expect(rescan).toBeEnabled({ timeout: 30_000 })
     answer = rescanResponse()
     await rescan.click()
     expect((await answer).ok(), '14 minutes after reauth the admin write goes through').toBe(true)
@@ -416,6 +437,9 @@ test.describe('E-74 oidc mode', () => {
     const out = await api(bob.page, 'POST', '/api/auth/logout')
     expect(out.status).toBe(204)
     const quiet = (await fakeEvents()).length
+    expect(reasonOf(await api(bob.page, 'GET', `/api/series/${wheelSid}`)), 'the logged-out session: 401, no reason').toBe(
+      '401 -',
+    )
     await seriesTile(bob.page, WHEEL).click()
     await expect(bob.page.getByText('계속하려면 로그인하세요.')).toBeVisible()
     expect(new URL(bob.page.url()).pathname, 'a reasonless 401 sends the page to base_path/').toBe('/')
@@ -433,6 +457,7 @@ test.describe('E-74 oidc mode', () => {
     const cookie = await sidCookie(context)
     const left = (cookie?.expires ?? 0) - Date.now() / 1000
     expect(left, 'the cookie stays 10 minutes for 모든 서비스에서 로그아웃').toBeLessThan(660)
+    expect(left).toBeGreaterThan(540)
 
     const before = (await fakeEvents()).length
     await page.getByRole('button', { name: '모든 서비스에서 로그아웃' }).click()
