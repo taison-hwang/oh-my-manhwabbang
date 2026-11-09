@@ -24,7 +24,7 @@
 1. (끝남 main 1ea034b) U-R5 병합. 이전 메모: 판정 ISSUES 61dce12 안전 2건(이후 실행 start의 바이너리 설정 검사 누락, build.sh --release 실패 시 바이너리 교체) 보완 중. 사용자 지시(02:1x): 관련 테스트 1회만, herdr-report 쓰지 않고 hc로 "[완료] U-R5 보완 1 커밋 <SHA>" 한 줄. 오면 verifier-1(t9f, `hc keys t9f / c l e a r enter` 후)에 그 2건만 짧게 재확인 [검증](기록 /tmp/verify-ur5/…, 앞 기록 /tmp/verify-ur5/2026-11-10T01-55-01+0900--verify-ur5.md) → PASS면 [병합](main e805e91 위 rebase: U-R6이 Makefile·README 경로를 바꿨으므로 충돌 해결이 생기면 바뀐 부분만 확인) → 시작 계약 5 완료를 Commander에 [완료]. 전체 검사(herdr-report)는 사용자 지시로 생략.
 2. 사용자 결정 대기: 회원관리 확장 A/B/C(~/.claude/herdr/handoff/zip-viewer/member-access-report-2026-11-09.md), U-R3c 사용자 적용(scripts/build.sh → scripts/start.sh, README "Running at books.betterax.net"), 기존 목록(push·옛 worktree 삭제·Codex 단가·E-70 실기기·allow_root_editing).
 3. 규칙: 구현 워커는 실행기 기본(sonnet), 모델 인자 금지. 검증은 위험에 비례: 단순 래퍼·경로 이동은 quick-check+표적 테스트, 전체 게이트는 릴리스·공개 계약 변경에만. 워커에게 진행 확인 메시지 금지. Commander에는 완료·차단만.
-4. 후속 후보: harness.env:46 quick-check 경로(scripts/check/)를 다음 harness sync 뒤 확인, tunnel-apply.sh 단독 호출의 grep "이미 있음" 검사.
+4. 후속 후보: tunnel-apply.sh 단독 호출의 grep "이미 있음" 검사.
 
 ## 미확정 사항
 
