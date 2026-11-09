@@ -127,12 +127,12 @@ class Env(unittest.TestCase):
         e.update(extra)
         return e
 
-    def run_books(self, *args, cfg=None, url=None, env=None, timeout=120):
-        cmd = [BOOKS, "--config", cfg or self.cfg, "--bin", FAKE_SHELF, "--workdir", self.tmp,
+    def run_books(self, *args, cfg=None, url=None, env=None, timeout=180, cwd=None, workdir=None, binary=None):
+        cmd = [BOOKS, "--config", cfg or self.cfg, "--bin", binary or FAKE_SHELF, "--workdir", workdir or self.tmp,
                "--state-dir", self.state, "--cf-config", self.cf,
                "--url", url or "http://127.0.0.1:%d" % self.port, "--wait", "10"] + list(args)
         return subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                              env=env or self.env(), timeout=timeout)
+                              env=env or self.env(), timeout=timeout, cwd=cwd)
 
     def pidfile_pid(self):
         try:
@@ -187,15 +187,18 @@ class Env(unittest.TestCase):
 
 
 def pids_with_arg(fragment):
+    """Processes whose command line or working directory mentions fragment."""
     for name in os.listdir("/proc"):
         if not name.isdigit():
             continue
         try:
             with open("/proc/%s/cmdline" % name, "rb") as f:
-                if fragment.encode() in f.read():
-                    yield int(name)
+                hit = fragment.encode() in f.read()
+            hit = hit or os.readlink("/proc/%s/cwd" % name).startswith(fragment)
         except OSError:
-            pass
+            continue
+        if hit:
+            yield int(name)
 
 
 def alive(pid):
@@ -320,6 +323,32 @@ class DataAndConfigPreserved(Env):
         self.assertEqual(r.returncode, 9, r.stdout + r.stderr)
         self.assertEqual(sha(self.cfg), before)
 
+    def test_init_needs_confirmation_and_writes_nothing_without_it(self):
+        new = os.path.join(self.tmp, "new.yaml")
+        r = self.run_books("init", "--from", self.cfg, cfg=new)
+        self.assertEqual(r.returncode, 10, r.stdout + r.stderr)
+        self.assertFalse(os.path.exists(new))
+
+    def test_relative_config_with_another_workdir_runs_and_backs_up_the_checked_config(self):
+        caller = os.path.join(self.tmp, "caller")
+        other = os.path.join(self.tmp, "other")
+        data_a, data_b = os.path.join(self.tmp, "data-a"), os.path.join(self.tmp, "data-b")
+        for d in (caller, other, data_a, data_b):
+            os.makedirs(d)
+        for d in (data_a, data_b):
+            with open(os.path.join(d, "user.db"), "wb") as f:
+                f.write(b"keep-" + d.encode())
+        self.write_cfg(books_config(self.port, data_a), os.path.join(caller, "shelf.books.yaml"))
+        self.write_cfg(books_config(self.port, data_b), os.path.join(other, "shelf.books.yaml"))
+        r = self.run_books("--yes", "start", cfg="shelf.books.yaml", cwd=caller, workdir=other)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        pid = self.pidfile_pid()
+        opened = [os.readlink("/proc/%d/fd/%s" % (pid, fd)) for fd in os.listdir("/proc/%d/fd" % pid)]
+        self.assertIn(os.path.join(data_a, "user.db"), opened)
+        self.assertNotIn(os.path.join(data_b, "user.db"), opened)
+        self.assertEqual(len(glob.glob(data_a + ".bak-*")), 1)
+        self.assertEqual(glob.glob(data_b + ".bak-*"), [])
+
     def test_init_writes_a_new_config_that_passes_check(self):
         old = os.path.join(self.tmp, "shelf.yaml")
         self.write_cfg({"server": {"listen": "0.0.0.0", "port": 9909, "allow_root_editing": True},
@@ -327,7 +356,7 @@ class DataAndConfigPreserved(Env):
                         "storage": {"data_dir": "data", "cache_dir": "cache"}}, old)
         old_before = sha(old)
         new = os.path.join(self.tmp, "new.yaml")
-        r = self.run_books("init", "--from", old, cfg=new)
+        r = self.run_books("--yes", "init", "--from", old, cfg=new)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(sha(old), old_before)
         got = load_yaml(new)
@@ -481,6 +510,39 @@ class SafeFailureAndRecovery(Env):
         self.assertEqual(sha(self.cf), cf_before)
         self.assertEqual(self.calls_text().count("sudo systemctl restart cloudflared"), 2)
 
+    def test_tunnel_restart_refuses_every_unsafe_config_without_restarting(self):
+        self.start_ok()
+        self.assertEqual(self.run_books("--yes-sudo", "tunnel", "apply").returncode, 0)
+        cf_applied = sha(self.cf)
+        for name, over in BAD_CONFIGS.items():
+            with self.subTest(name):
+                self.write_cfg(books_config(self.port, self.data, **over))
+                r = self.run_books("--yes-sudo", "tunnel", "restart")
+                self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+                self.assertNotIn("systemctl restart", self.calls_text())
+                self.assertEqual(sha(self.cf), cf_applied)
+
+    def test_tunnel_restart_without_a_restorable_backup_is_refused_before_restarting(self):
+        self.start_ok()
+        with open(self.cf) as f:
+            text = f.read()
+        manual = text.replace("  # catch-all\n", "  - hostname: books.betterax.net\n    service: http://127.0.0.1:%d\n  # catch-all\n" % self.port)
+        with open(self.cf, "w") as f:
+            f.write(manual)
+        r = self.run_books("--yes-sudo", "tunnel", "restart")
+        self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("backup", r.stdout + r.stderr)
+        self.assertNotIn("systemctl restart", self.calls_text())
+        r = self.run_books("--yes-sudo", "tunnel", "restart", "--backup", self.cf)
+        self.assertNotEqual(r.returncode, 0, "a backup that still routes books cannot unpublish it")
+        self.assertNotIn("systemctl restart", self.calls_text())
+        backup = os.path.join(self.tmp, "cf", "config.yml.bak-manual")
+        with open(backup, "w") as f:
+            f.write(text)
+        r = self.run_books("--yes-sudo", "tunnel", "restart", "--backup", backup)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("sudo systemctl restart cloudflared", self.calls_text())
+
     def test_cloudflared_not_active_after_restart_rolls_back(self):
         self.start_ok()
         cf_before = sha(self.cf)
@@ -488,6 +550,80 @@ class SafeFailureAndRecovery(Env):
         r = self.run_books("--yes-sudo", "tunnel", "restart", env=self.env(FAKE_CF_INACTIVE="1"))
         self.assertNotEqual(r.returncode, 0)
         self.assertEqual(sha(self.cf), cf_before)
+
+
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(LIB)))
+GOENV = {"GOPROXY": "https://proxy.golang.org,direct", "GOSUMDB": "sum.golang.org", "GOTOOLCHAIN": "auto",
+         "CGO_ENABLED": "0"}
+
+
+class RealBinaryConfigCheck(Env):
+    """The config rules that only the shelf binary knows (E-74 §2.19, e.g. the
+    24h oidc session_ttl cap) must stop restart before the old instance is
+    touched. Uses a real build; the instance never asks the issuer for anything
+    because nothing here requests /api/auth/status or oidc/start."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.build = tempfile.mkdtemp(prefix="books-test-bin-")
+        cls.bin = os.path.join(cls.build, "shelf")
+        env = dict(os.environ, **GOENV)
+        r = subprocess.run(["go", "build", "-tags", "noavif nopdf", "-o", cls.bin, "./cmd/shelf"],
+                           cwd=REPO, env=env, capture_output=True, text=True, timeout=900)
+        if r.returncode != 0:
+            raise RuntimeError("go build failed: " + r.stderr[-2000:])
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.build, ignore_errors=True)
+
+    def setUp(self):
+        super().setUp()
+        self.real_data = os.path.join(self.tmp, "real-data")
+        root = os.path.join(self.tmp, "root")
+        os.makedirs(root)
+        self.real_cfg = books_config(self.port, self.real_data, roots=[{"name": "r", "path": root}])
+        self.real_cfg["storage"]["cache_dir"] = os.path.join(self.tmp, "real-cache")
+        self.real_cfg["scan"] = {"on_start": False}
+        self.write_cfg(self.real_cfg)
+
+    def start_real(self):
+        os.makedirs(self.state, exist_ok=True)
+        log = open(os.path.join(self.tmp, "real.log"), "ab")
+        self.addCleanup(log.close)
+        p = subprocess.Popen([self.bin, "--config", self.cfg], cwd=self.tmp, stdout=log, stderr=log,
+                             stdin=subprocess.DEVNULL)
+        self.procs.append(p)
+        with open(os.path.join(self.state, "shelf.pid"), "w") as f:
+            f.write(str(p.pid))
+        for _ in range(100):
+            if self.listening():
+                return p
+            time.sleep(0.2)
+        self.fail("real shelf did not listen")
+
+    def ttl_25h(self):
+        cfg = load_yaml(self.cfg)
+        cfg["auth"]["session_ttl"] = "25h"
+        self.write_cfg(cfg)
+
+    def test_check_runs_the_binary_config_validator(self):
+        r = self.run_books("check", binary=self.bin)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.ttl_25h()
+        r = self.run_books("check", binary=self.bin)
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+        self.assertIn("session_ttl", r.stdout + r.stderr)
+
+    def test_restart_with_a_config_the_binary_rejects_keeps_the_old_instance(self):
+        old = self.start_real()
+        self.ttl_25h()
+        r = self.run_books("--yes", "restart", binary=self.bin)
+        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+        self.assertIsNone(old.poll())
+        self.assertEqual(self.pidfile_pid(), old.pid)
+        self.assertTrue(self.listening())
+        self.assertEqual(glob.glob(self.real_data + ".bak-*"), [])
 
 
 class Help(unittest.TestCase):

@@ -4,20 +4,25 @@
 # usage: books.sh [options] <command>
 #
 # commands (impact in brackets):
-#   check               read-only preflight of the config and this machine        [none]
+#   check               preflight of the config and this machine, then the binary's
+#                       own config check: a throwaway copy (temporary data_dir,
+#                       cache_dir and port, no scan) is started until healthy     [none to your data]
 #   status              read-only: instance, port, health, ingress, DNS, public   [none]
 #   init --from FILE    write a NEW --config from an existing shelf.yaml; refused
-#                       if --config exists. Review it before start                [new file]
+#                       if --config exists. Needs --yes. Review it before start   [new file]
 #   start               preflight -> refuse if data_dir is in use -> back up
 #                       data_dir -> start --bin -> health -> local verify; on
 #                       failure the new instance is stopped                       [starts a process, no sudo]
 #   stop                TERM the instance only if pidfile, port owner and command
 #                       line (--bin --config) all match                           [stops it, no sudo]
-#   restart             preflight of the NEW config first (old process untouched
-#                       if it fails), then stop + start                           [no sudo]
+#   restart             check of the NEW config first (preflight + the binary's
+#                       config check; old process untouched if either fails),
+#                       then stop + start                                         [no sudo]
 #   tunnel apply        local verify must pass, then sudo tunnel-apply.sh adds the
 #                       books rule to the cloudflared config. No restart          [sudo, writes /etc/cloudflared/config.yml]
-#   tunnel restart      sudo systemctl restart cloudflared, then public verify;
+#   tunnel restart [--backup F]  needs the same preflight as tunnel apply and an
+#                       ingress backup without the books rule (recorded by tunnel
+#                       apply, or F); then sudo systemctl restart cloudflared, then public verify;
 #                       on failure the ingress backup is restored and cloudflared
 #                       restarted again. auth.betterax.net and
 #                       ohmyassets.betterax.net (same tunnel) drop for a few
@@ -27,7 +32,8 @@
 #   verify local|public|all   verify-public.sh against the port / the public URL  [none]
 #
 # options:
-#   --config FILE     default <repo>/shelf.books.yaml (never written, except by init when absent)
+#   --config FILE     default <repo>/shelf.books.yaml (never written, except by init when absent).
+#                     Every path option is made absolute against the directory you run this in
 #   --bin FILE        default <repo>/dist/shelf
 #   --workdir DIR     the server's working directory; a relative storage.data_dir
 #                     resolves here. Default <repo>
@@ -36,7 +42,7 @@
 #   --cf-config FILE  default /etc/cloudflared/config.yml
 #   --url URL         public URL for verify, default https://books.betterax.net
 #   --wait SECONDS    health wait after start, default 30
-#   --yes             confirm start/stop/restart without a prompt
+#   --yes             confirm init/start/stop/restart without a prompt
 #   --yes-sudo        confirm the sudo steps (tunnel apply/restart, rollback);
 #                     --yes does not cover them
 #   --dry-run         print what would change and change nothing
@@ -75,6 +81,9 @@ done
 [ "${#args[@]}" -gt 0 ] || { sed -n '4p' "$0" | sed 's/^# //'; exit 2; }
 need python3; need ss; need curl
 
+# The server runs in --workdir; fix every path now so the files checked are the files run.
+abs() { realpath -m -s -- "$1"; }
+config="$(abs "$config")" bin="$(abs "$bin")" workdir="$(abs "$workdir")" state="$(abs "$state")" cf_config="$(abs "$cf_config")"
 pidfile="$state/shelf.pid" logfile="$state/shelf.log" cf_backup_rec="$state/tunnel.backup"
 proc() { python3 -I "$here/books_proc.py" "$@"; }
 port() { yaml_get "$config" server.port; }
@@ -166,6 +175,48 @@ recovery_help() { # backup
   say "  nothing was published; the tunnel was not touched"
 }
 
+# binary_check: the rules only shelf knows (E-74 §2.19, e.g. session_ttl <= 24h in
+# oidc mode) surface when the binary loads the file; shelf has no check-only flag.
+# A copy with its own data_dir, cache_dir and port is started and stopped, so the
+# real data, the real port and a running instance are never touched.
+binary_check() {
+  local t tp tpid code=""
+  t="$(mktemp -d "${TMPDIR:-/tmp}/books-check.XXXXXX")"
+  tp="$(python3 -I - "$config" "$t" <<'PY'
+import socket, sys
+import yaml
+src, t = sys.argv[1:3]
+doc = yaml.safe_load(open(src)) or {}
+s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
+doc.setdefault("server", {}).update({"listen": "127.0.0.1", "port": port})
+doc.setdefault("storage", {}).update({"data_dir": t + "/data", "cache_dir": t + "/cache"})
+doc.setdefault("scan", {})["on_start"] = False
+with open(t + "/shelf.yaml", "w") as f:
+    yaml.safe_dump(doc, f)
+print(port)
+PY
+)"
+  (cd "$workdir" && exec "$bin" --config "$t/shelf.yaml" >"$t/log" 2>&1 </dev/null) &
+  tpid=$!
+  for _ in $(seq 1 $((wait_s * 2))); do
+    running "$tpid" || break
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:$tp/api/health" || true)"
+    [ "$code" = 200 ] && break
+    sleep 0.5
+  done
+  term_and_wait "$tpid" || kill -KILL "$tpid" 2>/dev/null || true
+  wait "$tpid" 2>/dev/null || true
+  if [ "$code" != 200 ]; then
+    say "REFUSED: $bin does not accept $config (a throwaway copy did not start):"
+    tail -5 "$t/log" | sed 's/^/   /'
+    rm -rf -- "$t"
+    say "Nothing was changed."
+    exit 3
+  fi
+  rm -rf -- "$t"
+  say "binary config check: $bin accepts $config"
+}
+
 do_start() {
   local d bak pid
   [ -z "$(instance_pid || true)" ] || { say "already running: pid $(instance_pid)"; exit 1; }
@@ -235,6 +286,7 @@ do_stop() {
 do_restart() {
   local pid; pid="$(matched_pid)"
   gate "$pid"
+  binary_check
   if [ "$dry" = 1 ]; then plan "stop pid $pid, then start (backup, health, local verify)"; return 0; fi
   confirm "Restart pid $pid with $config?"
   do_stop confirmed
@@ -272,10 +324,17 @@ rollback_ingress() { # backup
 
 do_tunnel_restart() {
   local bak
+  gate "$(instance_pid || true)"
   cf_has_rule || { say "REFUSED: $cf_config has no $LIB_HOST rule; run tunnel apply first"; exit 1; }
   local_verify >/dev/null || { say "REFUSED: local verify has FAILs (books.sh verify local); cloudflared not restarted"; exit 7; }
   bak="$(cat "$cf_backup_rec" 2>/dev/null || true)"
-  if [ "$dry" = 1 ]; then plan "sudo systemctl restart cloudflared, verify-public --public --url $url, on FAIL roll back to ${bak:-<no recorded backup>}"; return 0; fi
+  [ "${1:-}" = --backup ] && bak="$(abs "${2:-}")"
+  if [ -z "$bak" ] || [ ! -f "$bak" ] || grep -q "hostname: *$LIB_HOST" "$bak"; then
+    say "REFUSED: no ingress backup to fall back to (${bak:-none recorded}; it must exist and not route $LIB_HOST)."
+    say "give the file tunnel-apply.sh made: books.sh tunnel restart --backup /etc/cloudflared/config.yml.bak-<UTC>. cloudflared not restarted"
+    exit 1
+  fi
+  if [ "$dry" = 1 ]; then plan "sudo systemctl restart cloudflared, verify-public --public --url $url, on FAIL roll back to $bak"; return 0; fi
   confirm_sudo "Restart cloudflared? auth.betterax.net and ohmyassets.betterax.net drop for a few seconds."
   if restart_cloudflared && "$here/verify-public.sh" --public --url "$url"; then
     say "public: $url passes verify. First login: open it, copy the sub from the 403 page,"
@@ -314,6 +373,7 @@ do_init() {
   [ "${1:-}" = --from ] && [ -r "${2:-}" ] || die "init --from <existing shelf.yaml>"
   [ ! -e "$config" ] || { say "REFUSED: $config exists; it is never overwritten"; exit 9; }
   if [ "$dry" = 1 ]; then plan "write $config from $2 (server: 127.0.0.1:$DEFAULT_PORT, auth oidc block)"; return 0; fi
+  confirm "Write a new $config from $2?"
   python3 -I - "$2" "$config" "$LIB_HOST" "$DEFAULT_PORT" <<'PY'
 import sys
 import yaml
@@ -362,7 +422,7 @@ case "$cmd" in
   *) [ -r "$config" ] || { say "no config at $config (books.sh init --from <shelf.yaml> writes one)"; exit 3; } ;;
 esac
 case "$cmd" in
-  check) gate "$(instance_pid || true)"; say "check: no FAIL" ;;
+  check) gate "$(instance_pid || true)"; binary_check; say "check: no FAIL" ;;
   status) do_status ;;
   init) do_init "${args[@]:1}" ;;
   start) do_start ;;
@@ -371,7 +431,7 @@ case "$cmd" in
   tunnel)
     case "${args[1]:-}" in
       apply) do_tunnel_apply ;;
-      restart) do_tunnel_restart ;;
+      restart) do_tunnel_restart "${args[@]:2}" ;;
       *) die "tunnel apply|restart" ;;
     esac ;;
   rollback) do_rollback "${args[@]:1}" ;;
