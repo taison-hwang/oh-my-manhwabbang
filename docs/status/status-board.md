@@ -4,12 +4,13 @@
 
 | 작업 ID | 묶음 | 담당(role·터미널) | 상태 | 의존 | 근거 |
 | --- | --- | --- | --- | --- | --- |
-| U-R3 | U-R3 | worker-3(t93) | U-R3a 진행 | 없음 | 시작 계약 3: 운영 주소 books.betterax.net. a 저장소 → b 운영 준비(uni-auth 갱신·DNS·사용자 명령) → 사용자 적용 → c 공개 검증. U-R2b(library)는 이것으로 대체 |
+| U-R3 | U-R3 | worker-3(t93), verifier-1(t7h) | U-R3a 검사·독립 검증(e0d8af9), U-R3b 읽기 확인 | 없음 | 시작 계약 3: 운영 주소 books.betterax.net. a 저장소 → b 운영 준비(uni-auth 갱신·DNS·사용자 명령) → 사용자 적용 → c 공개 검증. U-R2b(library)는 이것으로 대체 |
 
 ## 대기
 
 | 작업 ID | 기다리는 것 | 시작 | 풀릴 조건 | 만료 | 만료 시 |
 | --- | --- | --- | --- | --- | --- |
+| U-R3a | 판정: verifier-1(t7h) e0d8af9 | 18:2x | [판정] | 19:45 (예측 50분: diff·사본 시험·lint, 근거 U-R2a·T-U 검증 소요) | hc read t7h |
 | U-R3 | 작업: worker-3(t93) U-R3a·b | 17:4x | [완료] U-R3b(사용자 명령 블록) | 20:00 (예측 1h20m: 문서·스크립트 수정+lint, 외부 확인·갱신, 근거 U-R1·U-R2a 소요) | hc read t93 |
 
 ## 세션 사고와 교체 (2026-11-09)
