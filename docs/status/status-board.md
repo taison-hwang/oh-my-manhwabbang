@@ -5,14 +5,14 @@
 | 작업 ID | 묶음 | 담당(role·터미널) | 상태 | 의존 | 근거 |
 | --- | --- | --- | --- | --- | --- |
 | U-R3 | U-R3 | worker-3(t93), verifier-1(t9f) | U-R3a 병합 128a0f6, U-R3b 병합 a4da3b4, U-R3c는 사용자 적용 대기. 사용자 명령: books.sh 런북 docs/progress/2026-11-09T23-37-06+0900--e74-books-ops-script.md(권장) 또는 docs/progress/2026-11-09T18-34-31+0900--e74-books-ops-prep.md §5 A~F | 없음 | 시작 계약 3: 운영 주소 books.betterax.net. a 저장소 → b 운영 준비(uni-auth 갱신·DNS·사용자 명령) → 사용자 적용 → c 공개 검증. U-R2b(library)는 이것으로 대체 |
-| U-R5 | U-R5 | worker-3(t93, 보기 w6:pR) | 진행: 배정 00:4x(.worktrees/u-r5), 진입점 scripts/start.sh·stop.sh·build.sh | U-R4(병합됨) | 시작 계약 5. 커밋·검사 중이 오면 verifier-1(t9f, /clear 후) 독립 검증 |
+| U-R5 | U-R5 | worker-3(t9g sonnet, 보기 w6:pT; 01:3x t93 opus에서 인계, WIP 2c138c3) | 진행: 배정 00:4x(.worktrees/u-r5), 진입점 scripts/start.sh·stop.sh·build.sh | U-R4(병합됨) | 시작 계약 5. 커밋·검사 중이 오면 verifier-1(t9f, /clear 후) 독립 검증 |
 | U-R6 | U-R6 | worker-3(예약: 이어서) | 대기: U-R5 병합 뒤 배정 | U-R5 | 시작 계약 6: 도구 프로그램 → tools/, 실행·운영 스크립트 → scripts/<주제>/, 참조 전부 갱신 |
 
 ## 대기
 
 | 작업 ID | 기다리는 것 | 시작 | 풀릴 조건 | 만료 | 만료 시 |
 | --- | --- | --- | --- | --- | --- |
-| U-R5 | 세션: worker-3(t93) U-R5 구현(start·stop·build) | 00:4x | [진행] 검사 중 또는 [완료] | 04:30 (예측 2.5h: U-R4 실적 1.5h+pty 테스트+stop·build 추가, 1.5배 넘게) | hc read t93로 진행 확인 → 연장 또는 4절 |
+| U-R5 | 세션: worker-3(t9g) U-R5 이어 받기(start·stop·build) | 00:4x | [진행] 검사 중 또는 [완료] | 04:30 (예측 2.5h: U-R4 실적 1.5h+pty 테스트+stop·build 추가, 1.5배 넘게) | hc read t93로 진행 확인 → 연장 또는 4절 |
 | U-R6 | 의존: worker-3 U-R5 병합(Makefile·scripts 최상위) | 01:1x | U-R5 병합 [완료] | U-R5 대기 만료(04:30)를 따른다 | U-R5 만료 처리와 같이 |
 | U-R3c | 사용자 결정·실행: books.sh 1~7단계 또는 §5 A~F(설정·:9909 중지·9910 기동·sudo ingress·재시작·verify·첫 로그인 allowed_subs) | 19:2x | 사용자가 적용 알림 → worker-3 U-R3c 공개 검증 + verifier-1(정리 후) 독립 검증 | 만료 없음(사용자 결정) | 결정 없이 할 일: 없음 |
 | 회원관리 | 사용자 결정: 회원관리 확장 A(현 구조 유지+후속 2건)/B(스크립트 허용 목록 편집)/C(앱 내 회원관리, E-74 변경) | 22:0x | Commander 경유 답 | 만료 없음(사용자 결정) | 결정 없이 할 일: 없음(빈틈 2건은 A 확정 뒤 배정) |
