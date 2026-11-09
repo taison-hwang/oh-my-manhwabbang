@@ -88,3 +88,5 @@ ts	작업	결정	이유	증거	결과
 2026-11-09T11:55:43+09:00	R-B	main 병합 64d21f1	worker-4 [병합 완료]	64d21f1	—
 2026-11-09T12:06:43+09:00	U-E	최종 게이트 1회차 시스템 메모리 부족으로 강제 종료(다른 프로젝트 부하) → 재실행 승인: main rebase 후, 단계마다 MemAvailable ≥ 10 GB·load1 < 20 가드, 메모리 실패 시 단계별 1회 재시도	worker-2 [차단]	66b6000	worker-2 재실행
 2026-11-09T12:06:50+09:00	R-T	main 병합 fda2c35, 결과 Commander 보고(사용자 결정 질문 3개: A 먼저, B 적용, Codex 단가 기준)	worker-1 [병합 완료]	fda2c35	사용자 답 대기
+2026-11-09T12:40:48+09:00	T-U	사용자 승인(토큰 집계 구현). 원인 정정: herdr-session은 84ed3b9(11-08 22:49)부터 CLAUDE_CODE_CHILD_SESSION을 지운다 — 기록 없는 세션(orchestrator·옛 worker-1·worker-2)은 그 전 옛 실행기로 뜸. 조치: worker-1(t1k) 종료·새 세션 t6v로 교체, 새 jsonl 86fb5ba2(역할 worker-1, usage 기록)·화면 경고 없음 확인. T-U(집계 스크립트 scripts/usage, Claude 공식 단가만 추정 표시, Codex 미산출) 배정. worker-2는 U-E 뒤 교체, orchestrator 교체는 Commander 몫으로 보고	hc ls argv(옛 t1k에 env -u 없음), ~/.claude/projects jsonl	t6v	worker-1 T-U
+2026-11-09T12:40:48+09:00	R-F2	thumbs Stats 동시성 테스트 부하 시 실패(queued 45 ≠ generated 44)와 thumbs.test 4.7 GB OOM 원인 조사 배정(worker-4). 테스트 가정인지 제품 결함인지 확정	worker-2 U-E 게이트 rc=1, R-B OOM	—	worker-4 R-F2

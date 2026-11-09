@@ -14,3 +14,5 @@
 - 후속 후보: docs/impl-plan.md:277 RAR 문장이 D-71 이후 틀림.
 - 운영 메모: herdr-report는 herdr-check(약 13분)를 돌리는 무거운 명령이라 heavy.lock 아래서만 부른다. 보고 프로세스를 죽이면 자식 검사가 고아로 남으니 프로세스 묶음째 정리한다.
 | U-E | U-E | worker-2(t1m) | 진행 | 없음 | 가짜 공급자 oidc e2e·최종 gates·크기 재측정, 예산 33,816,576 반영 |
+| T-U | T-U | worker-1(t6v) | 진행 | 없음 | 토큰 사용량 집계 스크립트·새 세션 기록 저장 검증 |
+| R-F2 | R-F2 | worker-4(t3g) | 진행 | 없음 | thumbs 동시성 테스트 부하 실패·4.7 GB 메모리 원인 |
