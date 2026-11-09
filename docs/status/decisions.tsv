@@ -136,3 +136,4 @@ ts	작업	결정	이유	증거	결과
 2026-11-09T23:38:47+09:00	U-R4	판정 PASS 5314f69(런북 시간 설명 코드 대조 일치, 앞판 대비 1줄만 변경). 검사 PASS 대기 후 [병합]	판정 기록	/tmp/verify-ur4/2026-11-09T23-38-16+0900--verify-ur4-4.md	PASS
 2026-11-10T00:08:19+09:00	U-R4	[병합] 5314f69 지시(같은 SHA 검사 PASS·판정 PASS)	5절 병합 조건 충족	/tmp/verify-ur4/2026-11-09T23-38-16+0900--verify-ur4-4.md; 검사 PASS 5314f692a8a8	병합 지시
 2026-11-10T00:30:20+09:00	U-R4	병합 완료 main 0bd88f7(rebase 충돌·수정 없음 → 재검증 없음), 검사 PASS 0bd88f7. 시작 계약 4 완료 판정	완료 조건 1~5: 진입점·관문·보존·복구·자동 테스트·런북 모두 판정 PASS 5314f69와 검사 PASS로 확인. 운영 실제 sudo·systemctl 경로는 미확인(금지 범위, 사용자 실행)	git range-diff 4커밋 =; 검사 PASS 0bd88f7d7fd7; completed.md	완료
+2026-11-10T01:07:09+09:00	U-R5	시작 계약 5(대화형 마법사)를 worker-3에 배정 직후 사용자 구체화(진입점 scripts/start.sh, 첫 실행 대화형·이후 실행 무질문)를 정정 배정으로 보냄	같은 파일 scripts/deploy/library·U-R4 맥락(세션 고르기 2행). 구체화가 앞 지시에 우선	work-plan 시작 계약 5; orchestrator-drafts/assign-ur5.txt	배정
