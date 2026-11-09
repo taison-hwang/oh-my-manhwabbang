@@ -5,6 +5,8 @@ writes nothing.
   books_proc.py holders DIR               "pid argv" of every process with a file under DIR open
   books_proc.py portpid PORT              pid of the process listening on 127.0.0.1/any :PORT
   books_proc.py match PID BIN CFG         exit 0 if PID runs BIN --config CFG
+  books_proc.py routes CFG HOST           exit 0 if the cloudflared ingress in CFG sends HOST
+                                          to a service, 1 if not, 2 if CFG has no readable ingress
 """
 import os
 import re
@@ -84,6 +86,38 @@ def match(pid, binary, cfg):
     sys.exit(1)
 
 
+def host_matches(pattern, host):
+    pattern = str(pattern).strip().lower().rstrip(".")
+    if pattern in ("", "*"):
+        return True
+    if pattern.startswith("*."):
+        return host.endswith(pattern[1:])
+    return pattern == host
+
+
+def routes(cfg, host):
+    """cloudflared takes the first rule whose hostname (exact, case-insensitive,
+    or a *. wildcard; none means every host) and path match. A path rule sends
+    only some requests, so it counts as routing and the search goes on."""
+    host = host.lower().rstrip(".")
+    try:
+        doc = yaml.safe_load(open(cfg))
+    except (OSError, yaml.YAMLError):
+        sys.exit(2)
+    rules = doc.get("ingress") if isinstance(doc, dict) else None
+    if not isinstance(rules, list) or not all(isinstance(r, dict) for r in rules):
+        sys.exit(2)
+    for rule in rules:
+        if not host_matches(rule.get("hostname") or "", host):
+            continue
+        serves = not str(rule.get("service", "")).strip().startswith("http_status:")
+        if serves:
+            sys.exit(0)
+        if not rule.get("path"):
+            sys.exit(1)
+    sys.exit(1)
+
+
 if __name__ == "__main__":
     cmd, args = sys.argv[1], sys.argv[2:]
-    {"datadir": datadir, "holders": holders, "portpid": portpid, "match": match}[cmd](*args)
+    {"datadir": datadir, "holders": holders, "portpid": portpid, "match": match, "routes": routes}[cmd](*args)

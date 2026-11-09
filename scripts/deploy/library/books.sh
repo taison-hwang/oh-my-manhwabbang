@@ -21,10 +21,11 @@
 #   tunnel apply        local verify must pass, then sudo tunnel-apply.sh adds the
 #                       books rule to the cloudflared config. No restart          [sudo, writes /etc/cloudflared/config.yml]
 #   tunnel restart [--backup F]  needs the same preflight as tunnel apply and an
-#                       ingress backup without the books rule (recorded by tunnel
+#                       ingress backup whose rules (read as YAML, as cloudflared
+#                       matches them) send books nowhere (recorded by tunnel
 #                       apply, or F); then sudo systemctl restart cloudflared, then public verify;
-#                       on failure the ingress backup is restored and cloudflared
-#                       restarted again. auth.betterax.net and
+#                       on failure the ingress backup is restored, cloudflared
+#                       restarted again and the 404 checked. auth.betterax.net and
 #                       ohmyassets.betterax.net (same tunnel) drop for a few
 #                       seconds on every restart                                  [sudo, outage of seconds]
 #   rollback [--backup F]  sudo tunnel-rollback.sh with F (default: the backup
@@ -293,7 +294,8 @@ do_restart() {
   yes=1 do_start
 }
 
-cf_has_rule() { grep -q "hostname: *$LIB_HOST" "$cf_config"; }
+routes_books() { python3 -I "$here/books_proc.py" routes "$1" "$LIB_HOST"; }
+cf_has_rule() { routes_books "$cf_config"; }
 cf_args=()
 [ "$cf_config" = "$CF_CONFIG_DEFAULT" ] || cf_args=(--config-path "$cf_config")
 
@@ -329,7 +331,9 @@ do_tunnel_restart() {
   local_verify >/dev/null || { say "REFUSED: local verify has FAILs (books.sh verify local); cloudflared not restarted"; exit 7; }
   bak="$(cat "$cf_backup_rec" 2>/dev/null || true)"
   [ "${1:-}" = --backup ] && bak="$(abs "${2:-}")"
-  if [ -z "$bak" ] || [ ! -f "$bak" ] || grep -q "hostname: *$LIB_HOST" "$bak"; then
+  local rc=2
+  if [ -n "$bak" ] && [ -f "$bak" ]; then rc=0; routes_books "$bak" || rc=$?; fi
+  if [ "$rc" != 1 ]; then
     say "REFUSED: no ingress backup to fall back to (${bak:-none recorded}; it must exist and not route $LIB_HOST)."
     say "give the file tunnel-apply.sh made: books.sh tunnel restart --backup /etc/cloudflared/config.yml.bak-<UTC>. cloudflared not restarted"
     exit 1
@@ -344,11 +348,22 @@ do_tunnel_restart() {
   say "FAIL after the restart (cloudflared inactive or public verify FAILs)"
   if [ -n "$bak" ] && [ -f "$bak" ]; then
     say "rolling back the ingress to $bak"
-    if rollback_ingress "$bak"; then say "rolled back; $LIB_HOST answers 404 again"; else say "ROLLBACK FAILED: run books.sh rollback --backup $bak"; fi
+    if rollback_ingress "$bak"; then report_unpublished; else say "ROLLBACK FAILED: run books.sh rollback --backup $bak"; fi
   else
     say "no recorded backup: run books.sh rollback --backup /etc/cloudflared/config.yml.bak-<UTC>"
   fi
   exit 8
+}
+
+report_unpublished() {
+  local code=""
+  if cf_has_rule; then say "ROLLBACK INCOMPLETE: $cf_config still routes $LIB_HOST; run books.sh rollback --backup <file without it>"; return; fi
+  for _ in 1 2 3 4 5; do
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$url/" || true)"
+    [ "$code" = 404 ] && { say "rolled back; $url answers 404 again"; return; }
+    sleep 2
+  done
+  say "ingress rolled back, but $url answered ${code:-nothing}, not 404; check it: books.sh status"
 }
 
 do_rollback() {

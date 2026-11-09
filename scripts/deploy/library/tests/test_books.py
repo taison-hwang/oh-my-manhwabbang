@@ -4,6 +4,8 @@ fake cloudflared/systemctl/sudo first on PATH. Nothing here reaches /etc, the
 real cloudflared, uni-auth or a running shelf."""
 import hashlib
 import glob
+import http.server
+import threading
 import os
 import shutil
 import signal
@@ -508,6 +510,7 @@ class SafeFailureAndRecovery(Env):
         r = self.run_books("--yes-sudo", "tunnel", "restart", url="http://127.0.0.1:%d" % bad_port)
         self.assertEqual(r.returncode, 8, r.stdout + r.stderr)
         self.assertEqual(sha(self.cf), cf_before)
+        self.assertNotIn("404 again", r.stdout, "the public URL still answers 200 here")
         self.assertEqual(self.calls_text().count("sudo systemctl restart cloudflared"), 2)
 
     def test_tunnel_restart_refuses_every_unsafe_config_without_restarting(self):
@@ -542,6 +545,65 @@ class SafeFailureAndRecovery(Env):
         r = self.run_books("--yes-sudo", "tunnel", "restart", "--backup", backup)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("sudo systemctl restart cloudflared", self.calls_text())
+
+    def test_tunnel_restart_refuses_a_backup_that_routes_books_in_any_yaml_spelling(self):
+        self.start_ok()
+        svc = "http://127.0.0.1:%d" % self.port
+        live = CF_CONFIG.replace("  # catch-all\n", "  - hostname: books.betterax.net\n    service: %s\n  # catch-all\n" % svc)
+        with open(self.cf, "w") as f:
+            f.write(live)
+        spellings = {
+            "double quotes": '  - hostname: "books.betterax.net"\n    service: %s\n' % svc,
+            "single quotes": "  - hostname: 'books.betterax.net'\n    service: %s\n" % svc,
+            "upper case": "  - hostname: BOOKS.BETTERAX.NET\n    service: %s\n" % svc,
+            "flow mapping": '  - {hostname: books.betterax.net, service: "%s"}\n' % svc,
+            "wildcard": '  - hostname: "*.betterax.net"\n    service: %s\n' % svc,
+        }
+        for name, rule in spellings.items():
+            with self.subTest(name):
+                backup = os.path.join(self.tmp, "bak-%s.yml" % name.replace(" ", "-"))
+                with open(backup, "w") as f:
+                    f.write(CF_CONFIG.replace("  # catch-all\n", rule + "  # catch-all\n"))
+                r = self.run_books("--yes-sudo", "tunnel", "restart", "--backup", backup)
+                self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+                self.assertIn("no ingress backup to fall back to", r.stdout)
+                self.assertNotIn("systemctl restart", self.calls_text())
+        with self.subTest("catch-all serves a backend"):
+            backup = os.path.join(self.tmp, "bak-catch-all.yml")
+            with open(backup, "w") as f:
+                f.write(CF_CONFIG.replace("  - service: http_status:404", "  - service: " + svc))
+            r = self.run_books("--yes-sudo", "tunnel", "restart", "--backup", backup)
+            self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+            self.assertIn("no ingress backup to fall back to", r.stdout)
+            self.assertNotIn("systemctl restart", self.calls_text())
+        with self.subTest("a quoted live rule still counts as applied"):
+            with open(self.cf, "w") as f:
+                f.write(live.replace("hostname: books.betterax.net", 'hostname: "books.betterax.net"'))
+            good = os.path.join(self.tmp, "bak-good.yml")
+            with open(good, "w") as f:
+                f.write(CF_CONFIG)
+            r = self.run_books("--yes-sudo", "tunnel", "restart", "--backup", good)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_rollback_says_404_only_when_the_public_url_answers_404(self):
+        class NotFound(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(404)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            do_POST = do_GET
+
+            def log_message(self, *a):
+                pass
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), NotFound)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        self.start_ok()
+        self.assertEqual(self.run_books("--yes-sudo", "tunnel", "apply").returncode, 0)
+        r = self.run_books("--yes-sudo", "tunnel", "restart", url="http://127.0.0.1:%d" % srv.server_address[1])
+        self.assertEqual(r.returncode, 8, r.stdout + r.stderr)
+        self.assertIn("404 again", r.stdout)
 
     def test_cloudflared_not_active_after_restart_rolls_back(self):
         self.start_ok()
