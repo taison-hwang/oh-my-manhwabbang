@@ -45,7 +45,7 @@ type User = keyof typeof SUB
 
 const SID_COOKIE = '__Host-shelf_sid'
 const LOGIN_COOKIE = '__Host-shelf_login'
-const WHEEL = '바퀴'
+const WHEEL = SERIES.wheel
 
 interface FakeEvent {
   endpoint: 'authorize' | 'end_session'
@@ -103,6 +103,11 @@ function setReauthAgo(hash: string, minutesAgo: number): void {
   expect(n, 'exactly one session row was aged').toBe(1)
 }
 
+/** The server's sign-in page is a 401 document (E-74 §2.18), which Chrome logs. */
+function declareSignInPage(page: Page): void {
+  expectConsoleError(page, /status of 401/, 'the sign-in page without a session answers 401')
+}
+
 /** The sign-in page of the fake: press the user's button. */
 async function chooseUser(page: Page, user: User): Promise<void> {
   await expect(page.getByRole('heading', { name: 'fake uni-auth' })).toBeVisible()
@@ -114,10 +119,13 @@ async function chooseUser(page: Page, user: User): Promise<void> {
  * signs in as `user`. Returns where the browser ended up.
  */
 async function signIn(page: Page, user: User, path = '/'): Promise<URL> {
+  declareSignInPage(page)
   await page.goto(path)
   await expect(page.getByText('계속하려면 로그인하세요.')).toBeVisible()
   await page.getByRole('link', { name: 'uni-auth로 로그인' }).click()
+  const callback = page.waitForResponse((r) => r.url().startsWith(`${BASE}/api/auth/oidc/callback`))
   await chooseUser(page, user)
+  expect((await callback).status(), 'the callback answers with the redirect to `return`').toBe(302)
   await page.waitForURL((url) => url.origin === new URL(BASE).origin && !url.pathname.startsWith('/api/'))
   return new URL(page.url())
 }
@@ -130,9 +138,47 @@ async function otherUser(browser: Browser, user: User): Promise<{ context: Brows
   return { context, page }
 }
 
-/** A write from this page's origin, as the SPA's own fetch sends it (E-74 §2.11). */
-function sameOrigin(page: Page): Record<string, string> {
-  return { Origin: new URL(page.url()).origin }
+interface ApiResult {
+  status: number
+  body: unknown
+}
+
+/**
+ * A request made by the page itself, so the browser attaches the session cookie
+ * and `Origin` as it does for the SPA. Playwright's own request client does not
+ * send a `Secure` cookie to an http origin, even a loopback one.
+ */
+async function api(page: Page, method: string, url: string, data?: unknown): Promise<ApiResult> {
+  return page.evaluate(
+    async ({ method, url, data }) => {
+      const init: RequestInit = { method, credentials: 'same-origin' }
+      if (data !== undefined) {
+        init.headers = { 'Content-Type': 'application/json' }
+        init.body = JSON.stringify(data)
+      }
+      const response = await fetch(url, init)
+      const text = await response.text()
+      let body: unknown = text
+      try {
+        body = JSON.parse(text)
+      } catch {
+        /* not JSON */
+      }
+      return { status: response.status, body }
+    },
+    { method, url, data },
+  )
+}
+
+async function apiGet<T>(page: Page, url: string): Promise<T> {
+  const { status, body } = await api(page, 'GET', url)
+  expect(status, `GET ${url}`).toBe(200)
+  return body as T
+}
+
+function reasonOf(result: ApiResult): string {
+  const body = result.body as { error?: { detail?: { reason?: string } } } | null
+  return `${String(result.status)} ${body?.error?.detail?.reason ?? '-'}`
 }
 
 interface Facts {
@@ -142,18 +188,14 @@ interface Facts {
 }
 
 async function facts(page: Page): Promise<Facts> {
-  const series = (await (await page.request.get('/api/series?limit=200&sort=name')).json()) as {
-    items: { id: string; name: string }[]
-  }
+  const series = await apiGet<{ items: { id: string; name: string }[] }>(page, '/api/series?limit=200&sort=name')
   const find = (name: string): string => {
     const hit = series.items.find((s) => s.name === name)
     expect(hit, `the oidc round's library must contain ${name}`).toBeDefined()
     return hit?.id ?? ''
   }
   const cloverSid = find(SERIES.clover)
-  const detail = (await (await page.request.get(`/api/series/${cloverSid}`)).json()) as {
-    books: { id: string }[]
-  }
+  const detail = await apiGet<{ books: { id: string }[] }>(page, `/api/series/${cloverSid}`)
   return { cloverSid, cloverBook: detail.books[0]?.id ?? '', wheelSid: find(WHEEL) }
 }
 
@@ -164,9 +206,7 @@ interface BookState {
 }
 
 async function book(page: Page, bid: string): Promise<BookState> {
-  const response = await page.request.get(`/api/books/${bid}`)
-  expect(response.ok(), `GET /api/books/${bid}`).toBe(true)
-  return (await response.json()) as BookState
+  return apiGet<BookState>(page, `/api/books/${bid}`)
 }
 
 test.describe.configure({ mode: 'serial' })
@@ -206,12 +246,12 @@ test.describe('E-74 oidc mode', () => {
     expect(Math.abs(ttl - 2_592_000), 'Max-Age=2592000 (E-74 §2.4)').toBeLessThan(120)
     expect((await context.cookies()).map((c) => c.name)).not.toContain(LOGIN_COOKIE)
 
-    const status = (await (await page.request.get('/api/auth/status')).json()) as {
+    const status = await apiGet<{
       mode: string
       authenticated: boolean
       user?: { sub: string; is_admin: boolean }
       end_session_available: boolean
-    }
+    }>(page, '/api/auth/status')
     expect(status).toMatchObject({
       mode: 'oidc',
       authenticated: true,
@@ -228,32 +268,28 @@ test.describe('E-74 oidc mode', () => {
     await openViewerDirect(page, cloverSid, cloverBook, 3)
     await write
     await expect.poll(async () => (await book(page, cloverBook)).progress?.last_page).toBe(3)
-    const cover = await page.request.put(`/api/books/${cloverBook}/cover`, {
-      headers: sameOrigin(page),
-      data: { page: 2, x: 0, y: 0, w: 0.5, h: 0.5 },
-    })
-    expect(cover.status(), 'PUT …/cover is open to every allowed user (E-74 §2.10)').toBe(200)
+    const cover = await api(page, 'PUT', `/api/books/${cloverBook}/cover`, { page: 2, x: 0, y: 0, w: 0.5, h: 0.5 })
+    expect(cover.status, 'PUT …/cover is open to every allowed user (E-74 §2.10)').toBe(200)
     const aliceBook = await book(page, cloverBook)
 
     const bob = await otherUser(browser, 'bob')
     const bobBook = await book(bob.page, cloverBook)
     expect(bobBook.progress, "alice's progress must not reach bob (E-74 §2.13)").toBeNull()
-    const cont = (await (await bob.page.request.get('/api/continue')).json()) as { items: unknown[] }
+    const cont = await apiGet<{ items: unknown[] }>(bob.page, '/api/continue')
     expect(cont.items, "bob's 이어보기 is empty").toEqual([])
     expect(bobBook.cover, 'the cover is shared data').toEqual(aliceBook.cover)
     expect(bobBook.cover_cv).toBe(aliceBook.cover_cv)
 
-    const bobWrite = await bob.page.request.put(`/api/books/${cloverBook}/progress`, {
-      headers: sameOrigin(bob.page),
-      data: { page: 1 },
-    })
-    expect(bobWrite.ok(), "bob's own progress write").toBe(true)
+    const bobWrite = await api(bob.page, 'PUT', `/api/books/${cloverBook}/progress`, { page: 1 })
+    expect(bobWrite.status, "bob's own progress write").toBe(200)
     expect((await book(bob.page, cloverBook)).progress?.last_page).toBe(1)
     expect((await book(page, cloverBook)).progress?.last_page, "bob's write leaves alice's row alone").toBe(3)
     await bob.context.close()
   })
 
   test('(c) a sub outside allowed_subs gets the 403 page and no session', async ({ page, context }) => {
+    declareSignInPage(page)
+    expectConsoleError(page, /status of 403/, 'the refusal page answers 403')
     await page.goto('/')
     await page.getByRole('link', { name: 'uni-auth로 로그인' }).click()
     const refused = page.waitForResponse((r) => r.url().includes('/api/auth/oidc/callback'))
@@ -262,7 +298,7 @@ test.describe('E-74 oidc mode', () => {
     await expect(page.getByText('이 계정은 이 서재에 들어올 수 없습니다', { exact: false })).toBeVisible()
     await expect(page.locator('code')).toHaveText(SUB.mallory)
     expect((await context.cookies()).map((c) => c.name)).not.toContain(SID_COOKIE)
-    const status = (await (await page.request.get('/api/auth/status')).json()) as { authenticated: boolean }
+    const status = await apiGet<{ authenticated: boolean }>(page, '/api/auth/status')
     expect(status.authenticated).toBe(false)
   })
 
@@ -286,7 +322,7 @@ test.describe('E-74 oidc mode', () => {
       await expect(dialog.getByRole('heading', { name: '스캔 로그' }), who).toHaveCount(n)
       await expect(dialog.getByRole('button', { name: '전체 삭제' }), who).toHaveCount(n)
       await expect(dialog.getByTestId('root-row-mangga').getByRole('button', { name: '재스캔' }), who).toHaveCount(n)
-      const roots = (await (await p.request.get('/api/roots')).json()) as { items: { path: string }[] }
+      const roots = await apiGet<{ items: { path: string }[] }>(p, '/api/roots')
       expect(roots.items[0]?.path !== '', `${who}: Root.path is admin information (E-74 §2.10)`).toBe(admin)
     }
 
@@ -296,15 +332,8 @@ test.describe('E-74 oidc mode', () => {
       ['DELETE', '/api/cache'],
       ['GET', '/api/scan/log'],
     ] as const) {
-      const response = await bob.page.request.fetch(url, {
-        method,
-        headers: sameOrigin(bob.page),
-        ...(method === 'POST' && url === '/api/scan' ? { data: { full: false } } : {}),
-      })
-      const body = (await response.json()) as { error?: { detail?: { reason?: string } } }
-      expect(`${String(response.status())} ${body.error?.detail?.reason ?? '-'}`, `${method} ${url}`).toBe(
-        '403 admin_only',
-      )
+      const result = await api(bob.page, method, url, url === '/api/scan' ? { full: false } : undefined)
+      expect(reasonOf(result), `${method} ${url}`).toBe('403 admin_only')
     }
     await bob.context.close()
   })
@@ -349,7 +378,9 @@ test.describe('E-74 oidc mode', () => {
     await rescan.click()
     const refused = await answer
     const body = (await refused.json()) as { error?: { detail?: { reason?: string } } }
-    expect(`${String(refused.status())} ${body.error?.detail?.reason ?? '-'}`).toBe('403 reauth_required')
+    expect(`${String(refused.status())} ${body.error?.detail?.reason ?? '-'}`, 'after 16 minutes').toBe(
+      '403 reauth_required',
+    )
     await expect(dialog).toBeVisible()
   })
 
@@ -358,7 +389,6 @@ test.describe('E-74 oidc mode', () => {
     context,
     browser,
   }) => {
-    expectConsoleError(page, /status of 401/, 'the expired session is the subject of this test')
     await signIn(page, 'alice')
     const { wheelSid } = await facts(page)
     await page.goto('/')
@@ -383,8 +413,8 @@ test.describe('E-74 oidc mode', () => {
     const bob = await otherUser(browser, 'bob')
     await bob.page.goto('/')
     await expect(seriesTile(bob.page, WHEEL)).toBeVisible()
-    const out = await bob.page.request.post('/api/auth/logout', { headers: sameOrigin(bob.page) })
-    expect(out.status()).toBe(204)
+    const out = await api(bob.page, 'POST', '/api/auth/logout')
+    expect(out.status).toBe(204)
     const quiet = (await fakeEvents()).length
     await seriesTile(bob.page, WHEEL).click()
     await expect(bob.page.getByText('계속하려면 로그인하세요.')).toBeVisible()
@@ -398,7 +428,7 @@ test.describe('E-74 oidc mode', () => {
     await openSettings(page)
     await page.getByTestId('account-panel').getByRole('button', { name: '로그아웃', exact: true }).click()
     await expect(page.getByText('로그아웃했습니다. 다른 서비스에는 계속 로그인되어 있습니다.')).toBeVisible()
-    const status = (await (await page.request.get('/api/auth/status')).json()) as { authenticated: boolean }
+    const status = await apiGet<{ authenticated: boolean }>(page, '/api/auth/status')
     expect(status.authenticated, 'the local logout ends this session').toBe(false)
     const cookie = await sidCookie(context)
     const left = (cookie?.expires ?? 0) - Date.now() / 1000
