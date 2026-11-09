@@ -1,16 +1,16 @@
 # 상태판
 
-갱신: 2026-11-09T15:22:41+09:00 (Orchestrator t7c)
+갱신: 2026-11-09T16:56:42+09:00 (Orchestrator t7c)
 
 | 작업 ID | 묶음 | 담당(role·터미널) | 상태 | 의존 | 근거 |
 | --- | --- | --- | --- | --- | --- |
-| U-E | U-E | worker-2(t7f), verifier-1(t7h) | 판정 대기 → 병합 | 없음 | [완료] 2251ebb 수락: synthetic rc=0(11c PASS, laptop 4a·4b 감시 제외), herdr-check PASS 2251ebb, release 33,681,570 B(여유 135,006). verifier-1 판정(head 2251ebb) PASS면 [병합] |
+| U-E-F | U-E | worker-2(t7f) | 최종 main 확인 실행 | 없음 | U-E 병합 main 9377a14(herdr-check PASS). 완료 조건 5 문자 그대로: 최종 main에서 e2e-synthetic·e2e-synthetic-oidc·release |
 
 ## 대기
 
 | 작업 ID | 기다리는 것 | 시작 | 풀릴 조건 | 만료 | 만료 시 |
 | --- | --- | --- | --- | --- | --- |
-| U-E | 판정: verifier-1(t7h) 독립 검증, head 094e568로 확장(11c는 final6 결과) | 14:2x | [판정] 최종 head | 17:45 (final6 약 45분 뒤 잠금 차례 t85 2분+판정 작성, final6 만료 17:30 이후) | hc read t7h로 진행 확인 |
+| U-E-F | 검사: worker-2(t7f) 9377a14 확인 실행 | 17:0x | [완료] | 19:00 (예측 30분: synthetic 1486s+oidc 52s+release 70s, 1.5배 이상) | hc read t7f |
 
 ## 세션 사고와 교체 (2026-11-09)
 
