@@ -13,5 +13,4 @@
 - 후속 후보(판정 전): salvage가 잘린 마지막 엔트리를 쪽으로 잡아 요청 시 본문 도중 연결이 끊김(국수집 10권·유레카26 원본, 보관함에만 있음). docs/progress/2026-11-08T22-59-30+0900--targeted-read-verification.md.
 - 후속 후보: docs/impl-plan.md:277 RAR 문장이 D-71 이후 틀림.
 - 운영 메모: herdr-report는 herdr-check(약 13분)를 돌리는 무거운 명령이라 heavy.lock 아래서만 부른다. 보고 프로세스를 죽이면 자식 검사가 고아로 남으니 프로세스 묶음째 정리한다.
-| P-70 | P-70 | worker-3(t5h) | 병합 대기 | herdr-check 384dac7 | 독립 검증 PASS, 검사 PASS 뒤 조건부 병합 |
 | U-E | U-E | worker-2(t1m) | 진행 | 없음(예산 상향은 사용자 결정) | 가짜 공급자 oidc e2e·최종 gates·크기 재측정 |
