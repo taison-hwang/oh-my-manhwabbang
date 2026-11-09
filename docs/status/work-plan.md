@@ -1,6 +1,6 @@
 # 작업 계획
 
-갱신: 2026-11-10T00:4x (Orchestrator t7c, 시작 계약 5 추가)
+갱신: 2026-11-10T01:1x (Orchestrator t7c, 시작 계약 6 추가)
 
 ## 시작 계약 (E-74 계정 기능, 2026-11-09)
 
@@ -17,6 +17,21 @@
   6. uni-auth 클라이언트 등록(사용자 승인, 운영 주소 https://library.betterax.net)과 Cloudflare 터널 ingress: 등록은 바로, 터널 공개는 oidc 서버의 인증·접근 제한·우회 경로 검증 뒤. 실제 로그인 1회 확인. 기존 서비스 설정 보존.
 - 허용 범위: zip-viewer 코드·테스트·docs(intent 포함, 위 승인 범위), 새 Go 의존성 없이 표준 라이브러리. uni-auth는 읽기·GET만, 클라이언트 등록 1건만 사용자 URL 확정 뒤. 금지: push, :9909 재시작·쓰기, 다른 3차 기능, 크기 예산 상향, uni-auth 설정 변경·로그인 시도(등록 전).
 - 탈출 조건: 계약이 승인안 밖의 결정을 요구할 때, 크기 예산 초과, 재배정 2번+재계획 실패, uni-auth 쓰기가 등록 1건을 넘을 때.
+
+## 시작 계약 6 (scripts 최상위 정리, 2026-11-10)
+
+요청(사용자, Commander t1h 경유 01:1x): "scripts/start.sh·stop.sh·build.sh 외 기존 scripts 바로 아래 스크립트들은 혼동되지 않게 주제별 하위 폴더로 이동. 기존 하위 폴더와 책임을 조사해 자연스럽게 분류하고 Makefile·CI·테스트·하네스 설정·문서 등 모든 실행 참조를 함께 갱신, 호환성과 실제 주요 검사 명령을 검증. 작업 중 사용자 변경을 보존하고 필요한 최소 변경."
+읽기 확인(01:1x): 최상위 파일 check-gates.sh·check-readonly.sh·e2e.sh·e2e-config.sh·e2e-oidc.sh·e2e-assert.py·e2e-assert-rescan-test.py·quick-check.sh·media-root(실 미디어 경로 데이터 파일, Makefile:376-377이 읽음). 하위 폴더 contractcheck·deploy/library·fakeoidc·mkfixture·mkfonts·pixelbaseline·precompress·usage. 참조: Makefile, .agents/harness.env:46(HERDR_CHECK_FILE_CMD → scripts/quick-check.sh), AGENTS.md 프로젝트 규칙, README, docs(decisions·arch·impl-plan·HANDOFF·ui-shots), integration/·internal/ 테스트·코드, test/shelf.e2e.yaml.tmpl, web/e2e, .gitignore. CI 디렉터리(.github/workflows) 없음.
+
+- 완료 조건:
+  1. scripts/ 바로 아래에는 start.sh·stop.sh·build.sh(U-R5)와 하위 폴더만 남는다. 나머지는 기존 하위 폴더 책임과 맞는 주제별 폴더로 git mv(이력 보존). 분류 근거를 진행 기록에 적는다.
+  2. 실행 참조가 모두 새 경로를 가리킨다: `git grep`으로 옛 경로가 지난 진행 기록(docs/progress 옛 파일)·상태 기록 밖에서 0건. 하네스 설정(.agents/harness.env)은 harness sync 관리 여부를 확인하고, 프로젝트 소유면 갱신, sync가 덮어쓰는 파일이면 [차단]으로 보고.
+  3. 호환성: 옛 경로를 직접 부르는 사용자 습관이 있는 진입점(예: quick-check)은 필요한 최소의 호환 처리 여부를 근거와 함께 정한다(기본: 두지 않음, 남기면 이유).
+  4. 실제 주요 검사 명령이 새 경로로 통과: make lint·make test·make web-gates, HERDR_CHECK_FILE_CMD(quick-check) 한 파일, make e2e-synthetic(와 oidc 라운드) — 무거운 명령은 herdr-queue·heavy.lock 아래. 독립 검증 PASS 뒤 병합.
+  5. 사용자 변경 보존: 메인 체크아웃의 미커밋·추적 안 된 파일(.backup-harness/ 등)과 scripts/media-root 내용을 바꾸지 않는다.
+- 허용 범위: scripts/**(이동), 참조 파일(Makefile·.agents/harness.env·AGENTS.md 프로젝트 규칙 절·README·docs 현재 문서·테스트·코드의 경로 문자열·.gitignore), docs/progress 새 기록. 금지: 스크립트 동작 변경(경로 외), AGENTS.md harness 표시 사이, push, 운영 서버 조작.
+- 탈출 조건: 하네스가 덮어쓰는 파일을 바꿔야 할 때, 이동이 동작을 바꿀 때 → [차단].
+- 묶음 U-R6: U-R5와 같은 파일(Makefile, scripts/ 최상위)을 바꾸므로 의존 → worker-3에 U-R5 병합 뒤 이어서.
 
 ## 시작 계약 5 (books 대화형 설치·운영 마법사, 2026-11-10)
 
@@ -111,3 +126,4 @@ E-74 완료 조건 6을 대체한다(주소만 바뀜, 나머지 조건 그대�
 | U-R3c | U-R3 | 사용자 적용 뒤 공개 검증·실제 로그인 | 시작 계약 3 완료 조건 4(검증) | U-R3b, 사용자 적용 | docs/progress |
 | U-R4 | U-R4 | books 운영 실행 스크립트(check·status·start·stop·restart·tunnel·rollback·verify)·자동 테스트·런북 | 시작 계약 4 완료 조건 1~5 | 없음(U-R3a 스크립트 재사용) | scripts/deploy/library/**, docs/progress 새 런북 |
 | U-R5 | U-R5 | books 대화형 설치·운영 마법사(books.sh 위)·pty 자동 테스트·런북 | 시작 계약 5 완료 조건 1~6 | U-R4(병합됨) | scripts/deploy/library/**, docs/progress 새 런북 |
+| U-R6 | U-R6 | scripts 최상위 스크립트를 주제별 하위 폴더로 이동, 모든 참조 갱신 | 시작 계약 6 완료 조건 1~5 | U-R5(Makefile·scripts 최상위) | scripts/**, Makefile, .agents/harness.env, AGENTS.md(프로젝트 규칙), README, docs 현재 문서, 테스트·코드 경로 문자열 |

@@ -139,3 +139,4 @@ ts	작업	결정	이유	증거	결과
 2026-11-10T01:07:09+09:00	U-R5	시작 계약 5(대화형 마법사)를 worker-3에 배정 직후 사용자 구체화(진입점 scripts/start.sh, 첫 실행 대화형·이후 실행 무질문)를 정정 배정으로 보냄	같은 파일 scripts/deploy/library·U-R4 맥락(세션 고르기 2행). 구체화가 앞 지시에 우선	work-plan 시작 계약 5; orchestrator-drafts/assign-ur5.txt	배정
 2026-11-10T01:07:21+09:00	U-R5	사용자 추가 요구 scripts/stop.sh(관리 인스턴스만 중지)를 U-R5에 추가 배정	같은 묶음·같은 파일	work-plan 시작 계약 5 추가 요구	배정
 2026-11-10T01:07:41+09:00	U-R5	사용자 추가 요구 2 scripts/build.sh(make build 재사용 래퍼)를 U-R5에 추가 배정	같은 묶음(start.sh가 쓰는 dist/shelf)	work-plan 시작 계약 5 추가 요구 2; Makefile:195-202	배정
+2026-11-10T01:08:49+09:00	U-R6	scripts 최상위 정리를 worker-3 다음 예약(이어서 U-R6)으로 둠, 지금 배정하지 않음	U-R5와 Makefile·scripts 최상위를 함께 바꿔 의존(1절) → 같은 세션에 순서대로. 분류 조사도 이동과 한 커밋 묶음이라 함께 배정	work-plan 시작 계약 6; git grep 참조 목록	예약
