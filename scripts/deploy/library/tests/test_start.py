@@ -338,6 +338,20 @@ class ExistingServer(StartEnv):
         self.assertIsNone(old.poll())
         self.assertFalse(self.listening())
 
+    def test_a_pid_that_is_gone_by_the_time_it_is_typed_is_not_signalled(self):
+        self.ready()
+        old = self.old_server()
+        other = self.bystander()
+        p = self.pty_start()
+        p.expect(r"Type its pid to stop it.*: ")
+        old.terminate()
+        old.wait(5)
+        p.send(str(old.pid))
+        self.assertEqual(p.finish(), 1, p.text())
+        self.assertIn("no longer the process shown above", p.text())
+        self.assertIsNone(other.poll())
+        self.assertFalse(self.listening())
+
     def test_typing_the_pid_stops_only_that_server_and_prints_how_to_bring_it_back(self):
         self.ready()
         old = self.old_server()
@@ -376,7 +390,7 @@ class SubChange(StartEnv):
 
     def test_a_running_instance_with_ingress_is_only_asked_for_the_sub(self):
         p = self.pty_start()
-        for bad in ("", "two words", '"quoted"', "it's"):
+        for bad in ("two words", '"quoted"'):
             p.expect(r"Paste the sub.*: ")
             p.send(bad)
             p.expect(r"not a valid sub")
@@ -392,6 +406,15 @@ class SubChange(StartEnv):
         self.assertEqual(after, expected, "no other key or value changed")
         self.assertNotEqual(self.pidfile_pid(), self.pid)
         self.assertTrue(self.listening())
+
+    def test_three_invalid_subs_stop_without_writing(self):
+        p = self.pty_start()
+        for bad in ("", "it's", "a b"):
+            p.expect(r"Paste the sub.*: ")
+            p.send(bad)
+            p.expect(r"not a valid sub")
+        self.assertEqual(p.finish(), 10, p.text())
+        self.assertEqual(sha(self.cfg), self.before_sha)
 
     def test_declining_the_change_writes_nothing(self):
         p = self.pty_start()

@@ -366,6 +366,17 @@ they are; for a host directory bind-mounted at `/config` or `/cache`, either
 comes from `SHELF_CONFIG=/config/shelf.yaml`; pass `--config <path>` to use
 another. The `-avif` build cannot run in this image (it is dynamically linked).
 
+### Running at books.betterax.net
+
+```bash
+scripts/build.sh    # build dist/shelf (atomic swap; never touches a running server)
+scripts/start.sh    # first run: asks a few questions (config, Cloudflare, your sub); later runs: no questions
+scripts/stop.sh     # stops only the instance start.sh started
+```
+
+Each takes `--help`. Steps already done are skipped, so after a "no" or an interruption run `scripts/start.sh` again.
+`scripts/deploy/library/books.sh` holds the individual steps these call.
+
 ---
 
 ## Two things to know before you commit to a layout

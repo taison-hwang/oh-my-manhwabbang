@@ -1,11 +1,24 @@
 #!/bin/sh
 # Test double for go as the Makefile calls it: `build -o OUT` writes a stand-in
-# binary (FAKE_GO_FAIL=1: writes half a file, then fails like a compile error);
+# binary (FAKE_GO_FAIL=1: writes half a file, then fails like a compile error;
+# FAKE_GO_FAIL=2: writes a working binary, then fails; FAKE_GO_BAD=1: succeeds
+# with a binary that does not answer --version);
 # every other subcommand succeeds.
 echo "go $*" >>"${FAKE_CALLS:-/dev/null}"
 [ "$1" = build ] || exit 0
 out="" prev=""
 for a in "$@"; do [ "$prev" = -o ] && out="$a"; prev="$a"; done
+if [ "${FAKE_GO_BAD:-0}" = 1 ]; then
+  printf '#!/bin/sh\nexit 3\n' >"$out"
+  chmod +x "$out"
+  exit 0
+fi
+if [ "${FAKE_GO_FAIL:-0}" = 2 ]; then
+  printf '#!/bin/sh\necho "shelf fake"\n' >"$out"
+  chmod +x "$out"
+  echo "link failed (fake)" >&2
+  exit 1
+fi
 if [ "${FAKE_GO_FAIL:-0}" = 1 ]; then
   printf 'partial' >"$out"
   echo "cmd/shelf/main.go:1:1: expected 'package', found 'EOF' (fake)" >&2

@@ -3,6 +3,7 @@ output path: the repository's dist/shelf is never touched."""
 import hashlib
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
 import time
@@ -31,6 +32,10 @@ class Build(unittest.TestCase):
         os.chmod(self.out, 0o755)
         self.calls = os.path.join(self.tmp, "calls.log")
         open(self.calls, "w").close()
+
+    def calls_text(self):
+        with open(self.calls) as f:
+            return f.read()
 
     def env(self, **extra):
         e = dict(os.environ, GO=os.path.join(FAKES, "go"), PNPM=os.path.join(FAKES, "pnpm"), FAKE_CALLS=self.calls)
@@ -61,7 +66,7 @@ class Build(unittest.TestCase):
         self.assertIn("bytes", r.stdout)
         self.assertIn("scripts/start.sh", r.stdout)
         self.assertEqual(self.leftovers(), [])
-        self.assertNotIn("pnpm", open(self.calls).read(), "--skip-web relinks only")
+        self.assertNotIn("pnpm", self.calls_text(), "--skip-web relinks only")
 
     def test_a_failed_compile_keeps_the_old_binary_byte_for_byte(self):
         before = sha(self.out)
@@ -71,18 +76,34 @@ class Build(unittest.TestCase):
         self.assertEqual(self.leftovers(), [])
         self.assertIn("kept", r.stdout)
 
+    def test_a_failing_make_keeps_the_old_binary_even_if_the_output_works(self):
+        before = sha(self.out)
+        r = self.run_build("--skip-web", env=self.env(FAKE_GO_FAIL="2"))
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(sha(self.out), before)
+        self.assertEqual(self.leftovers(), [])
+
+    def test_a_binary_that_does_not_answer_version_is_not_installed(self):
+        before = sha(self.out)
+        r = self.run_build("--skip-web", env=self.env(FAKE_GO_BAD="1"))
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(sha(self.out), before)
+        self.assertIn("--version", r.stdout)
+        self.assertEqual(self.leftovers(), [])
+
     def test_missing_go_is_named_and_nothing_runs(self):
         before = sha(self.out)
         r = self.run_build("--skip-web", env=self.env(GO="/nonexistent/go"))
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
         self.assertIn("go", r.stdout + r.stderr)
         self.assertEqual(sha(self.out), before)
-        self.assertEqual(open(self.calls).read(), "")
+        self.assertEqual(self.calls_text(), "")
 
     def test_a_running_server_is_told_to_restart_and_left_alone(self):
-        p = subprocess.Popen([self.out], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        p = subprocess.Popen([self.out], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True)
         self.addCleanup(p.wait, 5)
-        self.addCleanup(p.terminate)
+        self.addCleanup(os.killpg, p.pid, signal.SIGTERM)
         time.sleep(0.3)
         r = self.run_build("--skip-web")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
