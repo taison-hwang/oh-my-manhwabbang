@@ -151,3 +151,4 @@ ts	작업	결정	이유	증거	결과
 2026-11-10T02:04:29+09:00	U-R6	[병합] 6d7e99a 지시(e2e-synthetic-oidc 7 passed, 옛 경로 0건, diff 72파일 +401/-401 이동·경로 문자열만, R090~R100). 독립 검증·전체 검사 대기 생략(사용자 지시). 후속: harness.env:46 quick-check 경로를 고쳤으므로 다음 harness sync가 되돌리면 HERDR_CHECK_FILE_CMD가 깨짐 — sync 뒤 확인	사용자 지시 02:1x(성공 시 즉시 병합)	git diff -M --shortstat 5e19d7d..6d7e99a; hc read t9h(7 passed)	병합 지시
 2026-11-10T02:05:48+09:00	U-R6	병합 완료 main e805e91, worktree·브랜치 정리. 시작 계약 6 완료(완료 조건 4의 전체 게이트·독립 검증은 사용자 지시로 생략)	사용자 지시 02:1x	git log; ls scripts tools	완료
 2026-11-10T02:15:24+09:00	U-R5	판정 PASS 59b680d(안전 2건 재확인: 25h 설정 start RC3·백업 0, --release 실패 시 바이너리 sha256 불변) → [병합] 지시(e805e91 위 rebase). 전체 검사 생략(사용자 지시)	사용자 지시 02:1x	/tmp/verify-ur5/2026-11-10T02-15-12+0900--verify-ur5-2.md	PASS·병합 지시
+2026-11-10T02:16:29+09:00	U-R5	병합 완료 main 1ea034b(충돌·경로 수정 없음, test_build 1개 PASS), worktree·브랜치 정리. 시작 계약 5 완료(전체 게이트는 사용자 지시로 생략)	사용자 지시	git log; ls scripts	완료
