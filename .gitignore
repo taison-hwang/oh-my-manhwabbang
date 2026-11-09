@@ -20,6 +20,8 @@ session.key
 /.e2e/
 web/test-results/
 web/playwright-report/
+web/test-results-oidc/
+web/playwright-report-oidc/
 web/blob-report/
 web/.playwright/
 /coverage.out

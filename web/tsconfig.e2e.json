@@ -25,6 +25,6 @@
     "types": ["node"],
     "jsx": "preserve"
   },
-  "include": ["e2e", "playwright.config.ts"],
+  "include": ["e2e", "playwright.config.ts", "playwright.oidc.config.ts"],
   "exclude": ["dist", "node_modules", "src"]
 }

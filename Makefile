@@ -158,7 +158,7 @@ FROZEN_DEPS := \
 	golang.org/x/crypto:v0.54.0
 
 .PHONY: all web build build-go dev test test-int test-int-full bench lint check-readonly contract \
-        fmt tidy release docker e2e e2e-synthetic gates gates-precheck web-gates clean help
+        fmt tidy release docker e2e e2e-synthetic e2e-synthetic-oidc gates gates-precheck web-gates clean help
 
 all: build
 
@@ -611,6 +611,11 @@ e2e:
 ## for a machine where the media volume is not mounted (D-49).
 e2e-synthetic:
 	@scripts/e2e.sh --synthetic $(E2E_ARGS)
+
+## e2e-synthetic-oidc — the auth.mode: oidc round of ruling E-74 against a fake
+## uni-auth (scripts/fakeoidc) on loopback; web/e2e/14-oidc.spec.ts.
+e2e-synthetic-oidc:
+	@scripts/e2e-oidc.sh $(E2E_ARGS)
 
 ## web-gates — the four frontend gates, which live in web/package.json and are
 ## NOT reachable from `make lint` or `make test`: `make lint` does not run

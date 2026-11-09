@@ -35,6 +35,8 @@ export default tseslint.config(
       'node_modules/**',
       'playwright-report/**',
       'test-results/**',
+      'playwright-report-oidc/**',
+      'test-results-oidc/**',
       'blob-report/**',
       'coverage/**',
     ],

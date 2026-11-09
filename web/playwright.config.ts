@@ -38,6 +38,8 @@ const VIEWPORTS = [
 
 export default defineConfig({
   testDir: './e2e',
+  // The oidc round's spec needs an oidc-mode server; playwright.oidc.config.ts runs it.
+  testIgnore: '14-oidc.spec.ts',
   outputDir: './test-results',
   // Serial, on purpose, and not a performance oversight.
   //
