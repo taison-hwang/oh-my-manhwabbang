@@ -21,7 +21,7 @@
 ## 새 Orchestrator가 이어 갈 다음 행동 (19:3x, t7c [CLEAR 요청] 직전)
 
 1. (끝남 a4da3b4) U-R3b 병합·기록 커밋.
-2. 사용자가 §5(docs/progress/2026-11-09T18-34-31+0900--e74-books-ops-prep.md) A~F 적용을 알리면: worker-3에 U-R3c(공개 검증 verify-public --public 결과 확인, 비인증 401·allowed 밖 403·평문 우회 없음·실제 로그인 1회는 사용자 브라우저) 배정, verifier-1(t7h, 재사용 전 /clear — hc keys)에 독립 공개 검증 배정(읽기 전용 GET만, uni-auth·터널 쓰기 금지). 둘 다 PASS면 시작 계약 3 완료 → E-74 전체 완료 보고.
+2. 사용자가 §5(docs/progress/2026-11-09T18-34-31+0900--e74-books-ops-prep.md) A~F 적용을 알리면: worker-3에 U-R3c(공개 검증 verify-public --public 결과 확인, 비인증 401·allowed 밖 403·평문 우회 없음·실제 로그인 1회는 사용자 브라우저) 배정, verifier-1(t7h 19:4x 종료됨 → 실행기로 새로 띄움)에 독립 공개 검증 배정(읽기 전용 GET만, uni-auth·터널 쓰기 금지). 둘 다 PASS면 시작 계약 3 완료 → E-74 전체 완료 보고.
 3. 사용자 결정 대기(Commander에 보냄): 공개 시점, main push(130+커밋), 옛 worktree 5개·.backup-harness/·damaged-zip-salvage 삭제, Codex 단가 기준, E-70 실기기 확인, §5 A의 allow_root_editing 유지 여부.
 4. 하네스 규칙은 1967a2f 기준: 무거운 검사는 공용 대기열 herdr-queue, herdr-report --bg의 '검사 중(뒤에서)'도 병행 검증 계기. 워커는 모두 --outlive-parent.
 
