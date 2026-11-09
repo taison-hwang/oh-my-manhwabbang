@@ -1,5 +1,5 @@
 import { Plus, RefreshCw, Trash } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import {
   useDeleteRoot,
@@ -78,6 +78,10 @@ function RootRow({ root, onRescan, scanDisabled, editable }: RootRowProps) {
   const remove = useDeleteRoot()
   const isAdmin = useIsAdmin()
   const [confirming, setConfirming] = useState(false)
+  // Rights can be withdrawn while the confirmation is open (the auth status may arrive late).
+  useEffect(() => {
+    if (!editable) setConfirming(false)
+  }, [editable])
 
   return (
     <div className="flex flex-col gap-2 border-b border-rule py-2" data-testid={`root-row-${root.name}`}>
@@ -136,7 +140,7 @@ function RootRow({ root, onRescan, scanDisabled, editable }: RootRowProps) {
         )}
       </div>
 
-      {confirming && (
+      {editable && confirming && (
         <div className="flex flex-col items-start gap-2 pb-1">
           {/* One alert, not two: on failure it carries the server's reason, and
               a second live region beside it would make `role="alert"` ambiguous
@@ -265,6 +269,9 @@ export function RootsPanel() {
   // no notice rather than one that flashes.
   const isAdmin = useIsAdmin()
   const editable = isAdmin && settings.data?.server.root_editing_enabled === true
+  useEffect(() => {
+    if (!editable) setAdding(false)
+  }, [editable])
   const configChanged = settings.data?.server.config_changed_on_disk === true
 
   // arch §7.10 has no `"done"` state: a finished run is `idle` with

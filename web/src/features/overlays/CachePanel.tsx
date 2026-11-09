@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { useCacheUsage, usePurgeCache } from '../../api/queries'
 import type { CacheUsageEntry } from '../../api/types'
@@ -25,6 +25,9 @@ export function CachePanel() {
   const purge = usePurgeCache()
   const isAdmin = useIsAdmin()
   const [confirming, setConfirming] = useState(false)
+  useEffect(() => {
+    if (!isAdmin) setConfirming(false)
+  }, [isAdmin])
 
   const total = usage.data?.total_bytes ?? 0
   const parts = formatBytes(total).split(' ')

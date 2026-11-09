@@ -1,5 +1,5 @@
 import { Plus } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { Button } from '../../components/ds/Button'
 import { Hr } from '../../components/ds/Hr'
@@ -58,6 +58,10 @@ export interface OnboardingProps {
 
 export function Onboarding({ configPath, rootEditingEnabled, onOpenSettings }: OnboardingProps) {
   const [adding, setAdding] = useState(false)
+  // The capability can be withdrawn while the form is open (the auth status may arrive late).
+  useEffect(() => {
+    if (!rootEditingEnabled) setAdding(false)
+  }, [rootEditingEnabled])
   // The one place the two unknowns are folded into one. `null` from here on
   // means "this screen cannot name a file", and nothing below invents one.
   const resolvedPath = configPath === undefined || configPath === '' ? null : configPath
@@ -122,7 +126,7 @@ export function Onboarding({ configPath, rootEditingEnabled, onOpenSettings }: O
           </Button>
         </div>
 
-        {adding && (
+        {rootEditingEnabled && adding && (
           <AddRootForm
             // A-12: the picker's gate is the same capability that put this form
             // on screen, so reaching this line already implies it. It is passed

@@ -1,7 +1,8 @@
 import '@testing-library/jest-dom/vitest'
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
@@ -43,7 +44,7 @@ beforeEach(() => {
   useUiStore.setState({ theme: 'system', overlays: [] })
 })
 
-function mount(user: { sub: string; is_admin: boolean }, paths: 'blank' | 'full') {
+function mount(user: { sub: string; is_admin: boolean } | null, paths: 'blank' | 'full'): QueryClient {
   const blank = paths === 'blank'
   server.use(
     http.get(`${ORIGIN}/api/roots`, () =>
@@ -69,20 +70,31 @@ function mount(user: { sub: string; is_admin: boolean }, paths: 'blank' | 'full'
     ),
     http.get(`${ORIGIN}/api/scan/log`, () => HttpResponse.json({ items: [] })),
   )
-  const status: AuthStatus = {
-    ...authStatus,
-    authenticated: true,
-    mode: 'oidc',
-    end_session_available: true,
-    user,
-  }
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  client.setQueryData(queryKeys.auth.status, status)
+  if (user !== null) {
+    const status: AuthStatus = {
+      ...authStatus,
+      authenticated: true,
+      mode: 'oidc',
+      end_session_available: true,
+      user,
+    }
+    client.setQueryData(queryKeys.auth.status, status)
+  }
   render(
     <QueryClientProvider client={client}>
       <SettingsDialog open onClose={() => undefined} />
     </QueryClientProvider>,
   )
+  return client
+}
+
+const nonAdmin: AuthStatus = {
+  ...authStatus,
+  authenticated: true,
+  mode: 'oidc',
+  end_session_available: false,
+  user: { sub: 'late', is_admin: false },
 }
 
 describe('admin-only controls in oidc mode', () => {
@@ -114,5 +126,31 @@ describe('admin-only controls in oidc mode', () => {
     expect(row).not.toBeNull()
     expect(row?.querySelector('[title]')).toBeNull()
     expect(screen.queryByTestId('config-path')).toBeNull()
+  })
+})
+
+describe('admin rights withdrawn while a confirmation is open (auth status arrives late)', () => {
+  it('closes the open 루트 제거 confirmation', async () => {
+    const client = mount(null, 'full')
+    await userEvent.click(await screen.findByRole('button', { name: '제거' }))
+    expect(screen.getByText(/루트를 제거할까요/)).toBeInTheDocument()
+    act(() => {
+      client.setQueryData(queryKeys.auth.status, nonAdmin)
+    })
+    await screen.findByTestId('account-panel')
+    expect(screen.queryByText(/루트를 제거할까요/)).toBeNull()
+    expect(screen.queryByRole('button', { name: '제거' })).toBeNull()
+  })
+
+  it('closes the open 캐시 전체 삭제 confirmation', async () => {
+    const client = mount(null, 'full')
+    await userEvent.click(await screen.findByRole('button', { name: '전체 삭제' }))
+    expect(screen.getByText('캐시를 모두 삭제할까요?')).toBeInTheDocument()
+    act(() => {
+      client.setQueryData(queryKeys.auth.status, nonAdmin)
+    })
+    await screen.findByTestId('account-panel')
+    expect(screen.queryByText('캐시를 모두 삭제할까요?')).toBeNull()
+    expect(screen.queryByRole('button', { name: '전체 삭제' })).toBeNull()
   })
 })

@@ -3866,6 +3866,30 @@ describe('onboarding — no roots (ui-spec §4.6, C-5)', () => {
     expect(screen.queryByRole('button', { name: '루트 추가' })).not.toBeInTheDocument()
   })
 
+  it('closes an open 루트 추가 form when a late auth status says non-admin (E-74 §2.10)', async () => {
+    scenario.settings = {
+      ...settingsFixture,
+      server: { ...settingsFixture.server, root_editing_enabled: true },
+    }
+    const user = userEvent.setup()
+    const client = renderLibrary()
+    await user.click(await screen.findByRole('button', { name: '루트 추가' }))
+    expect(screen.getByRole('textbox', { name: '루트 경로' })).toBeInTheDocument()
+    act(() => {
+      client.setQueryData(queryKeys.auth.status, {
+        auth_required: true,
+        authenticated: true,
+        mode: 'oidc',
+        end_session_available: false,
+        user: { sub: 'late', is_admin: false },
+      })
+    })
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: '루트 추가' })).not.toBeInTheDocument()
+    })
+    expect(screen.queryByRole('textbox', { name: '루트 경로' })).not.toBeInTheDocument()
+  })
+
   it('keeps 설정 파일 위치 보기 and offers no 루트 추가 while the capability is off (C-5)', async () => {
     // The `false` half of the same boolean, against the same screen — a flag
     // asserted only in its `true` state is a flag that has not been tested.
