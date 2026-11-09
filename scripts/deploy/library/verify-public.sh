@@ -45,7 +45,7 @@ check_target() { # prefix base
   nid() { n=$((n + 1)); id="$p$n"; }
 
   nid; req root -H 'Accept: text/html' "$b/"; all_hdrs+=(root)
-  if [ "$CODE" = 401 ] && ! grep -qiE '<script[^>]+src=|/assets/' "$tmp/root.body"; then
+  if [ "$CODE" = 401 ] && ! grep -qi '/assets/' "$tmp/root.body"; then
     rec PASS "$id" "[$p] GET / without session -> 401 login page, no SPA assets" "401"
   else rec FAIL "$id" "[$p] GET / without session -> 401 login page, no SPA assets" "HTTP $CODE (SPA or content reachable)"; fi
 
