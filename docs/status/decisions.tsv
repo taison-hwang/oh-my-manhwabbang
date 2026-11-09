@@ -93,3 +93,4 @@ ts	작업	결정	이유	증거	결과
 2026-11-09T12:41:45+09:00	세션 교체	Commander 지시: U-E 뒤 worker-2 교체, Orchestrator 교체 준비. 상태판을 다시 정리(진행 표·세션 교체·새 Orchestrator 다음 행동·미확정·운영 메모), U-E 검증 지시문 초안을 handoff/orchestrator-drafts로 옮김	Commander t1h	—	U-E 병합 뒤 교체 준비 완료 보고
 2026-11-09T13:10:35+09:00	T-U	[완료] 423a41f(hc 보고) → 독립 검증 배정(verifier-1). herdr-check는 thumbs OOM kill(R-F2 대상)로 미완 — make test 1/3에서 thumbs 외 28 패키지 ok, 2/3·3/3 미실행. 최종 PASS는 R-F2 병합 뒤 main에서	worker-1 [완료]	423a41f	verifier-1 T-U
 2026-11-09T13:13:56+09:00	T-U	독립 검증 ISSUES 2: 저장소 밖 cwd 응답이 합계·비용에 포함, TSV·JSON에 추정·구독·미산출 고지 없음. 단가는 공식표와 일치. 보완 배정	verifier-1 재현	/tmp/verify-tu/2026-11-09T13-12-40+0900--verify-tu.md	worker-1 보완
+2026-11-09T13:27:53+09:00	R-F2	수정 cb23cf0(제품 결함: take→inflight 틈) — 작성자 측정·검사가 잠금 대기라 독립 검증을 병행 배정. 병합은 검사 PASS(또는 thumbs 외 통과 근거)와 판정 PASS 둘 다 뒤	worker-4 [진행]	cb23cf0	verifier-1 R-F2
