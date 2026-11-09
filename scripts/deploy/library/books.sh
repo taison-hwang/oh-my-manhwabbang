@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # books.sh — run SHELF at https://books.betterax.net (auth.mode oidc, E-74 §2.18).
+# Day to day, use scripts/start.sh, scripts/stop.sh and scripts/build.sh; these
+# are the manual steps they are built from.
 #
 # usage: books.sh [options] <command>
 #
@@ -43,6 +45,7 @@
 #   --cf-config FILE  default /etc/cloudflared/config.yml
 #   --url URL         public URL for verify, default https://books.betterax.net
 #   --wait SECONDS    health wait after start, default 30
+#   --port PORT       the port init writes, default 9910
 #   --yes             confirm init/start/stop/restart without a prompt
 #   --yes-sudo        confirm the sudo steps (tunnel apply/restart, rollback);
 #                     --yes does not cover them
@@ -60,7 +63,7 @@ repo="$(cd "$here/../../.." && pwd)"
 
 config="$repo/shelf.books.yaml" bin="$repo/dist/shelf" workdir="$repo"
 state="${XDG_STATE_HOME:-$HOME/.local/state}/shelf-books"
-cf_config="$CF_CONFIG_DEFAULT" url="https://$LIB_HOST" wait_s=30
+cf_config="$CF_CONFIG_DEFAULT" url="https://$LIB_HOST" wait_s=30 init_port="$DEFAULT_PORT"
 yes=0 yes_sudo=0 dry=0
 args=()
 while [ $# -gt 0 ]; do
@@ -72,6 +75,7 @@ while [ $# -gt 0 ]; do
     --cf-config) cf_config="$2"; shift 2 ;;
     --url) url="$2"; shift 2 ;;
     --wait) wait_s="$2"; shift 2 ;;
+    --port) init_port="$2"; shift 2 ;;
     --yes) yes=1; shift ;;
     --yes-sudo) yes_sudo=1; shift ;;
     --dry-run) dry=1; shift ;;
@@ -387,9 +391,9 @@ do_verify() {
 do_init() {
   [ "${1:-}" = --from ] && [ -r "${2:-}" ] || die "init --from <existing shelf.yaml>"
   [ ! -e "$config" ] || { say "REFUSED: $config exists; it is never overwritten"; exit 9; }
-  if [ "$dry" = 1 ]; then plan "write $config from $2 (server: 127.0.0.1:$DEFAULT_PORT, auth oidc block)"; return 0; fi
+  if [ "$dry" = 1 ]; then plan "write $config from $2 (server: 127.0.0.1:$init_port, auth oidc block)"; return 0; fi
   confirm "Write a new $config from $2?"
-  python3 -I - "$2" "$config" "$LIB_HOST" "$DEFAULT_PORT" <<'PY'
+  python3 -I - "$2" "$config" "$LIB_HOST" "$init_port" <<'PY'
 import sys
 import yaml
 src, dst, host, port = sys.argv[1:5]

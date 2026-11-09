@@ -39,9 +39,10 @@ def pids():
             yield int(name)
 
 
-def holders(directory):
+def holder_pids(directory):
     root = os.path.realpath(directory) + os.sep
     me = os.getpid()
+    found = []
     for pid in pids():
         if pid == me:
             continue
@@ -55,35 +56,65 @@ def holders(directory):
             except OSError:
                 continue
             if target.startswith(root):
-                try:
-                    print(pid, " ".join(argv_of(pid)))
-                except OSError:
-                    print(pid)
+                found.append(pid)
                 break
+    return found
+
+
+def holders(directory):
+    for pid in holder_pids(directory):
+        try:
+            print(pid, " ".join(argv_of(pid)))
+        except OSError:
+            print(pid)
+
+
+def listening_ports(pid=None, port=None):
+    """[(port, pid)] of TCP listeners, filtered by pid and/or port."""
+    query = ["ss", "-ltnpH"] + (["sport = :%s" % port] if port else [])
+    out = subprocess.run(query, capture_output=True, text=True).stdout
+    found = []
+    for line in out.splitlines():
+        cols = line.split()
+        if len(cols) < 4:
+            continue
+        lport = int(cols[3].rsplit(":", 1)[1])
+        for owner in re.findall(r"pid=(\d+)", line):
+            if pid is None or int(owner) == pid:
+                found.append((lport, int(owner)))
+    return found
+
+
+def port_owner(port):
+    owners = listening_ports(port=port)
+    return owners[0][1] if owners else None
 
 
 def portpid(port):
-    out = subprocess.run(["ss", "-ltnpH", "sport = :%s" % port], capture_output=True, text=True).stdout
-    m = re.search(r"pid=(\d+)", out)
-    if not m:
+    owner = port_owner(port)
+    if owner is None:
         sys.exit(1)
-    print(m.group(1))
+    print(owner)
 
 
-def match(pid, binary, cfg):
+def matches(pid, binary, cfg):
     pid = int(pid)
     try:
         argv = argv_of(pid)
         cwd = os.readlink("/proc/%d/cwd" % pid)
     except OSError:
-        sys.exit(1)
+        return False
     want_bin, want_cfg = os.path.realpath(binary), os.path.realpath(cfg)
     # Index 1 covers a BIN that is a script: the kernel puts its interpreter first.
     for i in (0, 1):
         if len(argv) >= i + 3 and resolve(argv[i], cwd) == want_bin \
                 and argv[i + 1] == "--config" and resolve(argv[i + 2], cwd) == want_cfg:
-            sys.exit(0)
-    sys.exit(1)
+            return True
+    return False
+
+
+def match(pid, binary, cfg):
+    sys.exit(0 if matches(pid, binary, cfg) else 1)
 
 
 def host_matches(pattern, host):

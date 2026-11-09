@@ -195,11 +195,14 @@ web:
 build: web build-go
 
 ## build-go — relink the binary against whatever is already in web/dist.
+# SHELF_OUT lets scripts/build.sh link next to dist/shelf and rename it into
+# place, so a failed or interrupted build never leaves a running server's binary half-written.
+SHELF_OUT ?= dist/shelf
 build-go:
-	@mkdir -p dist
-	$(BUILDENV) $(GO) build -trimpath -tags "$(TAGS)" -ldflags "$(LDFLAGS)" -o dist/shelf ./cmd/shelf
-	@printf '>> dist/shelf  %s bytes\n' "$$(wc -c < dist/shelf)"
-	@SHELF_STATIC_ARTEFACTS="dist/shelf" $(STATICCHECK)
+	@mkdir -p "$(dir $(SHELF_OUT))"
+	$(BUILDENV) $(GO) build -trimpath -tags "$(TAGS)" -ldflags "$(LDFLAGS)" -o "$(SHELF_OUT)" ./cmd/shelf
+	@printf '>> %s  %s bytes\n' "$(SHELF_OUT)" "$$(wc -c < "$(SHELF_OUT)")"
+	@SHELF_STATIC_ARTEFACTS="$(SHELF_OUT)" $(STATICCHECK)
 
 ## docker — build the local image $(DOCKER_IMAGE) around the default static binary (E-72). Local only: no push, no login.
 DOCKER       ?= docker

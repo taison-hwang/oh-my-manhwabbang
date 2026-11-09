@@ -1,0 +1,3 @@
+#!/bin/sh
+# Test double for pnpm: logs the call and succeeds.
+echo "pnpm $*" >>"${FAKE_CALLS:-/dev/null}"

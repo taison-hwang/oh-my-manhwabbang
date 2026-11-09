@@ -1,4 +1,6 @@
 #!/bin/sh
-# Test double for sudo: logs the call and runs it unprivileged.
+# Test double for sudo: logs the call and runs it unprivileged. `sudo -v` (the
+# credential prompt start.sh asks for up front) just succeeds.
 echo "sudo $*" >>"$FAKE_CALLS"
+[ "$1" = -v ] && exit 0
 exec "$@"
