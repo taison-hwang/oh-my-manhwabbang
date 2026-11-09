@@ -329,7 +329,6 @@ func TestMeasuredSizes_DocsQuoteTheMakefile(t *testing.T) {
 		def - nopdf:  "MEASURED_DEFAULT − MEASURED_NOPDF",
 		budget:       "SIZE_BUDGET",
 		budget - def: "SIZE_BUDGET − MEASURED_DEFAULT",
-		def - budget: "MEASURED_DEFAULT − SIZE_BUDGET",
 	}
 
 	var comments []string

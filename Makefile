@@ -84,9 +84,10 @@ AVIF_ARTEFACTS   := $(foreach t,$(LINUX_TARGETS),dist/shelf-$(VERSION)-$(subst /
 # NFR-OPS-001's budget for the primary target, in bytes. `release` reports every
 # artefact's size and fails if linux/amd64 exceeds it.
 #
-# 32 MiB, per ruling **E-19** (decisions.md, wave-4 E2E) as confirmed by **E-21**
-# §4. The previous 20 MiB was
-# impl-plan §7.3 rounding up arch §1.2's "18 MB is fine for a NAS" — an estimate
+# 33 816 576 bytes (32.25 MiB), per ruling **E-78** (decisions.md), which raised
+# the 32 MiB of ruling **E-19** (wave-4 E2E, confirmed by **E-21** §4) once E-74's
+# oidc mode and the phase-3 viewer work took the default build over it. E-19 in
+# turn replaced a 20 MiB that was impl-plan §7.3 rounding up arch §1.2's "18 MB is fine for a NAS" — an estimate
 # whose base term (everything that is neither pdfium nor AVIF) was ~7 MB low,
 # mostly modernc.org/sqlite, the pure-Go SQLite CON-001's CGO_ENABLED=0 forces.
 # prd NFR-OPS-001 itself asks only for a single file with the SPA embedded and
@@ -101,12 +102,11 @@ AVIF_ARTEFACTS   := $(foreach t,$(LINUX_TARGETS),dist/shelf-$(VERSION)-$(subst /
 # `-tags nopdf` row, which is where arch §1.2's smaller PDF figure comes from; no
 # shipped artefact is built that way, so it is no longer measured.)
 #
-# 33 554 432 is E-19's headroom over the build it measured, which was 7.4 MB
-# smaller than the 2026-10-26 build — most of the difference is the vendored fonts
-# that E-46, E-53 and E-55 added after E-19 measured. That left about 1% even after
-# E-63 stopped embedding the SPA's JS and CSS uncompressed, and the default build
-# above (E-74's oidc mode and the phase-3 viewer work) is now 123 042 bytes over
-# it: `release` fails its budget gate until the budget is re-ruled (README §Build).
+# E-78 leaves 139 102 bytes over the default build above, about 0.4%. E-19's
+# 32 MiB had been headroom over a build 7.4 MB smaller than the 2026-10-26 one —
+# most of the difference is the vendored fonts that E-46, E-53 and E-55 added —
+# and the 1% it still left after E-63 stopped embedding the SPA's JS and CSS
+# uncompressed is what E-74 and the viewer work used up.
 # pdfium WASM ≈8.34 MB, AVIF WASM ≈1.58 MB, pure-Go SQLite (CON-001 forces
 # modernc.org/sqlite) and the embedded SPA are what occupy the budget. The gate
 # still cannot be satisfied by anything that matters and still trips on a
@@ -114,7 +114,7 @@ AVIF_ARTEFACTS   := $(foreach t,$(LINUX_TARGETS),dist/shelf-$(VERSION)-$(subst /
 # Korean webfont. Keep this in lockstep with
 # impl-plan §7.3 and README.md; internal/buildinfo/release_budget_test.go reads
 # all three and fails if any of them drift.
-SIZE_BUDGET := 33554432
+SIZE_BUDGET := 33816576
 
 # The measured sizes the table above and README.md quote. The budget always had
 # a guard; these had none, and README went on quoting E-19's measurement after the

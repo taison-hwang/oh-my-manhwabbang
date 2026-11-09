@@ -78,16 +78,17 @@ splitting on whitespace. (The smaller PDF figure in `docs/arch-backend.md` is
 ruling E-19's, measured against the *AVIF-enabled* build of that day.)
 
 `make release` reports every artefact's size and fails when the default
-linux/amd64 build exceeds `SIZE_BUDGET`, which is ≤ **32 MiB = 33 554 432 bytes**
-(ruling **E-19**). Pass `SIZE_BUDGET=0` to waive the gate for one run.
+linux/amd64 build exceeds `SIZE_BUDGET`, which is ≤ **33 816 576 bytes**
+(32.25 MiB, ruling **E-78**, which raised ruling **E-19**'s 32 MiB). Pass
+`SIZE_BUDGET=0` to waive the gate for one run.
 
-**The default build is over the budget.** It exceeds it by **123 042 B**
-(about 0.1 MB) after ruling **E-74**'s oidc mode and the phase-3 viewer work, so
-`make release` fails its budget gate until the budget is re-ruled or something is
-dropped — a decision awaiting the user as of 2026-11-09. The vendored fonts alone
-are about a fifth of the binary
-(see [§2](#2-names-render-in-vendored-faces--with-three-exceptions)). Until then every new dependency, embedded
-asset or font coverage widens the gap; check the size before adding one.
+**The budget is tight.** The default build above leaves **139 102 B**
+(about 0.1 MB) of it; E-78 raised the budget when ruling **E-74**'s oidc mode and
+the phase-3 viewer work took the build past E-19's 32 MiB. The vendored fonts
+alone are about a fifth of the binary
+(see [§2](#2-names-render-in-vendored-faces--with-three-exceptions)). One new dependency, embedded asset or font
+coverage can still push `make release` over; check the headroom before adding
+one, and decide what to drop, or re-rule the budget, if it does not fit.
 
 It also re-measures the three sizes above — default, `-avif` and `nopdf`, all
 linux/amd64 — and fails when one has moved more than `MEASURED_SLACK` bytes from
