@@ -95,3 +95,4 @@ ts	작업	결정	이유	증거	결과
 2026-11-09T13:13:56+09:00	T-U	독립 검증 ISSUES 2: 저장소 밖 cwd 응답이 합계·비용에 포함, TSV·JSON에 추정·구독·미산출 고지 없음. 단가는 공식표와 일치. 보완 배정	verifier-1 재현	/tmp/verify-tu/2026-11-09T13-12-40+0900--verify-tu.md	worker-1 보완
 2026-11-09T13:27:53+09:00	R-F2	수정 cb23cf0(제품 결함: take→inflight 틈) — 작성자 측정·검사가 잠금 대기라 독립 검증을 병행 배정. 병합은 검사 PASS(또는 thumbs 외 통과 근거)와 판정 PASS 둘 다 뒤	worker-4 [진행]	cb23cf0	verifier-1 R-F2
 2026-11-09T13:32:34+09:00	R-F2	독립 검증 PASS cb23cf0(코드·결정적 테스트·뮤테이션). -race RSS 비교는 미확인 → 작성자 herdr-check PASS 조건부 병합 지시	verifier-1 PASS	/tmp/verify-rf2/2026-11-09T13-31-32+0900--verify-rf2.md	worker-4 조건부 병합
+2026-11-09T13:45:58+09:00	U-E	결정: (A) palette 4a·4b laptop 2장 기준 갱신 승인(결정적·내용 동일·미세 차이, 원인 미확인 명시, 재발 시 감시 제외 후속). (B) go test 기본 10분 제한 3회째(httpapi×2, source) → Makefile test에 -timeout 30m. R-F2 병합 뒤 rebase하고 herdr-check·e2e-synthetic·release 재실행	worker-2 [차단], 1·2차 원본 sha256 동일	4f7a279	worker-2 (A)(B) 후 R-F2 대기
