@@ -68,3 +68,4 @@ ts	작업	결정	이유	증거	결과
 2026-11-09T08:34:15+09:00	U-B	main 병합 c36823f(rebase 무충돌, ff). worker-2 /clear. worker-1에 U-D rebase 지시	worker-2 [병합 완료]	c36823f	worker-1 U-D rebase
 2026-11-09T08:49:17+09:00	F-1	보완 1c0f236 Orchestrator 직접 대조 통과(텍스트 3개만 추가, NOTICE가 woff2 12개 전부·OFL 원문 포함). 코드 트리는 ab43bfa(검사 PASS)와 같아 1c0f236 herdr-check를 기다리지 않고 병합 지시(잠금 대기 약 30분 절약, P-71b 선행)	git diff --stat ab43bfa 1c0f236 = 3 files 텍스트, git grep으로 빌드·테스트가 fonts/ 디렉터리를 열거하지 않음 확인	ab43bfa PASS + 1c0f236	worker-4 병합 → P-71b
 2026-11-09T08:50:00+09:00	F-1	main 병합 ad9e0cf(rebase 무충돌, ff). P-71b 재개	worker-4 [병합 완료]	ad9e0cf	worker-4 P-71b
+2026-11-09T09:14:30+09:00	U-D	rebase 513c3a8(c36823f 위, 무충돌) 검사 PASS → 독립 검증 배정(verifier-1)	worker-1 [완료]	513c3a87fd5929a559302c92fa400a6794bb23d0	verifier-1 U-D
