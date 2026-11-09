@@ -167,7 +167,7 @@ func BuildRAR5(t testing.TB, spec RAR5Spec) []byte {
 	return out
 }
 
-// RAR5Bytes is BuildRAR5 without a testing.TB, for scripts/mkfixture.
+// RAR5Bytes is BuildRAR5 without a testing.TB, for tools/mkfixture.
 func RAR5Bytes(spec RAR5Spec) ([]byte, error) {
 	out := []byte{0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x01, 0x00}
 	if spec.HeaderEncryption {

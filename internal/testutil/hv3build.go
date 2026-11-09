@@ -79,7 +79,7 @@ func BuildHV3(t testing.TB, spec HV3Spec) []byte {
 	return HV3Bytes(spec)
 }
 
-// HV3Bytes is BuildHV3 without a testing.TB, for scripts/mkfixture — so the
+// HV3Bytes is BuildHV3 without a testing.TB, for tools/mkfixture — so the
 // e2e fixture tree and the unit fixtures are produced by one writer rather than
 // by two that could drift.
 //

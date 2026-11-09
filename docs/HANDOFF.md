@@ -49,7 +49,7 @@
 | **E-63** (사전 압축) | SPA JS·CSS를 gzip으로만 embed, gzip 미수용 요청엔 한 번 푼 바이트(B안). 에셋 476 469 → 147 774 B, 바이너리 약 300 KB 감소. 계약표 변화 없음 | B안 채택 = 사용자. 설계·구현 ea |
 | **E-64** (가져오기, **A-17**) | 현재 동작을 명세로: prefs merge는 `updated_at` 없는 행이 로컬에 지고 replace만 덮는다, `started_at`은 merge·replace 모두 늦추지 않는다(min, 들어온 항목이 쓰일 때만). 코드 변화 없음 | 명문화 = 사용자. 20 문서·25 테스트, codex 2사이클 차단 0 |
 | **E-65** (페이지 오류, **A-18**) | 서빙 시점에 드러난 암호화·손상·미지원 압축 = `422`(§7.6), 색인된 encrypted·`no page n` = `404`. 코드·골든 변화 없음 | 20 발견, A-18 승격 = 메인 |
-| **E-66** (test-int) | gates **5/5 = `make e2e` && `make test-int`(표본, 기본 N=500 + pinned, `TEST_INT_REQUIRE_ROOT=1`)**, 게이트 수 다섯 그대로. 전량은 `make test-int-full`(릴리스 전). 루트 경로는 `scripts/media-root` 한 곳, `gates-precheck` | ② 5/5 묶기·표본 = 사용자. ea(Makefile·가드)·45(표본 장치) |
+| **E-66** (test-int) | gates **5/5 = `make e2e` && `make test-int`(표본, 기본 N=500 + pinned, `TEST_INT_REQUIRE_ROOT=1`)**, 게이트 수 다섯 그대로. 전량은 `make test-int-full`(릴리스 전). 루트 경로는 `scripts/e2e/media-root` 한 곳, `gates-precheck` | ② 5/5 묶기·표본 = 사용자. ea(Makefile·가드)·45(표본 장치) |
 | **E-67** (로드맵) | prd §7.2 제외 다섯 기능(외부 메타데이터·다중 사용자·업로드/이름변경/삭제·OPDS·이미지 자동 보정)을 §9 **3차**로. 이 빌드 범위 불변, 착수 전 양립 판정 | 사용자(3차, 4차 아님). 20 문서, codex 2사이클 |
 | **E-68** (진행률 화면) | 설정 대화상자 마지막 구역 `읽기 기록` — 내보내기/가져오기, 가져오기는 확인 단계. D-04 "UI out"을 뒤집음. HTTP 계약 변화 없음 | 사용자 지시. 25 설계·구현, codex 2사이클(2R 수정은 메인 직접 확인), 실브라우저 64/64 |
 
@@ -167,7 +167,7 @@ E-63(SPA gzip-only)이 여유를 약 7배로 늘렸지만, 서체 한 벌(1.1~1.
 `getComputedStyle`을 읽고 나서야 나왔다. 새 `styles/cascade.test.ts`가 **컴파일된 시트**를
 검사하니 앞으로는 유닛 티어에서 잡힌다.
 
-**(3) `scripts/mkfonts/subset.py`가 이제 실제로 돈다.** E-53이 썼을 때부터 이 트리에서 한 번도
+**(3) `tools/mkfonts/subset.py`가 이제 실제로 돈다.** E-53이 썼을 때부터 이 트리에서 한 번도
 완주한 적이 없었다 — `@fontsource/archivo`가 커밋 `97e9782`에서 package.json에서 빠졌는데
 스크립트는 계속 그 경로를 봤고, 항상 exit 2였다. 의존성을 복구했고 `--check`가 처음으로 통과한다.
 서브셋 결과의 cmap을 되읽어 요청 글자가 실제로 들어갔는지 확인하는 `missing_glyphs()`도 붙였다.
@@ -275,7 +275,7 @@ CP949 · Shift_JIS로 디코드하므로, 레거시 인코딩 이름이 담을 �
 라이브러리 실측 — 18,729개 이름에 한자 111자·가나 69자 — 이 **전부 그 안에** 있다.
 
 `unicode-range`가 3 MB를 감당 가능하게 만든다: CJK 블록만 주장하므로 한자를 실제로 그리는 화면에서만
-받는다. 바이너리 **30,351,544 B** / 예산 33,554,432 B. 레시피는 `scripts/mkfonts/subset.py`.
+받는다. 바이너리 **30,351,544 B** / 예산 33,554,432 B. 레시피는 `tools/mkfonts/subset.py`.
 
 **hygiene 스위트가 NFR-OPS-001의 안 지켜지던 절반을 얻었다** — CDN 금지는 검사했지만 *스택이
 시스템 폰트보다 먼저 벤더 서체에 닿는지*는 아무도 안 봤고, 그래서 `--font-ui`가 세 스킨 동안
@@ -363,7 +363,7 @@ zip과 **바이트 단위로 동일**함을 파일마다 확인한 뒤에, 02는
 계속 검사하는 것이다. 군계는 이제 **25권 · 오류 0 · 전 권 페이지 있음**을 단언한다.
 
 **규칙의 커버리지는 유지된다.** 합성 트윈이 폴더+zip 쌍과 잘린 `.repair.zip` 2개를 **의도적으로
-만든다**(`scripts/mkfixture`). 실 라운드가 잃은 것은 **규칙이 아니라 표본**이다.
+만든다**(`tools/mkfixture`). 실 라운드가 잃은 것은 **규칙이 아니라 표본**이다.
 
 **표본을 되살릴 후보는 측정해 뒀다:** `월드 엠브리오 01~97화 완결`에 폴더+zip 쌍이 **하나** 남아
 있다(`월드 엠브리오 97 (완)`). 커레이티드 목록은 6개 사본이 contractcheck로 묶인 15개 계약이라
@@ -407,7 +407,7 @@ zip과 **바이트 단위로 동일**함을 파일마다 확인한 뒤에, 02는
   전체 루트 실측: ZIP **11,087개**를 읽어 컨테이너 1개, **104/104 CRC 일치**, 150초.
   HV3이 없는 루트에서는 여전히 skip하되 `found 0`을 **로그로 남긴다** — 침묵하는 skip이
   이 사고의 본체였다.
-- **실 e2e 라운드 통과 (2026-08-24 11:02–11:17).** `scripts/e2e.sh --port 8791`, 즉 `--synthetic`
+- **실 e2e 라운드 통과 (2026-08-24 11:02–11:17).** `scripts/e2e/e2e.sh --port 8791`, 즉 `--synthetic`
   없는 실 컬렉션 라운드가 **exit 0**: curl 단언 **104개**, Playwright **128개**(4뷰포트, 13.2분,
   synthetic 전용 4개 skip), 스크린샷 121장. **9단계(FR-CFG-005)도 통과** — 미디어 루트 무변경,
   서버 TMPDIR·작업 디렉터리 무기록. HV3 단언 셋이 실 데이터에서 초록이다: 볼륨이 있고, 열리고,
@@ -677,7 +677,7 @@ UTF-8 NFD 자모 시퀀스의 선두 바이트가 사라졌다. 어떤 디코더
 테스트가 단언한다.
 
 **⑥ `stale_seen` 이음매를 지키는 것은 e2e 하나뿐이다 — 새로 세웠다.** `contractcheck`는 요청 바디를
-**일부러 안 본다**(`scripts/contractcheck/main.go:48-53`). Go 테스트는 *"서버가 받는다"* 만, vitest는
+**일부러 안 본다**(`tools/contractcheck/main.go:48-53`). Go 테스트는 *"서버가 받는다"* 만, vitest는
 *"클라이언트가 보낸다"* 만 고정한다. **둘을 비교하는 것이 없었다** — Go 태그를 `staleSeen`으로 개명하고
 `api_test.go`를 같이 고치면 **다섯 게이트가 전부 초록인데** 실제 승인 PUT은 `DisallowUnknownFields`에
 걸려 400이 되고 경고는 영원히 안 사라진다. **`web/e2e/10-stale-progress.spec.ts`**(466줄)가 그 이음매다.
@@ -777,9 +777,9 @@ stale 상태는 `GET /api/progress/export` → `page_count`만 조작 → `POST 
 
 **⑥ 컬렉션이 e2e 티어 아래에서 개명됐다 — `make e2e`가 제품과 무관한 이유로 빨개졌다.** 사용자가
 미디어 볼륨의 **모든** 항목에서 앞머리 `[만화] ` 를 떼어냈다(1 082개, 지금 그것을 달고 있는 것 0개).
-커레이티드 10종은 전부 그대로 있다. 사용자 승인을 받고 픽스처를 다시 겨눴다: `scripts/e2e-config.sh`
-(진짜 `CURATED` 목록 — `e2e.sh`가 아니다. 거기엔 리터럴 하나가 있었다), `scripts/e2e-assert.py`,
-`web/e2e/shelf.ts`, `web/e2e/01-library.spec.ts`, `scripts/e2e.sh:921`, 그리고 **`scripts/mkfixture/
+커레이티드 10종은 전부 그대로 있다. 사용자 승인을 받고 픽스처를 다시 겨눴다: `scripts/e2e/e2e-config.sh`
+(진짜 `CURATED` 목록 — `e2e.sh`가 아니다. 거기엔 리터럴 하나가 있었다), `scripts/e2e/e2e-assert.py`,
+`web/e2e/shelf.ts`, `web/e2e/01-library.spec.ts`, `scripts/e2e/e2e.sh:921`, 그리고 **`tools/mkfixture/
 main.go`** — 합성 라운드가 **같은 이름 목록을 공유**하므로 mkfixture를 건너뛰었다면
 `make e2e-synthetic`이 **12개 중 0개를 인덱싱**했을 것이다. 정렬 순서는 다시 유도했고 바꿀 것이
 없었다(옛 이름 열이 전부 같은 7자 접두를 공유했으므로 순서는 이미 그 뒤의 글자가 정하고 있었다).
@@ -1240,7 +1240,7 @@ CSS 적용은 항목 `y`이고, **30건 중 24건은 테스트가 없다.**
 1. **`make gates`의 배너가 지워진 게이트를 RAN으로 보고했다.** 기록이 게이트 *옆*에 있을 뿐 게이트가
    만들어내는 값이 아니었다. `&&`로 한 줄에 묶어도 줄을 고쳐 게이트를 빼는 것은 못 막는다 —
    **레시피가 자기 자신에 대해 하는 기록은 레시피가 재작성되면 살아남지 못한다.** 그래서 레시피
-   **밖에서** 읽는 `scripts/check-gates.sh`를 만들어 `make lint`에 걸었다.
+   **밖에서** 읽는 `scripts/check/check-gates.sh`를 만들어 `make lint`에 걸었다.
 2. **E-34 §1 테스트가 `scope` 절반에서 실패할 수 없었다.** `goLibrary`에 `setScope('all')`을 넣어도
    초록이다 — A-5 하이드레이션이 **첫 `GET /api/series`보다 먼저** 복구하기 때문이다. 가라앉은 값을
    읽는 관찰(와이어·PUT·`getState()`)은 전부 복구된 값을 읽는다. **전이 목록**만이 왕복을 본다.
@@ -1364,7 +1364,7 @@ check-readonly). **실물 확인**: 출하 바이너리를 띄우고 실제 브�
 POST가 202를 주되 6단계의 run_id를 되돌려 주는 경우 — **둘 다 통과했다**), 시계를 재는 대신 **run
 정체성**을 보도록 바꿨다: "내가 시작시킨 run이 끝난 그 run인가."
 
-검사는 `scripts/e2e-assert.py`의 `phase_rescan`(단언 8개)으로 옮겼고, `scripts/e2e-assert-rescan-test.py`
+검사는 `scripts/e2e/e2e-assert.py`의 `phase_rescan`(단언 8개)으로 옮겼고, `scripts/e2e/e2e-assert-rescan-test.py`
 9건이 그것을 붙잡는다(**뮤테이션 7건 전부 KILLED**). `make test`의 `test 0/3`(당시 표기 `0/2`)으로 연결했다.
 **자세한 것은 §4.8과 §5.6.1 H.**
 
@@ -1464,7 +1464,7 @@ D-33 / E-3 / OQ-3이 세 곳에 똑같이 약속해 놓고 지키지 않았던 �
 이 세션은 **이 문서가 다시 확인되지 않은 채 이월한 주장** 때문에 존재한다. §5.5의 전제("덮으려면 명세
 범위 변경이 필요하고 사용자 판단이 있어야 한다")는 **거짓**이었고 — 이미 커레이티드 10개 안에 100%
 세로인 볼륨이 둘 있다 — §5.6 네 항목 중 **2건은 잘못 진단**돼 있었으며, 나머지 2건은 **행 번호가
-어긋나** 있었다. 전부 실측으로 판정한 뒤 E2E 스펙 3개, `web/e2e/shelf.ts`, `scripts/e2e-assert.py`,
+어긋나** 있었다. 전부 실측으로 판정한 뒤 E2E 스펙 3개, `web/e2e/shelf.ts`, `scripts/e2e/e2e-assert.py`,
 Go 4개 파일을 고쳤고, 그 과정에서 아무도 보지 못했던 결함 2건을 새로 찾았다: **칠해지지 않은 프레임에
 대고 통과하던 스크린샷 단언**(§5.5)과 **호버 오버레이 버튼의 도달 불가능성**(§5.6 항목 4).
 
@@ -1567,7 +1567,7 @@ Playwright는 48개 → **56개**였다 (뷰포트 4개 × 신규 회귀 가드 
 | | |
 |---|---|
 | E2E 스펙·헬퍼 | `web/e2e/{shelf.ts, 01-library.spec.ts, 04-viewer.spec.ts, 05-pdf-and-large.spec.ts}` |
-| curl 단언 | `scripts/e2e-assert.py` |
+| curl 단언 | `scripts/e2e/e2e-assert.py` |
 | 서버 | `internal/thumbs/{thumbs.go, thumbs_test.go}`, `internal/httpapi/{dto.go, health.go, api_test.go, dims_test.go}` |
 | 프론트 | `web/src/features/library/SeriesCard.tsx` — **주석만**. 세 개의 `className` 문자열을 변경 전 기록과 대조했고 바이트 단위로 동일하다. 렌더 결과는 안 바뀐다. (§5.6.1 C) |
 | | `web/src/features/library/library.test.tsx` — 불변식 테스트 **1건 추가**(39 → 40건). vitest 총계는 591 → **592**가 될 것이다. |
@@ -1609,7 +1609,7 @@ Playwright **48 passed / 12 failed / 4 not-run** (20.5분), 스텝 11만 실패,
 
 | 실패 (4개 뷰포트 전부) | 원인 |
 |---|---|
-| `6.1` — `Expected: 10 / Received: 12` | 합성 모드는 D-49가 요구하는 **암호화 ZIP·ZIP64 2개를 더 붙인다** (`scripts/e2e-config.sh:59-62`). `scripts/e2e-assert.py`는 `SYNTHETIC_EXTRA`로 이를 처리하지만 **`web/e2e/shelf.ts`의 `CURATED_SERIES_COUNT = 10`은 처리한 적이 없다.** |
+| `6.1` — `Expected: 10 / Received: 12` | 합성 모드는 D-49가 요구하는 **암호화 ZIP·ZIP64 2개를 더 붙인다** (`scripts/e2e/e2e-config.sh:59-62`). `scripts/e2e/e2e-assert.py`는 `SYNTHETIC_EXTRA`로 이를 처리하지만 **`web/e2e/shelf.ts`의 `CURATED_SERIES_COUNT = 10`은 처리한 적이 없다.** |
 | `6.2` — 같은 단언 (`:131`) | 위와 동일. 변경 전에는 `:105`의 `toHaveCount(CURATED_SERIES_COUNT)`가 같은 이유로 깨졌다 — 증상만 바뀌었다. |
 | `6.6` — 120초 타임아웃 | 합성 군계 01권은 **4쪽**뿐인데(`mkfixture:96-100`) `TURNS = 5`라 마지막 쪽에 착지하고, `NextVolumeCard.tsx:51`의 `next-volume-scrim`이 뷰포트를 덮어 `표시 모드` 세그 클릭을 229회 가로챈다. `TURNS = 5`는 변경 전 파일 49행에 이미 있었다. |
 
@@ -1621,7 +1621,7 @@ Playwright **48 passed / 12 failed / 4 not-run** (20.5분), 스텝 11만 실패,
 
 | 실패 | 수정 | 왜 이게 더 강한가 |
 |---|---|---|
-| `6.1`·`6.2`의 `toBe(10)` | **이름 집합 동등성**으로 교체. `shelf.ts`가 `SYNTHETIC_EXTRA` + `EXPECTED_SERIES`를 갖고, `scripts/e2e.sh`가 `SHELF_E2E_MODE`를 Playwright에 넘긴다 — curl 계층이 `--mode`로 늘 받던 그 신호다 | `toBe(10)`은 **어느** 10개인지 말한 적이 없다. 뮤테이션 **M-D2**가 결정적이다: 큐레이트 시리즈 하나를 가짜와 바꿔 총계를 12로 유지했더니 새 단언은 이름을 대며 실패했고, 옛 단언은 절대 잡을 수 없었다 |
+| `6.1`·`6.2`의 `toBe(10)` | **이름 집합 동등성**으로 교체. `shelf.ts`가 `SYNTHETIC_EXTRA` + `EXPECTED_SERIES`를 갖고, `scripts/e2e/e2e.sh`가 `SHELF_E2E_MODE`를 Playwright에 넘긴다 — curl 계층이 `--mode`로 늘 받던 그 신호다 | `toBe(10)`은 **어느** 10개인지 말한 적이 없다. 뮤테이션 **M-D2**가 결정적이다: 큐레이트 시리즈 하나를 가짜와 바꿔 총계를 12로 유지했더니 새 단언은 이름을 대며 실패했고, 옛 단언은 절대 잡을 수 없었다 |
 | `6.6`의 `next-volume-scrim` | 합성 군계 01권을 **4쪽 세로 → 8쪽 가로**로 재구성(`mkfixture`). `TURNS = 5`는 impl-plan §6.3 문구 그대로 유지 | 합성 픽스처가 전부 세로여서 **FR-VWR-004의 가로 분기가 죽은 코드**였다. 이제 합성에서도 실행된다 — 뮤테이션 **M-A2**(가로 분기 둘 다 삭제)가 6.6을 빨갛게 만든다 |
 | `expect(paired).toBe(false)` | 삭제하고 **전제조건 2개 + 무조건 결과**로 분해 | 이 단언은 "군계가 가로라서"가 아니라 **마지막 쪽 클램프 때문에** 통과하고 있었다 — 이름과 무관한 이유로 초록인 §6.5 사례. 이제 전제조건을 스스로 단언한다 |
 
@@ -1630,7 +1630,7 @@ Playwright **48 passed / 12 failed / 4 not-run** (20.5분), 스텝 11만 실패,
 
 ### 4.4 그 수정이 넣은 검사 하나가 §6.5 그 자체였다 — 리뷰가 잡았다
 
-같은 라운드에 `scripts/e2e.sh`의 AC-005에 "재구축된 라이브러리가 지워진 그것과 이름까지 같은가"를
+같은 라운드에 `scripts/e2e/e2e.sh`의 AC-005에 "재구축된 라이브러리가 지워진 그것과 이름까지 같은가"를
 새로 넣었다. 그런데 **이름을 하나도 읽지 않고 PASS를 찍고 있었다.** `?limit=500`인데 이 엔드포인트의
 상한은 **200**이고(`internal/httpapi/series.go:19`, `arch §7.5`는 `limit | int 1..200`), `set -e`가
 꺼져 있어 400이 나도 중단되지 않는다. 양쪽 변수가 `""`로 남고 `[ "" = "" ]`가 참이 된다.
@@ -1658,7 +1658,7 @@ Playwright **48 passed / 12 failed / 4 not-run** (20.5분), 스텝 11만 실패,
 | `go build ./...`, `go vet ./...`, `go vet -tags "noavif" ./...` | `make lint` / `make test` (타깃 전체) |
 | `go test ./internal/{thumbs,httpapi,app}/... -count=1` (태그 없음 + `-tags noavif`) | `make build` / `make release` |
 | `go test -race -count=25` (신규 thumbs 테스트) | `pnpm test` / `pnpm typecheck` / `pnpm build` (저장소 web/ 대상) |
-| `go run ./scripts/contractcheck` (36 checks), `./scripts/check-readonly.sh`, `staticcheck`, `gofmt -l` | **Playwright — 단 한 번도** |
+| `go run ./tools/contractcheck` (36 checks), `./scripts/check/check-readonly.sh`, `staticcheck`, `gofmt -l` | **Playwright — 단 한 번도** |
 | `tsc -p tsconfig.e2e.json --noEmit`, `eslint e2e` (스크래치 사본) | `make e2e` / `make e2e-synthetic` |
 | `python3 -m py_compile`, mock HTTP 서버 대상 동작 프로브 17건 | 실제 shelf 서버 대상 curl 단언 |
 | vitest 뮤테이션(스크래치 사본), 실제 Chrome CDP 히트테스트 하네스 | |
@@ -1788,7 +1788,7 @@ Playwright **48 passed / 12 failed / 4 not-run** (20.5분), 스텝 11만 실패,
 | `make build` | — | **실행 안 함.** Go 소스 변경 없음 |
 | `make e2e` (real) | — | **실행 안 함.** 합성 라운드만 돌렸다 |
 
-**신규 테스트 9건**(`scripts/e2e-assert-rescan-test.py`). 뮤테이션 **7건 전부 KILLED**: 새 run_id 단언
+**신규 테스트 9건**(`scripts/e2e/e2e-assert-rescan-test.py`). 뮤테이션 **7건 전부 KILLED**: 새 run_id 단언
 제거 / `state=="idle"`만 대기(=원래 버그) / POST 상태 무시 / full 검사 제거 / idle 전제 제거 / 예산
 비교 제거 / 완료 run 전제 제거.
 
@@ -1854,7 +1854,7 @@ vitest는 712 → **744**로 늘었다(E-31 2 · E-34/칩 4 · 대비 스캐너 
 > **`make gates` 하나로 다섯을 다 돌릴 수 있게 됐다**(§5.7 5번, 이번 세션에 완료). 다만 이 세션은
 > 그 타깃으로 완주하지 못했다 — 실행 환경이 긴 명령을 중간에 끊어서, 게이트를 **하나씩** 돌려
 > 위 숫자를 얻었다. `make gates` 자체의 오케스트레이션은 스텁 사본에서 따로 검증했고,
-> `scripts/check-gates.sh`가 레시피를 정적으로 검사한다. ~~다음 세션은 `make gates`를 그냥 돌려 볼 것.~~
+> `scripts/check/check-gates.sh`가 레시피를 정적으로 검사한다. ~~다음 세션은 `make gates`를 그냥 돌려 볼 것.~~
 > **← 10세션차가 돌려 봤고 같은 자리에서 또 끊겼다. §4.11과 §6을 볼 것 — 게이트는 하나씩 돌린다.**
 
 > **E2E를 돌리는 실전 요령 하나.** `make e2e`는 빌드까지 포함하면 한 명령으로는 길다. `make build`를
@@ -1883,7 +1883,7 @@ build·`make lint`·`make test`·`make build` 전부 rc=0. 9세션차 인수인�
 > `Makefile`의 **실행 순서상 `web-gates`가 첫 번째**다 — 즉 "셋째까지 갔다"가 아니라 **첫 게이트
 > 도중에 끊긴 것**이다.
 > 9세션차가 같은 자리에서 같은 일을 겪었고, 두 세션 연속 재현됐으므로 이것은 **그 타깃의 문제가 아니라
-> 실행 환경의 제약**이다. `scripts/check-gates.sh`가 레시피를 정적으로 검사하고 있으니 타깃 자체는
+> 실행 환경의 제약**이다. `scripts/check/check-gates.sh`가 레시피를 정적으로 검사하고 있으니 타깃 자체는
 > 건강하다. **다음 세션도 게이트를 하나씩 돌릴 것** — 그리고 `make build`를 먼저 따로 돌린 뒤
 > `make e2e E2E_ARGS="--no-build"`로 이어 돌리면 각 명령이 짧아진다(§4.10의 요령이 그대로 유효하다).
 
@@ -1940,7 +1940,7 @@ vitest **820/820 (32 파일)** rc=0 — 위 표의 값이 그대로 재현됐다
 > `RootsPanel`은 원래도 0이었다. **다음 세션의 0순위이고, 이유는 순서다** — §5.7을 볼 것.
 >
 > **주의:** `shelf.yaml`의 `listen`이 `127.0.0.1`이 됐지만 **e2e 하네스는 그 파일을 보지 않는다**
-> (`scripts/e2e-config.sh`가 자기 설정을 만든다). 이 변경이 e2e를 깨뜨릴 이유는 없지만, 확인 없이
+> (`scripts/e2e/e2e-config.sh`가 자기 설정을 만든다). 이 변경이 e2e를 깨뜨릴 이유는 없지만, 확인 없이
 > 단정하지 말 것 — 아직 돌려 보지 않았다.
 
 **`make gates` 한 방은 이번에도 안 썼다.** 네 세션 연속 끊긴 기록이 있어 처음부터 하나씩 돌렸고,
@@ -2211,7 +2211,7 @@ FAIL  expected 404 for a book with no index row, got 200
 - 코드는 이미 404를 낸다(`internal/httpapi/books.go:40-46`, 폴백 분기 없음). 단위 테스트
   `internal/httpapi/api_test.go:138-169`가 이미 이를 단언하고 통과한다.
 
-**한 일** — `scripts/e2e.sh`에 가드 4개 추가(각각 실제로 발화하는 것을 확인한 뒤 반영):
+**한 일** — `scripts/e2e/e2e.sh`에 가드 4개 추가(각각 실제로 발화하는 것을 확인한 뒤 반영):
 ① 스폰 전 포트 선점 검사 후 `die`, ② 폴 루프에서 health보다 **자식 생존 확인을 먼저**,
 ③ `/api/health`의 `uptime_ms`로 응답자 신원 확인, ④ `stop_server`가 **포트가 실제로 조용해졌는지** 증명.
 제품 코드·`web/**`·golden 파일은 **한 줄도 건드리지 않았다.**
@@ -2378,7 +2378,7 @@ poppler로 **전수** 실측했다 (표본이 아니라 100%):
 그대로다: `thumbnails.workers: 4`에서 스캔이 `idle 36/36`을 보고한 시점에 파일은 **32~33개**였다
 (36 = 커버 있는 9개 시리즈 × 폭 4개).
 
-> ⚠ **이 실측 문장은 `scripts/e2e-assert.py`의 `THUMB_SETTLE_S` 주석이 근거로 인용한다 — 지우지 말 것.**
+> ⚠ **이 실측 문장은 `scripts/e2e/e2e-assert.py`의 `THUMB_SETTLE_S` 주석이 근거로 인용한다 — 지우지 말 것.**
 > 그 주석은 한때 `docs/HANDOFF.md:208`이라고 **행 번호로** 적고 있었고, 3세션차의 §5.6 재작성으로
 > 그 행이 옮겨가면서(지금은 이 문단이다) 인용이 틀어졌다. **통합 점검에서 고쳤다** — 이제 §5.6
 > 항목 1을 **이름으로** 가리킨다. 이 문서는 세션마다 재작성되므로 이 문단을 옮기더라도 인용은
@@ -2416,7 +2416,7 @@ poppler로 **전수** 실측했다 (표본이 아니라 100%):
 
 **그리고 인수인계에 없던 것**: `docs/impl-plan.md:966`(§6.3 5단계)이 **이 스크립트를 이름으로 서술하며**
 `GET /api/books/{battle_royale}/pages/900`을 `200 image/jpeg`로 **200 ms 미만**이라고 **못박고 있다**
-(`scripts/e2e.sh`의 단계 이름 자체가 `7 · curl assertions (impl-plan §6.3 step 5)`이다). 즉 **200 ms는
+(`scripts/e2e/e2e.sh`의 단계 이름 자체가 `7 · curl assertions (impl-plan §6.3 step 5)`이다). 즉 **200 ms는
 습관이 아니라 판정이고, 페이지 900은 측정 집합에 남아 있어야 한다.** 첫 수정본은 점프 집합을
 `page_count`의 5분위로 유도하면서 900을 떨어뜨렸다 — 명세가 이름으로 든 요구사항이 조용히 사라진
 것이었고, 리뷰가 그것을 잡았다. 최종 형태는 900을 무조건 포함하고, "이 볼륨은 900쪽에 도달한다"를
@@ -2437,8 +2437,8 @@ poppler로 **전수** 실측했다 (표본이 아니라 100%):
 
 **여기서 딸려 나온 것**: `shelf.ts`의 `SERIES` 주석이 이 열 개 리터럴을 *"the one set of literals both
 modes share"*라고 적고 있었는데 **거짓**이다. 같은 열 개 문자열이 **서로 독립적인 사본 네 벌**로
-존재한다 — `scripts/e2e-config.sh`, `scripts/e2e-assert.py`, `web/e2e/shelf.ts`,
-`scripts/mkfixture/main.go`. 주석은 사실대로 고쳤지만(네 집을 이름으로 적고, 정적으로 연결된 것은 없으며
+존재한다 — `scripts/e2e/e2e-config.sh`, `scripts/e2e/e2e-assert.py`, `web/e2e/shelf.ts`,
+`tools/mkfixture/main.go`. 주석은 사실대로 고쳤지만(네 집을 이름으로 적고, 정적으로 연결된 것은 없으며
 실행이 실패해야만 불일치가 드러난다고), **사본 자체는 그대로다 → 아래 열린 항목 A.**
 
 #### 항목 4 — **오진이었다.** 그리고 옆에 진짜 구멍이 있었다.
@@ -2495,8 +2495,8 @@ series detail`, DOM에는 `<p>viewer</p>`. 그 테스트의 주석은 애초에 
 | F. `Stats()`의 단일 락 보유를 아무도 검사하지 않음 | **열림** (자매 결함인 전치 건은 닫힘) |
 
 **A. 커레이티드 10개 이름이 서로 독립적인 사본 네 벌로 존재한다.**
-`scripts/e2e-config.sh`(→ `scan.include_globs`), `scripts/e2e-assert.py`(curl tier의 기대값),
-`web/e2e/shelf.ts`(`SERIES`), `scripts/mkfixture/main.go`(합성 트리의 경로 리터럴 18개). 다섯 번째로
+`scripts/e2e/e2e-config.sh`(→ `scan.include_globs`), `scripts/e2e/e2e-assert.py`(curl tier의 기대값),
+`web/e2e/shelf.ts`(`SERIES`), `tools/mkfixture/main.go`(합성 트리의 경로 리터럴 18개). 다섯 번째로
 `docs/impl-plan.md` §6.3의 산문 YAML이 있다. **정적으로 연결된 것은 하나도 없다.** 시리즈 하나를
 개명하면 네 파일 편집이고, 어긋나면 컴파일이 아니라 **실행이** 실패한다. `shelf.ts` 주석은 이제 이
 사실을 정확히 적고 있지만, 사본 자체는 통합되지 않았다. 통합은 이번 스코프 밖이었다.
@@ -2551,7 +2551,7 @@ component's call; escalated with no ruling in decisions.md yet"*이다. 근거 �
 
 **D. `GET /api/health?verbose=1`의 `thumbs` 블록이 게이트의 의존 대상이 됐는데 계약 지위가 없다.**
 `arch-backend.md` §7.4는 페이로드를 명세하지 않고 `dto.go`는 "diagnostics, not contract"라고 적는다.
-그런데 `scripts/e2e-assert.py`가 `cover_depth`/`page_depth`/`active`/`inflight` 네 필드를 이름으로
+그런데 `scripts/e2e/e2e-assert.py`가 `cover_depth`/`page_depth`/`active`/`inflight` 네 필드를 이름으로
 폴링하고, 실패하면 E2E가 빨개진다. **이 네 필드를 지우거나 개명하면 게이트가 깨진다.** 이것을 계약으로
 승격할지, 아니면 스크립트를 다른 신호로 옮길지는 판정 사항이다. 이번 세션은 판정하지 않았다 —
 `decisions.md`에 없는 것을 있는 척하지 않기 위해서다.
@@ -2600,8 +2600,8 @@ component's call; escalated with no ruling in decisions.md yet"*이다. 근거 �
 > 아래 진단이 지목한 게시 창(`Start`가 `progress.begin` 전에 id를 반환)은 **폴링 조건 자체에** 넣었다:
 > `state == "idle"`이 아니라 `run_id == 내 run && state == "idle"`을 기다린다.
 >
-> - 검사는 `scripts/e2e-assert.py`의 `phase_rescan`으로 옮겼다(step 7·8b와 같은 모양). 단언 8개.
-> - `scripts/e2e-assert-rescan-test.py` **신규** — 스텁 기반 테스트 9개. 위 (a)(b) 두 상태가
+> - 검사는 `scripts/e2e/e2e-assert.py`의 `phase_rescan`으로 옮겼다(step 7·8b와 같은 모양). 단언 8개.
+> - `scripts/e2e/e2e-assert-rescan-test.py` **신규** — 스텁 기반 테스트 9개. 위 (a)(b) 두 상태가
 >   그중 앞의 두 개다. 서버·DB·픽스처 없이 약 1초.
 > - **뮤테이션 7건 전부 KILLED** (새 run_id 단언 제거, idle만 대기=원래 버그, POST 상태 무시,
 >   full 검사 제거, idle 전제 제거, 예산 비교 제거, 완료 run 전제 제거).
@@ -2614,7 +2614,7 @@ component's call; escalated with no ruling in decisions.md yet"*이다. 근거 �
 
 원래 진단 (보존):
 
-`scripts/e2e.sh:548`의 `curl -fsS -X POST "$BASE/api/scan"`이 **가드가 없다.** 6단계(529행)는 같은
+`scripts/e2e/e2e.sh:548`의 `curl -fsS -X POST "$BASE/api/scan"`이 **가드가 없다.** 6단계(529행)는 같은
 호출을 `|| die`로 감싸고 `run_id`까지 잡는데 8단계는 아니다. POST가 실패하면(예: 409)
 `wait_for_idle`의 첫 폴이 아직 idle인 스캐너를 보고 즉시 0을 반환하고, `WAIT_SECS=0`이라
 `[ 0 -lt 30 ]`이 참이 되어 **`PASS the no-change rescan finished in 0s (< 30 s)`** 를 찍는다.
@@ -3057,7 +3057,7 @@ rgb(45 43 43 / .14)`. `--shadow-inset`·`--color-hot`·`--shadow-sidebar`는 그
 |---|---|---|
 | **au** | **`openingFit`의 `undefined` 폴백은 프로덕션 도달이 0이다.** E-44가 강제변환을 없앤 뒤 남은 것은 `fit ?? DEFAULT_FIT` 한 줄인데(`store/viewer.ts:66-68`), 리셋 경로는 non-nullable한 `BookPrefs.fit_mode`를 넘기고(그래서 이번에 호출을 벗겼다 — `ViewerPage.tsx:391-402`) **유일한 프로덕션 `open()` 호출처도** `detail.prefs.fit_mode`를 넘긴다. 폴백이 살아 있는 이유는 스토어 자신의 `ViewerOpenOptions.fit`이 옵셔널이라는 것 하나뿐이다(`store/viewer.ts:72-78`). 남길지 인라인할지는 **판정** 거리다 — 지금 지우면 옵셔널 필드의 계약이 바뀌고, 두면 도달하지 않는 규칙이 남는다 | 판정 먼저 |
 | **av** | **맞춤 화살표 순회가 걸음마다 디바운스 없는 `PUT /prefs`를 쏘고, `contain`을 경유해 저장한다.** 네이티브 ←/→는 포커스를 옮기면서 **선택도 바꾸고**, `applyFit`에는 디바운스가 없다. 너비→원본으로 세 번 누르면 PUT 세 번이 나가고 중간에 화면이 **영구 저장**된다 — 키보드로 읽는 사람이 지나가는 길에 화면을 남긴다. 디바운스는 *"선택이 언제 영구해지는가"* 를 바꾸는 일이고 **아무도 그것을 판정한 적이 없다.** 15세션차는 이것을 알고도 **일부러 고치지 않았다** | 판정 먼저 |
-| ~~**aw**~~ | **20세션차에 닫힘 — 그리고 사본은 다섯이 아니라 여덟이었다.** 실측: `scripts/e2e-config.sh`의 `CURATED` · `scripts/e2e-assert.py` · `web/e2e/shelf.ts`의 `SERIES` · `scripts/mkfixture/main.go`(**26**개 경로 리터럴, "18개"는 틀렸다) · `scripts/e2e.sh:922`의 `A11_FILL` · `test/shelf.e2e.yaml.tmpl`의 주석 · **`docs/impl-plan.md` §6.3의 표** · **같은 절의 YAML 예시**. 하중 있는 넷은 서로 일치했지만 **스스로 출처라고 선언한 `impl-plan`이 어긋나 있었다** — 죽은 `[만화] ` 접두가 열 행에, 네 항목은 아예 없었다(2026-08-10부터). 새 `checkCuratedSeries`가 처음 돌았을 때 **24건**(누락 14 + 잉여 10)이었다. bash·python 두 벌은 **순서까지** 대조한다(`e2e-assert.py`가 위치로 언패킹하므로 재정렬은 *맞는 라벨로 틀린 시리즈*를 단언한다). 실패 메시지도 여섯 위치를 `file:line`으로 대며 양방향을 찍는다. **아래는 닫히기 전의 설명이며 이력으로 보존한다** ⟶ ~~커레이티드 10종의 이름이 서로 연결되지 않은 사본 다섯 벌에 산다~~ — `scripts/e2e-config.sh`의 `CURATED`, `scripts/e2e-assert.py`, `web/e2e/shelf.ts`의 `SERIES`, `scripts/mkfixture/main.go`, 그리고 `scripts/e2e.sh:921`의 리터럴 하나. (여섯째로 `test/shelf.e2e.yaml.tmpl`에 설명 주석이 있으나 하중은 없다.) 일치하는 유일한 이유는 **어긋나면 라운드가 죽는 것**인데, **죽는 모양이 `got 0, want 10`이라 파일도 시리즈도 이름 대지 않는다**(`web/e2e/shelf.ts:66`). 이번 개명이 정확히 그 비용을 청구했다. §5.6.1의 항목 A(당시엔 네 벌)가 자란 것이다 | 중간 |
+| ~~**aw**~~ | **20세션차에 닫힘 — 그리고 사본은 다섯이 아니라 여덟이었다.** 실측: `scripts/e2e/e2e-config.sh`의 `CURATED` · `scripts/e2e/e2e-assert.py` · `web/e2e/shelf.ts`의 `SERIES` · `tools/mkfixture/main.go`(**26**개 경로 리터럴, "18개"는 틀렸다) · `scripts/e2e/e2e.sh:922`의 `A11_FILL` · `test/shelf.e2e.yaml.tmpl`의 주석 · **`docs/impl-plan.md` §6.3의 표** · **같은 절의 YAML 예시**. 하중 있는 넷은 서로 일치했지만 **스스로 출처라고 선언한 `impl-plan`이 어긋나 있었다** — 죽은 `[만화] ` 접두가 열 행에, 네 항목은 아예 없었다(2026-08-10부터). 새 `checkCuratedSeries`가 처음 돌았을 때 **24건**(누락 14 + 잉여 10)이었다. bash·python 두 벌은 **순서까지** 대조한다(`e2e-assert.py`가 위치로 언패킹하므로 재정렬은 *맞는 라벨로 틀린 시리즈*를 단언한다). 실패 메시지도 여섯 위치를 `file:line`으로 대며 양방향을 찍는다. **아래는 닫히기 전의 설명이며 이력으로 보존한다** ⟶ ~~커레이티드 10종의 이름이 서로 연결되지 않은 사본 다섯 벌에 산다~~ — `scripts/e2e/e2e-config.sh`의 `CURATED`, `scripts/e2e/e2e-assert.py`, `web/e2e/shelf.ts`의 `SERIES`, `tools/mkfixture/main.go`, 그리고 `scripts/e2e/e2e.sh:921`의 리터럴 하나. (여섯째로 `test/shelf.e2e.yaml.tmpl`에 설명 주석이 있으나 하중은 없다.) 일치하는 유일한 이유는 **어긋나면 라운드가 죽는 것**인데, **죽는 모양이 `got 0, want 10`이라 파일도 시리즈도 이름 대지 않는다**(`web/e2e/shelf.ts:66`). 이번 개명이 정확히 그 비용을 청구했다. §5.6.1의 항목 A(당시엔 네 벌)가 자란 것이다 | 중간 |
 | **ax** | **저장소의 프로토타입 사본·캡처·`design.md`는 함께 늙는다 — 그래서 낡은 출처 셋이 일치하면 교차 확인이 무력해진다.** 15세션차에 **독립적인 두 에이전트가** zip(2026-07-28) · `ui-shots/viewer-overlay-visible-1440.png` · `design.md:88`을 읽고 *"판정이 증거를 잘못 인용했다"* 고 결론지었다. 셋 다 같은 시점에 묶여 있었고 라이브는 그 뒤로 두 번 움직였다. **부분적으로 막았다** — 새 `docs/ui-html/README.md`가 사본마다 받은 날짜를 표로 들고 *"사본은 증거가 아니라 그 날의 스냅숏"* 이라고 못박고, 라이브 사본 `만화방 v2 soft.dc.html`(2026-08-09)을 zip 옆에 커밋했다. **남은 구멍은 캡처와 `design.md`에는 그런 날짜표가 없다는 것**이다. 같은 README에 **`DesignSync`가 오케스트레이터 전용**이라는 것도 적었다(9세션차와 15세션차가 같은 벽에 부딪혔다 — 서브에이전트에 위임하면 "그런 도구 없음") | 부분 완화, 나머지는 열림 |
 | **ay** | **`Seg`의 키보드 동작은 이제 맞춤 하나만 덮여 있다.** 새 e2e는 뷰어의 맞춤 `.seg`만 화살표로 밟는다(`09-viewer-chrome.spec.ts:808-857`). 나머지 `.seg` 그룹 — **표시 모드**(`ViewerTopBar.tsx:186`, `ReadDefaultsPanel.tsx:72`) · **읽기 방향**(`ViewerTopBar.tsx:195`, `ReadDefaultsPanel.tsx:60`, `SeriesHeader.tsx:209`) · **보기 방식(그리드/리스트)**(`TopBar.tsx:198`) · **테마**(`ReadDefaultsPanel.tsx:116`) — 는 **어느 티어에도 화살표 커버리지가 없다.** 원인은 같다: `Seg`에 keydown이 없고 순회가 브라우저에서 오므로 jsdom이 못 본다. 그리고 항목 `av`의 무디바운스 PUT은 **읽기 방향·표시 모드에도 그대로 해당한다** | 중간 |
 
@@ -3086,7 +3086,7 @@ rgb(45 43 43 / .14)`. `--shadow-inset`·`--color-hot`·`--shadow-sidebar`는 그
 | **ba** | **`role="status"` 라이브 리전 둘이 같은 커밋에 마운트된다.** 여는 힌트(`ViewerPage.tsx`)와 변경 알림이 진입 즉시 **동시에** 뜨고 둘 다 3400 ms다. **배치 충돌은 없다**(하단 중앙 vs 상단 56px — 실측). 문제는 접근성이다: 둘 다 **텍스트를 이미 담은 채 새로 삽입되는** 리전이라 스크린리더가 안 읽는 경우가 흔하고, polite 리전 둘이 같은 순간에 생기면 큐가 직렬화되거나 하나가 버려진다. **순서를 아무도 정한 적이 없다.** 근본 조치는 **항상 마운트된 단일 리전의 내용을 갈아끼우는 것**인데, 여는 힌트까지 함께 바꿔야 하고 **종이 결 `::after`가 각 알림 박스에 `inset:0`으로 붙어 있어 빈 래퍼가 그림 위에 워시를 깐다**(`base.css` §2.7). 그 트레이드에 판정이 없어 16세션차는 **추측하지 않고 남겼다**(`ui-spec.md` §6.6에 기록) | 판정 먼저 |
 | **bb** | **`shelf.ts`의 `consoleGuard`가 티어다운에서 실패하면 그 테스트가 120초 타임아웃을 전부 태운다.** 16세션차의 뮤테이션 실행에서 실패 7개 × 120초 = **8.4분**이 되어 라운드가 22.5분으로 늘었다. 픽스처의 기존 성질이고 **초록 경로에는 영향이 없다.** 다만 브라우저에 non-2xx를 유발하는 스펙이 늘면 이 비용이 곱해진다 | 작음 |
 | **bc** | **개정(`A-`)의 집이 어디인지 규정한 것이 없다.** `A-7`이 *"§7을 바꾸면 이 표(impl-plan §0.3)를 먼저 고칠 것"* 이라고 규정했는데 **A-12·A-13이 어겼고**, 실제 규약은 `arch-backend.md`의 인라인 `AMENDMENT` 노트가 되어 있었다. 16세션차가 셋을 백필해 표를 복구했지만 **규칙이 두 번 어겨진 이유는 그대로다** — 개정을 쓰는 사람이 자연스럽게 닿는 곳이 arch이고 표는 다른 파일이다. 선택지 둘: (a) `A-7`을 개정해 arch 인라인을 공식 집으로 삼고 표를 색인으로 격하 (b) 표를 지키는 검사를 만든다(`grep`으로 arch의 `AMENDMENT A-nn`과 표의 행을 대조 — `contractcheck` 옆에 붙일 수 있다). **(b)가 §6.5의 답이다** | 판정 먼저 |
-| **bd** | **`stale_seen` 이음매를 지키는 것은 `10-stale-progress.spec.ts` 하나뿐이고, 그것은 e2e 티어에만 있다.** 설계상 그렇다(§1 ⑥) — 요청 바디는 `contractcheck`가 **일부러** 안 본다. **하지만 e2e는 다섯 게이트 중 가장 느리고 가장 자주 건너뛰는 티어다.** 값싼 정적 검사로 옮길 수 있는지가 열린 질문이다: Go 구조체 태그와 `types.ts`의 요청 타입을 대조하는 것은 `contractcheck`가 응답에 대해 이미 하는 일과 같은 모양이다. **`contractcheck`가 요청 바디를 안 보는 것은 판정이었으므로, 바꾸려면 판정이 필요하다**(`scripts/contractcheck/main.go:48-53`이 그 이유를 적어 두었다) | 판정 먼저 |
+| **bd** | **`stale_seen` 이음매를 지키는 것은 `10-stale-progress.spec.ts` 하나뿐이고, 그것은 e2e 티어에만 있다.** 설계상 그렇다(§1 ⑥) — 요청 바디는 `contractcheck`가 **일부러** 안 본다. **하지만 e2e는 다섯 게이트 중 가장 느리고 가장 자주 건너뛰는 티어다.** 값싼 정적 검사로 옮길 수 있는지가 열린 질문이다: Go 구조체 태그와 `types.ts`의 요청 타입을 대조하는 것은 `contractcheck`가 응답에 대해 이미 하는 일과 같은 모양이다. **`contractcheck`가 요청 바디를 안 보는 것은 판정이었으므로, 바꾸려면 판정이 필요하다**(`tools/contractcheck/main.go:48-53`이 그 이유를 적어 두었다) | 판정 먼저 |
 
 | **be** | **`SeriesDetail.encoding`이 영구히 `null`이고, 되살리려 해도 어휘가 안 맞는다.** 세션 종료 시점의 스펙 감사(§5.7.13)가 찾았다. **배선이 안 된 것만이 아니다 — 배선해도 값이 안 맞는다.** 자세히는 아래 | 판정 먼저 |
 
@@ -3334,7 +3334,7 @@ RSS 예산) `integration/perf_test.go` 게이트도 있지만, **현재 수치 �
    더할 때마다 `make lint`이 빨개진다. 그 침묵을 지키는 테스트도 같이 넣었다.
 3. **뮤테이션으로 검증했다 — 사망.** 접두를 되돌리니 `make lint`이 exit 1로 파일·시리즈·결과를
    짚는다: *"integration/harness_test.go: the integration harness indexes "[만화] Clover 클로버
-   (총4권)"; scripts/e2e-config.sh's CURATED does not list it, so its scan.include_globs matches
+   (총4권)"; scripts/e2e/e2e-config.sh's CURATED does not list it, so its scan.include_globs matches
    nothing and the suite runs against an empty library"*
 
 **부활한 게이트가 낸 숫자가 위 실측을 교차 확인한다** (다른 코퍼스·다른 구현, 두 번 재현):
@@ -3353,7 +3353,7 @@ RSS 예산) `integration/perf_test.go` 게이트도 있지만, **현재 수치 �
 
 | | 항목 | 규모 |
 |---|---|---|
-| ~~**bo**~~ | ~~**하네스의 커레이티드가 15개 중 10개다.** D-70/D-71/D-72가 더한 다섯(비둘기·라제폰·울프가이·사모님은 학생회장·펌프킨 시저스 — RAR · .7z · .hv3 · 중첩 컨테이너)이 **통합 티어에서 검사되지 않는다.**~~ **30세션차에 의도된 설계로 닫음(결함 아님).** 부분집합은 의도다 — `619a961` 본문("subset is deliberate … rounds cost minutes per series"), contractcheck는 한 방향 검사이고 `scripts/contractcheck/main_test.go:284` "a subset must be silent"가 그 침묵을 고정한다. 빠진 모양(RAR · 7z · hv3 · 중첩)은 실 e2e 라운드의 CURATED 16~19행(`scripts/e2e-config.sh`)이 스캔·스트리밍한다. 목록은 이제 **16개**(bz로 `바다의 무녀` 추가) | ~~중간~~ 닫힘 |
+| ~~**bo**~~ | ~~**하네스의 커레이티드가 15개 중 10개다.** D-70/D-71/D-72가 더한 다섯(비둘기·라제폰·울프가이·사모님은 학생회장·펌프킨 시저스 — RAR · .7z · .hv3 · 중첩 컨테이너)이 **통합 티어에서 검사되지 않는다.**~~ **30세션차에 의도된 설계로 닫음(결함 아님).** 부분집합은 의도다 — `619a961` 본문("subset is deliberate … rounds cost minutes per series"), contractcheck는 한 방향 검사이고 `tools/contractcheck/main_test.go:284` "a subset must be silent"가 그 침묵을 고정한다. 빠진 모양(RAR · 7z · hv3 · 중첩)은 실 e2e 라운드의 CURATED 16~19행(`scripts/e2e/e2e-config.sh`)이 스캔·스트리밍한다. 목록은 이제 **16개**(bz로 `바다의 무녀` 추가) | ~~중간~~ 닫힘 |
 | **bp** | **`GET /api/scan/status`의 `covers_total`/`covers_done`이 런당이 아니라 누적이다** — 스캔 3회에 4356 → 8712 → 13068로 자란다. 화면에 진행률로 쓰이면 틀린 분모다. **관측만 했고 원인은 안 봤다.** ~~`done`(12013)이 `total`(11390)을 넘는 것~~ **— 22세션차에 닫았다. 같은 계열이 아니라 별개였다: 컨테이너가 워커의 한 권으로도, 자기가 된 권들로도 세어졌다. 차이 623은 D-70이 만든 중첩 권의 수와 정확히 같고, 고친 뒤 total은 11,390 − 45 + 623 = 11,968 — 21세션차가 실측한 장서 권수 그대로다** | 작음 |
 
 
@@ -3385,7 +3385,7 @@ RSS 예산) `integration/perf_test.go` 게이트도 있지만, **현재 수치 �
   독자에게는 보이지 않고 바이트 비교에는 치명적이다.
 
 **오차 허용으로는 못 푼다.** 둘째 무리의 223을 통과시킬 만큼 느슨한 오차는 색 변경 대부분을 통과시킨다.
-그래서 `scripts/pixelbaseline`은 오차 대신 **이름으로 제외**하고, 매 실행마다 *몇 장을 안 보고 있는지*
+그래서 `tools/pixelbaseline`은 오차 대신 **이름으로 제외**하고, 매 실행마다 *몇 장을 안 보고 있는지*
 출력한다. 63%를 덮으면서 전량인 척하는 것이 §6.5의 주제 그 자체이기 때문이다.
 
 제외 목록은 손으로 적지 않았다. `-classify` 가 N개 라운드를 받아 어느 샷이 전부에서 재현됐는지, 아닌
@@ -3453,7 +3453,7 @@ E-55는 코드로는 닫혔다(유닛 게이트 전부 초록, `1e362df` 푸시)
 
 | | 항목 | 규모 |
 |---|---|---|
-| **by** | **E-55는 e2e를 한 번도 안 거쳤다 — 합성도, 실 라운드도.** 서체가 바뀌었으므로 `docs/e2e-shots/`의 **121장이 전부 무효**이고 `docs/ui-shots/` 34장도 같다. 그냥 돌리면 서체 차이로 빨개지므로 *결함이 아닌 빨강*을 121번 보게 된다. **순서가 있다:** ①먼저 베이스라인을 다시 뜰지 정하고 ②`scripts/pixelbaseline -classify`로 재현되는 샷과 아닌 샷을 다시 분류하고(항목 `x`/`aj`가 그 장치다) ③그 다음 라운드를 돌린다. 실 라운드는 약 13분, 합성은 그보다 짧다 | 실 라운드 13분 + 베이스라인 재수집 **판정 먼저** |
+| **by** | **E-55는 e2e를 한 번도 안 거쳤다 — 합성도, 실 라운드도.** 서체가 바뀌었으므로 `docs/e2e-shots/`의 **121장이 전부 무효**이고 `docs/ui-shots/` 34장도 같다. 그냥 돌리면 서체 차이로 빨개지므로 *결함이 아닌 빨강*을 121번 보게 된다. **순서가 있다:** ①먼저 베이스라인을 다시 뜰지 정하고 ②`tools/pixelbaseline -classify`로 재현되는 샷과 아닌 샷을 다시 분류하고(항목 `x`/`aj`가 그 장치다) ③그 다음 라운드를 돌린다. 실 라운드는 약 13분, 합성은 그보다 짧다 | 실 라운드 13분 + 베이스라인 재수집 **판정 먼저** |
 | **bz** | **합성 픽스처에 가나 이름이 하나도 없다 — 합성 라운드는 E-55의 일본어 경로를 영원히 초록으로 지나간다.** `textLang`이 `ja`를 붙이는 이름이 그 트리에 없으므로 `[lang='ja']`도, `--font-ja`도, `noto-sans-jp-*`도 합성 라운드에서 한 번도 실행되지 않는다. [[synthetic-round-is-not-the-real-round]] 그 자체다. **넣으려면 사본 다섯 벌이 함께 움직인다** — `mkfixture/main.go` · `e2e-config.sh` · `e2e-assert.py` · `web/e2e/shelf.ts` · `e2e.sh`의 `A11_FILL` — 그리고 시리즈 카운트와 스크린샷이 줄줄이 바뀐다(항목 `A`가 기록한 바로 그 다섯 벌이다). **`by`와 같이 하는 것이 싸다**: 어차피 베이스라인을 다시 뜬다면 그때 이름을 넣는 것이 스크린샷을 두 번 무효화하지 않는 유일한 순서다 | 사본 5벌 + 카운트/스크린샷 **판정 먼저** |
 | **ca** | **릴리스 예산 여유가 344 KB뿐이다(최종 스냅숏 33 210 530 B, go1.26.9).** 바이너리 30 351 544 → **32 936 120 B**, `SIZE_BUDGET` 33 554 432(E-19). 다음 기능 하나가 `make release`를 깬다. 그리고 더 나쁜 쪽: `release_budget_test.go`는 **예산 값**이 Makefile · impl-plan §7.3 · README에서 일치하는지만 지키고, 같은 문서들이 적어 둔 **빌드 크기 측정치는 지키는 것이 없다** — `Makefile:95`와 `README.md:54`의 `25 833 656`은 E-55 *이전에 이미* 4.5 MB 밀려 있었다(실측 HEAD 30 351 544). 선택지는 셋이고 섞어 쓸 수 있다: ①측정치를 갱신만 하고 그대로 둔다 ②측정치도 `release`가 재서 갱신하게 만든다 ③예산을 다시 측정에서 도출한다(E-19가 한 방식) | ② 채택: release가 MEASURED_*를 재고, TestMeasuredSizes가 README·Makefile을 묶는다 |
 | **cb** | **전(全)한자 일본어 제목은 원리적으로 못 가른다 — 그리고 쓸 수 있는 신호가 없다는 것을 확인했다.** 「攻殻機動隊」는 가나가 없어 `textLang`이 `undefined`를 주고 명조로 그려진다(E-55 §4). **인코딩으로 풀 수 있지 않을까를 실제로 확인했고, 안 된다:** `internal/kenc`는 인코딩 이름을 돌려주지만(`DecodeEntryName`) **아카이브 엔트리 이름에만 쓰인다** — 호출자는 `archive/zipidx` · `rar4` · `hv3` 뿐이고 `scanner`/`index`에는 한 번도 안 나온다. 시리즈·책 표시명은 **파일시스템 경로**(`scanner.go:1675`의 `u.name`)에서 오고, 리눅스 파일명은 그냥 UTF-8 바이트라 기록할 인코딩 결정 자체가 없다. 인덱스 스키마에도 인코딩 컬럼이 없다. **즉 이 항목은 "아직 안 했다"가 아니라 "현재 데이터로는 불가"이다.** 열려면 새 신호가 필요하다(예: 사용자 지정 시리즈별 언어 태그) | 메커니즘 없음 — 새 입력 없이는 **닫힘에 가깝다** |
@@ -3515,7 +3515,7 @@ make test-int      TEST_INT_REQUIRE_ROOT=1 #   GATES_E2E=0이면 둘 다 SKIPPED
 
 > **`make gates`(다섯을 한 타깃으로)는 쓰지 말 것 — 이 환경이 게이트 3/5 도중에 끊는다.**
 > 9세션차와 10세션차가 **같은 자리에서 같은 일**을 겪었다. 타깃 자체는 건강하고
-> `scripts/check-gates.sh`가 레시피를 정적으로 검사하고 있으니, 이것은 **실행 환경의 제약**이지
+> `scripts/check/check-gates.sh`가 레시피를 정적으로 검사하고 있으니, 이것은 **실행 환경의 제약**이지
 > 고칠 결함이 아니다. 위처럼 **하나씩** 돌릴 것.
 >
 > **15세션차에 `make web-gates`도 같은 방식으로 끊겼다 — vitest가 시작되는 순간이다.** 끊기는
@@ -3543,13 +3543,13 @@ make e2e            # 실제 컬렉션 · ~4분
 make e2e-synthetic  # 합성 픽스처 · ~3분 · 미디어 볼륨 없이도 돈다
 ```
 
-**`:8791`을 누가 잡고 있으면 죽이고 시작할 것.** 이제는 `scripts/e2e.sh`가 스폰 전에 포트를 검사하고,
+**`:8791`을 누가 잡고 있으면 죽이고 시작할 것.** 이제는 `scripts/e2e/e2e.sh`가 스폰 전에 포트를 검사하고,
 포트 소유자 PID가 우리 자식인지까지 대조하므로 조용히 잘못되는 대신 즉시 멈춘다.
 
 **E2E 라운드가 도는 동안 저장소를 편집하지 말 것.** 9단계가 `data_dir`/`cache_dir` 밖에 생긴 파일을
 찾아내 실패한다 — 이 검사는 옳고, 실제로 2세션차에 한 번 걸렸다.
 
-**저장소에 파일을 남기지 말 것 — 특히 `.pyc`.** 3세션차에 `python3 -m py_compile scripts/e2e-assert.py`가
+**저장소에 파일을 남기지 말 것 — 특히 `.pyc`.** 3세션차에 `python3 -m py_compile scripts/e2e/e2e-assert.py`가
 `scripts/__pycache__/e2e-assert.cpython-312.pyc`를 남겼고, 리뷰가 잡아 지웠다. 이번엔 9단계 마커보다
 오래된 파일이라 게이트에 걸리지 않았지만, 다음번엔 걸린다.
 
@@ -3609,7 +3609,7 @@ E2E가 실패한다. 실제로 아슬아슬했다 — `shelf.yaml`이 `make e2e`
 | **핸들러를 붙여 놓았다는 것** | **그 이벤트가 실제로 도착하는지** — E-27의 호버 hold는 두 바의 `onMouseEnter`였는데, **가장자리 스트립으로 깨울 때는 발화하지 않는다.** 스트립은 크롬이 없을 때만 그려지므로 wake가 스트립을 언마운트하고 바를 **같은 커밋에, 움직이지 않은 포인터 밑에** 세운다. 브라우저는 제대로 한다(재-히트테스트 후 ~10 ms 뒤 `pointerover` 발사, 4폭에서 22/24/24/26 ms 실측). **React가 버린다** — `onMouseEnter`는 `mouseover`에서 *합성*되는데 `relatedTarget`이 React 관리 노드면 "짝은 `…out`에서 이미 보냈다"고 가정하고 조기 반환한다. 그 `…out`은 삭제되던 스트립이 받았다. 768/400에서는 포인터가 바 안에 있는데 2 600 ms 뒤 크롬이 녹았고, 1440/1024에서는 숨었다가 13 ms 뒤 스트립이 다시 깨워 **2.6초마다 영원히 깜빡였다** (8세션차, 판정 E-30) |
 | **뮤테이션이 살아남았다는 것** | **그 줄이 필요 없다는 것** — 9세션차가 `useLibrarySettingsSync`의 `lastSent.current = null`을 지웠다. 근거는 "지워도 이 파일의 테스트가 전부 그린"이었다. 그것은 **테스트에 대한 진술이지 코드에 대한 진술이 아니다.** 독립 리뷰가 그 파일의 테스트가 한 번도 걷지 않는 두 경로를 만들어 반증했다 — 이미 보낸 값으로 되돌아가면 쓰기가 삼켜지고, invalid-`library_sort` 복구가 refetch 경로에서 영영 안 돈다. **살아남은 뮤테이션은 그 줄이 방어되지 않았다는 증거일 뿐이다**; 둘이 같은 말이 되려면 테스트 집합이 완전해야 하는데 이 저장소에서 그것이 참이었던 적은 없다 (9세션차) |
 | **상수가 스타일시트와 일치한다는 것** | **지금도 일치하는지** — `05-pdf-and-large.spec.ts`가 슬라이더 thumb 폭을 `SLIDER_THUMB_PX = 12`로 들고 있었고 E-32가 18px로 키웠다. 상수는 **실패하지 않았다. 낡았다.** 매 드래그가 ~3px 빗나갔고, 허용오차가 빠듯한 laptop-1024·tablet-768에서만 빨개졌으며 desktop-1440은 그린이었다. 검사가 검사 대상을 **재기술**하면 언젠가 반드시 어긋나고, 어긋나는 순간은 조용하다. 새 숫자로 갈아끼우는 대신 컨트롤을 두 점으로 **보정**하도록 바꿨다 (9세션차) |
-| **레시피가 스스로에 대해 남긴 기록** | **레시피가 재작성돼도 그 기록이 살아남는지** — `make gates`의 배너는 각 게이트가 성공 뒤에만 자기 이름을 적게 해 "유도된 증거"처럼 보였다. 게이트 줄만 지우고 기록 줄을 남기면 `All 5 gates ran and passed`가 rc 0으로 나온다. `&&`로 한 줄에 묶으면 실수는 막지만 의도적 편집은 못 막는다. **자기 자신에 대한 기록은 자기가 편집되면 살아남지 못한다** — 밖에서 읽는 `scripts/check-gates.sh`가 그래서 있다 (9세션차) |
+| **레시피가 스스로에 대해 남긴 기록** | **레시피가 재작성돼도 그 기록이 살아남는지** — `make gates`의 배너는 각 게이트가 성공 뒤에만 자기 이름을 적게 해 "유도된 증거"처럼 보였다. 게이트 줄만 지우고 기록 줄을 남기면 `All 5 gates ran and passed`가 rc 0으로 나온다. `&&`로 한 줄에 묶으면 실수는 막지만 의도적 편집은 못 막는다. **자기 자신에 대한 기록은 자기가 편집되면 살아남지 못한다** — 밖에서 읽는 `scripts/check/check-gates.sh`가 그래서 있다 (9세션차) |
 | **가라앉은 값을 읽는 것** | **그 값이 왕복했는지** — E-34 §1은 "`라이브러리` 버튼이 `scope`를 지우지 않는다"인데, `setScope('all')`을 넣어도 테스트가 그린이었다. A-5 하이드레이션이 **첫 `GET /api/series`보다 먼저** 복구하기 때문이다. 와이어도, `PUT /api/settings`도, `getState().scope`도 전부 **복구된 뒤**를 읽는다. 전이 목록(zustand `subscribe`)만이 `all → scan` 왕복을 본다. **"지금 값이 맞다"와 "그 값이 잘못된 적이 없다"는 다른 주장이다** (9세션차) |
 
 | **두 검사가 이음매 양쪽을 지킨다는 것** | **이음매 자체를 지키는지** — A-12는 `POST`가 채택 다이제스트를 전진시키게 했고 `TestCreateRoot_writesTheFileAndAdoptsIt`이 그것을 고정한다. `DELETE`에는 짝이 없었고, `TestSettings_configChangedOnDiskIsFalseUntilSomethingChanges`는 **손으로 고친 파일**만 본다. 둘 다 자기 절반을 정확히 보고 있었고, **결함은 사이에 있었다**: 추가-제거 뒤 파일은 기동 시점과 바이트 단위로 같은데 `config_changed_on_disk`가 `true`로 남아, 이미 적용된 변경에 대고 재시작을 요구했다. 게이트 넷(lint·test·vitest·typecheck)이 전부 그린이었고 **계약의 *모양*이 안 바뀌었으므로 contractcheck도 초록이었다.** 잡은 것은 `make e2e-synthetic` 하나다 (13세션차, 판정 E-41) |
@@ -3721,7 +3721,7 @@ E2E가 실패한다. 실제로 아슬아슬했다 — `shelf.yaml`이 `make e2e`
 - **구현자와 리뷰어는 반드시 다른 에이전트.** 수정 적용도 제3의 에이전트가 한다.
 - 리뷰어에게는 "구현자 보고서는 증거가 아니라 주장"이라고 명시하고, **/tmp 사본에서 구현을 일부러 망가뜨려 테스트가 실제로 빨개지는지** 확인시킨다. 이 절차가 이번 빌드에서 가장 많은 실제 결함을 잡았다.
 - **수정 에이전트에게도 같은 말을 한다: "리뷰 지적도 주장이다."** 파일에 대고 검증하고, 반증되면 적용하지 말고 **반증했다고 보고**하게 한다. 3세션차에 §5.6 네 항목 중 둘이 그렇게 반증됐다 — 그중 하나는 이 문서 자신의 문장이었다.
-- **에이전트를 병렬로 돌릴 때는 각자에게 자기 파일 목록·자기 스크래치 디렉터리·자기 포트를 준다.** 그리고 **저장소에 파일을 남기지 말라**고 명시한다(`PYTHONDONTWRITEBYTECODE=1`). `scripts/e2e.sh` 9단계가 `data_dir`/`cache_dir` 밖의 새 파일에서 실패하고, 그 검사는 옳다.
+- **에이전트를 병렬로 돌릴 때는 각자에게 자기 파일 목록·자기 스크래치 디렉터리·자기 포트를 준다.** 그리고 **저장소에 파일을 남기지 말라**고 명시한다(`PYTHONDONTWRITEBYTECODE=1`). `scripts/e2e/e2e.sh` 9단계가 `data_dir`/`cache_dir` 밖의 새 파일에서 실패하고, 그 검사는 옳다.
 - 프론트엔드는 **반드시 실제 브라우저에서 렌더링해 측정**시킨다. 유닛테스트가 전부 통과하는데 화면이 완전히 깨져 있던 사례가 여러 건 있었다.
 - 테스트 중 **비슷한 유형의 오류·동작이 5번 연속 반복되면 비상중지**한다. 워크플로 스크립트에 실패 클래스 슬러그 기반으로 구현해 두었다 (`shelf-wave4` 스크립트 참조).
 - 수정 에이전트에게 "테스트를 약화시키거나 허용오차를 넓혀 통과시키지 말 것, 못 고치면 못 고쳤다고 보고할 것"을 매번 명시한다.
@@ -3730,7 +3730,7 @@ E2E가 실패한다. 실제로 아슬아슬했다 — `shelf.yaml`이 `make e2e`
 
 **백엔드 (Go, 22개 패키지)**
 `config` `ids` `natsort` `hangul` `kenc` `index` `userdata` `archive/zipidx` `openpool` `source` `pdfium`
-`thumbs` `scanner` `httpapi` `auth` `app` `buildinfo` `testutil` + `cmd/shelf` `integration` `scripts/contractcheck` `scripts/mkfixture`
+`thumbs` `scanner` `httpapi` `auth` `app` `buildinfo` `testutil` + `cmd/shelf` `integration` `tools/contractcheck` `tools/mkfixture`
 
 **프론트엔드 (React 18 + TS + Vite + Tailwind)**
 `api`(계약 클라이언트) `components/ds`(디자인시스템) `components/shell` `lib` `store` `styles`

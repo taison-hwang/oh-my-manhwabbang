@@ -966,7 +966,7 @@ func TestScan_unreachableRoot_isRecordedAndNeverSwept(t *testing.T) {
 // The roots are opened inside the subtest, and the testing package deletes the
 // directory when the subtest returns, so the scan lists a handle whose
 // directory no longer exists (Linux: getdents fails with ENOENT). This package
-// may not chmod or delete a fixture itself — scripts/check-readonly.sh guard 1
+// may not chmod or delete a fixture itself — scripts/check/check-readonly.sh guard 1
 // (FR-CFG-005) covers tests too — and a vanished directory behaves the same
 // under uid 0, so no root-user Skip is needed. (test audit, 10-26)
 func TestScan_rootThatCannotBeListedMidRun_abortsThatRootAndSweepsNothing(t *testing.T) {

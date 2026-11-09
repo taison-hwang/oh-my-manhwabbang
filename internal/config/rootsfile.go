@@ -12,7 +12,7 @@ package config
 // of the configuration file, gated by `server.allow_root_editing`, with the
 // running server adopting nothing until it restarts. Only this package writes;
 // the HTTP layer calls it and never touches a file itself, and
-// `scripts/check-readonly.sh` greps for exactly that.
+// `scripts/check/check-readonly.sh` greps for exactly that.
 //
 // # Why the edit is a text splice and not a YAML re-emit
 //

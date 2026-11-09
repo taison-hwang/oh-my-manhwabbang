@@ -1379,7 +1379,7 @@ func TestIncludeGlobs_koreanBracketPatterns(t *testing.T) {
 	}
 }
 
-// TestE2EConfig_parses is the configuration impl-plan §6.3 has scripts/e2e.sh
+// TestE2EConfig_parses is the configuration impl-plan §6.3 has scripts/e2e/e2e.sh
 // emit, verbatim: flow mappings, a root pointed at the real collection and ten
 // literal Korean directory names as include_globs. It has to load as written.
 func TestE2EConfig_parses(t *testing.T) {

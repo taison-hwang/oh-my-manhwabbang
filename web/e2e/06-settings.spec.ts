@@ -114,7 +114,7 @@ test('6.10 · cache, theme, read-only roots and the scan log', async ({ page }, 
     server.root_editing_enabled,
     `A-11 · the gate this round configures: server.allow_root_editing is ` +
       `${String(ROOT_EDITING_ENABLED)} in the ${ROOT_EDITING_ENABLED ? 'synthetic' : 'real'} ` +
-      `round (scripts/e2e-config.sh). Everything below reads its meaning from this.`,
+      `round (scripts/e2e/e2e-config.sh). Everything below reads its meaning from this.`,
   ).toBe(ROOT_EDITING_ENABLED)
 
   const rootRows = roots.locator('[data-testid^="root-row-"]')

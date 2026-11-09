@@ -557,7 +557,7 @@ export interface ProgressUpdate {
    * treating it as consent would acknowledge a notice nobody read.
    *
    * `contractcheck` cannot see this: it deliberately does not inspect request
-   * bodies (`scripts/contractcheck/main.go:48-53`). Known and accepted (E-45 §4).
+   * bodies (`tools/contractcheck/main.go:48-53`). Known and accepted (E-45 §4).
    */
   stale_seen?: boolean
 }

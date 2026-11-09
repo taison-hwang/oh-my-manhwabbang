@@ -86,9 +86,9 @@ type PoolCounter struct {
 // `covers` phase.
 //
 // Those four are contract — amendment A-15, ruling E-57, arch §7.4 — because
-// the E2E gate in scripts/e2e-assert.py waits on them by name before it judges
+// the E2E gate in scripts/e2e/e2e-assert.py waits on them by name before it judges
 // the covers the scan pre-generated. Renaming or dropping one is a contract
-// change; scripts/contractcheck compares their tags here with arch §7.4 and the
+// change; tools/contractcheck compares their tags here with arch §7.4 and the
 // gate's tuple. The other fields stay diagnostics.
 type ThumbCounter struct {
 	Hits       int64 `json:"hits"`

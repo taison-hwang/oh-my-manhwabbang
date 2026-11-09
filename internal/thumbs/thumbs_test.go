@@ -967,7 +967,7 @@ func (b *decodeBarrier) wait(timeout time.Duration) {
 // internal/app/covers.go derives `done` from the queue depth, so the up-to-
 // `Workers` decodes still running count as finished. Measured on the E2E's
 // curated subset at `thumbnails.workers: 4` — the phase reported `idle 36/36`
-// with 32-33 of the 36 files present. scripts/e2e-assert.py now waits on all
+// with 32-33 of the 36 files present. scripts/e2e/e2e-assert.py now waits on all
 // four work-in-progress fields instead of sleeping a second and hoping.
 //
 // The assertion that matters is the middle one: with two workers parked inside

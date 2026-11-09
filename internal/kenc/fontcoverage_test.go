@@ -13,7 +13,7 @@ import (
 )
 
 // The vendored 한자/가나 faces (web/src/assets/fonts/noto-*) are cut from a
-// character set that scripts/mkfonts/subset.py derives by round-tripping
+// character set that tools/mkfonts/subset.py derives by round-tripping
 // Python's codecs, and records in cjk-coverage.txt. This package decodes with
 // x/text's. Those are two implementations of "CP949 or Shift_JIS", and they
 // drifted once: subset.py used Python's strict `shift_jis` while x/text's
@@ -56,7 +56,7 @@ func TestDecodableIdeographs_AreTheVendoredFontSubset(t *testing.T) {
 		}
 	}
 
-	path := filepath.Join("..", "..", "scripts", "mkfonts", "cjk-coverage.txt")
+	path := filepath.Join("..", "..", "tools", "mkfonts", "cjk-coverage.txt")
 	got := map[rune]bool{}
 	for r := range readCoverage(t, path) {
 		if isIdeograph(r) {
@@ -67,7 +67,7 @@ func TestDecodableIdeographs_AreTheVendoredFontSubset(t *testing.T) {
 	if missing := difference(want, got); len(missing) > 0 {
 		t.Errorf("%d ideographs internal/kenc can decode are not in %s, so a title holding one "+
 			"falls through the font's unicode-range to the reader's system face: %s\n"+
-			"Re-run scripts/mkfonts/subset.py with the codecs this package uses.",
+			"Re-run tools/mkfonts/subset.py with the codecs this package uses.",
 			len(missing), path, sample(missing))
 	}
 	if extra := difference(got, want); len(extra) > 0 {
@@ -88,7 +88,7 @@ func readCoverage(t *testing.T, path string) map[rune]bool {
 	t.Helper()
 	f, err := os.Open(path)
 	if err != nil {
-		t.Fatalf("the font subset's manifest: %v (scripts/mkfonts/subset.py writes it)", err)
+		t.Fatalf("the font subset's manifest: %v (tools/mkfonts/subset.py writes it)", err)
 	}
 	defer f.Close()
 	out := map[rune]bool{}

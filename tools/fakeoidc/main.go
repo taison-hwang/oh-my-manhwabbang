@@ -10,7 +10,7 @@
 // server is run unmodified against it over loopback http (E-74 §2.19's
 // loopback exception).
 //
-//	go run ./scripts/fakeoidc -client-id shelf-e2e -audience http://127.0.0.1:8792/api \
+//	go run ./tools/fakeoidc -client-id shelf-e2e -audience http://127.0.0.1:8792/api \
 //	    -redirect-uri http://127.0.0.1:8792/api/auth/oidc/callback \
 //	    -users alice=sub-a,bob=sub-b -addr-file /tmp/x/fakeoidc.addr
 //

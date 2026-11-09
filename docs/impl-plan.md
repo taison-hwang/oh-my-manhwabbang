@@ -80,8 +80,8 @@ survey showed reality breaking an assumption, the plan was adjusted. Every resol
 | **A-12** | **`GET /api/browse`** and **`POST /api/roots` now opens the root it wrote** (ruling **E-40**). A-11 shipped an add that stayed invisible until a restart; A-12 opens the new root into the running server and scans it. Adds **config key `server.browse_bases: []`** (each entry non-empty, absolute, cleaned at load — `GET /api/browse` decides containment by string prefix, so an uncleaned `/mnt/x/` would refuse everything under it). Existence is deliberately **not** checked, for the same reason a root's path is not (§4.9). Normative text: **arch §7.4** — both endpoints and the amendment note, including `GET /api/browse` itself, which lives in §7.4 (`arch-backend.md:1951`) and not in §7.6 as this row said until 2026-08-10 — and **§3.2** (the config key). |
 | **A-13** | **`DELETE /api/roots/{name}` moves the adopted digest back** (ruling **E-41**). A-12 taught the add path to change what the running server holds; the remove path did not follow, so removing a root left A-12's added-set and the adopted configuration digest stale. `DELETE` now drops the name from A-12's added set and — **only when the file it just wrote was the file this process loaded** — moves the adopted digest back, so `config_changed_on_disk` does not fire for the server's own edit. It still closes no handle. Normative text: **arch §7.4**. |
 | **A-14** | **`ProgressUpdate` gains `stale_seen?: boolean`, and an unacknowledged write preserves `page_count`** (ruling **E-45**). The stored `page_count` is the baseline `stale` is derived from; before this it was overwritten on every progress write, so the `파일이 변경되었습니다` warning was destroyed about a second after it appeared and never returned on any device. `page`'s clamp and FR-VWR-012's automatic completion keep using the index's **current** length — only the persisted column holds the baseline. A plain page turn is **not** an acknowledgement: the viewer writes progress on load alone, so an implicit rule would clear the warning for a reader who did nothing. Clients that omit the field are unaffected. **`Progress.stale` is symmetric**: `0` on **either** side is `false`, because `0` is "length unknown" (§4.11) and a comparison needs two lengths. A book that is unreadable *now* therefore does not warn — the screen already says the file cannot be opened, the reader has no place to resume at, and no acknowledgement could ever be sent because the viewer never finishes loading it. The warning is **deferred, not lost**: the baseline survives and a repair to a different length raises it then. **An acknowledgement also rebaselines only when the length is known** (`page_count > 0`): no client can send that combination once `stale` is symmetric, so the rule exists for the hand-made call that never passed through a screen — defence in depth for the baseline the deferral depends on. **No schema change** (`schema_version` stays 2), and no golden changes — the symmetry only turns `true` into `false`, and none of the 36 goldens carry `stale: true`. Normative text: **arch §7.6**, the `Progress.page_count` and `Progress.stale` comments in **§7.3** (`arch-backend.md:1601`, `:1614`), and the DDL comment in **§3.6**. |
-| **A-15** | **Four fields of `GET /api/health?verbose=1` become contract: `verbose.thumbs.{cover_depth,page_depth,active,inflight}`** (ruling **E-57**). They were load-bearing before anyone ruled on them: `scripts/e2e-assert.py` waits until all four are zero before judging the covers a scan pre-generated, while `internal/httpapi/dto.go` called the whole block "diagnostics, not contract" (`decisions.md`, "what was deliberately NOT ruled" #1). Promoting them is the smaller move than re-pointing the gate: they are one snapshot under one lock, and their conjunction is exactly the `quiet` half of `thumbs.Service.idle()` (which additionally waits on the dimension backfill). All four zero means no thumbnail job is queued, being decoded, or still being written — every job the service was handed has finished, successfully or not; whether a given file exists is for the caller to check, and the gate does. Only these four — the rest of `verbose` stays diagnostics. No golden carries `?verbose=1` and no client type reads it, so `scripts/contractcheck` compares the three spellings instead (arch §7.4, `ThumbCounter`'s tags, the gate's tuple); the Go test `TestHealthVerbose_thumbCountersMirrorTheServiceFieldForField` pins the wire names. Normative text: **arch §7.4**, the `GET /api/health` row. |
-| **A-16** | **`SeriesDetail.encoding` becomes `NameEncoding \| null`, the closed union of `internal/kenc`'s labels `"utf-8" \| "utf-8-invalid" \| "cp949" \| "cp932" \| "unknown"`** (ruling **E-56**). The contract promised `"utf-8" \| "cp949" \| "mixed" \| null` while the server sent `null` for every series since it shipped: nothing produced `mixed`, and `utf-8-invalid`, `cp932` and `unknown` — which the scanner did produce — had no place on the wire. This is an amendment, not a sharpening like E-14/E-15: a value leaves and three arrive, so a client that switched over the old set is no longer exhaustive. The series value is the most suspect of its books' labels in kenc's one order (`kenc.MostSuspect`); a book with no verdict is left out and `null` means none has one. Backed by `books.name_encoding` (index schema v3). `BookSummary` gains nothing. `scripts/contractcheck` compares `NAME_ENCODINGS` in `web/src/api/types.ts` with kenc's `Enc*` constants, and the golden `series_detail.json` carries `"cp949"`. Normative text: **arch §7.5**, the `SeriesDetail` interface and the `encoding` paragraph under it. |
+| **A-15** | **Four fields of `GET /api/health?verbose=1` become contract: `verbose.thumbs.{cover_depth,page_depth,active,inflight}`** (ruling **E-57**). They were load-bearing before anyone ruled on them: `scripts/e2e/e2e-assert.py` waits until all four are zero before judging the covers a scan pre-generated, while `internal/httpapi/dto.go` called the whole block "diagnostics, not contract" (`decisions.md`, "what was deliberately NOT ruled" #1). Promoting them is the smaller move than re-pointing the gate: they are one snapshot under one lock, and their conjunction is exactly the `quiet` half of `thumbs.Service.idle()` (which additionally waits on the dimension backfill). All four zero means no thumbnail job is queued, being decoded, or still being written — every job the service was handed has finished, successfully or not; whether a given file exists is for the caller to check, and the gate does. Only these four — the rest of `verbose` stays diagnostics. No golden carries `?verbose=1` and no client type reads it, so `tools/contractcheck` compares the three spellings instead (arch §7.4, `ThumbCounter`'s tags, the gate's tuple); the Go test `TestHealthVerbose_thumbCountersMirrorTheServiceFieldForField` pins the wire names. Normative text: **arch §7.4**, the `GET /api/health` row. |
+| **A-16** | **`SeriesDetail.encoding` becomes `NameEncoding \| null`, the closed union of `internal/kenc`'s labels `"utf-8" \| "utf-8-invalid" \| "cp949" \| "cp932" \| "unknown"`** (ruling **E-56**). The contract promised `"utf-8" \| "cp949" \| "mixed" \| null` while the server sent `null` for every series since it shipped: nothing produced `mixed`, and `utf-8-invalid`, `cp932` and `unknown` — which the scanner did produce — had no place on the wire. This is an amendment, not a sharpening like E-14/E-15: a value leaves and three arrive, so a client that switched over the old set is no longer exhaustive. The series value is the most suspect of its books' labels in kenc's one order (`kenc.MostSuspect`); a book with no verdict is left out and `null` means none has one. Backed by `books.name_encoding` (index schema v3). `BookSummary` gains nothing. `tools/contractcheck` compares `NAME_ENCODINGS` in `web/src/api/types.ts` with kenc's `Enc*` constants, and the golden `series_detail.json` carries `"cp949"`. Normative text: **arch §7.5**, the `SeriesDetail` interface and the `encoding` paragraph under it. |
 | **A-17** | **`POST /api/progress/import` states the two rules §7.11's one sentence did not: an import never moves `started_at` later — an incoming item written over an existing row (merge with a newer `updated_at`, or replace) stores `min(local, incoming)`, and an item merge skips is not written at all — and a `prefs` row — which the export carries without `updated_at` — loses to an existing local override under merge and overwrites it only under `?strategy=replace`** (ruling **E-64**). Nothing on the wire changes and the server already behaved this way; what the old sentence promised ("the row with the newer `updated_at`", "overwrites unconditionally") was untrue for `started_at` and undefined for `prefs`, so a client or a test reading it literally was wrong. Also stated: an all-`null` prefs row is ignored, an imported prefs row is stamped with the import time, the counters describe `items` only, under merge a tie keeps the local row, and `last_page` is clamped to `[1, page_count]` (the upper bound only when `page_count > 0`) as the progress write does. Normative text: **arch §7.11**, the A-17 paragraph. |
 | **A-18** | **`GET /api/books/{bid}/pages/{n}` lists two statuses the server already sent: `422 unprocessable` when an entry the index listed as a page turns out at serving time to be encrypted, corrupt, or packed with a method this build cannot decode, and `404` when `n` is inside `[1, page_count]` but the index holds no page row for it** (ruling **E-65**). No code or golden changes. This is an amendment, not a sharpening like E-14/E-15, by A-16's own criterion: widening a listed set breaks the exhaustiveness of a client that switched over the old one, and this endpoint's error list grows by a status. The `404` for a book the index records as `encrypted` is stated as what it is — refused by its status alone, whatever its page rows or `page_count` (E-54 §4). Normative text: **arch §7.6**, the A-18 bullet of the page endpoint's error list. |
 | **A-19** | **The 권 표지 (book cover) and the series reading direction** (ruling **E-69**). New: `GET /api/books/{bid}/cover` (a JPEG with the `/api/series/{sid}/cover` semantics, versioned by the new `BookSummary.cover_cv`), `PUT /api/books/{bid}/cover` (body `BookCover` `{page, x, y, w, h}`, `200 BookCoverResult`) and `DELETE` (`204`), `BookSummary.cover: BookCover | null`, `PUT /api/series/{sid}/prefs` (`SeriesPrefs`, `{reading_direction: ReadingDir | null}`) and `SeriesDetail.reading_direction`. Changed: a `cover_kind='page'` series cover is its cover book's 권 표지 and its `cover_cv` that book's; `BookPrefs.reading_direction` is resolved book → series → global; the export is `shelf-progress/2` with `covers` and `series_prefs`, and import takes `/1` and `/2`. An amendment by A-16's criterion: fields arrive on `BookSummary` and `SeriesDetail`, the export's `format` literal changes, and a pre-A-19 server refuses a `/2` file. Normative text: **arch §4.10, §5.6, §7.3, §7.5, §7.6, §7.11**, the A-19 notes; `user.db` v3 in **§3.6**. |
@@ -143,7 +143,7 @@ it belongs to WP-16, which owns neither.
 | `internal/scanner/classify_test.go` | **WP-08** | `TestSeriesStatus_foldsBookStatusesIntoTheSeriesStatus`: the case named *"a container of archives is empty, not an error"* asserts the pre-ruling answer. Rewrite it to assert `StatusError` with the book's message, and keep a separate zero-books case asserting `StatusEmpty` so the two rows stay distinguishable. |
 | `internal/scanner/scanner_test.go` | **WP-08** | The `망가진 시리즈` **book** map (`"엔젤하트 전32권 완결.zip": StatusEmpty`) is correct and must not change; so is the `Errors == 4` count — `empty` is still not a scan failure. Add a series-level case: a series whose only book is `empty` reads `error`. |
 | `integration/scan_test.go` | **WP-13** | Sub-test *"D-10 a container of sub-archives is empty, not broken"*: `mustSeries(s, angelHeart).Status` must be `"error"`, with a non-empty `Error`. Rename the sub-test; the D-10 limitation it proves is now "the nested archives are not read", not "the series looks empty". |
-| `scripts/e2e-assert.py` | **WP-13** | The 엔젤하트 assertion must expect `status == "error"` and a non-empty `error` string. |
+| `scripts/e2e/e2e-assert.py` | **WP-13** | The 엔젤하트 assertion must expect `status == "error"` and a non-empty `error` string. |
 
 Nothing else moves: `books.status` keeps all five FR-IDX-010 values, the scan-error count is unchanged
 (`empty` books are not failures), and no wire type changes — §7.3 already types `series.status` as the
@@ -183,8 +183,8 @@ bind the whole list and are not negotiable per-file:
 | `web/src/api/urls.ts` / `queries.ts` / `fixtures.ts` | **WP-06** | The two mutations, invalidating the roots and settings queries; MSW fixtures for 201, 204, 400 and 403. |
 | `web/src/features/overlays/RootsPanel.tsx` | **WP-10** | `+ 루트 추가` and `제거`, rendered **only** when `server.root_editing_enabled`; ~~the removal confirmation must state that the index rows and the reading progress are kept (ruling E-26, decision 3)~~ **REVISED (R1)**: the row disappears, so the confirmation must state that **the reading progress is kept** and must **not** promise the index rows are — they are purged; a restart notice driven by `server.config_changed_on_disk` that survives a browser reload because it is server state, not client state; **R2**: a row with `pending: true` renders as "재시작 후 적용" with no counts and no 재스캔 button. The panel already reads `useSettings()` directly (E-25) — keep it that way. |
 | `web/src/features/library/Onboarding.tsx` | **WP-09** | Unchanged unless the capability is on; `설정 파일 위치 보기` stays the answer when it is off (C-5). Do not reintroduce a guessed default path — E-25 removed one. |
-| `scripts/check-readonly.sh` | **WP-00/WP-13** | A fourth guard: no filesystem mutation primitive in `internal/httpapi`. The HTTP layer must reach the file only through `internal/config`, and a grep is what keeps that true across six agents. |
-| `integration/` + `scripts/e2e.sh` | **WP-13** | Two behaviours no unit test can prove: the file round-trip against a real config, and **restart adoption** — `POST`, assert `GET /api/roots` ~~is *unchanged*~~ **(REVISED, R2)** now carries the root with `pending: true`, no counts and `available: false`; restart; assert the same row is now `pending: false` with real counts. The second half is the assertion that stops "restart-based" quietly becoming "never applied", and the first is what stops a pending row quietly becoming a lie. |
+| `scripts/check/check-readonly.sh` | **WP-00/WP-13** | A fourth guard: no filesystem mutation primitive in `internal/httpapi`. The HTTP layer must reach the file only through `internal/config`, and a grep is what keeps that true across six agents. |
+| `integration/` + `scripts/e2e/e2e.sh` | **WP-13** | Two behaviours no unit test can prove: the file round-trip against a real config, and **restart adoption** — `POST`, assert `GET /api/roots` ~~is *unchanged*~~ **(REVISED, R2)** now carries the root with `pending: true`, no counts and `available: false`; restart; assert the same row is now `pending: false` with real counts. The second half is the assertion that stops "restart-based" quietly becoming "never applied", and the first is what stops a pending row quietly becoming a lie. |
 
 ### 0.4 Thumbnail width derivation (closes arch OQ-7)
 
@@ -753,7 +753,7 @@ and may run fully in parallel.
 5. `make release` cross-compiles all seven targets of arch §11 with `CGO_ENABLED=0`, emitting a **static** default artefact and an `-avif` variant for each (14 files) plus `SHA256SUMS` and `dist/ARTIFACTS.txt` (NFR-OPS-003, ruling **E-21**). Default linux/amd64 ≤ **33 816 576 bytes** (32.25 MiB, ruling **E-78**, which raised ruling **E-19**'s 32 MiB; see §7.3).
 6. `make e2e` runs §6.3 end to end and exits non-zero on any failed assertion.
 7. Integration suite (`-tags integration`, gated on `SHELF_TEST_ROOT`) implements every test in §6.2.
-8. **Ruling E-14** — `integration/scan_test.go` and `scripts/e2e-assert.py` expect `[만화] 엔젤하트 전32권 완결.zip` to be a **series** with `status:"error"` and a non-empty `error`, over a single **book** with `status:"empty"`. See §0.3 "E-14 follow-up work". This assertion cannot pass until WP-08 lands its half of that table, so the two move together.
+8. **Ruling E-14** — `integration/scan_test.go` and `scripts/e2e/e2e-assert.py` expect `[만화] 엔젤하트 전32권 완결.zip` to be a **series** with `status:"error"` and a non-empty `error`, over a single **book** with `status:"empty"`. See §0.3 "E-14 follow-up work". This assertion cannot pass until WP-08 lands its half of that table, so the two move together.
 
 ---
 
@@ -790,12 +790,12 @@ there can only ever be one copy.
 >
 > **A-9** (ruling E-13) and **A-10** (ruling E-25, 2026-07-30) also postdate wave 2, so the sentence that
 > once stood here — *"A-8 is the only amendment newer than `web/src/api/types.ts`"* — is no longer true.
-> Both are encoded in `types.ts`, and `scripts/contractcheck` compares that file against the server's
+> Both are encoded in `types.ts`, and `tools/contractcheck` compares that file against the server's
 > golden JSON on every `make lint`, so the two sides cannot silently disagree about either one.
 >
 > **A-11 … A-14 postdate all of those** (rulings E-26, E-40, E-41, E-45). **`contractcheck` covers them
 > unevenly, and that is worth knowing before trusting it:** it compares golden **response** JSON against
-> `types.ts`, and **deliberately does not check request bodies** (`scripts/contractcheck/main.go:48-53`).
+> `types.ts`, and **deliberately does not check request bodies** (`tools/contractcheck/main.go:48-53`).
 > So A-14's `stale_seen` — a *request* field — is invisible to it. **Do not read a green `make lint` as
 > "both sides agree about A-14".**
 >
@@ -916,7 +916,7 @@ make test-int       # sample (E-66): SHELF_TEST_SAMPLE=$(TEST_INT_SAMPLE) go tes
 make test-int-full  # every archive: SHELF_TEST_SAMPLE=all, -timeout 120m — before a release
 make bench          # -bench . -benchmem
 make release        # 7 targets × 2 variants (static default, -avif) + SHA256SUMS
-make e2e            # scripts/e2e.sh — full curated-subset run, see §6.3
+make e2e            # scripts/e2e/e2e.sh — full curated-subset run, see §6.3
 
 # frontend (from web/)
 pnpm install
@@ -925,7 +925,7 @@ pnpm build          # -> web/dist, which go:embed swallows
 pnpm typecheck      # tsc --noEmit
 pnpm lint
 pnpm test           # vitest
-pnpm e2e            # playwright, needs a running server (scripts/e2e.sh does this for you)
+pnpm e2e            # playwright, needs a running server (scripts/e2e/e2e.sh does this for you)
 ```
 
 Ports: **8790** backend dev · **5173** Vite dev · **8791** E2E server (verified free).
@@ -992,9 +992,9 @@ test exercises genuine CP949 bytes and genuine truncated archives.
 Root: `/mnt/big-data/pds/taison-data/02. books/01. mangga`
 
 The **exact-name column is the contract**, and this table is no longer the only place it is written down: the
-same sixteen strings are `CURATED` in `scripts/e2e-config.sh` (which becomes `scan.include_globs`), `CURATED`
-in `scripts/e2e-assert.py`, `SERIES` in `web/e2e/shelf.ts`, path literals in `scripts/mkfixture/main.go` and
-`A11_FILL` in `scripts/e2e.sh`. `contractcheck`'s `checkCuratedSeries` compares all six every `make lint`, and
+same sixteen strings are `CURATED` in `scripts/e2e/e2e-config.sh` (which becomes `scan.include_globs`), `CURATED`
+in `scripts/e2e/e2e-assert.py`, `SERIES` in `web/e2e/shelf.ts`, path literals in `tools/mkfixture/main.go` and
+`A11_FILL` in `scripts/e2e/e2e.sh`. `contractcheck`'s `checkCuratedSeries` compares all six every `make lint`, and
 it exists because this table had drifted from the other five and nothing said so — it still carried the
 `[만화] ` prefix the collection lost in 2026-08, and it was four rows short.
 
@@ -1006,12 +1006,12 @@ give the shape and no size rather than a number nobody took. Row 16 was measured
 | 1 | `Clover 클로버 (총4권)` | folder + 4 ZIPs, 31 MB | prd §2.2 row 1; CP949 entry names; 4-book series |
 | 2 | `상처를 쫓는자 1-11 (완) 이케가미 료이치` | folder + 11 image sub-folders, 183 MB | prd §2.2 row 2; `kind:"dir"` books; dir fingerprint incremental path |
 | 3 | `자살도114-122` | folder with 181 loose images, 48 MB | prd §2.2 row 3 (the **only** instance in the collection); natural-sort stress (`1.jpg`,`10.jpg`,`100.jpg`) |
-| 4 | `바퀴.zip` | single top-level ZIP, 4.5 MB | prd §2.2 row 4; series == its own book. Also the archive `scripts/e2e.sh` step 11b copies into the A-11 root (`A11_FILL`), which only becomes a series there because this row is in `include_globs` |
+| 4 | `바퀴.zip` | single top-level ZIP, 4.5 MB | prd §2.2 row 4; series == its own book. Also the archive `scripts/e2e/e2e.sh` step 11b copies into the A-11 root (`A11_FILL`), which only becomes a series there because this row is in `include_globs` |
 | 5 | `강철의 연금술사 1~27권 완결` | 27 ZIPs + `강철의 연금술사 00 Cover.jpg`, 876 MB | prd §2.2 row 6 "mixed" as it actually occurs (D-5); cover-file ladder step 1 |
 | 6 | `군계 1~25` | `[cover].jpg` + `01권/` **and** `01권.zip` + `07권.zip`/`07권.repair.zip`/`07권 (2).repair.zip` + **2 truncated archives**, 622 MB | duplicate books (D-6); FR-IDX-010 truncated-CD isolation; cover-file rule; the **only** curated volume whose pages are landscape (104/104 measured, ruling **E-23**), so FR-VWR-004's auto-split has a subject |
 | 7 | `디엔엔젤 1-13권 연재중` | 13 ZIPs, one of them **0 bytes**, 250 MB | FR-IDX-010 unopenable container → `status:"error"`, scan continues |
 | 8 | `미생 1~9 (완결 pdf)` | 9 PDFs, 509 MB | prd §2.2 row 5; **AC-004**; FR-SRV-006; pdfium lazy init + render cache |
-| 9 | `배틀로얄 1~15 [완결].zip` | one 1.34 GB ZIP, **1 540 pages in 15 per-volume directories** | **AC-008**; NFR-PRF-006; deflate streaming at scale. Since **D-73** it is also the real-collection sample of a container of chapter directories — 15 `kind:"nesteddir"` 권, page total unchanged. The one remaining name holding a `[`, so it is the only reason `scripts/e2e-config.sh`'s glob escaping is still load-bearing. **Step 6.9's "the strip must not mount 1 540 cells" lost its subject with the split** — no curated book now exceeds the 120-cell window; `이누야샤 01~56권 완결/이누야샤(1~56권)(완).zip` (7 480 pages, 1.40 GB, measured flat) or 군계's 207-page `03권` is the replacement if the subset is re-based |
+| 9 | `배틀로얄 1~15 [완결].zip` | one 1.34 GB ZIP, **1 540 pages in 15 per-volume directories** | **AC-008**; NFR-PRF-006; deflate streaming at scale. Since **D-73** it is also the real-collection sample of a container of chapter directories — 15 `kind:"nesteddir"` 권, page total unchanged. The one remaining name holding a `[`, so it is the only reason `scripts/e2e/e2e-config.sh`'s glob escaping is still load-bearing. **Step 6.9's "the strip must not mount 1 540 cells" lost its subject with the split** — no curated book now exceeds the 120-cell window; `이누야샤 01~56권 완결/이누야샤(1~56권)(완).zip` (7 480 pages, 1.40 GB, measured flat) or 군계's 207-page `03권` is the replacement if the subset is re-based |
 | 10 | `엔젤하트 전32권 완결.zip` | 1.44 GB ZIP containing 33 sub-ZIPs, 0 images | **series `status:"ok"` with one `kind:"nestedzip"` book per inner archive, each with pages (D-70, superseding D-10's first clause)**; proves a container of volumes is read without extracting anything |
 | 11 | `비둘기.zip` | opens cleanly, one directory entry, 128 bytes | book `status:"empty"`, series **`status:"error"`** with that reason (**E-14**); the shape row 10 used to demonstrate, now that row 10 is readable — a series with nothing readable in it is visibly broken rather than greyed out |
 | 12 | `라제폰 1-3권 완결` | folder of 3 RARs — `라제폰 1권[번역].rar`, `2권[번역].rar`, `3권[번역](完).rar`; size not measured | **D-71** — `kind:"rar"` volumes on disk, the ordinary RAR case; the stored-entry path (2,685 of the collection's 2,914 RAR entries are stored, and none of the 14 archives is solid) |
@@ -1020,7 +1020,7 @@ give the shape and no size rather than a number nobody took. Row 16 was measured
 | 15 | `펌프킨 시저스 1~13권` | folder of ZIP volumes, one of which — `펌프킨 시저스 04.zip` — holds 39.5 MB in a single `.hv3` | **E-51** — the `.hv3` is a `nestedhv3` volume of **104 pages**, verified against the CRC-32 the container itself records for every one. Three rulings have been about this file: `비어 있음` under D-07 (false), `unsupported` naming HV3 under **D-72** (true while the format was believed encrypted), and readable under E-51. D-72's rule is still exercised by `사모님은 학생회장.zip`'s `.7z`. |
 | 16 | `바다의 무녀 (완결, 미번) (文月晃, 海の御先)` | folder of 15 ZIPs, `[文月晃] 海の御先 01.zip` … `[文月晃] 海の御先 15 (完).zip`, 2 989 images; entry names are Shift_JIS in 6 volumes and CP949 in 1, and 5 keep their pages in a wrapper directory (09 adds a `(+color)` sub-folder beneath it, still one 권 — `source.Chapters` splits only on two sibling chapter directories); 1.09 GB | **E-55** — the only curated name `textLang` tags `lang="ja"`: kana in the series name **and** in every 권 name, so `[lang='ja']`, `--font-ja` and the Noto Sans JP faces are drawn by both rounds (item `bz`; until this row neither round drew one). `15 (完)` puts 完 inside a Japanese name, the shape §0.0.5 of HANDOFF caught the seal subset drawing in its own cut. The synthetic twin builds 01, 02 and 15 (完) |
 
-#### The config (`scripts/e2e-config.sh` emits this)
+#### The config (`scripts/e2e/e2e-config.sh` emits this)
 
 ```yaml
 server: { listen: "127.0.0.1", port: 8791 }
@@ -1056,13 +1056,13 @@ log: { level: "debug", format: "text" }
 ```
 
 `[` and `]` are `path.Match` character-class metacharacters — the config loader must therefore accept
-these patterns literally when they contain no unmatched class, and `scripts/e2e-config.sh` escapes every
+these patterns literally when they contain no unmatched class, and `scripts/e2e/e2e-config.sh` escapes every
 pattern's brackets as the one-member class `[[]` regardless. Since the collection lost its `[만화] ` prefix
 in 2026-08 that matters to exactly **one** entry, row 9 — which is emitted as
 `배틀로얄 1~15 [[]완결].zip` above, and is why the escaping is still load-bearing rather than dead code.
 **WP-01 must add a test for a glob containing `[…]`.**
 
-#### The script (`scripts/e2e.sh`, run by `make e2e`)
+#### The script (`scripts/e2e/e2e.sh`, run by `make e2e`)
 
 1. `make build`.
 2. `mkdir -p .e2e/{data,cache}`; emit `test/shelf.e2e.yaml`; record `START=$(date)` and a marker file in `$TMPDIR`.
@@ -1088,7 +1088,7 @@ in 2026-08 that matters to exactly **one** entry, row 9 — which is emitted as
 
 #### Hermetic fallback
 
-`scripts/e2e.sh --synthetic` builds a ~12 MB tree with `scripts/mkfixture` covering the same fifteen shapes
+`scripts/e2e/e2e.sh --synthetic` builds a ~12 MB tree with `tools/mkfixture` covering the same fifteen shapes
 under the same fifteen names, plus three the real collection has no sample of — a synthetic **encrypted**
 ZIP, a synthetic **ZIP64** archive and a **solid RAR** this build refuses on purpose (D-49, extended by
 D-71) — and runs the identical assertion set against its own expected set of eighteen. This is the version
@@ -1107,7 +1107,7 @@ The build is done when **every** box below is ticked. Each is verifiable by a co
 
 ### 7.1 Acceptance criteria (prd §8)
 
-- [ ] **AC-001** — During a full read of a 1 540-page volume, no file is created outside `cache_dir` and the media volume is untouched. *Verified by:* I-5, I-9, `scripts/e2e.sh` step 7.
+- [ ] **AC-001** — During a full read of a 1 540-page volume, no file is created outside `cache_dir` and the media volume is untouched. *Verified by:* I-5, I-9, `scripts/e2e/e2e.sh` step 7.
 - [ ] **AC-002** — Korean filenames inside 2014–2018 ZIPs display correctly. *Verified by:* WP-02 golden vectors, I-2, E2E step 5 (zero U+FFFD in 500 names).
 - [ ] **AC-003** — Folder-type and ZIP-type series are read through an identical UI flow. *Verified by:* I-3, E2E steps 6.1–6.6 run against both `[만화] Clover…` and `[만화] 바퀴.zip`.
 - [ ] **AC-004** — A PDF series opens in the same viewer as a ZIP series. *Verified by:* I-4, E2E step 6.8.

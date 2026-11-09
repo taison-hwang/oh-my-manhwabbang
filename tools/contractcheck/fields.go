@@ -643,12 +643,12 @@ func compareInterfaceFields(arch map[string]fieldSet, ts *tsTypes, gs map[string
 			report("web/src/api/types.ts: %s is declared in no ```ts block of arch §7 "+
 				"(declare it there, or list it in tsWithoutArch with the reason)", n)
 		case declared[n] && excused:
-			report("scripts/contractcheck: %s is listed in tsWithoutArch but arch §7 declares it; the exemption is stale", n)
+			report("tools/contractcheck: %s is listed in tsWithoutArch but arch §7 declares it; the exemption is stale", n)
 		}
 	}
 	for n := range c.tsWithoutArch {
 		if _, ok := ts.interfaces[n]; !ok {
-			report("scripts/contractcheck: %s is listed in tsWithoutArch but types.ts has no such interface; the exemption is stale", n)
+			report("tools/contractcheck: %s is listed in tsWithoutArch but types.ts has no such interface; the exemption is stale", n)
 		}
 	}
 
@@ -675,7 +675,7 @@ func compareInterfaceFields(arch map[string]fieldSet, ts *tsTypes, gs map[string
 	}
 	for k := range c.goOnly {
 		if !goOnlyUsed[k] {
-			report("scripts/contractcheck: %s is listed in goOnly but no compared Go struct sends it as a Go-only field; the exemption is stale", k)
+			report("tools/contractcheck: %s is listed in goOnly but no compared Go struct sends it as a Go-only field; the exemption is stale", k)
 		}
 	}
 
@@ -683,7 +683,7 @@ func compareInterfaceFields(arch map[string]fieldSet, ts *tsTypes, gs map[string
 	for n, goName := range c.requestPairs {
 		tf, ok := tsFieldSet(ts, n)
 		if !ok {
-			report("scripts/contractcheck: request body %s is not a types.ts interface", n)
+			report("tools/contractcheck: request body %s is not a types.ts interface", n)
 			continue
 		}
 		gf, ok := gs[goName]

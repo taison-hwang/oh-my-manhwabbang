@@ -178,7 +178,7 @@ report.**
 | # | Question | Ruling | Basis |
 |---|---|---|---|
 | **E-19** | **`make release` fails the 20 MiB binary-size gate** (linux/amd64 = 27,418,916 B, 30.8% over). Raised as a failure in E2E rounds 1, 2 and 3; the E2E engineer twice flagged it as needing a decision rather than a patch. | **Raise the gate to 32 MiB and document the breakdown.** Do NOT shrink by dropping features, and do NOT delete the gate. Set `SIZE_BUDGET` in the `Makefile` to 33,554,432 and correct `docs/impl-plan.md` §7.3, adding a comment naming what occupies the space (pdfium WASM ≈8.34 MB, AVIF WASM ≈1.58 MB, pure-Go SQLite, the embedded SPA). Keep `nopdf` and `noavif` as the documented small-build path and record their sizes in the README. | **prd NFR-OPS-001 specifies a single self-contained binary — it states no size limit.** The 20 MiB figure was invented by the planning agent, not derived from a requirement, and it is now failing a build that satisfies every actual requirement. The real resource requirement is NFR-PRF-005 (idle memory ≤200 MB), which is unaffected. A gate that a correct build cannot pass is a broken gate, and this one has burned three E2E rounds. |
-| **E-20** | **`web/e2e/` (the Playwright browser suite) is owned by no work package**, so impl-plan §6.3 step 6 and §7.4's `docs/e2e-shots/` deliverable were never built and `scripts/e2e.sh` step 11 silently self-skips. | **In scope — assign it explicitly.** The next repair agent owns `web/e2e/**` and `scripts/e2e.sh`. Build the twelve browser assertions across the four viewport projects and produce `docs/e2e-shots/`. **A step that self-skips must fail loudly instead** — a skipped check that reports success is worse than a missing one. | prd §8 acceptance and impl-plan §6.3/§7.4 both require it; ownership was a planning gap, not a scope decision. FR-VWR-* and FR-LIB-* are only end-to-end-verifiable in a browser. |
+| **E-20** | **`web/e2e/` (the Playwright browser suite) is owned by no work package**, so impl-plan §6.3 step 6 and §7.4's `docs/e2e-shots/` deliverable were never built and `scripts/e2e/e2e.sh` step 11 silently self-skips. | **In scope — assign it explicitly.** The next repair agent owns `web/e2e/**` and `scripts/e2e/e2e.sh`. Build the twelve browser assertions across the four viewport projects and produce `docs/e2e-shots/`. **A step that self-skips must fail loudly instead** — a skipped check that reports success is worse than a missing one. | prd §8 acceptance and impl-plan §6.3/§7.4 both require it; ownership was a planning gap, not a scope decision. FR-VWR-* and FR-LIB-* are only end-to-end-verifiable in a browser. |
 
 **Note to repair agents:** neither of these is fixed by editing product code. E-19 is a one-line `Makefile`
 constant plus a doc correction. E-20 is new test-suite work. Do not attempt to shrink the binary by removing
@@ -242,7 +242,7 @@ with the difference stated in the README and in `SHA256SUMS`' companion notes.
 **Do not re-open this. It has been adjudicated against the contract, the code and the packet capture, and the
 answer is that nothing in the product was wrong.**
 
-`scripts/e2e.sh` step 10 reported:
+`scripts/e2e/e2e.sh` step 10 reported:
 
 ```
 FAIL  expected 404 for a book with no index row, got 200
@@ -270,7 +270,7 @@ come from our server at all.
    are `503` (`s.idx == nil`) and `500`. `internal/index/books.go:95-105` maps `sql.ErrNoRows` → `ErrNotFound`.
    `internal/httpapi/api_test.go:138-169` (`TestIDs_invalidIs400_wellFormedUnknownIs404`) already asserts
    `GET /api/books/aaaaaaaaaaaaaaaa` → `404 not_found`, and it passes.
-4. **The assertion is correct and stays verbatim.** `scripts/e2e.sh:632-634`. Its `probe_book` is a *real* id
+4. **The assertion is correct and stays verbatim.** `scripts/e2e/e2e.sh:632-634`. Its `probe_book` is a *real* id
    read from the live index before the wipe (`:600-608`), i.e. a book that exists on disk but has no row —
    exactly §7.1's "unknown". There is no rescan race to excuse a 200: the E2E config sets
    `scan.on_start: false` (`test/shelf.e2e.yaml.tmpl:38`) and passes no `--rebuild-index`, so
@@ -298,7 +298,7 @@ come from our server at all.
 
 ### The real defect, and the guards now in place
 
-`scripts/e2e.sh`'s `start_server()` polled `curl /api/health` **before** `kill -0 "$server_pid"`. A foreign
+`scripts/e2e/e2e.sh`'s `start_server()` polled `curl /api/health` **before** `kill -0 "$server_pid"`. A foreign
 server answers the probe instantly, so the loop returned success having started nothing, and `stop_server`
 then no-opped on an already-dead pid without a single FAIL. **A health probe cannot tell whose server answered
 it** — that is the whole lesson. Four guards were added, and each was demonstrated to fire before landing:
@@ -349,7 +349,7 @@ verbatim from the shipped script (2026-07-29):
   `internal/httpapi/testdata/golden/` on the strength of this E2E line. The frontend already expects 404
   (`web/src/api/types.ts:31`, `web/src/api/errors.ts:15`, `ViewerPage.tsx:300-303`) and separately consumes the
   200 + `error` path for `status != "ok"` (`SeriesDetailPage.tsx:100`, `features/series/volume.ts:62-63`). Both
-  paths are implemented and both are correct. `scripts/contractcheck` diffs *shapes*, not status codes, so no
+  paths are implemented and both are correct. `tools/contractcheck` diffs *shapes*, not status codes, so no
   status change is in its scope either.
 - Widening this endpoint to resolve ids from the filesystem — so a book survives an index wipe — would be a
   **contract change** and requires a new `A-` amendment per `docs/impl-plan.md:737-739`, not a silent 200.
@@ -371,13 +371,13 @@ requirement; both stop one being re-litigated.
 | # | Question | Ruling | Basis |
 |---|---|---|---|
 | **E-23** | **Does covering the RTL 양면 rule (ui-spec §6.2 / impl-plan §6.3 WP-11 acceptance 4) require adding a portrait volume to the §6.3 curated ten?** `docs/HANDOFF.md` §5.5 said it did — "명세 범위 변경이라 사용자 판단 없이 진행하지 않았다" — and blocked the work for two sessions on that basis. | **No. Do not change the §6.3 curated set for this, and do not re-open the question.** Two of the ten already-curated series are 100 % portrait **in both real and synthetic mode**, so the witness the rule needs was always inside D-48's subset: `[만화] 자살도114-122` (181 / 181 portrait pages, real; 11 / 11 synthetic) and `[만화] 미생 1~9 (완결 pdf)` → `미생 1권.pdf` (306 / 306 portrait, MediaBox ~378×548 pt; 4 × 595×842 synthetic). The coverage accordingly lives in **`04-viewer.spec.ts` 6.6b** (raster path, 자살도) and **`05-pdf-and-large.spec.ts` 6.8** (pdfium path, 미생), both with the two-frame branch made **unconditional**. `[만화] 군계 1~25` stays the subject of 6.6 and must not be swapped for a portrait book: at 0 / 104 portrait it is the **only** curated volume that exercises FR-VWR-004's landscape auto-split, and replacing it would trade one covered rule for another. Corollary, binding on any future E2E spec: **a two-frame check may not sit behind a guard that can silently skip** — assert the precondition (`toHaveCount(2)`) instead of testing it (`if (count === 2)`), and assert the frames are painted (`[data-status="ready"]`) before measuring any geometry. | Measured read-only over 100 % of the pages of every curated first volume (PIL for rasters, poppler `pdfinfo` MediaBox for the PDFs), not sampled; 군계's 104 / 104 landscape figure was independently re-confirmed at the same time. D-48 (the curated root) and D-49 (the synthetic twin reproduces the same ten shapes) already bind the set, and neither says anything about page orientation — so no amendment is needed, only the measurement nobody had taken. The guard corollary is `docs/HANDOFF.md` §6.5: at desktop-1440 the pre-existing `if (count === 2)` block passed against a frame that had **not painted** (an undecoded `PageFrame` has an absolutely-positioned `opacity:0` child, hence content width 0 — a zero-width box that still carries a bounding rect), proven to the pixel by scanning `docs/e2e-shots/step-06-8b-viewer-pdf-rtl-spread-desktop-1440.png`. |
-| **E-24** | **Is `scripts/e2e-assert.py`'s AC-008 budget of 200 ms a ruling or a habit, and may the measured page set drop page 900?** The repair implementer read the 200 ms as unowned ("nothing in decisions.md or impl-plan.md rules on it") and escalated it, and the first rewrite derived the jump set from `page_count`, which silently dropped page 900. | **It is a ruling, and page 900 stays.** `docs/impl-plan.md:966` (§6.3 step 5) is the binding description of *this* script — `scripts/e2e.sh` names the step `7 · curl assertions (impl-plan §6.3 step 5)` — and it spells out `GET /api/books/{battle_royale}/pages/900` returning `200 image/jpeg` **in < 200 ms**. So: page 900 is measured **by name and unconditionally**, and "the volume reaches page 900" is a **precondition to assert**, never a guard (`{900} if pc >= 900 else set()` would make a named requirement disappear on exactly the volume that broke it). The 200 ms does **not** conflict with I-8's `p95 TTFB < 100 ms warm` (`docs/impl-plan.md:890`, measured by `integration/perf_test.go`): those are two different measurements of the same acceptance criterion — I-8 is the 95th percentile of time-to-**first**-byte over 50 warm jumps; this suite is the worst time-to-**last**-byte over a handful of **cold** ones, through CPython/urllib over loopback. **Neither number is `e2e-assert.py`'s to change.** No page under measurement may be pre-warmed: warm page 1 and never measure page 1, exactly as `integration/perf_test.go` does. | §0 precedence puts `impl-plan.md` above `arch-backend.md`, and `impl-plan.md` carries both numbers itself, so there is nothing to reconcile — only two measurements to keep labelled. prd AC-008 (`docs/prd.md:345`) is about an **arbitrary**, i.e. never-before-served, jump, which is why the old code measuring its own warm-up page was a defect and why the fix makes every measured page cold. A ZIP page has no server-side per-page cache at all (`serveArchivePage` streams from a stored offset), so "warm" can only ever mean the openpool handle and the index rows — which is what I-8 means by it. |
+| **E-24** | **Is `scripts/e2e/e2e-assert.py`'s AC-008 budget of 200 ms a ruling or a habit, and may the measured page set drop page 900?** The repair implementer read the 200 ms as unowned ("nothing in decisions.md or impl-plan.md rules on it") and escalated it, and the first rewrite derived the jump set from `page_count`, which silently dropped page 900. | **It is a ruling, and page 900 stays.** `docs/impl-plan.md:966` (§6.3 step 5) is the binding description of *this* script — `scripts/e2e/e2e.sh` names the step `7 · curl assertions (impl-plan §6.3 step 5)` — and it spells out `GET /api/books/{battle_royale}/pages/900` returning `200 image/jpeg` **in < 200 ms**. So: page 900 is measured **by name and unconditionally**, and "the volume reaches page 900" is a **precondition to assert**, never a guard (`{900} if pc >= 900 else set()` would make a named requirement disappear on exactly the volume that broke it). The 200 ms does **not** conflict with I-8's `p95 TTFB < 100 ms warm` (`docs/impl-plan.md:890`, measured by `integration/perf_test.go`): those are two different measurements of the same acceptance criterion — I-8 is the 95th percentile of time-to-**first**-byte over 50 warm jumps; this suite is the worst time-to-**last**-byte over a handful of **cold** ones, through CPython/urllib over loopback. **Neither number is `e2e-assert.py`'s to change.** No page under measurement may be pre-warmed: warm page 1 and never measure page 1, exactly as `integration/perf_test.go` does. | §0 precedence puts `impl-plan.md` above `arch-backend.md`, and `impl-plan.md` carries both numbers itself, so there is nothing to reconcile — only two measurements to keep labelled. prd AC-008 (`docs/prd.md:345`) is about an **arbitrary**, i.e. never-before-served, jump, which is why the old code measuring its own warm-up page was a defect and why the fix makes every measured page cold. A ZIP page has no server-side per-page cache at all (`serveArchivePage` streams from a stored offset), so "warm" can only ever mean the openpool handle and the index rows — which is what I-8 means by it. |
 
 **Note on what was deliberately NOT ruled.** Two questions surfaced in the same close-out and are **not**
 recorded as rulings, because nobody with spec authority answered them. They are carried as open items in
 `docs/HANDOFF.md` §5.6.1 instead, so this log keeps only what was actually decided.
 
-1. **The `?verbose=1` thumb counters' contract status** (§5.6.1 D). `scripts/e2e-assert.py` now polls
+1. **The `?verbose=1` thumb counters' contract status** (§5.6.1 D). `scripts/e2e/e2e-assert.py` now polls
    `GET /api/health?verbose=1`'s `thumbs.{cover_depth,page_depth,active,inflight}` as a hard gate, while
    `arch-backend.md` §7.4 does not specify the `?verbose=1` payload at all and `internal/httpapi/dto.go` calls
    the block *"diagnostics, not contract"*. Four diagnostic fields are now load-bearing without anyone having
@@ -2470,7 +2470,7 @@ true를 false로 바꾸는 방향뿐이다.
 |---|---|
 | Go 단위 | `api_test.go:782-793` `TestProgress_staleWhenTheIndexLengthMoved` — **순수 함수 `isStale`만 호출하고 HTTP를 한 번도 거치지 않는다.** 그래서 PUT이 기준선을 지우는 것을 원리적으로 못 본다 |
 | 골든 | 36개 중 `stale: true`인 것이 **0건** |
-| `contractcheck` | 요청 바디를 **의도적으로 검사하지 않는다**(`scripts/contractcheck/main.go:48-53`). `stale_seen`은 이 검사가 볼 수 없는 자리에 있다 — 알고 넣는다 |
+| `contractcheck` | 요청 바디를 **의도적으로 검사하지 않는다**(`tools/contractcheck/main.go:48-53`). `stale_seen`은 이 검사가 볼 수 없는 자리에 있다 — 알고 넣는다 |
 | vitest | `ViewerPage.test.tsx:1663` `'warns **once** when the recorded progress no longer matches the file'` — **이름이 once라고 말하지만 `getByText`가 있다는 것만 단언한다.** 타이머도, 사라짐도, 재진입도 재지 않는다. 1초 디바운스가 끝나기 전에 단언이 끝나서 통과한다 |
 | e2e | `web/e2e/` 전체에서 이 알림을 단언하는 것이 **0건** |
 
@@ -3204,7 +3204,7 @@ CP949 4,888자, Shift_JIS 6,356자, 합집합 **7,159자**. 여기에 가나 두
 때문**이다. 남는 구멍은 UTF-8로 저장된 이름이 두 레거시 집합 밖의 한자를 담는 경우뿐이고, 그건
 지금까지와 똑같이 폴백한다.
 
-레시피는 `scripts/mkfonts/subset.py`다 — 표가 아니라 **코덱을 왕복시켜** 집합을 만들므로 kenc가
+레시피는 `tools/mkfonts/subset.py`다 — 표가 아니라 **코덱을 왕복시켜** 집합을 만들므로 kenc가
 디코드할 것과 커버리지가 어긋날 수 없다.
 
 ### 3. 3 MB를 감당 가능하게 만드는 것은 `unicode-range`다
@@ -3605,7 +3605,7 @@ package.json에서 제거됐다.** 스크립트는 항상 exit 2로 죽었고 `-
 
 **출처.** HANDOFF §5.6.1 항목 `D`. 이 문서의 "what was deliberately NOT ruled" #1이 판정을 남겨 두었다.
 `GET /api/health?verbose=1`의 `thumbs.{cover_depth,page_depth,active,inflight}`는 계약인가? 그 사이
-`scripts/e2e-assert.py`의 `wait_for_thumb_quiescence`가 이 넷을 이름으로 기다리는 하드 게이트가 됐다.
+`scripts/e2e/e2e-assert.py`의 `wait_for_thumb_quiescence`가 이 넷을 이름으로 기다리는 하드 게이트가 됐다.
 반면 `internal/httpapi/dto.go`는 블록 전체를 "diagnostics, not contract"라고 적고 있었다.
 
 ### 1. 결론
@@ -3635,13 +3635,13 @@ package.json에서 제거됐다.** 스크립트는 항상 exit 2로 죽었고 `-
 
 ### 4. 검증
 
-- `?verbose=1`을 담은 골든도 없고, 이것을 읽는 클라이언트 타입도 없다. 그래서 `scripts/contractcheck`의
+- `?verbose=1`을 담은 골든도 없고, 이것을 읽는 클라이언트 타입도 없다. 그래서 `tools/contractcheck`의
   `checkThumbFlushFields`가 세 표기를 대조한다. arch §7.4 health 행, `ThumbCounter`의 json 태그(Go AST로 읽음,
   함수 범위), `wait_for_thumb_quiescence` 안의 `keys` 튜플이다. 추출 범위는 health 행으로 한정했다.
 - 와이어 이름은 `TestHealthVerbose_thumbCountersMirrorTheServiceFieldForField`(`internal/httpapi/api_test.go`)가
   이미 고정하고 있다.
 - 검사기 뮤테이션은 모두 빨강이었다.
-  `scripts/e2e-assert.py`는 바꾸지 않았다.
+  `scripts/e2e/e2e-assert.py`는 바꾸지 않았다.
 - 리뷰는 codex 1회였다. 샌드박스(bwrap) 문제로 파일을 읽지 못해, 코드를 지시문에 넣어 돌렸다. 차단 5건은
   모두 수용했고 구현자와 다른 에이전트가 반영했다. 내용은 과장된 보장 문구, "idle()과 같다"는 오기,
   튜플·태그·arch 추출 범위였다.
@@ -3694,7 +3694,7 @@ HV3이 모두 이 값을 적는다. 서빙 경로는 바뀌지 않는다. 이 �
   `source.NewFactory`)을 쓰고, PDF 렌더러만 뺀다.
 - **동시성.** 책을 `scan.workers` 고루틴에 나눈다. 한 책의 줄은 한 락 아래에서 쓰므로 섞이지 않는다.
   중단하면 새 책을 넣지 않고, 처리 중이던 책은 세지 않고 버린다.
-- **읽기 전용 보장.** `internal/verify`는 `scripts/check-readonly.sh`의 미디어 패키지 목록에 테스트 파일까지 들어
+- **읽기 전용 보장.** `internal/verify`는 `scripts/check/check-readonly.sh`의 미디어 패키지 목록에 테스트 파일까지 들어
   있다(FR-CFG-005).
 
 **메인 판단** 셋(정책)은 이렇다.
@@ -4081,7 +4081,7 @@ SPA는 JS·CSS(약 475 KB)를 압축 없이 embed하고, 정적 핸들러도 압
 
 ### 2. 판정
 
-1. 빌드(`make web`, 따라서 `make build`·`make release`)는 `pnpm build` 뒤 `scripts/precompress`로 `web/dist/assets/` 아래 `*.js`·`*.css`를
+1. 빌드(`make web`, 따라서 `make build`·`make release`)는 `pnpm build` 뒤 `tools/precompress`로 `web/dist/assets/` 아래 `*.js`·`*.css`를
    `*.gz`로 바꾸고 원본을 지운다. Go 표준 라이브러리 `compress/gzip`(BestCompression, 헤더의 시각·이름 비움)이므로 출력 바이트는 입력과 Go 버전에만 묶이고,
    그 버전은 `MEASURED_TOOLCHAIN`이 이미 고정한다. node zlib나 시스템 gzip은 버전마다 바이트가 달라질 수 있어 쓰지 않는다.
 2. 폰트(woff2, 이미 brotli 압축)·`index.html`(요청마다 `<base href>`를 끼운다)·그 밖의 파일은 그대로 둔다.
@@ -4104,7 +4104,7 @@ SPA는 JS·CSS(약 475 KB)를 압축 없이 embed하고, 정적 핸들러도 압
 
 ### 4. 검증
 
-- 유닛: `scripts/precompress/main_test.go`는 원본 교체와 왕복, 결정성(사본 둘의 바이트 일치, 헤더 시각·이름 비움, BestCompression), 멱등,
+- 유닛: `tools/precompress/main_test.go`는 원본 교체와 왕복, 결정성(사본 둘의 바이트 일치, 헤더 시각·이름 비움, BestCompression), 멱등,
   rename 실패 때 원본 보존과 재실행 수렴, 심볼릭 링크 건너뜀을 본다. `internal/httpapi/spa_precompressed_test.go`는 협상표(q=0, `*`, 대소문자,
   `x-gzip`, 형식 오류 q, `gzip;q=0, identity;q=0`), `Vary`·`Content-Type`·`Content-Length`, HEAD, 단일 Range(양쪽 표현), 다중 Range, 416에 gzip 표시 없음,
   index.html·클라이언트 라우트·평문 자산 불변, 깨진 `.gz`, 동시 첫 요청의 해제 1회, 서버별 캐시, 서버와 함께 수거되는 캐시를 본다.
@@ -4128,7 +4128,7 @@ SPA는 JS·CSS(약 475 KB)를 압축 없이 embed하고, 정적 핸들러도 압
 
 ### 5. 바뀐 것
 
-- `scripts/precompress/`(새), `Makefile`의 `web:` 레시피.
+- `tools/precompress/`(새), `Makefile`의 `web:` 레시피.
 - `internal/httpapi/spa.go`, `internal/httpapi/spa_precompressed_test.go`(새).
 - `docs/arch-backend.md` §2(그림의 `middleware.go`에 있지도 않던 "gzip-exempt"를 정정), §2.1 Serving rules 한 줄, §11 빌드 한 줄.
 
@@ -4166,7 +4166,7 @@ arch §7.11은 가져오기를 한 문장으로 정했다. "`book_id`로 합치�
   - prefs: `TestImport_prefsAgainstAnExistingOverride`(가져온 시각, 집계 제외 포함), `TestImport_allNullPrefsRowIsIgnored`.
   - tie: `TestImport_mergeKeepsTheNewerRow_replaceOverwrites`.
   - HTTP 기본 전략이 merge인 것은 `internal/httpapi/progress_import_test.go`가 본다.
-- `scripts/contractcheck`의 checkAmendments가 impl-plan 행과 arch의 `AMENDMENT A-17` 표지를 대조한다. 초록이다.
+- `tools/contractcheck`의 checkAmendments가 impl-plan 행과 arch의 `AMENDMENT A-17` 표지를 대조한다. 초록이다.
 
 ### 5. 바뀐 것
 
@@ -4222,14 +4222,14 @@ arch §7.6 `GET /api/books/{bid}/pages/{n}`의 오류 목록에는 404·409·501
    zipidx의 N은 비교할 ZIP 수다. hv3의 N은 중첩 HV3를 찾으려고 열어 볼 ZIP 수다. 느슨한 `.hv3`와 pinned는 항상 들어가고, 탐색은 패키지에서 한 번만 한다.
    rar4(20 s)와 integration(큐레이션 부분집합)은 표본 대상이 아니다. 표본이면 로그에 "sample N of M (…) + k pinned"를 남긴다.
 3. `make test-int-full`은 `SHELF_TEST_SAMPLE=all`, `-timeout 120m`이다. 게이트가 아니며, 릴리스 전(커밋 승인 직전)에 돈다.
-4. 미디어 루트 경로는 `scripts/media-root` 한 줄에만 둔다. Makefile의 `SHELF_TEST_ROOT` 기본값과 `scripts/e2e.sh`·`e2e-config.sh`의 `SHELF_E2E_ROOT` 기본값이 그 파일을 읽는다.
+4. 미디어 루트 경로는 `scripts/e2e/media-root` 한 줄에만 둔다. Makefile의 `SHELF_TEST_ROOT` 기본값과 `scripts/e2e/e2e.sh`·`e2e-config.sh`의 `SHELF_E2E_ROOT` 기본값이 그 파일을 읽는다.
 5. `make gates`는 `GATES_E2E`가 0이 아니면, 게이트를 하나도 돌리기 전에 test-int와 e2e가 쓸 루트가 읽을 수 있는 디렉터리인지 본다. 아니면 안내를 출력하고 게이트를 하나도 돌리지 않은 채 실패로 끝낸다(make의 종료 코드는 2).
    `GATES_E2E`는 정확히 `0`일 때만 꺼짐이고, 빈 값을 포함한 그 밖의 값은 켜짐이다. 사전 점검과 5/5가 같은 규칙을 쓴다.
 6. 5/5의 test-int는 `TEST_INT_REQUIRE_ROOT=1`로 부르고, 이것이 `SHELF_TEST_REQUIRE_ROOT=1`로 넘어간다. `testutil.MediaRoot`는 이때 루트 부재를 skip이 아니라 실패로 바꾼다.
    루트 없이 skip한 실행은 RAN이 될 수 없다.
 7. 목표 시간: 실 루트에서 `make test-int` 전체가 10분 안쪽.
 8. 지키는 곳:
-   - `scripts/check-gates.sh`: GATE_TARGETS에 test-int를 넣고, 개수는 기록 줄 수로 센다. 5/5 줄의 `e2e && test-int`를 단언한다.
+   - `scripts/check/check-gates.sh`: GATE_TARGETS에 test-int를 넣고, 개수는 기록 줄 수로 센다. 5/5 줄의 `e2e && test-int`를 단언한다.
    - `internal/buildinfo`: 두 레시피의 env·`-timeout`, `TEST_INT_SAMPLE`이 양의 정수인지, Makefile·`scripts/*.sh`에 경로 리터럴이 없는지 본다.
    - `internal/testutil`의 sample 테스트: 파싱과 결정성을 본다.
 
@@ -4254,7 +4254,7 @@ arch §7.6 `GET /api/books/{bid}/pages/{n}`의 오류 목록에는 404·409·501
   - `GATES_E2E=`·`"0 0"`에서 사전 점검과 5/5가 엇갈림 → 술어 `gates_e2e_on` 하나로 통일.
   - 가드가 stdout만 봄 → 실제 로그를 읽고, check-gates는 기록을 출현 횟수로 세며 `||` 뒤 기록을 거부.
   이 수정의 뮤테이션 8개도 전부 RED였다.
-- 게이트(합친 트리, heavy.lock): `make lint` exit 0(12 s), `make test` exit 0(763 s). 메인 착지 후 `go test ./internal/buildinfo/ ./internal/testutil/`와 `scripts/check-gates.sh` exit 0.
+- 게이트(합친 트리, heavy.lock): `make lint` exit 0(12 s), `make test` exit 0(763 s). 메인 착지 후 `go test ./internal/buildinfo/ ./internal/testutil/`와 `scripts/check/check-gates.sh` exit 0.
 - 실 루트(같은 트리, `make test-int TEST_INT_REQUIRE_ROOT=1`):
   - N=20: 172 s, SKIP 0. 로그에 `sample 20 of 11079 archives … + 6 pinned`, `26 archives: 26 agree`가 남았다.
   - N=500: **206 s**, SKIP 0. 패키지별: zipidx 189 s, integration 204 s, hv3 31 s(794 s에서 줄어듦), rar4 15 s. 목표 10분 안쪽을 지켰으므로 기본 N은 500으로 확정한다.
@@ -4530,7 +4530,7 @@ impl-plan §1.3도 같은 내용을 적었다. 그래서 백업을 만들려면 
   - 코드: `web/src/features/viewer/CoverDialog.tsx`·`coverGeometry.ts`(새), `ViewerPage.tsx`·`ViewerTopBar.tsx`·`fit.ts`, `features/overlays/CommandPalette.tsx`, 시리즈 상세 `SeriesHeader.tsx`·`VolumeTile.tsx`·`VolumeRow.tsx`.
   - 통합 기록: UI 독립 리뷰가 Chrome에서 EXIF JPEG의 미리보기와 서버 픽셀 일치(blue, 267×400), 최소 크기 저장, 손상책의 상단·팔레트 초기화(204, `cover=null`, 불필요 이미지 요청 0)를 재현했다. 독립 검증은 키보드·포인터 이동과 크기 변경, 저장 뒤 권 카드 픽셀 비교를 실제 Chrome에서 확인했다.
 - **U5 e2e·픽스처(54).** 기록 없음(통합 검증으로 대신함: 같은 진행 기록).
-  - 코드: `web/e2e/12-cover.spec.ts`(새), `scripts/mkfixture/`(합성 픽스처 19→20), `scripts/e2e-assert.py`·`e2e-config.sh`, `integration/`의 I-6 확장.
+  - 코드: `web/e2e/12-cover.spec.ts`(새), `tools/mkfixture/`(합성 픽스처 19→20), `scripts/e2e/e2e-assert.py`·`e2e-config.sh`, `integration/`의 I-6 확장.
   - 통합 기록: 실 컬렉션 첫 실행이 낡은 테스트 대상(책 이름의 `.zip`, 손상책 시리즈)과 `cover_cv=null`을 문자열로 보내는 테스트 오류, 카드/bitmap 축소 입력 차이로 실패했다. 제품 코드가 아니라 테스트를 고쳤고 서버 표지의 원본 크롭을 독립 확인했다. I-6은 표지 준비의 409 반환값을 검사하지 않던 것을 고쳐, 인덱스·캐시 삭제와 재시작 뒤에도 지정 표지와 시리즈 방향이 남는지 검사한다.
 - **마감(U6): 크기, `make gates`, 실브라우저.**
   - 통합(b3468ab 작업 트리): `make lint` 0, `make test` 세 구성 `-race` 통과, `make web-gates` 0, `make e2e-synthetic` 브라우저 266 통과·6 건너뜀(115개 watched 픽셀 byte-exact), `make e2e` 실 컬렉션 258 통과·14 건너뜀, `make test-int TEST_INT_REQUIRE_ROOT=1` 최상위 232개 통과. 정규 빌드는 33 411 234 B(32 MiB 이내, noavif, CGO=0)였다.
@@ -4697,7 +4697,7 @@ impl-plan §1.3도 같은 내용을 적었다. 그래서 백업을 만들려면 
     - `POST /api/auth/logout`은 폼 POST에 `200` 완료 화면, 그 밖에는 `204`다(§2.12).
     - 진행률을 담는 응답은 oidc 모드에서 요청한 사용자의 값이다. 모양은 같다.
     - 쿠키 `shelf_sid`·`shelf_login`(oidc 모드).
-    - **arch §7.8의 `Settings` TS 블록과 `web/src/api/types.ts`의 `Settings`·`AuthStatus`는 Go 구조체를 고치는 커밋(U-B)에서 함께 고친다.** contractcheck가 arch 블록·types.ts·Go 태그를 서로 대조하므로(`scripts/contractcheck/fields.go`), 어느 한쪽만 먼저 고치면 게이트가 빨개진다. U-B가 types.ts의 이 두 타입을 고치고, U-D는 그 타입을 쓴다. 그때까지 정본은 arch §7.8·§7.12의 A-20 절이다.
+    - **arch §7.8의 `Settings` TS 블록과 `web/src/api/types.ts`의 `Settings`·`AuthStatus`는 Go 구조체를 고치는 커밋(U-B)에서 함께 고친다.** contractcheck가 arch 블록·types.ts·Go 태그를 서로 대조하므로(`tools/contractcheck/fields.go`), 어느 한쪽만 먼저 고치면 게이트가 빨개진다. U-B가 types.ts의 이 두 타입을 고치고, U-D는 그 타입을 쓴다. 그때까지 정본은 arch §7.8·§7.12의 A-20 절이다.
 21. **구현 제약.** 새 Go 모듈을 들이지 않는다. EdDSA 검증은 `crypto/ed25519`, JWT·JWKS 파싱은 `encoding/json`으로 한다(EdDSA 하나만 받으므로 범용 JOSE 라이브러리가 필요 없다). `auth.db`는 이미 쓰는 `modernc.org/sqlite`다. CGO 없음, 릴리스 크기 예산은 그대로다. 테스트는 테스트용 Ed25519 키로 토큰을 발급하는 가짜 OIDC 공급자(`httptest`)로 하고, 실제 uni-auth를 쓰지 않는다.
 
 ### 3. 기각한 대안
@@ -4844,7 +4844,7 @@ impl-plan §1.3도 같은 내용을 적었다. 그래서 백업을 만들려면 
 ### 5. 바뀐 것
 
 - 문서: intent.md 경계 표, prd §7.2, D-71 행 메모, impl-plan §1.3, arch §1.1 `rardecode` 행, 이 절. 개정(A-n)은 없다.
-- 코드(P-71b): 새 패키지 `internal/archive/rar5`(RAR 5 리더와, 시그니처로 rar4·rar5를 고르는 `Any`), `internal/source/source.go`의 RAR 리더 결선, `internal/testutil/rar5build.go`(RAR 5 작성기와 실제 패커 출력 표본 221 B, MIT), `scripts/mkfixture`의 `울프가이` v04(RAR 5), `scripts/e2e-assert.py`의 v04 단정.
+- 코드(P-71b): 새 패키지 `internal/archive/rar5`(RAR 5 리더와, 시그니처로 rar4·rar5를 고르는 `Any`), `internal/source/source.go`의 RAR 리더 결선, `internal/testutil/rar5build.go`(RAR 5 작성기와 실제 패커 출력 표본 221 B, MIT), `tools/mkfixture`의 `울프가이` v04(RAR 5), `scripts/e2e/e2e-assert.py`의 v04 단정.
 - 새로 안 것: 고정 `rardecode v2.3.0`의 RAR 5 디코더는 손상된 압축 데이터에서 패닉한다(`decode_reader.go:125` 범위 밖 슬라이스, `FuzzReadIndex`가 찾음, 말뭉치 `internal/archive/rar5/testdata/fuzz/FuzzReadIndex/a0a9f6957c8296a8`). 쪽은 백그라운드 썸네일 작업자도 읽으므로, `rar5`는 해제 경로의 패닉을 `ErrDecode`(손상)로 바꾸고 그 스트림을 실패 상태로 둔다. RAR 4 압축 경로(`rar4`)에는 같은 방어가 없다 — 이 판정 범위 밖이라 후속으로 남긴다.
 - 크기: `-s -w`, go1.26.10, linux/amd64, 같은 트리에서 결선만 바꿔 비교 28,123,401 → 28,160,265 B(**+36,864 B**). RAR 5 디코더는 이미 링크되어 있었다.
 - 의존성: 새 Go 의존성 0(`go.mod` 변화 없음).
@@ -4854,14 +4854,14 @@ impl-plan §1.3도 같은 내용을 적었다. 그래서 백업을 만들려면 
 ### 1. 문제
 
 - 예산 `SIZE_BUDGET` 33,554,432 B는 E-19(오케스트레이터 행)와 E-21 §4가 정했고, intent.md는 "릴리스 크기 예산 상향"을 사용자 승인 항목으로 묶었다. 게이트는 `make release`가 linux/amd64 기본 변형(정적, `noavif`)의 크기로 비교한다.
-- 3차 기능이 이 변형을 예산 위로 밀었다. E-74 U-B(oidc 인증 코어)의 정식 측정은 분기점 41c5e04 33,472,674 B → f7a4c1b 33,632,418 B(**+159,744 B**)이고, 기존 예산보다 77,986 B 크다([verify-ub2](/tmp/verify-ub/2026-11-09T07-57-36+0900--verify-ub2.md) UB-6, go1.26.9, `pnpm build` + `scripts/precompress`). 같은 시기 E-71 P-71b가 +36,864 B(E-71 §5, go1.26.10 결선 비교), F-1(화살표 서브셋 웹폰트)이 +4,096 B를 더한다(decisions.tsv 2026-11-09T07:09:31 행). 세 값의 단순 합으로 본 초과는 약 119 KB이고, 정식 측정이 아니다.
+- 3차 기능이 이 변형을 예산 위로 밀었다. E-74 U-B(oidc 인증 코어)의 정식 측정은 분기점 41c5e04 33,472,674 B → f7a4c1b 33,632,418 B(**+159,744 B**)이고, 기존 예산보다 77,986 B 크다([verify-ub2](/tmp/verify-ub/2026-11-09T07-57-36+0900--verify-ub2.md) UB-6, go1.26.9, `pnpm build` + `tools/precompress`). 같은 시기 E-71 P-71b가 +36,864 B(E-71 §5, go1.26.10 결선 비교), F-1(화살표 서브셋 웹폰트)이 +4,096 B를 더한다(decisions.tsv 2026-11-09T07:09:31 행). 세 값의 단순 합으로 본 초과는 약 119 KB이고, 정식 측정이 아니다.
 - U-B의 증가는 계약 기능의 코드 자체라 더 줄일 수 없다고 판단했다(decisions.tsv 2026-11-09T07:49:44 행, nm·readelf). E-19는 기능을 빼서 맞추는 것과 게이트를 지우는 것을 금지한다.
 
 ### 2. 판정
 
 1. **예산을 33,816,576 B(32 MiB + 256 KiB)로 올린다.** 위 단순 합(약 33,673,378 B)에 대한 여유는 약 143 KB다. 숫자는 U-E(worker-2)가 `Makefile` `SIZE_BUDGET`, `docs/impl-plan.md`(§7.3과 `make release`를 말하는 줄), `README.md`의 `SIZE_BUDGET` 문장 세 곳에 함께 넣고, 최종 정식 측정(`MEASURED_*`)도 그 작업에서 한다. 이 판정의 추정과 U-E의 측정이 다르면 측정이 기준이다.
 2. **이후 판단 기준.** 조정한 뒤의 예산이 **67,108,864 B 미만**이면 사용자 승인 없이 Orchestrator가 정한다. 올리는 것과 내리는 것 모두 해당하고, 아래 세 조건을 모두 채워야 한다.
-   - **정식 측정이 근거다.** `make release`가 게이트로 비교하는 산출물과 같은 조건이어야 한다: 그 커밋의 `web`을 `pnpm build`하고 `scripts/precompress web/dist`를 적용한 뒤, `Makefile`의 `MEASURED_TOOLCHAIN`으로 `CGO_ENABLED=0 go build -tags noavif -trimpath -ldflags '-s -w'` 한 linux/amd64 바이너리 크기. 다른 툴체인, precompress를 거치지 않은 빌드, 결선만 바꾼 비교, 여러 측정의 합산은 추정이며 근거로 쓰지 않는다.
+   - **정식 측정이 근거다.** `make release`가 게이트로 비교하는 산출물과 같은 조건이어야 한다: 그 커밋의 `web`을 `pnpm build`하고 `tools/precompress web/dist`를 적용한 뒤, `Makefile`의 `MEASURED_TOOLCHAIN`으로 `CGO_ENABLED=0 go build -tags noavif -trimpath -ldflags '-s -w'` 한 linux/amd64 바이너리 크기. 다른 툴체인, precompress를 거치지 않은 빌드, 결선만 바꾼 비교, 여러 측정의 합산은 추정이며 근거로 쓰지 않는다.
    - **아래 §5 조정 기록에 한 줄을 더한다:** 날짜, 전 값, 후 값, 이유(어떤 변경이 얼마를 더했고 왜 줄일 수 없는가, 또는 왜 내리는가), 측정(툴체인, 크기, 명령 출력이나 기록의 경로).
    - **세 곳을 한 커밋에서 함께 바꾼다:** `Makefile` `SIZE_BUDGET`, `docs/impl-plan.md`, `README.md`. 그 커밋에서 `internal/buildinfo/release_budget_test.go`가 통과해야 한다.
 3. **67,108,864 B 이상은 사용자 승인을 받는다.** 이 상한은 E-19의 32 MiB에서 100% 늘어난 값으로 고정이며, 예산을 거듭 조정해도 움직이지 않는다.

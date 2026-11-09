@@ -233,8 +233,8 @@ func TestI10_classification_matchesTheRealShapes(t *testing.T) {
 // the only readable one; each book carries its own status instead (FR-IDX-010).
 //
 // The real 군계 lost this shape when E-52 repaired it (25 plain archives now;
-// scripts/e2e-assert.py's real branch pins that state), so this runs on the
-// twin scripts/mkfixture builds on purpose — block 6, whose books are listed
+// scripts/e2e/e2e-assert.py's real branch pins that state), so this runs on the
+// twin tools/mkfixture builds on purpose — block 6, whose books are listed
 // below exactly.
 func TestI10_D6_duplicateBooksAreAllListed(t *testing.T) {
 	s := syntheticServer(t, gungye)

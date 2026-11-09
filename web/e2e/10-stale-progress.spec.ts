@@ -6,7 +6,7 @@
  *
  * E-45 §4 counts the tiers and finds that each one guards its own half:
  *
- *  * `scripts/contractcheck/main.go:48-53` does not look at request bodies at
+ *  * `tools/contractcheck/main.go:48-53` does not look at request bodies at
  *    all, on purpose — `stale_seen` lives exactly where that check cannot see;
  *  * `internal/httpapi/api_test.go` pins *"the server accepts `stale_seen`"*;
  *  * `web/src/.../ViewerPage.test.tsx` pins *"the client sends `stale_seen`"*;

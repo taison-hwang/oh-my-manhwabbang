@@ -1,7 +1,7 @@
 # ============================================================================
 #  shelf.e2e.yaml — generated. Do not edit.
 # ============================================================================
-#  Emitted by scripts/e2e-config.sh from test/shelf.e2e.yaml.tmpl.
+#  Emitted by scripts/e2e/e2e-config.sh from test/shelf.e2e.yaml.tmpl.
 #  This is impl-plan §6.3's curated-subset configuration.
 #
 #  The root points AT THE REAL COLLECTION and is narrowed by
@@ -17,7 +17,7 @@
 #  raw form compiles but matches nothing, which would index an empty library.
 #  Since the collection lost its `[만화] ` prefix (2026-08) that is one entry of
 #  the sixteen — `배틀로얄 1~15 [완결].zip` — rather than every one of them;
-#  scripts/e2e-config.sh escapes every pattern the same way anyway.
+#  scripts/e2e/e2e-config.sh escapes every pattern the same way anyway.
 # ============================================================================
 
 server:
@@ -26,7 +26,7 @@ server:
   base_path: "@@BASE_PATH@@"
   shutdown_grace: "5s"
   # Amendment A-11 / ruling E-26 — the gate on `POST /api/roots` and
-  # `DELETE /api/roots/{name}`. It is emitted by scripts/e2e-config.sh and it
+  # `DELETE /api/roots/{name}`. It is emitted by scripts/e2e/e2e-config.sh and it
   # differs by round, on purpose:
   #
   #   real       false — the SHIPPED DEFAULT, and the configuration the settings
@@ -36,7 +36,7 @@ server:
   #              reason rather than to whatever this file happens to say.
   #   synthetic  true  — the write path is exercised for real. Both the fixture
   #              tree and THIS FILE live under the run's /tmp state directory in
-  #              that round (scripts/e2e.sh, `CONFIG`), so `POST` writes a real
+  #              that round (scripts/e2e/e2e.sh, `CONFIG`), so `POST` writes a real
   #              configuration file, takes a real `.bak`, and threatens nothing.
   #              A real-collection round must never turn this on: this file would
   #              then be the one inside the repository, and step 9 would — quite
@@ -44,7 +44,7 @@ server:
   allow_root_editing: @@ALLOW_ROOT_EDITING@@
   # Amendment A-12 / ruling E-40 — the allowlist `GET /api/browse` lists under,
   # and the folder picker behind 설정 → 루트 관리 → 찾아보기. Emitted by
-  # scripts/e2e-config.sh and derived from the round for the same reason the key
+  # scripts/e2e/e2e-config.sh and derived from the round for the same reason the key
   # above is, plus one of its own:
   #
   #   real       []    — the SHIPPED DEFAULT, and an empty allowlist refuses

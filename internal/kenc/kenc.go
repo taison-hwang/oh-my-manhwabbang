@@ -79,7 +79,7 @@ import (
 //
 // They are also the font's specification: the vendored 한자/가나 faces are cut
 // from exactly the ideographs these two can produce, and fontcoverage_test.go
-// fails when scripts/mkfonts/cjk-coverage.txt says otherwise. Swapping either
+// fails when tools/mkfonts/cjk-coverage.txt says otherwise. Swapping either
 // one is therefore a font change as well (E-53, E-55).
 var (
 	cp932 encoding.Encoding = japanese.ShiftJIS

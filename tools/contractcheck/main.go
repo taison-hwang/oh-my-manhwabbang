@@ -8,8 +8,8 @@
 // gate rather than a review item because the two sides cannot be trusted to
 // stay aligned by inspection.
 //
-//	go run ./scripts/contractcheck          # from the repository root
-//	go run ./scripts/contractcheck -v       # also list what was checked
+//	go run ./tools/contractcheck          # from the repository root
+//	go run ./tools/contractcheck -v       # also list what was checked
 //
 // It exits non-zero on any disagreement and prints one line per finding, in the
 // form `<golden file>: <json path>: <what is wrong>`.
@@ -163,7 +163,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  "+f)
 	}
 	fmt.Fprintf(os.Stderr, "\nThe API contract is arch-backend.md §7 as amended by impl-plan.md §0.3.\n"+
-		"The curated e2e series are scripts/e2e-config.sh's CURATED, which is what\n"+
+		"The curated e2e series are scripts/e2e/e2e-config.sh's CURATED, which is what\n"+
 		"scan.include_globs is built from; every other copy follows it.\n"+
 		"Fix the side that disagrees; do not adjust this check.\n")
 	os.Exit(1)
@@ -198,7 +198,7 @@ func check(root string) (findings, checked []string, err error) {
 				typeName = "ErrorResponse"
 			} else {
 				findings = append(findings, fmt.Sprintf(
-					"%s.json: no TypeScript type is mapped to this golden file; add it to goldenType in scripts/contractcheck",
+					"%s.json: no TypeScript type is mapped to this golden file; add it to goldenType in tools/contractcheck",
 					name))
 				continue
 			}
@@ -252,7 +252,7 @@ func check(root string) (findings, checked []string, err error) {
 		return nil, nil, err
 	}
 	findings = append(findings, curatedFindings...)
-	checked = append(checked, fmt.Sprintf("%-28s -> the curated e2e series", "scripts/e2e-config.sh"))
+	checked = append(checked, fmt.Sprintf("%-28s -> the curated e2e series", "scripts/e2e/e2e-config.sh"))
 
 	flushFindings, err := checkThumbFlushFields(root)
 	if err != nil {
@@ -874,7 +874,7 @@ var (
 
 // checkThumbFlushFields compares the three places that name amendment A-15's
 // fields (ruling E-57): arch §7.4 declares them, `ThumbCounter` serves them,
-// and scripts/e2e-assert.py waits until all of them are zero before it judges
+// and scripts/e2e/e2e-assert.py waits until all of them are zero before it judges
 // the covers a scan pre-generated.
 //
 // The four were load-bearing for the gate long before anyone ruled them
@@ -898,7 +898,7 @@ func checkThumbFlushFields(root string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	py, err := read("scripts/e2e-assert.py")
+	py, err := read("scripts/e2e/e2e-assert.py")
 	if err != nil {
 		return nil, err
 	}
@@ -1000,7 +1000,7 @@ func parseFlushTags(src string) ([]string, error) {
 func parseFlushTuple(src string) ([]string, error) {
 	loc := reFlushWait.FindStringIndex(src)
 	if loc == nil {
-		return nil, errors.New("scripts/e2e-assert.py: no top-level `def wait_for_thumb_quiescence(`")
+		return nil, errors.New("scripts/e2e/e2e-assert.py: no top-level `def wait_for_thumb_quiescence(`")
 	}
 	body := src[loc[1]:]
 	if next := reTopLevelDef.FindStringIndex(body); next != nil {
@@ -1008,7 +1008,7 @@ func parseFlushTuple(src string) ([]string, error) {
 	}
 	tuples := reFlushTuple.FindAllStringSubmatch(body, -1)
 	if len(tuples) != 1 {
-		return nil, fmt.Errorf("scripts/e2e-assert.py: wait_for_thumb_quiescence holds %d `keys = (…)` tuples; want exactly one", len(tuples))
+		return nil, fmt.Errorf("scripts/e2e/e2e-assert.py: wait_for_thumb_quiescence holds %d `keys = (…)` tuples; want exactly one", len(tuples))
 	}
 	var names []string
 	for _, m := range rePyString.FindAllStringSubmatch(tuples[0][1], -1) {
@@ -1030,13 +1030,13 @@ func compareThumbFlush(c *thumbFlushCopies) []string {
 		}
 		if !contains(c.py, f) {
 			findings = append(findings, fmt.Sprintf(
-				"scripts/e2e-assert.py: the flush wait does not read %q; arch §7.4 (A-15) declares it", f))
+				"scripts/e2e/e2e-assert.py: the flush wait does not read %q; arch §7.4 (A-15) declares it", f))
 		}
 	}
 	for _, f := range c.py {
 		if !contains(c.arch, f) {
 			findings = append(findings, fmt.Sprintf(
-				"scripts/e2e-assert.py: the flush wait reads %q; arch §7.4 (A-15) does not declare it", f))
+				"scripts/e2e/e2e-assert.py: the flush wait reads %q; arch §7.4 (A-15) does not declare it", f))
 		}
 	}
 	return findings
@@ -1192,7 +1192,7 @@ func compareAmendments(arch, table []int, exempt map[int]string) []string {
 					"(mark the §7 text it changed, or list it in amendmentsWithoutArchNote with the reason)", n, n))
 		case noted[n] && excused:
 			findings = append(findings, fmt.Sprintf(
-				"scripts/contractcheck: A-%d is listed in amendmentsWithoutArchNote but docs/arch-backend.md "+
+				"tools/contractcheck: A-%d is listed in amendmentsWithoutArchNote but docs/arch-backend.md "+
 					"marks it; the exemption is stale", n))
 		}
 	}
@@ -1315,18 +1315,18 @@ func checkSeriesParams(root string, ts *tsTypes) ([]string, error) {
 
 // Where the names live. Relative to the repository root, slash-separated.
 const (
-	curatedBashPath    = "scripts/e2e-config.sh"
-	curatedPyPath      = "scripts/e2e-assert.py"
+	curatedBashPath    = "scripts/e2e/e2e-config.sh"
+	curatedPyPath      = "scripts/e2e/e2e-assert.py"
 	curatedTSPath      = "web/e2e/shelf.ts"
-	curatedFixturePath = "scripts/mkfixture/main.go"
-	curatedShellPath   = "scripts/e2e.sh"
+	curatedFixturePath = "tools/mkfixture/main.go"
+	curatedShellPath   = "scripts/e2e/e2e.sh"
 	curatedDocPath     = "docs/impl-plan.md"
 	curatedIntPath     = "integration/harness_test.go"
 )
 
 var (
-	// `CURATED=( … )` / `SYNTHETIC_EXTRA=( … )` in scripts/e2e-config.sh, and
-	// `CURATED = [ … ]` / `SYNTHETIC_EXTRA = [ … ]` in scripts/e2e-assert.py.
+	// `CURATED=( … )` / `SYNTHETIC_EXTRA=( … )` in scripts/e2e/e2e-config.sh, and
+	// `CURATED = [ … ]` / `SYNTHETIC_EXTRA = [ … ]` in scripts/e2e/e2e-assert.py.
 	// The closing delimiter is anchored at column 0 so a `)` inside a name — of
 	// which there are several, `Clover 클로버 (총4권)` among them — cannot end
 	// the block early.
@@ -1341,7 +1341,7 @@ var (
 	// reConstArr above matches `[ … ] as const` only, and these two are keyed
 	// objects — the keys (`clover`, `battleRoyale`) are what the specs import.
 	reTSConstObj = regexp.MustCompile(`(?ms)^export const (SERIES|SYNTHETIC_EXTRA) = \{(.*?)^\} as const`)
-	// scripts/e2e.sh step 11b's one bare literal.
+	// scripts/e2e/e2e.sh step 11b's one bare literal.
 	reA11Fill = regexp.MustCompile(`(?m)^\s*A11_FILL="([^"]*)"`)
 	// integration/harness_test.go's two declarations of the same names: the
 	// `curated` slice that becomes scan.include_globs there, and the `const`
@@ -1368,11 +1368,11 @@ var (
 // Parsing is separated from IO so the comparison can be table-tested against
 // small hand-written sources.
 type curatedCopies struct {
-	bash, bashExtra []string // scripts/e2e-config.sh — the source of truth
-	py, pyExtra     []string // scripts/e2e-assert.py
+	bash, bashExtra []string // scripts/e2e/e2e-config.sh — the source of truth
+	py, pyExtra     []string // scripts/e2e/e2e-assert.py
 	ts, tsExtra     []string // web/e2e/shelf.ts
 	fixtureLiterals []string // every non-comment string literal of mkfixture
-	a11Fill         string   // scripts/e2e.sh's A11_FILL, basename only
+	a11Fill         string   // scripts/e2e/e2e.sh's A11_FILL, basename only
 	doc             []string // docs/impl-plan.md §6.3's table
 	integration     []string // integration/harness_test.go's `curated` + const block
 }
@@ -1396,11 +1396,11 @@ type nameList struct {
 //
 // Five of the six copies are load-bearing:
 //
-//	scripts/e2e-config.sh   CURATED becomes scan.include_globs; the source of truth
-//	scripts/e2e-assert.py   CURATED is the curl tier's expectation, unpacked POSITIONALLY
+//	scripts/e2e/e2e-config.sh   CURATED becomes scan.include_globs; the source of truth
+//	scripts/e2e/e2e-assert.py   CURATED is the curl tier's expectation, unpacked POSITIONALLY
 //	web/e2e/shelf.ts        SERIES is the browser tier's, and every by-name helper
-//	scripts/mkfixture/…     path literals that build the synthetic twin (D-49)
-//	scripts/e2e.sh          A11_FILL, one archive by path (step 11b)
+//	tools/mkfixture/…     path literals that build the synthetic twin (D-49)
+//	scripts/e2e/e2e.sh          A11_FILL, one archive by path (step 11b)
 //
 // The sixth, the §6.3 table in docs/impl-plan.md, is the *declared* source of
 // truth and carries no code — which is precisely why it was the copy that had
@@ -1529,7 +1529,7 @@ func namedBlocks(re *regexp.Regexp, src string, values func(string) []string) ma
 
 // quotedPerLine reads the double-quoted strings of a shell or Python list body,
 // in order. Trailing `#` comments are dropped first: every entry of
-// scripts/e2e-config.sh's CURATED carries one describing the shape it covers.
+// scripts/e2e/e2e-config.sh's CURATED carries one describing the shape it covers.
 func quotedPerLine(block string) []string {
 	var out []string
 	for _, line := range strings.Split(block, "\n") {

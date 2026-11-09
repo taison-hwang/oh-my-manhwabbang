@@ -21,10 +21,10 @@ import (
 )
 
 // Decision E-63: the release build replaces assets/*.js and *.css with .gz
-// files (scripts/precompress) and serveStatic serves the compressed form to a
+// files (tools/precompress) and serveStatic serves the compressed form to a
 // client that accepts it and the decompressed form to one that does not. These
 // tests pin the HTTP semantics of that fallback; the build side is pinned in
-// scripts/precompress/main_test.go.
+// tools/precompress/main_test.go.
 
 // The bodies are large enough that `bytes=0-9` is a strict prefix of both the
 // compressed and the identity representation, so a Range served from the wrong

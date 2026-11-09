@@ -487,7 +487,7 @@ func makeEnv() []string {
 		"RACE": true, "INT_PKGS": true, "NOPDF_PKGS": true,
 		// E-66: the integration knobs are `?=` too, and the two roots are what
 		// the `gates` pre-check reads — an operator's export of either would
-		// otherwise answer for scripts/media-root.
+		// otherwise answer for scripts/e2e/media-root.
 		"SHELF_TEST_ROOT": true, "SHELF_MEDIA_ROOT": true, "SHELF_E2E_ROOT": true,
 		"TEST_INT_SAMPLE": true, "TEST_INT_REQUIRE_ROOT": true, "GATES_E2E": true,
 		"SHELF_TEST_SAMPLE": true, "SHELF_TEST_REQUIRE_ROOT": true,

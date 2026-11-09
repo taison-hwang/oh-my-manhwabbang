@@ -369,7 +369,7 @@
      `feTurbulence` is the deterministic route: the SVG spec pins the generator,
      so a fixed `seed` gives the same bytes on every load and in every engine,
      and `stitchTiles` is what lets the 200px tile repeat without a seam. That
-     determinism is now load-bearing twice over — `scripts/pixelbaseline` holds
+     determinism is now load-bearing twice over — `tools/pixelbaseline` holds
      the render to it byte for byte.
 
      The filter writes **alpha and nothing else** — the colour matrix zeroes RGB

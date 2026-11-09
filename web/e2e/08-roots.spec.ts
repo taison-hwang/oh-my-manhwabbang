@@ -15,8 +15,8 @@
  * purges an index and keeps `user.db` — had no end-to-end coverage of any kind.
  *
  * This spec is the browser half of closing that. The HTTP half is
- * `scripts/e2e-assert.py --phase roots-{pre,post,delete}`, called from three
- * points of `scripts/e2e.sh`; the two halves cover different things and neither
+ * `scripts/e2e/e2e-assert.py --phase roots-{pre,post,delete}`, called from three
+ * points of `scripts/e2e/e2e.sh`; the two halves cover different things and neither
  * replaces the other. What only a browser can show is that the *controls* are
  * rendered under the capability, that the folder picker walks the allowlist and
  * that the server's `selectable`/`reason` reach the screen instead of being
@@ -33,7 +33,7 @@
  * # Why it runs in the synthetic round only
  *
  * The round decides the configuration, and only one of the two may be written
- * to. `scripts/e2e.sh --synthetic` puts both the fixture tree and the
+ * to. `scripts/e2e/e2e.sh --synthetic` puts both the fixture tree and the
  * configuration file under a /tmp state directory, so `POST /api/roots` edits a
  * real file, takes a real `.bak`, and threatens nothing. The real-collection
  * round's configuration is `test/shelf.e2e.yaml` **inside the repository**,
@@ -43,7 +43,7 @@
  * is off, so "absent" is pinned to its cause there instead of being asserted
  * twice here.
  *
- * There are deliberately no `shot()` calls: `scripts/e2e.sh` step 11 requires a
+ * There are deliberately no `shot()` calls: `scripts/e2e/e2e.sh` step 11 requires a
  * fresh screenshot for every `shot()` call it can grep out of `web/e2e/*.spec.ts`,
  * and a call in a spec that is skipped in one of the two rounds would fail that
  * round for a screenshot nobody could have produced.
@@ -113,12 +113,12 @@ async function configChangedOnDisk(page: Page): Promise<boolean> {
   return body.server.config_changed_on_disk
 }
 
-/** An environment variable `scripts/e2e.sh` is required to have set. */
+/** An environment variable `scripts/e2e/e2e.sh` is required to have set. */
 function requireEnv(name: string): string {
   const value = process.env[name]
   expect(
     value,
-    `${name} must be set by scripts/e2e.sh (run_playwright) for the synthetic round`,
+    `${name} must be set by scripts/e2e/e2e.sh (run_playwright) for the synthetic round`,
   ).toBeTruthy()
   return value ?? ''
 }
@@ -131,7 +131,7 @@ test('A-12 · 루트 추가 → 즉시 적용 → 제거, against a real server'
       'default — and 06-settings.spec.ts asserts the controls are absent and why.',
   )
 
-  // The root `scripts/e2e.sh` step 8b added before the restart and step 10b saw
+  // The root `scripts/e2e/e2e.sh` step 8b added before the restart and step 10b saw
   // adopted, and a scratch directory this spec may create its own roots under.
   const adoptedName = requireEnv('SHELF_E2E_A11_ROOT')
   const scratch = requireEnv('SHELF_E2E_UI_ROOT_DIR')
@@ -149,12 +149,12 @@ test('A-12 · 루트 추가 → 즉시 적용 → 제거, against a real server'
   const before = await rootsFromApi(page)
   expect(
     before.map((root) => root.name).sort(),
-    'this project starts from the two roots scripts/e2e.sh configured and added — a third ' +
+    'this project starts from the two roots scripts/e2e/e2e.sh configured and added — a third ' +
       'means an earlier viewport project failed before it removed its own',
   ).toHaveLength(2)
   const adopted = must(
     before.find((root) => root.name === adoptedName),
-    `scripts/e2e.sh step 8b added a root named ${adoptedName} and step 10b saw it adopted`,
+    `scripts/e2e/e2e.sh step 8b added a root named ${adoptedName} and step 10b saw it adopted`,
   )
   const media = must(
     before.find((root) => root.name !== adoptedName),
@@ -175,7 +175,7 @@ test('A-12 · 루트 추가 → 즉시 적용 → 제거, against a real server'
   }
   expect(
     server.root_editing_enabled,
-    'A-11 · this round configures server.allow_root_editing: true (scripts/e2e-config.sh)',
+    'A-11 · this round configures server.allow_root_editing: true (scripts/e2e/e2e-config.sh)',
   ).toBe(true)
   // A-10 publishes the file this server loaded, which is what makes the
   // byte-for-byte comparison at the end of this test possible from here.
@@ -187,7 +187,7 @@ test('A-12 · 루트 추가 → 즉시 적용 → 제거, against a real server'
   // The same fact `--phase roots-post` asserts on the wire. It is worth both:
   // that phase proves a fresh process re-read the spliced entry, this proves
   // the screen agrees — the two could disagree, and the row is what a user
-  // would believe. (`scripts/e2e.sh` step 10 deletes the index database before
+  // would believe. (`scripts/e2e/e2e.sh` step 10 deletes the index database before
   // that restart, so this row is not inherited from the POST's own scan.)
   expect(
     [adopted.pending, adopted.available],
@@ -211,11 +211,11 @@ test('A-12 · 루트 추가 → 즉시 적용 → 제거, against a real server'
   //
   // The base comes from the endpoint rather than from the layout of
   // `SHELF_E2E_UI_ROOT_DIR`, so this test asserts what the server allows instead
-  // of restating what `scripts/e2e-config.sh` was told.
+  // of restating what `scripts/e2e/e2e-config.sh` was told.
   const top = await page.request.get('/api/browse')
   expect(top.ok(), 'GET /api/browse').toBe(true)
   const { entries: bases } = (await top.json()) as { entries: { path: string }[] }
-  const base = must(bases[0], 'scripts/e2e-config.sh configures exactly one browse base').path
+  const base = must(bases[0], 'scripts/e2e/e2e-config.sh configures exactly one browse base').path
 
   await roots.getByRole('button', { name: '루트 추가' }).click()
   await roots.locator('[data-testid="browse-folders"]').click()
@@ -308,7 +308,7 @@ test('A-12 · 루트 추가 → 즉시 적용 → 제거, against a real server'
   // rendered. `duplicate` is the one a user reaches without help: the media
   // root's path is on the screen above, and re-adding it names the root it
   // collides with. (`overlaps` and `contains_storage` are asserted on the wire
-  // by `scripts/e2e-assert.py --phase roots-pre` — the second only since item
+  // by `scripts/e2e/e2e-assert.py --phase roots-pre` — the second only since item
   // `c`: until then this sentence claimed an assertion that did not exist.)
   //
   // The refusal is a 400, and Chromium logs every non-2xx response as a console

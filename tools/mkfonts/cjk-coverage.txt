@@ -1,4 +1,4 @@
-# Written by scripts/mkfonts/subset.py; do not edit by hand.
+# Written by tools/mkfonts/subset.py; do not edit by hand.
 # The characters the vendored 한자/가나 faces are cut for: every ideograph
 # CP949 or Windows-31J can encode, plus the assigned kana. One hexadecimal
 # code point per line.

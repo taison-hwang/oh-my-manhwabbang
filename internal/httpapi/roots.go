@@ -52,7 +52,7 @@ import (
 //  2. **Only `internal/config` writes.** This package never opens a file for
 //     writing, never renames one and never removes one; it calls
 //     `config.AddRoot` / `config.RemoveRoot` and nothing else.
-//     `scripts/check-readonly.sh` guard 4 is a grep that keeps that true across
+//     `scripts/check/check-readonly.sh` guard 4 is a grep that keeps that true across
 //     six agents.
 
 // maxRootLabelLen bounds the one free-form field of a root, for the same reason

@@ -5,7 +5,7 @@
 Two different comparisons are easy to confuse, so they are separated here.
 
 **The product against itself — checked exactly, for most of the set, since session 22.**
-`scripts/e2e.sh` step 11c runs `scripts/pixelbaseline`, which holds the SHA-256 of every PNG the synthetic
+`scripts/e2e/e2e.sh` step 11c runs `tools/pixelbaseline`, which holds the SHA-256 of every PNG the synthetic
 round writes that was *measured* reproducible, and fails the round when one of them renders differently.
 The comparison is byte-exact rather than tolerant, and the exactness is affordable because most of the
 render is deterministic: fixed-seed `feTurbulence` grain, a fixture built with a fixed mtime and no `rand`.
@@ -16,7 +16,7 @@ log, a relative time on the series and 이어보기 rows — the product telling
 11 differ by 3–18 of 255 across a wide area, which is image decode variance a reader cannot see. A
 tolerance loose enough to pass the second group would pass most colour changes too, so those 45 are
 excluded **by name, with the measured delta attached**, and the count of what is not being watched is
-printed every time. `scripts/pixelbaseline` carries the full derivation.
+printed every time. `tools/pixelbaseline` carries the full derivation.
 
 `docs/pixel-baseline/` holds the manifest and a 320px thumbnail of each watched shot, so a red gate says
 *what* moved and not only *that* something did. This is open item `x`; items `bs` (the 45) and `aj`
@@ -88,9 +88,9 @@ accent is allowed to appear), not pixels.
 Reproducible; redo it the same way when the look changes again.
 
 1. `make build` from a clean tree — the shipping binary, SPA embedded.
-2. `scripts/e2e-config.sh --synthetic --root <abs>/fixture` with `SHELF_E2E_STATE` pointing outside the
+2. `scripts/e2e/e2e-config.sh --synthetic --root <abs>/fixture` with `SHELF_E2E_STATE` pointing outside the
    repo. **Never start a server from the repo root:** `shelf.yaml`'s relative `data_dir`/`cache_dir` make
-   it write inside the repository. The synthetic fixture (`scripts/mkfixture`) is preferred over the real
+   it write inside the repository. The synthetic fixture (`tools/mkfixture`) is preferred over the real
    collection because it is reproducible and needs no media volume.
 3. `POST /api/scan {"full":true}`, poll `/api/scan/status` to `idle` — 12 series, 40 covers.
 4. Chrome, CDP viewport emulation at `{width}x1024x2`, non-mobile, non-touch. **Emulation, not window

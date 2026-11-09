@@ -141,8 +141,8 @@
  * with (x/text's `japanese.ShiftJIS` is Windows-31J, NEC and IBM extension rows
  * included), so a legacy name cannot hold a 한자 outside it. A volume added next
  * year is covered because the encoding cannot express anything else, not
- * because we looked. `scripts/mkfonts/subset.py` derives the set by round-tripping
- * Python's `cp949` and `cp932`, writes it to `scripts/mkfonts/cjk-coverage.txt`,
+ * because we looked. `tools/mkfonts/subset.py` derives the set by round-tripping
+ * Python's `cp949` and `cp932`, writes it to `tools/mkfonts/cjk-coverage.txt`,
  * and is the recipe for these files. Two checks keep it honest: kenc's
  * fontcoverage_test.go fails unless the manifest is exactly what kenc's codecs
  * produce — the recipe once used strict `shift_jis` and left 265 of them out —
@@ -269,7 +269,7 @@
  * shortcuts sheet's `← →`). 고운바탕 has none of them and Archivo only ↑ ↓, so
  * every stack handed them to the system, and the system's choice changed under
  * the e2e pixel baseline without this repo changing at all. Cut from the same
- * Noto Serif CJK TC as the 한자 face (`scripts/mkfonts/subset.py --only arrows`),
+ * Noto Serif CJK TC as the 한자 face (`tools/mkfonts/subset.py --only arrows`),
  * about a kilobyte per weight. The `unicode-range` is what lets it stand in
  * every stack in tokens.css without answering for anything but the arrows;
  * fontCoverage.test.ts fails if a stack reaches a system face for one of them.

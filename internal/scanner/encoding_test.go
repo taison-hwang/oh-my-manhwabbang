@@ -112,7 +112,7 @@ func TestScan_skippedBookThatMoved_keepsItsNameEncoding(t *testing.T) {
 	// A volume that sorts first pushes 02권 from ord 0 to ord 1 without
 	// touching its file, so 02권 is skipped and still rewritten.
 	// Through testutil: this package may not hold a write primitive, tests
-	// included (scripts/check-readonly.sh, FR-CFG-005).
+	// included (scripts/check/check-readonly.sh, FR-CFG-005).
 	testutil.BuildTreeAt(t, filepath.Join(h.rootDirs["manga"], "[만화] 군계 1~25"),
 		map[string]any{"01권.zip": jpegZIP(t, "001.jpg")})
 

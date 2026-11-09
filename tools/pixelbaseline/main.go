@@ -2,7 +2,7 @@
 //
 // # The hole this fills
 //
-// scripts/e2e.sh step 11 proves every shot() call fired. Nothing proved that
+// scripts/e2e/e2e.sh step 11 proves every shot() call fired. Nothing proved that
 // what they drew is what they drew last time: docs/ui-shots/README.md opened,
 // until session 22, by saying so in its own first heading. The reference set has
 // gone stale four times — E-32, session 10, E-42, E-44 — and each time a person
@@ -22,7 +22,7 @@
 //
 // It was assumed at first, on good grounds: the grain is feTurbulence with a
 // fixed seed (tokens.css `--paper-grain`), the fixture is built with a fixed
-// mtime and no rand (scripts/mkfixture), and re-photographing one server gave
+// mtime and no rand (tools/mkfixture), and re-photographing one server gave
 // byte-identical frames across separate Chrome processes. Three full synthetic
 // rounds said otherwise, and the shape of the disagreement is the reason this
 // tool has an exclusion list instead of a tolerance:
@@ -190,13 +190,13 @@ func main() {
 			watched, len(excluded), filepath.Join(*baseDir, "thumbs"))
 		fmt.Printf("pixelbaseline: the review reference set in docs/ui-shots/built/ describes the renders you\n" +
 			"  just replaced. Retake it (docs/ui-shots/README.md has the recipe) and then:\n\n" +
-			"      go run ./scripts/pixelbaseline -reference-retaken\n\n")
+			"      go run ./tools/pixelbaseline -reference-retaken\n\n")
 		return
 	}
 
 	want, err := readManifest(filepath.Join(*baseDir, "manifest.json"))
 	if err != nil {
-		fail("reading the baseline: %v\n\n  There is no committed baseline yet. Build one from rounds you have\n  archived and reviewed:\n\n      go run ./scripts/pixelbaseline -classify /path/round1,/path/round2,/path/round3\n", err)
+		fail("reading the baseline: %v\n\n  There is no committed baseline yet. Build one from rounds you have\n  archived and reviewed:\n\n      go run ./tools/pixelbaseline -classify /path/round1,/path/round2,/path/round3\n", err)
 	}
 	if want.Round != *round {
 		fail("the baseline is for round %q but these shots are from %q", want.Round, *round)
@@ -213,7 +213,7 @@ func main() {
 	report("new — no baseline entry, so nothing decided whether to watch them", added)
 	report("missing — the baseline has them, this round did not write them", missing)
 	fmt.Printf("\n  The thumbnails in %s show what the baseline held.\n", filepath.Join(*baseDir, "thumbs"))
-	fmt.Printf("  If the change is intended, review the new renders and then:\n\n      go run ./scripts/pixelbaseline -update\n\n")
+	fmt.Printf("  If the change is intended, review the new renders and then:\n\n      go run ./tools/pixelbaseline -update\n\n")
 	os.Exit(1)
 }
 
@@ -504,7 +504,7 @@ func writeReference(baseDir, fp string) error {
 		CapturedAgainst: fp,
 		Note: "The renders docs/ui-shots/built/v3-*.png was captured from. When the round's " +
 			"fingerprint stops matching this, that reference set is provably stale — item `aj`. " +
-			"Record a fresh capture with: go run ./scripts/pixelbaseline -reference-retaken",
+			"Record a fresh capture with: go run ./tools/pixelbaseline -reference-retaken",
 	}, "", "  ")
 	if err != nil {
 		return err

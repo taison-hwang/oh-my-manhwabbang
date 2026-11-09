@@ -7,8 +7,8 @@ import { describe, expect, it } from 'vitest'
 /**
  * The vendored 한자/가나 faces must carry every character they were cut for.
  *
- * `scripts/mkfonts/subset.py` asks pyftsubset for the set in
- * `scripts/mkfonts/cjk-coverage.txt`, and internal/kenc's
+ * `tools/mkfonts/subset.py` asks pyftsubset for the set in
+ * `tools/mkfonts/cjk-coverage.txt`, and internal/kenc's
  * fontcoverage_test.go holds that manifest to the ideographs kenc's codecs can
  * actually produce. This is the other half of the chain: the manifest is a
  * request, and pyftsubset drops what the source face lacks without a word. So
@@ -25,7 +25,7 @@ const ROOT = resolve(process.cwd(), '..')
 const STYLES = resolve(process.cwd(), 'src/styles')
 
 function manifest(): Set<number> {
-  const text = readFileSync(join(ROOT, 'scripts/mkfonts/cjk-coverage.txt'), 'utf8')
+  const text = readFileSync(join(ROOT, 'tools/mkfonts/cjk-coverage.txt'), 'utf8')
   const out = new Set<number>()
   for (const raw of text.split('\n')) {
     const line = raw.trim()

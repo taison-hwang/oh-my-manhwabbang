@@ -30,11 +30,11 @@
 #      handler that reached for `os.WriteFile` itself would have none of that,
 #      and would be reviewed as "one line" the day it was added.
 #
-# Usage: scripts/check-readonly.sh [repo-root]
+# Usage: scripts/check/check-readonly.sh [repo-root]
 
 set -euo pipefail
 
-root="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+root="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 cd "$root"
 
 fail=0

@@ -651,7 +651,7 @@ Instead:
 
 1. `npm i @fontsource/archivo` (or drop the `.woff2` files into `src/assets/fonts/`).
 2. Import only the three weights the DS uses — ~~**400, 600, 800** — latin + latin-ext subsets~~ **400 and
-   700, latin only** (E-46 moved the heading weight to 700; `scripts/mkfonts/subset.py` copies them).
+   700, latin only** (E-46 moved the heading weight to 700; `tools/mkfonts/subset.py` copies them).
 3. Declare `@font-face { font-display: swap; }` and let Vite fingerprint + inline them into `dist/`, which
    `go:embed` then swallows.
 

@@ -8,7 +8,7 @@ The copyright line of each font is quoted from the name table (name ID 0) of
 the file in this directory. Files marked "subset" are Modified Versions in the
 sense of the OFL: they keep only some of the original glyphs. The
 noto-serif-tc, noto-sans-jp and shelf-arrows cuts are made by
-scripts/mkfonts/subset.py.
+tools/mkfonts/subset.py.
 
 
 Gowun Batang

@@ -216,7 +216,7 @@ test('6.12 · the 이어보기 shelf obeys the §7 tier it is in', async ({ page
   // and to no others. A shelf of short names cannot see that, which is what
   // this test used to be. 울프가이's volumes are
   // `Wolf_Guy_-_Wolfen_Crest_v0N_JP.{zip,rar}` in **both rounds** — the real
-  // collection carries them and `scripts/mkfixture` builds three of them plus a
+  // collection carries them and `tools/mkfixture` builds three of them plus a
   // fourth of the same shape (E-71) — so the longest of them is a long name that is also a single unbreakable
   // 34-character Latin token, which is the harder half of the same defect.
   const opened: { sid: string; bookId: string }[] = []

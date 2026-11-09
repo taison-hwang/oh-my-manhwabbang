@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """The curl-level assertion suite of impl-plan §6.3 step 5.
 
-Run by scripts/e2e.sh against a live server. It speaks only HTTP — no database
+Run by scripts/e2e/e2e.sh against a live server. It speaks only HTTP — no database
 access, no filesystem access — so what it checks is exactly what a browser
 would see.
 
-    scripts/e2e-assert.py --base http://127.0.0.1:8791 --mode real
-    scripts/e2e-assert.py --base http://127.0.0.1:8791 --mode synthetic
+    scripts/e2e/e2e-assert.py --base http://127.0.0.1:8791 --mode real
+    scripts/e2e/e2e-assert.py --base http://127.0.0.1:8791 --mode synthetic
 
 `--phase` selects which suite runs. The default, `main`, is step 5 above and is
 the whole of what this script used to be. The three `roots-*` phases are
 amendment A-11 (ruling E-26) and are called at three different points of
-scripts/e2e.sh, because what they assert is a sequence in time — write the file,
+scripts/e2e/e2e.sh, because what they assert is a sequence in time — write the file,
 restart, adopt, remove — and no single invocation can stand at all three
-moments. They run in the SYNTHETIC round only; see scripts/e2e.sh step 8b.
+moments. They run in the SYNTHETIC round only; see scripts/e2e/e2e.sh step 8b.
 
 The A-11 phases are the one documented exception to "no filesystem access" in
 the paragraph above, and it is not a shortcut: `POST /api/roots` is specified as
@@ -42,7 +42,7 @@ import urllib.request
 # collection has no sample of, which only the synthetic tree carries (D-49, as
 # extended by D-71).
 #
-# A *copy*. scripts/e2e-config.sh's CURATED is the source of truth, and the
+# A *copy*. scripts/e2e/e2e-config.sh's CURATED is the source of truth, and the
 # order below is part of the contract, not a formatting choice: the unpacking
 # under this list reads it POSITIONALLY, so a reorder would leave every constant
 # pointing at the wrong series while every assertion label stayed right.
@@ -89,11 +89,11 @@ def curated_copies() -> str:
         "          " + line
         for line in (
             "the names live in six unlinked copies:",
-            "  scripts/e2e-config.sh:29-49  CURATED — becomes scan.include_globs. THE SOURCE OF TRUTH.",
-            "  scripts/e2e-assert.py:51-66  CURATED — this file, unpacked positionally at :70-74",
+            "  scripts/e2e/e2e-config.sh:29-49  CURATED — becomes scan.include_globs. THE SOURCE OF TRUTH.",
+            "  scripts/e2e/e2e-assert.py:51-66  CURATED — this file, unpacked positionally at :70-74",
             "  web/e2e/shelf.ts:86-101      SERIES — the browser tier",
-            "  scripts/mkfixture/main.go    its path literals, which build the synthetic twin (D-49)",
-            "  scripts/e2e.sh:922           A11_FILL — one archive by path, step 11b",
+            "  tools/mkfixture/main.go    its path literals, which build the synthetic twin (D-49)",
+            "  scripts/e2e/e2e.sh:922           A11_FILL — one archive by path, step 11b",
             "  docs/impl-plan.md §6.3       the curated-set table — the declared source of truth",
         )
     )
@@ -118,7 +118,7 @@ def curated_detail(expected: list[str], indexed: list[str]) -> str:
     if not indexed:
         lines += [
             "NOTHING was indexed: every scan.include_globs pattern missed. That is one",
-            "edit to scripts/e2e-config.sh's CURATED — a collection-wide rename did it once.",
+            "edit to scripts/e2e/e2e-config.sh's CURATED — a collection-wide rename did it once.",
         ]
     elif len(missing) == 1 and len(surplus) == 1:
         lines += [
@@ -317,7 +317,7 @@ def wait_for_thumb_quiescence(r: Runner, limit_s: float = THUMB_SETTLE_S) -> Non
     service was ever handed is at its final path.
 
     Still HTTP only, as the module docstring promises: this reads
-    /api/health?verbose=1 and never looks at <cache_dir>, which scripts/e2e.sh
+    /api/health?verbose=1 and never looks at <cache_dir>, which scripts/e2e/e2e.sh
     does not even pass us.
     """
     keys = ("cover_depth", "page_depth", "active", "inflight")
@@ -359,7 +359,7 @@ def wait_for_thumb_quiescence(r: Runner, limit_s: float = THUMB_SETTLE_S) -> Non
 # Amendment A-11 / ruling E-26 — adding and removing a root over HTTP
 # ---------------------------------------------------------------------------
 #
-# Three phases, called from three different points of scripts/e2e.sh, because
+# Three phases, called from three different points of scripts/e2e/e2e.sh, because
 # what A-11 promises is a sequence in time:
 #
 #   roots-pre     step 8b, before the restart. AMENDMENT A-12 (ruling E-40):
@@ -371,7 +371,7 @@ def wait_for_thumb_quiescence(r: Runner, limit_s: float = THUMB_SETTLE_S) -> Non
 #                 `pending` row it used to expect is now the *fallback* for an
 #                 adoption that failed, which internal/httpapi/roots_test.go
 #                 pins because it is not reachable from a passing round here.)
-#   roots-post    step 10b, after the restart scripts/e2e.sh already performs.
+#   roots-post    step 10b, after the restart scripts/e2e/e2e.sh already performs.
 #                 Under A-11 this was the assertion impl-plan §0.3 called "the
 #                 one that stops 'restart-based' quietly becoming 'never
 #                 applied'". A-12 moved adoption to the `POST`, so that is no
@@ -443,7 +443,7 @@ def check_browse(r: Runner, media_path: str, fresh_dir: str) -> None:
     the same row is `duplicate`. Both states are worth having and the second is
     the golden's (`testdata/golden/browse.json`); this tier is here for what a
     golden cannot show — the endpoint answering about *this run's* filesystem,
-    through the `os.Root` opened on a base scripts/e2e-config.sh configured.
+    through the `os.Root` opened on a base scripts/e2e/e2e-config.sh configured.
     """
     print("\n-- A-12 · GET /api/browse " + "-" * 45)
 
@@ -458,7 +458,7 @@ def check_browse(r: Runner, media_path: str, fresh_dir: str) -> None:
     r.eq("A-12 · the top level names no directory, has no parent and offers no self",
          (top["path"], top["parent"], top["self"]), ("", None, None))
     bases = [entry["path"] for entry in top["entries"]]
-    if not r.check("A-12 · scripts/e2e-config.sh configured exactly one base, and it is listed",
+    if not r.check("A-12 · scripts/e2e/e2e-config.sh configured exactly one base, and it is listed",
                    len(bases) == 1, f"entries: {bases}"):
         return
     base = bases[0]
@@ -585,7 +585,7 @@ def load_state(path: str) -> dict:
     # under whichever step happens to run next.
     if not os.path.exists(path):
         raise AssertionError(
-            f"{path} does not exist: scripts/e2e.sh step 8b (--phase roots-pre) never got as "
+            f"{path} does not exist: scripts/e2e/e2e.sh step 8b (--phase roots-pre) never got as "
             f"far as writing it, so the root this phase is about was never created. Fix the "
             f"failure reported by that step first — this one has nothing to grade.")
     with open(path, encoding="utf-8") as f:
@@ -603,7 +603,7 @@ def phase_roots_pre(r: Runner, new_root: str, label: str, state_path: str) -> in
     if not r.check(
             "A-11 · the gate is open in this round, so what follows exercises the write path",
             server["root_editing_enabled"] is True,
-            f"root_editing_enabled={server['root_editing_enabled']!r}; scripts/e2e-config.sh "
+            f"root_editing_enabled={server['root_editing_enabled']!r}; scripts/e2e/e2e-config.sh "
             f"emits server.allow_root_editing: true for --synthetic only"):
         return report(r)
 
@@ -823,7 +823,7 @@ def phase_roots_delete(r: Runner, state_path: str) -> int:
     if not r.check("the library has series to lose", bool(before_ids)):
         return report(r)
 
-    # scripts/e2e.sh has just copied one archive into the added root. Scanning
+    # scripts/e2e/e2e.sh has just copied one archive into the added root. Scanning
     # only that root is arch §7.10's per-root rescan and is what the settings
     # screen's 재스캔 button sends.
     status, body, _ = r.request("POST", "/api/scan", {"roots": [name]})
@@ -911,11 +911,11 @@ def phase_roots_delete(r: Runner, state_path: str) -> int:
 # pass. Generous against the budget on purpose: a run that overruns must be
 # reported as "took N s, over budget", not as "never finished".
 #
-# Both are environment-overridable so scripts/e2e-assert-rescan-test.py can
+# Both are environment-overridable so scripts/e2e/e2e-assert-rescan-test.py can
 # drive the over-budget and never-published paths in under a second instead of
 # in two minutes. That is safe to expose because the budget is printed INTO the
 # check's own name below, so a run using anything other than 30 s says so in the
-# gate output rather than passing quietly at a weakened threshold. scripts/e2e.sh
+# gate output rather than passing quietly at a weakened threshold. scripts/e2e/e2e.sh
 # sets neither, and the test pins both defaults.
 RESCAN_BUDGET_S = float(os.environ.get("SHELF_E2E_RESCAN_BUDGET_S", "30"))
 RESCAN_LIMIT_S = float(os.environ.get("SHELF_E2E_RESCAN_LIMIT_S", "120"))
@@ -947,7 +947,7 @@ def wait_for_run(r: Runner, run_id: str, limit_s: float) -> tuple[dict, float]:
 
 
 def phase_rescan(r: Runner) -> int:
-    """NFR-PRF-004 (scripts/e2e.sh step 8) — an immediate rescan is incremental.
+    """NFR-PRF-004 (scripts/e2e/e2e.sh step 8) — an immediate rescan is incremental.
 
     This phase exists because the four lines of bash it replaces reported PASS
     in two states where NO RESCAN RAN AT ALL (open item H, HANDOFF §5.6.1 H
@@ -1184,7 +1184,7 @@ def main() -> int:
     if not real:
         # A Shift_JIS name read as CP949 carries no U+FFFD — it comes out as
         # Hangul (묉01뒱 쁔궻뽨뤞/0001빬.jpg) — so the check above cannot see the
-        # wrong verdict. The fixture's names are known (scripts/mkfixture
+        # wrong verdict. The fixture's names are known (tools/mkfixture
         # shiftJISPages): no Hangul, and page 1 is the one CP949 cannot read.
         r.check("and they read as Japanese, not as CP949",
                 wg_names
@@ -1218,7 +1218,7 @@ def main() -> int:
             str(headers.get("Content-Type")))
     r.ge("with real bytes in it", len(body), 100)
     if not real:
-        # E-71: v04 is RAR 5 (scripts/mkfixture). Same kind, same series, its
+        # E-71: v04 is RAR 5 (tools/mkfixture). Same kind, same series, its
         # own reader; the real collection has no RAR 5 to show this.
         v04 = next((b for b in wg["books"] if "v04" in b["name"]), None)
         r.check("the RAR 5 volume v04 is a kind-rar book (E-71)",
@@ -1308,7 +1308,7 @@ def main() -> int:
         #
         # Both shapes keep their coverage in the synthetic round, whose twin
         # builds the folder-and-ZIP pair and two truncated `.repair.zip` files
-        # on purpose (scripts/mkfixture). What the real round lost is the
+        # on purpose (tools/mkfixture). What the real round lost is the
         # *sample*, not the rule. `월드 엠브리오 01~97화 완결` still holds one
         # folder-and-ZIP pair and is the candidate if the real round should
         # carry that shape again — it is not curated, and adding it costs a
@@ -1443,7 +1443,7 @@ def main() -> int:
     # not an assumption: assert it rather than hard-coding around it.
     r.ge("AC-008 · the archive under measurement is the 500+-page one AC-008 names", pc, 500)
     # impl-plan §6.3 step 5 (docs/impl-plan.md:966) is the binding description of
-    # THIS script — scripts/e2e.sh:531 names the step `7 · curl assertions
+    # THIS script — scripts/e2e/e2e.sh:531 names the step `7 · curl assertions
     # (impl-plan §6.3 step 5)` — and it spells out one page by number:
     # `GET /api/books/{battle_royale}/pages/900` returns `200 image/jpeg` in
     # < 200 ms. So the archive's 900th page joins the measured set
@@ -1595,7 +1595,7 @@ def main() -> int:
     #
     # Both rounds run this, and the expectation is derived from the mode rather
     # than written down twice, for the same reason `expected` above is: the
-    # rounds differ in configuration (scripts/e2e-config.sh emits
+    # rounds differ in configuration (scripts/e2e/e2e-config.sh emits
     # `server.allow_root_editing: true` for --synthetic only), so a config that
     # stopped matching its round has to fail HERE, by name, instead of turning
     # some other check into a tautology. The real round's browser tier asserts

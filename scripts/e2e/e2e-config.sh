@@ -4,8 +4,8 @@
 #
 # Separated from e2e.sh so the config can be produced and inspected on its own:
 #
-#   scripts/e2e-config.sh > /tmp/shelf.e2e.yaml         # the real curated subset
-#   scripts/e2e-config.sh --synthetic --root /tmp/fx    # the hermetic twin
+#   scripts/e2e/e2e-config.sh > /tmp/shelf.e2e.yaml         # the real curated subset
+#   scripts/e2e/e2e-config.sh --synthetic --root /tmp/fx    # the hermetic twin
 #
 # Environment (all optional):
 #   SHELF_E2E_ROOT       media root                 (default: the real collection)
@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 # The sixteen series of impl-plan §6.3, exact names, IN THAT ORDER. Each covers
 # something no other entry does; see the table in that section for the mapping.
@@ -24,7 +24,7 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # This array is the source of truth: five other copies follow it, and since they
 # agreed only by luck until one of them didn't, `contractcheck`'s
 # checkCuratedSeries compares all six on every `make lint`. The order is part of
-# the contract because scripts/e2e-assert.py unpacks its copy positionally.
+# the contract because scripts/e2e/e2e-assert.py unpacks its copy positionally.
 CURATED=(
   "Clover 클로버 (총4권)"                    # folder + 4 ZIPs, CP949 names
   "상처를 쫓는자 1-11 (완) 이케가미 료이치"  # folder of image sub-folders
@@ -59,10 +59,10 @@ SYNTHETIC_EXTRA=(
 )
 
 synthetic=0
-# The real collection is named in one place, scripts/media-root (ruling E-66);
+# The real collection is named in one place, scripts/e2e/media-root (ruling E-66);
 # the Makefile reads the same file. Missing or empty is an error, not a guess.
-root="${SHELF_E2E_ROOT:-$(cat "$repo/scripts/media-root" 2>/dev/null || :)}"
-[ -n "$root" ] || { echo "e2e-config.sh: scripts/media-root is missing or empty (it names the real collection, E-66)" >&2; exit 2; }
+root="${SHELF_E2E_ROOT:-$(cat "$repo/scripts/e2e/media-root" 2>/dev/null || :)}"
+[ -n "$root" ] || { echo "e2e-config.sh: scripts/e2e/media-root is missing or empty (it names the real collection, E-66)" >&2; exit 2; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --synthetic) synthetic=1 ;;
@@ -83,7 +83,7 @@ log_level="${SHELF_E2E_LOG_LEVEL:-debug}"
 # It is derived from --synthetic rather than exposed as an environment override,
 # and that is the safety property: turning it on for the real-collection round
 # would point `POST /api/roots` at `test/shelf.e2e.yaml` *inside the repository*,
-# which scripts/e2e.sh step 9 fails on. The synthetic round writes to a config
+# which scripts/e2e/e2e.sh step 9 fails on. The synthetic round writes to a config
 # under the run's /tmp state directory instead. See the key's comment in the
 # template for the full reasoning.
 allow_root_editing=false

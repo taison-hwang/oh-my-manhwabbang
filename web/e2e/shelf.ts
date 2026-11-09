@@ -2,7 +2,7 @@
  * Shared fixtures and page helpers for the browser half of impl-plan §6.3.
  *
  * The specs in this directory are step 6 of that section — the twelve browser
- * assertions — run by `scripts/e2e.sh` step 11 against the **already running**
+ * assertions — run by `scripts/e2e/e2e.sh` step 11 against the **already running**
  * server it started in step 4, i.e. the real collection narrowed to sixteen
  * series by `scan.include_globs` (amendment A-3). Nothing here starts or
  * configures a server; `PLAYWRIGHT_BASE_URL` points at the one that is up.
@@ -10,7 +10,7 @@
  * Three rules travel with this file.
  *
  *  1. **No hard-coded page or volume counts.** The identical suite has to pass
- *     against `scripts/e2e.sh --synthetic`, whose fixture tree reproduces the
+ *     against `scripts/e2e/e2e.sh --synthetic`, whose fixture tree reproduces the
  *     *shapes* of §6.3 but not their sizes (D-49). Every assertion is therefore
  *     relative — "advanced five pages", "the largest series is first" — or reads
  *     its expectation from the API first.
@@ -57,11 +57,11 @@ export const SHOTS_DIR = path.resolve(HERE, '..', '..', 'docs', 'e2e-shots')
  * `바다의 무녀`, the one curated name in Japanese (E-55). Sixteen now.
  *
  * These are a *copy*, not the source. The same strings are written out three
- * more times — `scripts/e2e-config.sh:29-49` (`CURATED`, which becomes
- * `scan.include_globs`, and is the source of truth), `scripts/e2e-assert.py:51-66`
+ * more times — `scripts/e2e/e2e-config.sh:29-49` (`CURATED`, which becomes
+ * `scan.include_globs`, and is the source of truth), `scripts/e2e/e2e-assert.py:51-66`
  * (`CURATED`, the curl tier's expectation) and the path literals in
- * `scripts/mkfixture/main.go`, which builds the synthetic twin under the same
- * names (D-49). A **fifth** copy hides in `scripts/e2e.sh:922` (`A11_FILL`, one
+ * `tools/mkfixture/main.go`, which builds the synthetic twin under the same
+ * names (D-49). A **fifth** copy hides in `scripts/e2e/e2e.sh:922` (`A11_FILL`, one
  * archive by path), and a sixth in `docs/impl-plan.md` §6.3's table, which is
  * the *declared* source of truth and carries no code.
  *
@@ -77,7 +77,7 @@ export const SHOTS_DIR = path.resolve(HERE, '..', '..', 'docs', 'e2e-shots')
  * collection on disk lost the leading `[만화] ` every entry used to carry. That
  * is what a rename cost when nothing linked the copies: the scan matched zero of
  * ten, and `make e2e` died at step 7 with `got 0, want 10` before a browser ever
- * started. Two consequences outlived the edit. `scripts/e2e-config.sh`'s glob
+ * started. Two consequences outlived the edit. `scripts/e2e/e2e-config.sh`'s glob
  * escaping is now load-bearing for exactly one name, 배틀로얄, which is the only
  * one left holding a `[`. And `docs/e2e-shots/` still shows the old titles until
  * the next review round retakes it.
@@ -110,9 +110,9 @@ export const SERIES = {
  * not one whose halves are flat colours, nor books no other spec shoots.
  *
  * A *copy* on the same terms as `SERIES` above: the same strings are written out
- * in `scripts/e2e-config.sh:49-51` (`SYNTHETIC_EXTRA`, appended to
- * `scan.include_globs` in synthetic mode), `scripts/e2e-assert.py:67` (the curl
- * tier's expectation) and `scripts/mkfixture/main.go`, which builds them.
+ * in `scripts/e2e/e2e-config.sh:49-51` (`SYNTHETIC_EXTRA`, appended to
+ * `scan.include_globs` in synthetic mode), `scripts/e2e/e2e-assert.py:67` (the curl
+ * tier's expectation) and `tools/mkfixture/main.go`, which builds them.
  *
  * Four copies of one list is three too many, and it drifted once: the D-71
  * series were added to the other three and this round failed here, in eight
@@ -129,7 +129,7 @@ export const SYNTHETIC_EXTRA = {
 } as const
 
 /**
- * Which mode the server under test was configured for, from `scripts/e2e.sh`.
+ * Which mode the server under test was configured for, from `scripts/e2e/e2e.sh`.
  *
  * The default is `real`, so a spec run by hand against a real server needs no
  * environment at all. The coupling is not unchecked — that was the objection to
@@ -145,7 +145,7 @@ export const SYNTHETIC = process.env.SHELF_E2E_MODE === 'synthetic'
  * under test — amendment **A-11**, ruling **E-26**.
  *
  * It is derived from the mode for the same reason `EXPECTED_SERIES` is: the two
- * rounds run different configurations (`scripts/e2e-config.sh` emits
+ * rounds run different configurations (`scripts/e2e/e2e-config.sh` emits
  * `server.allow_root_editing: true` for `--synthetic` only), and the difference
  * decides whether the 루트 추가 / 제거 controls exist at all. So it is a
  * *derived expectation*, never a switch that skips work:
@@ -165,7 +165,7 @@ export const ROOT_EDITING_ENABLED = SYNTHETIC
  * Exactly what `scan.include_globs` puts in the library for this mode: the
  * curated set, plus the D-49 extras in synthetic mode.
  *
- * The same parameterisation `scripts/e2e-assert.py:1020` already makes —
+ * The same parameterisation `scripts/e2e/e2e-assert.py:1020` already makes —
  * `expected = CURATED + ([] if real else SYNTHETIC_EXTRA)` — green in both modes
  * since it was written. impl-plan §6.3 step 6.1's literal "10 cards" is outranked
  * by D-49 (decisions > impl-plan, §0 precedence), and §6.3's own hermetic-fallback
@@ -187,11 +187,11 @@ export const EXPECTED_SERIES: readonly string[] = SYNTHETIC
  * names the file and the series in seconds.
  */
 const CURATED_COPIES = [
-  'scripts/e2e-config.sh:29-49  CURATED — becomes scan.include_globs. THE SOURCE OF TRUTH.',
-  'scripts/e2e-assert.py:51-66  CURATED — the curl tier, unpacked positionally at :70-74',
+  'scripts/e2e/e2e-config.sh:29-49  CURATED — becomes scan.include_globs. THE SOURCE OF TRUTH.',
+  'scripts/e2e/e2e-assert.py:51-66  CURATED — the curl tier, unpacked positionally at :70-74',
   'web/e2e/shelf.ts:86-101      SERIES — this file, the browser tier',
-  'scripts/mkfixture/main.go    its path literals, which build the synthetic twin (D-49)',
-  'scripts/e2e.sh:922           A11_FILL — one archive by path, step 11b',
+  'tools/mkfixture/main.go    its path literals, which build the synthetic twin (D-49)',
+  'scripts/e2e/e2e.sh:922           A11_FILL — one archive by path, step 11b',
   'docs/impl-plan.md §6.3       the curated-set table — the declared source of truth',
 ].join('\n  ')
 
@@ -201,7 +201,7 @@ const CURATED_COPIES = [
  * Strictly stronger than the `toBe(10)` it replaces, which never said *which*
  * ten: an `include_globs` leak that swapped one curated series for another, or a
  * rescan that dropped one, passed a count and fails this by name. That matters
- * most in the browser tier, because `scripts/e2e.sh` step 10 deletes `index.db`
+ * most in the browser tier, because `scripts/e2e/e2e.sh` step 10 deletes `index.db`
  * and rescans *after* the curl tier has run, and not every curated name is
  * referenced anywhere else in this directory.
  *
@@ -227,7 +227,7 @@ export function expectCuratedLibrary(names: Iterable<string>, why: string): void
     if (got.length === 0) {
       lines.push(
         'NOTHING was indexed: every scan.include_globs pattern missed. One edit to',
-        "scripts/e2e-config.sh's CURATED does exactly this — a collection-wide rename did, once.",
+        "scripts/e2e/e2e-config.sh's CURATED does exactly this — a collection-wide rename did, once.",
       )
     } else if (missing.length === 1 && surplus.length === 1) {
       lines.push(
@@ -367,7 +367,7 @@ export { expect } from '@playwright/test'
  */
 export async function shot(page: Page, info: TestInfo, name: string): Promise<void> {
   await mkdir(SHOTS_DIR, { recursive: true })
-  // Item `bs`: these PNGs are compared byte for byte by scripts/pixelbaseline
+  // Item `bs`: these PNGs are compared byte for byte by tools/pixelbaseline
   // (e2e.sh step 11c), so a frame has to be the same frame every round. Five
   // archived synthetic rounds were diffed to find out what moved, and the
   // answer decides each line below — nothing here is a guess or a tolerance.

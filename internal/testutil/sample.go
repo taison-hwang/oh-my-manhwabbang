@@ -14,7 +14,7 @@ import (
 
 // The variables a real-collection integration test reads (ruling E-66). Each
 // is read when the helper is called, never at package initialisation: this
-// package is imported by every test package and by scripts/mkfixture, and none
+// package is imported by every test package and by tools/mkfixture, and none
 // of those should see a side effect of a variable meant for four tests.
 const (
 	// RootEnv names the collection the integration tier reads (impl-plan §6.2).

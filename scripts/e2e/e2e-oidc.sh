@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
 # e2e-oidc.sh — the oidc round of ruling E-74 (U-E), invoked by
-# `make e2e-synthetic-oidc`. The password/no-auth rounds stay in scripts/e2e.sh.
+# `make e2e-synthetic-oidc`. The password/no-auth rounds stay in scripts/e2e/e2e.sh.
 #
-#   1. build dist/shelf and the fake uni-auth (scripts/fakeoidc, not linked
+#   1. build dist/shelf and the fake uni-auth (tools/fakeoidc, not linked
 #      into dist/shelf)
 #   2. build the synthetic fixture tree and start the fake on a free loopback port
 #   3. write an `auth.mode: oidc` config whose issuer is the fake (E-74 §2.19's
@@ -22,7 +22,7 @@
 
 set -uo pipefail
 
-repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo"
 
 keep=0
@@ -99,13 +99,13 @@ if [ "$do_build" -eq 1 ]; then
   make build >/dev/null || die "make build failed"
 fi
 [ -x "$BIN" ] || die "$BIN does not exist; run without --no-build"
-env "${GOENV[@]}" CGO_ENABLED=0 go build -o "$FAKE_BIN" ./scripts/fakeoidc || die "building scripts/fakeoidc failed"
+env "${GOENV[@]}" CGO_ENABLED=0 go build -o "$FAKE_BIN" ./tools/fakeoidc || die "building tools/fakeoidc failed"
 ok "$("$BIN" --version | head -1)"
 
 # ---------------------------------------------------------------------------
 step "2 · fixture and fake uni-auth"
 # ---------------------------------------------------------------------------
-env "${GOENV[@]}" CGO_ENABLED=0 go run ./scripts/mkfixture -out "$STATE/fixture" >/dev/null \
+env "${GOENV[@]}" CGO_ENABLED=0 go run ./tools/mkfixture -out "$STATE/fixture" >/dev/null \
   || die "building the synthetic fixture tree failed"
 "$FAKE_BIN" -addr 127.0.0.1:0 -addr-file "$STATE/fakeoidc.addr" -client-id "$CLIENT_ID" \
   -audience "$BASE/api" -redirect-uri "$BASE/api/auth/oidc/callback" \

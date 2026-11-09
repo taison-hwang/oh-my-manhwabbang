@@ -1,14 +1,14 @@
 // Command mkfixture builds the hermetic twin of the curated E2E subset
 // (impl-plan §6.3 "Hermetic fallback", decision D-49).
 //
-// `scripts/e2e.sh --synthetic` runs the *identical* assertion set against this
+// `scripts/e2e/e2e.sh --synthetic` runs the *identical* assertion set against this
 // tree, so the suite can run on a machine where /mnt/big-data is not mounted.
 // The ten directory names are the real ones, byte for byte, because two of the
 // assertions are about those bytes: the `[` and `]` are `path.Match` character
 // classes that `scan.include_globs` has to escape, and the entry names inside
 // the archives are genuine CP949 with the UTF-8 flag clear (AC-002).
 //
-//	go run ./scripts/mkfixture -out /tmp/shelf-e2e-synthetic
+//	go run ./tools/mkfixture -out /tmp/shelf-e2e-synthetic
 //
 // Two shapes exist here that the real collection does not contain and that
 // D-49 asks for anyway: an archive with the encryption flag set, and a ZIP64

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Tests for `e2e-assert.py --phase rescan` — scripts/e2e.sh step 8.
+"""Tests for `e2e-assert.py --phase rescan` — scripts/e2e/e2e.sh step 8.
 
-    scripts/e2e-assert-rescan-test.py
+    scripts/e2e/e2e-assert-rescan-test.py
 
 Why a test for a gate step: step 8 spent four sessions reporting PASS while no
 rescan ran (open item H, HANDOFF §5.6.1 H and §5.7). The old shape watched the

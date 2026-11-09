@@ -181,7 +181,7 @@ print-%:
 ## web — build the SPA that go:embed swallows (arch §2.1). Must precede `go build`.
 #
 # E-63: the second line replaces every web/dist/assets/**/*.js and *.css with a
-# deterministic .gz (scripts/precompress), because go:embed stores bytes as they
+# deterministic .gz (tools/precompress), because go:embed stores bytes as they
 # are and the release would otherwise carry the SPA's text uncompressed. The
 # server serves either form (internal/httpapi/spa.go: the .gz as-is to a gzip
 # client, inflated once otherwise), so `web-gates`'s build, which is a check and
@@ -189,7 +189,7 @@ print-%:
 # binary only: `vite preview` cannot load its assets — rerun `pnpm build`.
 web:
 	cd web && $(PNPM) install --frozen-lockfile && $(PNPM) build
-	$(BUILDENV) $(GO) run ./scripts/precompress web/dist
+	$(BUILDENV) $(GO) run ./tools/precompress web/dist
 
 ## build — the single static binary of NFR-OPS-001: SPA embedded, cgo-free.
 build: web build-go
@@ -300,8 +300,8 @@ RACE ?= -race
 test:
 	@$(if $(NOPDF_PKGS),,$(error NOPDF_PKGS is empty: no package has a nopdf build constraint. Pass 3 would test the current directory and pass. See the comment above INT_PKGS))
 	@echo ">> test 0/3: the E2E gate's own assertions (no server, ~1 s)"
-	@python3 scripts/e2e-assert-rescan-test.py
-	@python3 -I -B -m unittest discover -s scripts/usage -p 'test_*.py'
+	@python3 scripts/e2e/e2e-assert-rescan-test.py
+	@python3 -I -B -m unittest discover -s tools/usage -p 'test_*.py'
 	@echo ">> test 0/3: books.sh against fake shelf/cloudflared/systemctl/sudo on loopback (~2 min)"
 	@python3 -I -B -m unittest discover -s scripts/deploy/library/tests -p 'test_*.py'
 	@echo ">> test 1/3: untagged (the superset — includes the live AVIF decode path)"
@@ -317,9 +317,9 @@ test:
 # It runs $(INT_PKGS): every package holding a `//go:build integration` file
 # (see the comment above that variable), not just ./integration.
 #
-# THE ROOT. SHELF_TEST_ROOT defaults to the one line in scripts/media-root, which
-# is the only place the media volume's path is written (E-66 §2.4); scripts/e2e.sh
-# and scripts/e2e-config.sh read the same file for SHELF_E2E_ROOT. The file is
+# THE ROOT. SHELF_TEST_ROOT defaults to the one line in scripts/e2e/media-root, which
+# is the only place the media volume's path is written (E-66 §2.4); scripts/e2e/e2e.sh
+# and scripts/e2e/e2e-config.sh read the same file for SHELF_E2E_ROOT. The file is
 # found next to this Makefile, not in the working directory, so `make -f` from
 # elsewhere reads the same default. $(shell cat) drops the final newline and nothing
 # else for this single-line file — no $(strip), because the path holds spaces and a strip would be one more
@@ -330,7 +330,7 @@ test:
 # space-separated list, so `$(dir $(lastword …))` cuts a path with spaces in it
 # in half. Here (no `include` above this line) the list is normally just this
 # Makefile, so the whole list is read as ONE path first — spaces swapped for a
-# marker, $(dir) taken, spaces put back. If no scripts/media-root sits there,
+# marker, $(dir) taken, spaces put back. If no scripts/e2e/media-root sits there,
 # the list held more than one makefile (`-f a.mk -f Makefile`, or $MAKEFILES),
 # and the last word is used as before. Not covered: a tab in the path, or
 # several makefiles in the list AND a space in one of them, which make itself
@@ -340,7 +340,7 @@ test:
 # single-line file through the shell with quotes preserved instead.
 #
 # With the root missing, the tests that NEED it skip themselves (those that build
-# their own tree, as from scripts/mkfixture, run regardless) and `go test` exits
+# their own tree, as from tools/mkfixture, run regardless) and `go test` exits
 # 0. That is fine for an operator's ad-hoc run, and wrong for a gate, where the
 # skip would read as RAN:
 # TEST_INT_REQUIRE_ROOT=1 (what gate 5/5 passes) reaches the Go side as
@@ -373,8 +373,8 @@ shelf_empty           :=
 shelf_sp              := $(shelf_empty) $(shelf_empty)
 shelf_whole_dir       := $(subst <shelf:sp>,$(shelf_sp),$(dir $(subst $(shelf_sp),<shelf:sp>,$(MAKEFILE_LIST))))
 shelf_read_media       = $(shell cat -- '$(subst ','"'"',$(1))' 2>/dev/null)
-shelf_media_whole     := $(call shelf_read_media,$(shelf_whole_dir)scripts/media-root)
-SHELF_MEDIA_ROOT      := $(if $(shelf_media_whole),$(shelf_media_whole),$(call shelf_read_media,$(dir $(lastword $(MAKEFILE_LIST)))scripts/media-root))
+shelf_media_whole     := $(call shelf_read_media,$(shelf_whole_dir)scripts/e2e/media-root)
+SHELF_MEDIA_ROOT      := $(if $(shelf_media_whole),$(shelf_media_whole),$(call shelf_read_media,$(dir $(lastword $(MAKEFILE_LIST)))scripts/e2e/media-root))
 SHELF_TEST_ROOT       ?= $(SHELF_MEDIA_ROOT)
 TEST_INT_SAMPLE       ?= 500
 TEST_INT_REQUIRE_ROOT ?= 0
@@ -393,7 +393,7 @@ test-int:
 	@if [ ! -d "$(SHELF_TEST_ROOT)" ] || [ ! -r "$(SHELF_TEST_ROOT)" ]; then \
 		echo ">> SHELF_TEST_ROOT (\"$(SHELF_TEST_ROOT)\") is not a readable directory: the"; \
 		echo ">> tests that need the collection will skip (fail, with TEST_INT_REQUIRE_ROOT=1)."; \
-		echo ">> The default is the path in scripts/media-root. Elsewhere, run:"; \
+		echo ">> The default is the path in scripts/e2e/media-root. Elsewhere, run:"; \
 		echo ">>   make $@ SHELF_TEST_ROOT=\"/path/to/the/collection\""; \
 	fi
 	$(GOENV) CGO_ENABLED=0 SHELF_TEST_ROOT="$(SHELF_TEST_ROOT)" \
@@ -412,7 +412,7 @@ test-int-full:
 	@if [ ! -d "$(SHELF_TEST_ROOT)" ] || [ ! -r "$(SHELF_TEST_ROOT)" ]; then \
 		echo ">> SHELF_TEST_ROOT (\"$(SHELF_TEST_ROOT)\") is not a readable directory: the"; \
 		echo ">> tests that need the collection will skip (fail, with TEST_INT_REQUIRE_ROOT=1)."; \
-		echo ">> The default is the path in scripts/media-root. Elsewhere, run:"; \
+		echo ">> The default is the path in scripts/e2e/media-root. Elsewhere, run:"; \
 		echo ">>   make $@ SHELF_TEST_ROOT=\"/path/to/the/collection\""; \
 	fi
 	$(GOENV) CGO_ENABLED=0 SHELF_TEST_ROOT="$(SHELF_TEST_ROOT)" \
@@ -443,8 +443,8 @@ bench:
 # graph — the expensive step of this recipe, not worth paying twice more for
 # a handful of test files.
 lint:
-	@scripts/check-readonly.sh
-	@scripts/check-gates.sh
+	@scripts/check/check-readonly.sh
+	@scripts/check/check-gates.sh
 	$(BUILDENV) $(GO) vet ./...
 	@echo ">> vet of the SHIPPED tag set (-tags \"$(TAGS)\")"
 	$(BUILDENV) $(GO) vet -tags "$(TAGS)" ./...
@@ -454,17 +454,17 @@ lint:
 	$(BUILDENV) $(GO) vet -tags integration $(INT_PKGS)
 	$(BUILDENV) $(GO) vet -tags "$(TAGS) nopdf" $(NOPDF_PKGS)
 	$(BUILDENV) $(GO) run honnef.co/go/tools/cmd/staticcheck@latest ./...
-	@$(BUILDENV) $(GO) run ./scripts/contractcheck
+	@$(BUILDENV) $(GO) run ./tools/contractcheck
 
 ## check-readonly — FR-CFG-005, the two-database rule (D-13) and A-8's
-## write-once series_seen, as three greps. See scripts/check-readonly.sh.
+## write-once series_seen, as three greps. See scripts/check/check-readonly.sh.
 check-readonly:
-	@scripts/check-readonly.sh
+	@scripts/check/check-readonly.sh
 
 ## contract — impl-plan §4's reconciliation gate: the server's golden JSON
 ## diffed against web/src/api/types.ts, field by field and enum by enum.
 contract:
-	@$(BUILDENV) $(GO) run ./scripts/contractcheck
+	@$(BUILDENV) $(GO) run ./tools/contractcheck
 
 fmt:
 	$(BUILDENV) $(GO) fmt ./...
@@ -615,17 +615,17 @@ release: web
 
 ## e2e — the curated real-collection subset of impl-plan §6.3.
 e2e:
-	@scripts/e2e.sh $(E2E_ARGS)
+	@scripts/e2e/e2e.sh $(E2E_ARGS)
 
 ## e2e-synthetic — the same assertions against a ~2 MB hermetic fixture tree,
 ## for a machine where the media volume is not mounted (D-49).
 e2e-synthetic:
-	@scripts/e2e.sh --synthetic $(E2E_ARGS)
+	@scripts/e2e/e2e.sh --synthetic $(E2E_ARGS)
 
 ## e2e-synthetic-oidc — the auth.mode: oidc round of ruling E-74 against a fake
-## uni-auth (scripts/fakeoidc) on loopback; web/e2e/14-oidc.spec.ts.
+## uni-auth (tools/fakeoidc) on loopback; web/e2e/14-oidc.spec.ts.
 e2e-synthetic-oidc:
-	@scripts/e2e-oidc.sh $(E2E_ARGS)
+	@scripts/e2e/e2e-oidc.sh $(E2E_ARGS)
 
 ## web-gates — the four frontend gates, which live in web/package.json and are
 ## NOT reachable from `make lint` or `make test`: `make lint` does not run
@@ -660,7 +660,7 @@ web-gates:
 ##
 ## The same ordering argument is why `gates-precheck` runs before gate 3/5: with
 ## GATES_E2E on, an unreadable SHELF_TEST_ROOT or e2e root (both default to
-## scripts/media-root) would otherwise fail 5/5 after every other gate had run.
+## scripts/e2e/media-root) would otherwise fail 5/5 after every other gate had run.
 ## It also refuses a TEST_INT_SAMPLE that test-int would refuse (E-66 §2.5). The
 ## root REQUIRED on 5/5 is the other half: there a missing root fails the
 ## integration tests that need it instead of skipping them, so no skip can be
@@ -684,7 +684,7 @@ web-gates:
 ##     accident and nothing closes the deliberate rewrite. **No bookkeeping a
 ##     recipe does about itself survives the recipe being rewritten.**
 ##
-##     What actually holds the line is `scripts/check-gates.sh`, which reads
+##     What actually holds the line is `scripts/check/check-gates.sh`, which reads
 ##     this Makefile as an artefact from outside — same shape as
 ##     check-readonly.sh and contractcheck, and for the same reason. It runs in
 ##     `make lint`. Its header explains what it asserts.
@@ -721,7 +721,7 @@ gates-precheck:
 	if [ "$$bad" -ne 0 ]; then \
 		echo "  Gate 5/5 runs make e2e and make test-int against the real collection, last,"; \
 		echo "  so this run would fail there after every other gate. Stopping before any."; \
-		echo "  Both roots default to the path in scripts/media-root. Point them elsewhere:"; \
+		echo "  Both roots default to the path in scripts/e2e/media-root. Point them elsewhere:"; \
 		echo "    make gates SHELF_TEST_ROOT=\"/path/to/the/collection\" SHELF_E2E_ROOT=\"/path/to/the/collection\""; \
 		echo "  or skip gate 5/5, which the banner will report as SKIPPED:"; \
 		echo "    make gates GATES_E2E=0"; \

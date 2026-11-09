@@ -1,7 +1,7 @@
 /**
  * Ruling **E-74** in the browser: `auth.mode: oidc` against the real binary and
- * a fake uni-auth (`scripts/fakeoidc`). Run by `make e2e-synthetic-oidc`
- * (`scripts/e2e-oidc.sh`) under `playwright.oidc.config.ts`; the other rounds'
+ * a fake uni-auth (`tools/fakeoidc`). Run by `make e2e-synthetic-oidc`
+ * (`scripts/e2e/e2e-oidc.sh`) under `playwright.oidc.config.ts`; the other rounds'
  * config ignores this file, because their servers have no oidc mode.
  *
  * Time is moved by rewriting the session row in `auth.db` (`reauth_at`,
@@ -28,7 +28,7 @@ import {
 function env(name: string): string {
   const value = process.env[name]
   if (value === undefined || value === '') {
-    throw new Error(`${name} is not set; run this spec through scripts/e2e-oidc.sh`)
+    throw new Error(`${name} is not set; run this spec through scripts/e2e/e2e-oidc.sh`)
   }
   return value
 }

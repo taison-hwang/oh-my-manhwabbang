@@ -3,13 +3,13 @@
 // Package integration is the suite of impl-plan §6.2: the whole product, wired
 // exactly as `cmd/shelf` wires it, running against the **real** collection.
 //
-//	make test-int        # SHELF_TEST_ROOT defaults to scripts/media-root (E-66)
+//	make test-int        # SHELF_TEST_ROOT defaults to scripts/e2e/media-root (E-66)
 //
 // Without a usable SHELF_TEST_ROOT every test that reads the collection skips
 // (testutil.MediaRoot), or fails under SHELF_TEST_REQUIRE_ROOT=1, which gate
 // 5/5 sets so that a run that lost its root is not recorded as a run. The one
 // exception is a shape the collection no longer holds: its test builds the
-// hermetic twin (scripts/mkfixture) and runs whether the volume is there or not
+// hermetic twin (tools/mkfixture) and runs whether the volume is there or not
 // — see syntheticServer.
 //
 // # Nothing is copied
@@ -51,7 +51,7 @@ import (
 
 // Ten of impl-plan §6.3's curated series, exact names.
 //
-// A deliberate SUBSET of `scripts/e2e-config.sh`'s CURATED, which has grown to
+// A deliberate SUBSET of `scripts/e2e/e2e-config.sh`'s CURATED, which has grown to
 // fifteen: the rounds this suite drives — a full scan, a whole-volume stream, an
 // index-and-cache wipe — cost minutes per series, and the five it leaves out
 // (D-70/D-71/D-72's RAR, .7z, .hv3 and nested-container shapes) are covered by
@@ -517,7 +517,7 @@ func sharedServer(t *testing.T) *server {
 // the perf tests rather than measured again.
 var sharedScanSeconds float64
 
-// syntheticServer builds scripts/mkfixture's tree in a temporary directory,
+// syntheticServer builds tools/mkfixture's tree in a temporary directory,
 // starts a server over the series in names and scans it once.
 //
 // It is for a shape the real collection has lost. Rule 05 is that a lost
@@ -532,15 +532,15 @@ func syntheticServer(t *testing.T, names ...string) *server {
 	if err != nil {
 		t.Fatalf("locating the repository: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(repo, "scripts", "mkfixture")); err != nil {
-		t.Fatalf("scripts/mkfixture is not at %s: %v", repo, err)
+	if _, err := os.Stat(filepath.Join(repo, "tools", "mkfixture")); err != nil {
+		t.Fatalf("tools/mkfixture is not at %s: %v", repo, err)
 	}
 	dir := t.TempDir()
 	fixture := filepath.Join(dir, "fixture")
-	cmd := exec.Command("go", "run", "./scripts/mkfixture", "-out", fixture)
+	cmd := exec.Command("go", "run", "./tools/mkfixture", "-out", fixture)
 	cmd.Dir = repo
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("building the synthetic fixture (go run ./scripts/mkfixture): %v\n%s\n"+
+		t.Fatalf("building the synthetic fixture (go run ./tools/mkfixture): %v\n%s\n"+
 			"Run the suite through `make test-int`, which supplies GOPROXY/GOTOOLCHAIN.", err, out)
 	}
 	state := filepath.Join(dir, "state")

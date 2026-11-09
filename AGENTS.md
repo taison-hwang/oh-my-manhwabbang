@@ -32,7 +32,7 @@ Codex는 이 파일을 직접 읽고, Claude Code는 `CLAUDE.md`의 `@AGENTS.md`
 ## 프로젝트 규칙
 
 - 주업무: 압축 해제 없이 ZIP·RAR·이미지 폴더·PDF 컬렉션을 브라우저에서 읽는 스캔→서재→뷰어 경로. 상세는 docs/service-plan/index.md
-- 검사 명령: 전체 `make lint && make test && make web-gates`(web/node_modules가 없으면 먼저 `cd web && pnpm install --frozen-lockfile`). 모든 게이트는 `make gates`(실제 미디어가 없으면 `GATES_E2E=0`). 편집 직후 빠른 검사는 `scripts/quick-check.sh <파일>`(gofmt, eslint). 하네스 관문은 `.agents/harness.env`의 `HERDR_CHECK_CMD`·`HERDR_CHECK_FILE_CMD`가 같은 명령을 쓴다
+- 검사 명령: 전체 `make lint && make test && make web-gates`(web/node_modules가 없으면 먼저 `cd web && pnpm install --frozen-lockfile`). 모든 게이트는 `make gates`(실제 미디어가 없으면 `GATES_E2E=0`). 편집 직후 빠른 검사는 `scripts/check/quick-check.sh <파일>`(gofmt, eslint). 하네스 관문은 `.agents/harness.env`의 `HERDR_CHECK_CMD`·`HERDR_CHECK_FILE_CMD`가 같은 명령을 쓴다
 - 실제 동작 확인: 합성 라운드 `make e2e-synthetic`(실 컬렉션은 `make e2e`, 둘 다 임시 서버·상태로 돌고 :9909 사용자 서버는 건드리지 않는다). 증거는 `SHELF_E2E_STATE`(기본 `/tmp/shelf-e2e-<pid>`)의 `server.log`와 `web/playwright-report/`. `docs/e2e-last-run.log`는 2026-07-31 기록이라 최신 증거가 아니다
 - 코드 위치 찾기: graft(`graft ask "<작업>" --source`, `graft grep "<문자열>"`, `graft callers 함수이름`)
 - 크기 예산 조정: 릴리스 크기 예산(`Makefile` `SIZE_BUDGET`)이 64 MiB(67,108,864 B) 미만으로 남는 조정은 docs/decisions.md E-78 기준(정식 측정 근거, E-78 §5 조정 기록)에 따라 사용자 승인 없이 정하고, 64 MiB 이상은 사용자 승인을 받는다. 조정할 때는 `Makefile`·`docs/impl-plan.md`·`README.md` 세 곳을 한 커밋에서 함께 바꾸고 `internal/buildinfo/release_budget_test.go`를 통과시킨다

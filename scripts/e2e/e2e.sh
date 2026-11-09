@@ -2,8 +2,8 @@
 #
 # e2e.sh — the end-to-end run of impl-plan §6.3, invoked by `make e2e`.
 #
-#   scripts/e2e.sh                 the curated real-collection subset
-#   scripts/e2e.sh --synthetic     the hermetic twin, no media volume needed
+#   scripts/e2e/e2e.sh                 the curated real-collection subset
+#   scripts/e2e/e2e.sh --synthetic     the hermetic twin, no media volume needed
 #
 # What it does, in order:
 #
@@ -16,7 +16,7 @@
 #   4. start the server on :8791 and wait for GET /api/health
 #   5. NFR-OPS-006: the library answers before any scan has run
 #   6. POST /api/scan {"full":true}; poll /api/scan/status until idle, 180 s cap
-#   7. the curl assertion suite (scripts/e2e-assert.py)
+#   7. the curl assertion suite (scripts/e2e/e2e-assert.py)
 #   8. NFR-PRF-004: a second scan of the same tree finishes in under 30 s
 #  8b. A-11: POST /api/roots writes the configuration file — synthetic only
 #   9. FR-CFG-005 / AC-001: nothing under the media root changed, and nothing
@@ -41,7 +41,7 @@
 
 set -uo pipefail
 
-repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo"
 
 synthetic=0
@@ -68,10 +68,10 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-# The real collection is named in one place, scripts/media-root (ruling E-66);
+# The real collection is named in one place, scripts/e2e/media-root (ruling E-66);
 # the Makefile reads the same file. Missing or empty is an error, not a guess.
-REAL_ROOT="${SHELF_E2E_ROOT:-$(cat "$repo/scripts/media-root" 2>/dev/null || :)}"
-[ -n "$REAL_ROOT" ] || { echo "e2e.sh: scripts/media-root is missing or empty (it names the real collection, E-66)" >&2; exit 2; }
+REAL_ROOT="${SHELF_E2E_ROOT:-$(cat "$repo/scripts/e2e/media-root" 2>/dev/null || :)}"
+[ -n "$REAL_ROOT" ] || { echo "e2e.sh: scripts/e2e/media-root is missing or empty (it names the real collection, E-66)" >&2; exit 2; }
 STATE="${SHELF_E2E_STATE:-/tmp/shelf-e2e-$$}"
 FIXTURE="$STATE/fixture"
 SRVTMP="$STATE/tmp"          # the server's private TMPDIR — step 9 asserts it stays empty
@@ -557,18 +557,18 @@ mkdir -p "$STATE/data" "$STATE/cache" "$SRVTMP"
 if [ "$synthetic" -eq 1 ]; then
   mode=synthetic
   ROOT="$FIXTURE"
-  env "${GOENV[@]}" CGO_ENABLED=0 go run ./scripts/mkfixture -out "$FIXTURE" >/dev/null \
+  env "${GOENV[@]}" CGO_ENABLED=0 go run ./tools/mkfixture -out "$FIXTURE" >/dev/null \
     || die "building the synthetic fixture tree failed"
   ok "synthetic tree: $(du -sh "$FIXTURE" | cut -f1) in $FIXTURE"
   SHELF_E2E_STATE="$STATE" SHELF_E2E_PORT="$port" \
-    scripts/e2e-config.sh --synthetic --root "$ROOT" >"$CONFIG" || die "emitting the config failed"
+    scripts/e2e/e2e-config.sh --synthetic --root "$ROOT" >"$CONFIG" || die "emitting the config failed"
 else
   mode=real
   ROOT="$REAL_ROOT"
   [ -d "$ROOT" ] || die "the media root is not mounted: $ROOT
-  (run scripts/e2e.sh --synthetic for the hermetic version)"
+  (run scripts/e2e/e2e.sh --synthetic for the hermetic version)"
   SHELF_E2E_STATE="$STATE" SHELF_E2E_PORT="$port" \
-    scripts/e2e-config.sh --root "$ROOT" >"$CONFIG" || die "emitting the config failed"
+    scripts/e2e/e2e-config.sh --root "$ROOT" >"$CONFIG" || die "emitting the config failed"
   ok "root: $ROOT (read-only; nothing is copied — A-3 include_globs)"
 fi
 ok "config: $CONFIG   state: $STATE"
@@ -614,7 +614,7 @@ fi
 # ---------------------------------------------------------------------------
 step "7 · curl assertions (impl-plan §6.3 step 5)"
 # ---------------------------------------------------------------------------
-if ! python3 scripts/e2e-assert.py --base "$BASE" --mode "$mode"; then
+if ! python3 scripts/e2e/e2e-assert.py --base "$BASE" --mode "$mode"; then
   failures=$((failures + 1))
 fi
 
@@ -635,9 +635,9 @@ step "8 · NFR-PRF-004 — an immediate rescan is incremental"
 # reproduced against a stub server before this was replaced.
 #
 # The assertion now lives with the other server-facing checks and watches run
-# identity rather than wall clock — see phase_rescan in scripts/e2e-assert.py,
-# and scripts/e2e-assert-rescan-test.py for the tests that hold it to that.
-if ! python3 scripts/e2e-assert.py --base "$BASE" --mode "$mode" --phase rescan; then
+# identity rather than wall clock — see phase_rescan in scripts/e2e/e2e-assert.py,
+# and scripts/e2e/e2e-assert-rescan-test.py for the tests that hold it to that.
+if ! python3 scripts/e2e/e2e-assert.py --base "$BASE" --mode "$mode" --phase rescan; then
   failures=$((failures + 1))
 fi
 
@@ -650,7 +650,7 @@ step "8b · A-12 — POST /api/roots writes the file AND opens the root"
 # else, the next step fails the run by name instead of this one quietly getting
 # away with it.
 if [ "$synthetic" -eq 1 ]; then
-  if ! python3 scripts/e2e-assert.py --base "$BASE" --mode "$mode" --phase roots-pre \
+  if ! python3 scripts/e2e/e2e-assert.py --base "$BASE" --mode "$mode" --phase roots-pre \
       --new-root "$A11_ROOT" --label "$A11_LABEL" --state-file "$A11_STATE"; then
     failures=$((failures + 1))
   fi
@@ -850,7 +850,7 @@ step "10b · A-12 — the root added in step 8b survived the restart"
 # cannot have been inherited from step 8b's scan; a process that failed to
 # re-read the spliced entry would report the root `pending` instead.
 if [ "$synthetic" -eq 1 ]; then
-  if ! python3 scripts/e2e-assert.py --base "$BASE" --mode "$mode" --phase roots-post \
+  if ! python3 scripts/e2e/e2e-assert.py --base "$BASE" --mode "$mode" --phase roots-post \
       --state-file "$A11_STATE"; then
     failures=$((failures + 1))
   fi
@@ -942,11 +942,11 @@ if [ "$synthetic" -eq 1 ]; then
   A11_FILL="$FIXTURE/바퀴.zip"
   if [ ! -f "$A11_FILL" ]; then
     bad "A-11 · the fixture archive that fills the added root is missing: $A11_FILL
-        (scripts/mkfixture builds it; if it was renamed, rename it here too — and in
-        scripts/e2e-config.sh's CURATED, which is what puts it in scan.include_globs)"
+        (tools/mkfixture builds it; if it was renamed, rename it here too — and in
+        scripts/e2e/e2e-config.sh's CURATED, which is what puts it in scan.include_globs)"
   elif ! cp "$A11_FILL" "$A11_ROOT/"; then
     bad "A-11 · could not copy the fixture archive into $A11_ROOT"
-  elif ! python3 scripts/e2e-assert.py --base "$BASE" --mode "$mode" --phase roots-delete \
+  elif ! python3 scripts/e2e/e2e-assert.py --base "$BASE" --mode "$mode" --phase roots-delete \
       --state-file "$A11_STATE"; then
     failures=$((failures + 1))
   fi
@@ -958,7 +958,7 @@ fi
 step "11c · the pixel baseline — did step 11 draw what it drew last time"
 # ---------------------------------------------------------------------------
 # Step 11 proves every shot() fired; nothing proved what they drew. That is item
-# `x`, and scripts/pixelbaseline was written for it in 97e9782 — and then never
+# `x`, and tools/pixelbaseline was written for it in 97e9782 — and then never
 # called from anywhere, with no manifest ever committed for it to compare
 # against, so docs/ui-shots/README.md has described a step 11c that did not
 # exist since the commit that wrote both. A gate that is not wired is HANDOFF §6.5's subject with
@@ -971,11 +971,11 @@ step "11c · the pixel baseline — did step 11 draw what it drew last time"
 if [ "$do_playwright" -eq 0 ]; then
   echo "  skip  --no-playwright, so step 11 drew nothing to compare"
 elif [ "$synthetic" -eq 1 ]; then
-  if env "${GOENV[@]}" go run ./scripts/pixelbaseline -shots docs/e2e-shots -round synthetic; then
+  if env "${GOENV[@]}" go run ./tools/pixelbaseline -shots docs/e2e-shots -round synthetic; then
     ok "pixel baseline — every watched shot matches docs/pixel-baseline/synthetic byte for byte"
   else
     bad "pixel baseline — see above; an intended change is re-baselined with
-        go run ./scripts/pixelbaseline -update   (after reviewing the renders)"
+        go run ./tools/pixelbaseline -update   (after reviewing the renders)"
   fi
 else
   echo "  skip  real round — no committed baseline can describe this collection's renders"

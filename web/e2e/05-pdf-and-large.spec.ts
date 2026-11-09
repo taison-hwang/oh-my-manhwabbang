@@ -9,7 +9,7 @@
  *        Measured: 306/306 portrait in the real 미생 1권, modal MediaBox
  *        378.48 × 548.40 pt (poppler `pdfinfo` over the file as it sits on the
  *        volume); 595 × 842 on all four pages of the synthetic twin
- *        (scripts/mkfixture/main.go:331, D-49). That is a property of this PDF
+ *        (tools/mkfixture/main.go:331, D-49). That is a property of this PDF
  *        and not of PDFs: a landscape MediaBox is exactly how a scanned
  *        two-page spread is often stored, which is the FR-VWR-004 case 군계
  *        stands for. 04-viewer 6.6b proves the same rule on the raster path.

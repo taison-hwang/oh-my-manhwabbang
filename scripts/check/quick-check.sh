@@ -2,7 +2,7 @@
 # 편집 직후 빠른 검사(하네스 HERDR_CHECK_FILE_CMD). 고친 파일만 본다. 테스트는 돌리지 않는다.
 #   .go          gofmt -l 로 포맷 확인
 #   web/ ts·tsx  eslint(web/node_modules가 없으면 건너뛴다)
-# 사용: scripts/quick-check.sh <파일…>   (작업 트리 최상위에서 실행)
+# 사용: scripts/check/quick-check.sh <파일…>   (작업 트리 최상위에서 실행)
 set -uo pipefail
 go_files=() web_files=()
 for f in "$@"; do

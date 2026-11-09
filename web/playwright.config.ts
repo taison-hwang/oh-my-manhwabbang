@@ -7,7 +7,7 @@ import { defineConfig, devices } from '@playwright/test'
 // Measured: 24.16 stalls between 65 000 and 70 000 B; 24.20 merges the same
 // trace in 196 ms. 24.17–24.19 were not measured, so they are warned about too.
 // A warning and not a refusal: results are still right, only a failure costs
-// 120 s more and its trace is unreadable. scripts/e2e.sh puts
+// 120 s more and its trace is unreadable. scripts/e2e/e2e.sh puts
 // SHELF_E2E_NODE_DIR first on PATH for step 11.
 {
   const [major = 0, minor = 0] = process.versions.node.split('.').map(Number)
@@ -15,12 +15,12 @@ import { defineConfig, devices } from '@playwright/test'
     console.warn(
       `item bb: Node ${process.versions.node} stalls Playwright 1.50's trace merge — every failed ` +
         'test will wait out the 120 s tracing slot and leave a half-written trace.zip. ' +
-        'Use Node >= 24.20 (scripts/e2e.sh takes SHELF_E2E_NODE_DIR).',
+        'Use Node >= 24.20 (scripts/e2e/e2e.sh takes SHELF_E2E_NODE_DIR).',
     )
   }
 }
 
-// The E2E server that scripts/e2e.sh starts (impl-plan §5.5: 8791, verified
+// The E2E server that scripts/e2e/e2e.sh starts (impl-plan §5.5: 8791, verified
 // free). Override with PLAYWRIGHT_BASE_URL to point at `pnpm dev` or a
 // long-running instance.
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:8791'
@@ -43,7 +43,7 @@ export default defineConfig({
   outputDir: './test-results',
   // Serial, on purpose, and not a performance oversight.
   //
-  // All four projects drive **one** server — `scripts/e2e.sh` starts it in step
+  // All four projects drive **one** server — `scripts/e2e/e2e.sh` starts it in step
   // 4 and Playwright is step 11 — and a good deal of what these specs assert is
   // persisted *server-side*: `library_view`, `library_sort`, `library_order`,
   // `library_scope` and `theme` in `Settings` (arch §7.8, A-5), reading progress

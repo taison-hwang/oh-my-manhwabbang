@@ -1,6 +1,6 @@
 import { defineConfig, devices } from '@playwright/test'
 
-// The oidc round of ruling E-74, started by scripts/e2e-oidc.sh: one server in
+// The oidc round of ruling E-74, started by scripts/e2e/e2e-oidc.sh: one server in
 // `auth.mode: oidc` and the fake uni-auth. Only 14-oidc.spec.ts runs here, and
 // only here — playwright.config.ts ignores it. One viewport: what this round
 // checks is the session, not the layout.

@@ -212,7 +212,7 @@ test.describe('6.6/6.7 · one volume, read then resumed', () => {
     // same reason in both. Measured on the real collection, every page of
     // 군계 01권 is 1072×813 or 1075×811: 104 / 104 landscape, PIL over 100 % of
     // the volume (ruling E-23). The synthetic twin reproduces that shape rather
-    // than only the name — `scripts/mkfixture/main.go` builds 군계 01권 out of
+    // than only the name — `tools/mkfixture/main.go` builds 군계 01권 out of
     // 60×40 pages, and out of enough of them that `1 + TURNS` is not the last
     // page. Landscape throughout either way, so 양면 must never pair here.
     const landscape = landscapeIn(await recordedDims(page, bid), bid)
@@ -367,7 +367,7 @@ test.describe('6.6/6.7 · one volume, read then resumed', () => {
     // on 군계 01권 (1072×813 / 1075×811, PIL over the volume as it sits on disk —
     // ruling E-23, and the source of the figures at the top of this test); the
     // synthetic twin builds the same volume out of 60×40 pages
-    // (scripts/mkfixture/main.go, D-49).
+    // (tools/mkfixture/main.go, D-49).
     //
     // An `if (paired) { … }` x-order block used to sit here. It had never
     // run under either mode and it read as coverage, which is worse than absent
@@ -483,9 +483,9 @@ test.describe('6.6/6.7 · one volume, read then resumed', () => {
  * this suite. 자살도 is the collection's single instance of prd §2.2 row 3
  * (images loose in the series directory, impl-plan §6.3 row 3): one book whose
  * 181 real pages measured 181 portrait and 0 landscape (PIL over the pages as
- * they sit on the volume; the page count is the one scripts/e2e-assert.py pins
+ * they sit on the volume; the page count is the one scripts/e2e/e2e-assert.py pins
  * as "자살도 holds 181 loose pages"), against eleven equally portrait pages in
- * the synthetic twin — a 40×60 JPEG each, scripts/mkfixture/main.go:80-81 and
+ * the synthetic twin — a 40×60 JPEG each, tools/mkfixture/main.go:80-81 and
  * :289 (D-49). So 양면 pairs here in both modes, which is what shelf.ts rule 1
  * requires of every assertion below — and none of it is taken on trust: the
  * pair's dimensions are read back from the API and asserted portrait before a

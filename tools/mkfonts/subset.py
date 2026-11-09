@@ -13,8 +13,8 @@ system fonts and an npm package, and a font that silently changes between
 builds is a worse problem than one that has to be regenerated deliberately.
 Run it when the coverage rule below changes, then commit the result.
 
-    python3 scripts/mkfonts/subset.py            # rebuild, report sizes
-    python3 scripts/mkfonts/subset.py --check    # verify, change nothing
+    python3 tools/mkfonts/subset.py            # rebuild, report sizes
+    python3 tools/mkfonts/subset.py --check    # verify, change nothing
 
 Coverage
 --------
@@ -109,7 +109,7 @@ NOTO = Path("/usr/share/fonts/opentype/noto")
 # what the checks hold the recipe to: internal/kenc/fontcoverage_test.go says
 # it is exactly what kenc's codecs can produce, and
 # web/src/styles/fontCoverage.test.ts says every woff2 file's cmap carries it.
-MANIFEST = ROOT / "scripts/mkfonts/cjk-coverage.txt"
+MANIFEST = ROOT / "tools/mkfonts/cjk-coverage.txt"
 
 # CJK blocks the vendored Han/kana faces answer for. Hangul is deliberately
 # absent: 고운바탕 owns it, and letting either face claim it would replace the
@@ -244,7 +244,7 @@ def missing_glyphs(woff2: Path, chars: set[str]) -> set[str]:
 
 def manifest_text(chars: set[str]) -> str:
     lines = [
-        "# Written by scripts/mkfonts/subset.py; do not edit by hand.",
+        "# Written by tools/mkfonts/subset.py; do not edit by hand.",
         "# The characters the vendored 한자/가나 faces are cut for: every ideograph",
         "# CP949 or Windows-31J can encode, plus the assigned kana. One hexadecimal",
         "# code point per line.",

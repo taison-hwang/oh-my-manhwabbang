@@ -1,6 +1,6 @@
 {
   "round": "synthetic",
-  "note": "SHA-256 of every PNG the synthetic e2e round writes to docs/e2e-shots/ that was measured reproducible across three full rounds. The comparison is exact, not sampled and not tolerant. \"excluded\" lists what this gate does NOT watch and why; scripts/pixelbaseline explains the measurement. Rebuild the exclusion list with -classify, refresh the digests with -update.",
+  "note": "SHA-256 of every PNG the synthetic e2e round writes to docs/e2e-shots/ that was measured reproducible across three full rounds. The comparison is exact, not sampled and not tolerant. \"excluded\" lists what this gate does NOT watch and why; tools/pixelbaseline explains the measurement. Rebuild the exclusion list with -classify, refresh the digests with -update.",
   "shots": {
     "e27-viewer-chromeless-desktop-1440.png": "217f6ecb604e4d23b8240c46be26c209648968c0d9a46498d656b9750bca1d37",
     "e27-viewer-chromeless-laptop-1024.png": "f25b768b959fe57f8b6d6a4021030905fab61c3ae67f3b24813fdb9199a89309",

@@ -1,7 +1,7 @@
 // Command precompress replaces the SPA's hashed JS and CSS with gzip files
 // before `go build` embeds them (decision E-63).
 //
-//	go run ./scripts/precompress web/dist
+//	go run ./tools/precompress web/dist
 //
 // Every regular `<dist>/assets/**/*.js` and `*.css` becomes `<file>.gz` and the
 // original is removed. The binary then carries only the compressed form, which

@@ -1810,7 +1810,7 @@ The frontend is built against this section in parallel with the backend. It is b
 > FR-LIB-004 set, §7.8) are *sharpenings*, not amendments: they narrow a type to the values the server
 > already produced and accepted, so no client that was correct becomes incorrect.
 > `web/src/api/types.ts` is the TypeScript form of this section. It carries every **response** shape as
-> amended — `scripts/contractcheck` diffs every golden file against it on every run — plus A-8's
+> amended — `tools/contractcheck` diffs every golden file against it on every run — plus A-8's
 > **request** field `SeriesListParams.scope?: "all" | "added"`, serialised by `urls.ts`. A-9, E-14 and
 > E-15 landed in it with this ruling; A-10 landed in it with E-25, together with the two consumers that
 > are the whole point of the field (`features/overlays/RootsPanel.tsx`, `features/library/Onboarding.tsx`). What remains of A-8 is the two *consumers* impl-plan §0.3 assigns
@@ -2054,7 +2054,7 @@ interface PageInfo {
 
 | | |
 |---|---|
-| `GET /api/health` | `200 {ok: true, version: string, commit: string, started_at: Unix, uptime_ms: number, pdf_enabled: boolean, avif_enabled: boolean}`. Add `?verbose=1` for pool counters. Never requires auth. **AMENDMENT A-15 (ruling E-57):** of the `verbose` block, `verbose.thumbs.{cover_depth,page_depth,active,inflight}` is contract — four non-negative integers read as **one snapshot**, and **all four zero means that, at the snapshot, no thumbnail job is queued, being decoded, or still being written** — every job the service was handed has finished, successfully or not. Whether a given thumbnail file exists is for the caller to check (the E2E gate does). The E2E gate waits on exactly this; the names are checked across this line, `ThumbCounter` and `scripts/e2e-assert.py` by `scripts/contractcheck`. Everything else under `verbose` stays diagnostics and may change without an amendment, and the plain body never carries `verbose`. | **AMENDMENT A-20 (ruling E-74 §2.18):** in `auth.mode: oidc` a request without a session gets no `verbose` even with `?verbose=1`; the other fields are unchanged.
+| `GET /api/health` | `200 {ok: true, version: string, commit: string, started_at: Unix, uptime_ms: number, pdf_enabled: boolean, avif_enabled: boolean}`. Add `?verbose=1` for pool counters. Never requires auth. **AMENDMENT A-15 (ruling E-57):** of the `verbose` block, `verbose.thumbs.{cover_depth,page_depth,active,inflight}` is contract — four non-negative integers read as **one snapshot**, and **all four zero means that, at the snapshot, no thumbnail job is queued, being decoded, or still being written** — every job the service was handed has finished, successfully or not. Whether a given thumbnail file exists is for the caller to check (the E2E gate does). The E2E gate waits on exactly this; the names are checked across this line, `ThumbCounter` and `scripts/e2e/e2e-assert.py` by `tools/contractcheck`. Everything else under `verbose` stays diagnostics and may change without an amendment, and the plain body never carries `verbose`. | **AMENDMENT A-20 (ruling E-74 §2.18):** in `auth.mode: oidc` a request without a session gets no `verbose` even with `?verbose=1`; the other fields are unchanged.
 | `GET /api/roots` | `200 {items: Root[]}` — from the **index**, so it also lists a root that has left the configuration (`available: false`), minus any root removed by `DELETE` in this process's lifetime. **AMENDMENT A-11 / R2**: plus one `pending: true` row per root that is in the configuration **file on disk** with no index row yet — including one whose name this process removed, if something has since put an entry back (see §7.4). |
 | `POST /api/roots` | `201 RootEntry` — **AMENDMENT A-11** (ruling E-26). Adds an entry to the `roots:` list of the configuration file, and — **AMENDMENT A-12** (ruling E-40) — opens it into the running server and scans it. |
 | `DELETE /api/roots/{name}` | `204` — **AMENDMENT A-11**. Removes one entry from that list, purges its index rows (R1), and — **AMENDMENT A-13** (ruling E-41) — drops it from A-12's added set and moves the adopted digest back. It still closes no handle. |
@@ -3292,7 +3292,7 @@ export GOTOOLCHAIN=auto
 
 # frontend first — go:embed needs web/dist to exist
 cd web && pnpm install --frozen-lockfile && pnpm build && cd ..
-go run ./scripts/precompress web/dist   # assets/*.js|*.css → *.gz (E-63)
+go run ./tools/precompress web/dist   # assets/*.js|*.css → *.gz (E-63)
 
 # single static binary (NFR-OPS-001)
 CGO_ENABLED=0 go build -trimpath \

@@ -383,14 +383,14 @@ func TestCuratedSeries_findsEveryKindOfDrift(t *testing.T) {
 		{
 			name:   "a series the Python copy is missing",
 			mutate: func(s *curatedSrc) { s.py = strings.Replace(s.py, "    \"다 시리즈\",\n", "", 1) },
-			want:   []string{"scripts/e2e-config.sh", `"다 시리즈"`, "scripts/e2e-assert.py's CURATED does not list it"},
+			want:   []string{"scripts/e2e/e2e-config.sh", `"다 시리즈"`, "scripts/e2e/e2e-assert.py's CURATED does not list it"},
 		},
 		{
 			name: "a series only the Python copy has",
 			mutate: func(s *curatedSrc) {
 				s.py = strings.Replace(s.py, "]\nSYNTHETIC", "    \"라 시리즈\",\n]\nSYNTHETIC", 1)
 			},
-			want: []string{"scripts/e2e-assert.py: CURATED lists", `"라 시리즈"`, "scripts/e2e-config.sh's CURATED does not"},
+			want: []string{"scripts/e2e/e2e-assert.py: CURATED lists", `"라 시리즈"`, "scripts/e2e/e2e-config.sh's CURATED does not"},
 		},
 		{
 			name: "the two positional copies are reordered against each other",
@@ -399,38 +399,38 @@ func TestCuratedSeries_findsEveryKindOfDrift(t *testing.T) {
 					"    \"가 시리즈\",\n    \"나 시리즈.zip\",\n",
 					"    \"나 시리즈.zip\",\n    \"가 시리즈\",\n", 1)
 			},
-			want: []string{"scripts/e2e-assert.py", `"나 시리즈.zip" at index 0`, "order-identical", "by position"},
+			want: []string{"scripts/e2e/e2e-assert.py", `"나 시리즈.zip" at index 0`, "order-identical", "by position"},
 		},
 		{
 			name:   "a series the TypeScript copy is missing",
 			mutate: func(s *curatedSrc) { s.ts = strings.Replace(s.ts, "  na: '나 시리즈.zip',\n", "", 1) },
-			want:   []string{"scripts/e2e-config.sh", `"나 시리즈.zip"`, "web/e2e/shelf.ts's SERIES does not name it"},
+			want:   []string{"scripts/e2e/e2e-config.sh", `"나 시리즈.zip"`, "web/e2e/shelf.ts's SERIES does not name it"},
 		},
 		{
 			name: "a series only the TypeScript copy has",
 			mutate: func(s *curatedSrc) {
 				s.ts = strings.Replace(s.ts, "} as const", "  ma: '마 시리즈',\n} as const", 1)
 			},
-			want: []string{"web/e2e/shelf.ts: SERIES names", `"마 시리즈"`, "scripts/e2e-config.sh's CURATED"},
+			want: []string{"web/e2e/shelf.ts: SERIES names", `"마 시리즈"`, "scripts/e2e/e2e-config.sh's CURATED"},
 		},
 		{
 			name: "mkfixture builds no path under one name",
 			mutate: func(s *curatedSrc) {
 				s.fixture = strings.Replace(s.fixture, `b.rarFile("다 시리즈/다 1권.rar", nil)`, "", 1)
 			},
-			want: []string{"scripts/mkfixture/main.go", `"다 시리즈"`, "no path literal here builds it", "one series fewer"},
+			want: []string{"tools/mkfixture/main.go", `"다 시리즈"`, "no path literal here builds it", "one series fewer"},
 		},
 		{
 			name: "mkfixture names it in a comment only",
 			mutate: func(s *curatedSrc) {
 				s.fixture = strings.Replace(s.fixture, `b.zipFile("나 시리즈.zip", nil)`, `// b.zipFile("나 시리즈.zip", nil)`, 1)
 			},
-			want: []string{"scripts/mkfixture/main.go", `"나 시리즈.zip"`, "no path literal here builds it"},
+			want: []string{"tools/mkfixture/main.go", `"나 시리즈.zip"`, "no path literal here builds it"},
 		},
 		{
 			name:   "A11_FILL is not one of the curated names",
 			mutate: func(s *curatedSrc) { s.shell = strings.Replace(s.shell, "나 시리즈.zip", "바 시리즈.zip", 1) },
-			want:   []string{"scripts/e2e.sh: A11_FILL", `"바 시리즈.zip"`, "scripts/e2e-config.sh's CURATED does not list it"},
+			want:   []string{"scripts/e2e/e2e.sh: A11_FILL", `"바 시리즈.zip"`, "scripts/e2e/e2e-config.sh's CURATED does not list it"},
 		},
 		{
 			// The real drift this copy was added for: the collection dropped a
@@ -460,7 +460,7 @@ func TestCuratedSeries_findsEveryKindOfDrift(t *testing.T) {
 			mutate: func(s *curatedSrc) {
 				s.doc = strings.Replace(s.doc, "| 3 | `다 시리즈` | folder of RARs | D-71 |\n", "", 1)
 			},
-			want: []string{"scripts/e2e-config.sh", `"다 시리즈"`, "docs/impl-plan.md's §6.3 curated-set table has no row for it"},
+			want: []string{"scripts/e2e/e2e-config.sh", `"다 시리즈"`, "docs/impl-plan.md's §6.3 curated-set table has no row for it"},
 		},
 		{
 			name: "impl-plan's table carries a name nothing else has",
@@ -478,7 +478,7 @@ func TestCuratedSeries_findsEveryKindOfDrift(t *testing.T) {
 			mutate: func(s *curatedSrc) {
 				s.py = strings.Replace(s.py, `SYNTHETIC_EXTRA = ["암호화 테스트.zip"]`, "SYNTHETIC_EXTRA = [\"ZIP64 테스트.zip\"]", 1)
 			},
-			want: []string{"synthetic-only series", `"암호화 테스트.zip"`, "scripts/e2e-assert.py's SYNTHETIC_EXTRA does not list it"},
+			want: []string{"synthetic-only series", `"암호화 테스트.zip"`, "scripts/e2e/e2e-assert.py's SYNTHETIC_EXTRA does not list it"},
 		},
 	}
 	for _, tc := range cases {
@@ -672,12 +672,12 @@ func TestThumbFlush_findsEveryKindOfDrift(t *testing.T) {
 		wantFile, wantField string
 	}{
 		{
-			name: "the gate stopped waiting on one", wantFile: "scripts/e2e-assert.py", wantField: "inflight",
+			name: "the gate stopped waiting on one", wantFile: "scripts/e2e/e2e-assert.py", wantField: "inflight",
 			arch: sampleFlushArch, dto: sampleFlushDTO,
 			py: strings.Replace(sampleFlushPy, `, "inflight"`, "", 1),
 		},
 		{
-			name: "the gate waits on one nobody promised", wantFile: "scripts/e2e-assert.py", wantField: "queued",
+			name: "the gate waits on one nobody promised", wantFile: "scripts/e2e/e2e-assert.py", wantField: "queued",
 			arch: sampleFlushArch, dto: sampleFlushDTO,
 			py: strings.Replace(sampleFlushPy, `"inflight"`, `"inflight", "queued"`, 1),
 		},
@@ -687,7 +687,7 @@ func TestThumbFlush_findsEveryKindOfDrift(t *testing.T) {
 			dto: strings.Replace(sampleFlushDTO, `json:"inflight"`, `json:"in_flight"`, 1),
 		},
 		{
-			name: "the contract lost one", wantFile: "scripts/e2e-assert.py", wantField: "active",
+			name: "the contract lost one", wantFile: "scripts/e2e/e2e-assert.py", wantField: "active",
 			dto: sampleFlushDTO, py: sampleFlushPy,
 			arch: strings.Replace(sampleFlushArch, ",active", "", 1),
 		},
@@ -830,7 +830,7 @@ func TestThumbFlush_extractionSeesTheFourFieldsInTheRepository(t *testing.T) {
 		}
 		return string(b)
 	}
-	c, err := parseThumbFlush(read("docs/arch-backend.md"), read("internal/httpapi/dto.go"), read("scripts/e2e-assert.py"))
+	c, err := parseThumbFlush(read("docs/arch-backend.md"), read("internal/httpapi/dto.go"), read("scripts/e2e/e2e-assert.py"))
 	if err != nil {
 		t.Fatalf("parseThumbFlush: %v", err)
 	}

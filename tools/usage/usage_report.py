@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """하네스 적용 이후 토큰 사용량 집계 (읽기 전용).
 
-실행: python3 -I scripts/usage/usage_report.py [--format text|tsv|json]
+실행: python3 -I tools/usage/usage_report.py [--format text|tsv|json]
 Claude 프로젝트 jsonl(메인 + subagents)과 Codex rollout(session_meta.cwd가 이 저장소인 것)만 읽는다.
 기록 파일은 열어서 읽기만 하고, 두 체계(Claude/Codex)의 토큰은 합치지 않는다.
 """

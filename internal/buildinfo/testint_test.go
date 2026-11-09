@@ -15,10 +15,10 @@ package buildinfo_test
 //     (the Go side, `testutil.MediaRoot`, turns the missing root into a failure),
 //     and `make gates` refuses to start when either root is unreadable — before
 //     an hour of the other gates, not after;
-//   - the media root was a literal in three places. It lives in scripts/media-root
+//   - the media root was a literal in three places. It lives in scripts/e2e/media-root
 //     now, and a literal that comes back is a second source that will drift.
 //
-// scripts/check-gates.sh reads the same recipe from `make lint`; these tests add
+// scripts/check/check-gates.sh reads the same recipe from `make lint`; these tests add
 // what a grep cannot: make's own expansion of the variables, and the recipe RUN
 // against a stub $(MAKE), so the order and the `&&` chain are observed, not read.
 
@@ -144,25 +144,25 @@ func TestIntegrationDefaults(t *testing.T) {
 	}
 }
 
-// TestMediaRootLivesInOneFile: scripts/media-root is one absolute path on one
+// TestMediaRootLivesInOneFile: scripts/e2e/media-root is one absolute path on one
 // line, and it is what SHELF_TEST_ROOT defaults to — read by make, not copied.
 func TestMediaRootLivesInOneFile(t *testing.T) {
 	t.Parallel()
-	raw := repoFile(t, "scripts/media-root")
+	raw := repoFile(t, "scripts/e2e/media-root")
 	root, ok := strings.CutSuffix(raw, "\n")
 	switch {
 	case !ok:
-		t.Fatalf("scripts/media-root does not end in a newline: %q", raw)
+		t.Fatalf("scripts/e2e/media-root does not end in a newline: %q", raw)
 	case root == "" || strings.ContainsAny(root, "\n\r"):
-		t.Fatalf("scripts/media-root must be exactly one non-empty line, got %q", raw)
+		t.Fatalf("scripts/e2e/media-root must be exactly one non-empty line, got %q", raw)
 	case strings.TrimSpace(root) != root:
-		t.Fatalf("scripts/media-root has surrounding whitespace, which every reader would "+
+		t.Fatalf("scripts/e2e/media-root has surrounding whitespace, which every reader would "+
 			"have to agree to strip (and the path itself holds spaces): %q", raw)
 	case !strings.HasPrefix(root, "/"):
-		t.Fatalf("scripts/media-root is not an absolute path: %q", root)
+		t.Fatalf("scripts/e2e/media-root is not an absolute path: %q", root)
 	}
 	if got := makeVar(t, "SHELF_TEST_ROOT"); got != root {
-		t.Errorf("`make print-SHELF_TEST_ROOT` with no environment is %q, want scripts/media-root's %q", got, root)
+		t.Errorf("`make print-SHELF_TEST_ROOT` with no environment is %q, want scripts/e2e/media-root's %q", got, root)
 	}
 	// `?=` keeps an override — including an explicitly empty one.
 	for _, want := range []string{"/elsewhere/a b", ""} {
@@ -180,7 +180,7 @@ func TestMediaRootLivesInOneFile(t *testing.T) {
 }
 
 // TestMediaRootFoundNextToTheMakefile: the default is read from the
-// scripts/media-root beside the Makefile, wherever make is run from — including
+// scripts/e2e/media-root beside the Makefile, wherever make is run from — including
 // when the Makefile's own path holds spaces. $(MAKEFILE_LIST) is space-separated,
 // so `$(lastword …)` cut such a path in half and the default went quietly empty
 // (a review reproduced it with `make -f '/tmp/project copy/Makefile'`). The copy
@@ -190,13 +190,13 @@ func TestMediaRootLivesInOneFile(t *testing.T) {
 // than one makefile, which has no spaces to recover from.
 func TestMediaRootFoundNextToTheMakefile(t *testing.T) {
 	t.Parallel()
-	root := strings.TrimSuffix(repoFile(t, "scripts/media-root"), "\n")
+	root := strings.TrimSuffix(repoFile(t, "scripts/e2e/media-root"), "\n")
 	base := t.TempDir()
 	proj := filepath.Join(base, "-project  copy's")
-	if err := os.MkdirAll(filepath.Join(proj, "scripts"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(proj, "scripts", "e2e"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, rel := range []string{"Makefile", "scripts/media-root"} {
+	for _, rel := range []string{"Makefile", "scripts/e2e/media-root"} {
 		if err := os.WriteFile(filepath.Join(proj, rel), []byte(repoFile(t, rel)), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -225,28 +225,28 @@ func TestMediaRootFoundNextToTheMakefile(t *testing.T) {
 		}
 		lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
 		if got := lines[len(lines)-1]; got != root {
-			t.Errorf("%s: SHELF_TEST_ROOT defaults to %q, want scripts/media-root's %q", tc.name, got, root)
+			t.Errorf("%s: SHELF_TEST_ROOT defaults to %q, want scripts/e2e/media-root's %q", tc.name, got, root)
 		}
 	}
 }
 
-// TestNoMediaRootLiteralOutsideItsFile: the Makefile and scripts/*.sh read
-// scripts/media-root; none spells the path out (E-66 §2.4). Comment lines are
+// TestNoMediaRootLiteralOutsideItsFile: the Makefile and scripts/*/*.sh read
+// scripts/e2e/media-root; none spells the path out (E-66 §2.4). Comment lines are
 // exempt. Kept apart from the tests above so that its failure names itself:
-// scripts/e2e.sh and scripts/e2e-config.sh are converted in a separate change.
+// scripts/e2e/e2e.sh and scripts/e2e/e2e-config.sh are converted in a separate change.
 func TestNoMediaRootLiteralOutsideItsFile(t *testing.T) {
 	t.Parallel()
-	root := strings.TrimSuffix(repoFile(t, "scripts/media-root"), "\n")
+	root := strings.TrimSuffix(repoFile(t, "scripts/e2e/media-root"), "\n")
 	if root == "" {
-		t.Fatal("scripts/media-root is empty")
+		t.Fatal("scripts/e2e/media-root is empty")
 	}
 	files := []string{"Makefile"}
-	shells, err := filepath.Glob(filepath.Join(repoRoot(t), "scripts", "*.sh"))
+	shells, err := filepath.Glob(filepath.Join(repoRoot(t), "scripts", "*", "*.sh"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(shells) == 0 {
-		t.Fatal("no scripts/*.sh found: the glob is looking in the wrong place")
+		t.Fatal("no scripts/*/*.sh found: the glob is looking in the wrong place")
 	}
 	for _, p := range shells {
 		files = append(files, mustRel(repoRoot(t), p))
@@ -257,7 +257,7 @@ func TestNoMediaRootLiteralOutsideItsFile(t *testing.T) {
 				continue
 			}
 			if strings.Contains(line, root) {
-				t.Errorf("%s:%d spells out the media root instead of reading scripts/media-root:\n  %s",
+				t.Errorf("%s:%d spells out the media root instead of reading scripts/e2e/media-root:\n  %s",
 					rel, i+1, strings.TrimSpace(line))
 			}
 		}
@@ -455,7 +455,7 @@ func TestGatesRefusesUnreadableRootsBeforeAnyGate(t *testing.T) {
 	}
 }
 
-// TestCheckGatesRejectsRecordsAFailureCanReach runs scripts/check-gates.sh on
+// TestCheckGatesRejectsRecordsAFailureCanReach runs scripts/check/check-gates.sh on
 // a copy of the Makefile with one edit each: a record that a failing gate can
 // still reach, or one gate recorded twice. Each must fail the script; the
 // unedited copy must pass, so a failure is the edit's and not the copy's.
@@ -465,7 +465,7 @@ func TestCheckGatesRejectsRecordsAFailureCanReach(t *testing.T) {
 		t.Fatalf("bash is not on PATH: %v", err)
 	}
 	makefile := repoFile(t, "Makefile")
-	script := repoFile(t, "scripts/check-gates.sh")
+	script := repoFile(t, "scripts/check/check-gates.sh")
 	five := "&& echo '5/5  make e2e + test-int (sample)    RAN' >> '$(GATES_LOG)'"
 	one := "lint && echo '1/5  make lint                       RAN' >> '$(GATES_LOG)'"
 	for _, anchor := range []string{five, one} {
@@ -485,7 +485,7 @@ func TestCheckGatesRejectsRecordsAFailureCanReach(t *testing.T) {
 			one + " && echo '1/5  make lint                       RAN' >> '$(GATES_LOG)'"},
 	} {
 		dir := t.TempDir()
-		if err := os.MkdirAll(filepath.Join(dir, "scripts"), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(dir, "scripts", "check"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		edited := makefile
@@ -495,10 +495,10 @@ func TestCheckGatesRejectsRecordsAFailureCanReach(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "Makefile"), []byte(edited), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, "scripts", "check-gates.sh"), []byte(script), 0o755); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "scripts", "check", "check-gates.sh"), []byte(script), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		out, err := exec.Command("bash", filepath.Join(dir, "scripts", "check-gates.sh")).CombinedOutput()
+		out, err := exec.Command("bash", filepath.Join(dir, "scripts", "check", "check-gates.sh")).CombinedOutput()
 		switch {
 		case tc.from == "" && err != nil:
 			t.Fatalf("check-gates.sh fails on an unedited copy: %v\n%s", err, out)

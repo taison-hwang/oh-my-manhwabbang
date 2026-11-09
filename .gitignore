@@ -30,7 +30,7 @@ web/.playwright/
 # `make build`'s Playwright pass. They are review artefacts, not sources.
 #
 # The README is the one exception, and it is 2 KB of text rather than an
-# artefact: `scripts/e2e.sh` step 11 tells the reviewer to compare against this
+# artefact: `scripts/e2e/e2e.sh` step 11 tells the reviewer to compare against this
 # directory, and after ruling E-32 replaced the whole visual system most of what
 # is in it disagrees with the product on purpose. Which subdirectory is the
 # current target has to survive a fresh clone, or the instruction points at
@@ -60,15 +60,15 @@ graphify-out
 
 
 # ---- __pycache__/ and *.pyc are deliberately NOT ignored ---------------------
-# scripts/e2e-assert.py never produces them on its own: it runs as `__main__`
-# (scripts/e2e.sh step 7) and CPython does not cache `__main__` — verified by
-# running `python3 scripts/e2e-assert.py --help` on a clean tree and finding no
+# scripts/e2e/e2e-assert.py never produces them on its own: it runs as `__main__`
+# (scripts/e2e/e2e.sh step 7) and CPython does not cache `__main__` — verified by
+# running `python3 scripts/e2e/e2e-assert.py --help` on a clean tree and finding no
 # `__pycache__`. They appear only when someone compiles or imports the file, and
 # `python3 -m py_compile` writes one even under `-B`/PYTHONDONTWRITEBYTECODE,
 # because those only govern the import machinery, not an explicit compile. Use
 # `py_compile.compile(src, cfile=<somewhere outside the repo>, doraise=True)`.
 #
-# Ignoring them would be worse than not: scripts/e2e.sh step 9 fails the whole
+# Ignoring them would be worse than not: scripts/e2e/e2e.sh step 9 fails the whole
 # E2E on ANY file appearing under $repo after its marker, so a gitignore entry
 # would hide the dirt from `git status` while leaving the gate to blow up later,
 # with a message about the media volume rather than about a stray build
@@ -88,7 +88,7 @@ Thumbs.db
 # second copy of the tree pointing at a branch that may never be pushed.
 #
 # NOT the same case as the `__pycache__` note above: that one argues an
-# untracked file should stay visible because scripts/e2e.sh step 9 fails on
+# untracked file should stay visible because scripts/e2e/e2e.sh step 9 fails on
 # anything appearing under $repo mid-run. A worktree directory is created
 # deliberately, before a run rather than during one, and step 9's walk is
 # already scoped to the media volume and the state directory — so the signal

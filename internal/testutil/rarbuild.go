@@ -183,7 +183,7 @@ func BuildRAR4(t testing.TB, spec RAR4Spec) []byte {
 	return out
 }
 
-// RAR4Bytes is BuildRAR4 without a testing.TB, for scripts/mkfixture — so the
+// RAR4Bytes is BuildRAR4 without a testing.TB, for tools/mkfixture — so the
 // e2e fixture tree and the unit fixtures are produced by one writer rather than
 // by two that could drift.
 func RAR4Bytes(spec RAR4Spec) ([]byte, error) {

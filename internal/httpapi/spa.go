@@ -173,7 +173,7 @@ func (s *Server) servePlaceholder(w http.ResponseWriter, _ *http.Request) error 
 
 // --- precompressed assets (decision E-63) -----------------------------------
 //
-// `make web` runs scripts/precompress after `pnpm build`, which replaces every
+// `make web` runs tools/precompress after `pnpm build`, which replaces every
 // assets/**/*.js and *.css with a gzip file of the same name plus ".gz" and
 // removes the original. go:embed stores bytes verbatim, so that is the only way
 // the release binary stops carrying the SPA's text uncompressed.
@@ -185,7 +185,7 @@ func (s *Server) servePlaceholder(w http.ResponseWriter, _ *http.Request) error 
 // carry a content hash; index.html is rewritten per request by serveIndex and
 // never comes from a .gz, and a client-side route is never a file at all.
 
-// gzSuffix is what scripts/precompress appends; it carries the same constant.
+// gzSuffix is what tools/precompress appends; it carries the same constant.
 const gzSuffix = ".gz"
 
 // servePrecompressed serves name from name+".gz", or answers the asset 404.

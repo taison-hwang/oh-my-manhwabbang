@@ -1328,7 +1328,7 @@ func TestHealth_verbose(t *testing.T) {
 // in particular it carries `active` and `inflight`.
 //
 // Those two are not decoration. With `cover_depth` and `page_depth` they are the
-// conjunction thumbs.Service.idle() tests, and scripts/e2e-assert.py waits on
+// conjunction thumbs.Service.idle() tests, and scripts/e2e/e2e-assert.py waits on
 // all four before it judges the covers the scan pre-generated — the sleep it
 // replaced let 3-4 of 36 cover files be missing while the scan reported 36/36
 // (internal/app/covers.go derives `done` from queue depth). A health.go that
@@ -1387,7 +1387,7 @@ func TestHealthVerbose_thumbCountersMirrorTheServiceFieldForField(t *testing.T) 
 	} {
 		raw, ok := wire.Verbose.Thumbs[key]
 		if !ok {
-			t.Errorf("the thumbs block has no %q; scripts/e2e-assert.py polls it by that name", key)
+			t.Errorf("the thumbs block has no %q; scripts/e2e/e2e-assert.py polls it by that name", key)
 			continue
 		}
 		if string(raw) != value {

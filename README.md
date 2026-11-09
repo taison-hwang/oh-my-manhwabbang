@@ -36,7 +36,7 @@ internal/…          seventeen single-responsibility packages; see docs/arch-ba
 web/                simultaneously the Vite project and the Go package go:embed reads
 integration/        -tags integration, gated on SHELF_TEST_ROOT (impl-plan §6.2)
 scripts/            the E2E runner, the static guards, the contract gate, the fixture builder
-scripts/usage/      token-usage report over Claude/Codex session logs (read-only, stdlib Python)
+tools/usage/      token-usage report over Claude/Codex session logs (read-only, stdlib Python)
 test/               the E2E configuration template
 ```
 
@@ -163,13 +163,13 @@ Token-usage report (read-only; reads `~/.claude/projects/<this repo>` and the
 Codex rollouts whose `session_meta.cwd` is this repo, never writes them):
 
 ```bash
-python3 -I scripts/usage/usage_report.py                  # text tables, since the harness install commit
-python3 -I scripts/usage/usage_report.py --format tsv     # or json; --since <ISO time>; --codex-role gpt-x=role
-python3 -I -B -m unittest discover -s scripts/usage          # its tests (also run by make test)
+python3 -I tools/usage/usage_report.py                  # text tables, since the harness install commit
+python3 -I tools/usage/usage_report.py --format tsv     # or json; --since <ISO time>; --codex-role gpt-x=role
+python3 -I -B -m unittest discover -s tools/usage          # its tests (also run by make test)
 ```
 
 Claude and Codex counts are never added together. Cost is a Claude-only API-price
-estimate from `scripts/usage/prices.json` (source URL and retrieval date inside);
+estimate from `tools/usage/prices.json` (source URL and retrieval date inside);
 models without a confirmed price, and all of Codex, show no cost. The "gaps"
 section at the top lists what the logs cannot cover.
 
@@ -237,7 +237,7 @@ product:
 ### 3. Integration — `make test-int`
 
 `-tags integration`, against `SHELF_TEST_ROOT` — by default the collection named
-in `scripts/media-root`, the one file `make e2e` reads it from too. Brings the
+in `scripts/e2e/media-root`, the one file `make e2e` reads it from too. Brings the
 whole product up exactly as `cmd/shelf` does, against ten real series (~5.1 GB)
 selected out of the collection with `scan.include_globs`. **Nothing is copied**:
 the tests read the genuine 2012–2018 mtimes, the genuine CP949 entry names and
@@ -251,7 +251,7 @@ the same sample. `make test-int-full` checks every archive; run it before a
 release.
 
 ```bash
-make test-int                          # sample, against scripts/media-root
+make test-int                          # sample, against scripts/e2e/media-root
 make test-int SHELF_TEST_ROOT=/elsewhere
 make test-int-full                     # every archive
 ```
@@ -274,13 +274,13 @@ make e2e-synthetic              # against a ~2 MB generated fixture tree
 make e2e E2E_ARGS=--keep        # leave the scratch directory behind
 ```
 
-`make e2e-synthetic` needs no media volume: `scripts/mkfixture` generates a tree
+`make e2e-synthetic` needs no media volume: `tools/mkfixture` generates a tree
 carrying the same ten directory names and the same ten shapes, plus an
 encrypted archive and a ZIP64 archive that the real collection has no sample
 of.
 
 > **Known gap.** The browser half of the E2E plan (Playwright, four viewports)
-> has no specs: no work package owns `web/e2e/`. `scripts/e2e.sh` runs
+> has no specs: no work package owns `web/e2e/`. `scripts/e2e/e2e.sh` runs
 > `pnpm e2e` when specs appear there and prints a `skip` line until then.
 > Everything else in the E2E script is HTTP-level and does run.
 
@@ -410,7 +410,7 @@ Coverage is derived, not sampled: the Han subset is every ideograph CP949 or
 Windows-31J can encode — 7 424 of them — plus the 189 assigned kana. Those are
 the two codecs `internal/kenc` decodes a non-UTF-8 archive entry name with, so
 that is all such a name can hold; a Go test holds the recipe's list
-(`scripts/mkfonts/cjk-coverage.txt`) to exactly what kenc's codecs produce, and
+(`tools/mkfonts/cjk-coverage.txt`) to exactly what kenc's codecs produce, and
 a web test reads every cut's cmap against it. When ruling E-53 measured the
 reference library the set also covered every ideograph in every series and book
 name.
@@ -432,7 +432,7 @@ only those names switch to Noto Sans JP (ruling **E-55**). What that leaves:
 The fonts come to about 6.7 MB, a fifth of the binary, and the release budget
 has little headroom left (see [Build](#build)), so adding a face is a budget decision
 before it is a CSS one. Noto Serif TC and Noto Sans JP are cut, and Archivo
-copied, by `scripts/mkfonts/subset.py`; `--check` rebuilds them to the side,
+copied, by `tools/mkfonts/subset.py`; `--check` rebuilds them to the side,
 re-reads each cut's cmap for the requested glyphs and compares the bytes with
 what is committed. 고운바탕 and the seal were cut by hand at E-46. Either way the
 rules live in `web/src/styles/fonts.css`, and `styles/tokens.test.ts` and

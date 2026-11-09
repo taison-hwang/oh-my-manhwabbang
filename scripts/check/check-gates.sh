@@ -46,7 +46,7 @@
 #
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 MAKEFILE=Makefile
 
 fail() { printf 'check-gates: %s\n' "$1" >&2; exit 1; }
