@@ -481,6 +481,12 @@ type Options struct {
 	// which is why it lives here rather than on Service.
 	hookDecode func()
 
+	// hookTaken runs in a worker right after it releases s.mu holding a job
+	// it took from a queue, which is the one point where a concurrent Enqueue
+	// of the same key could slip past deduplication. Unexported and set before
+	// New for the same reasons as hookDecode.
+	hookTaken func()
+
 	// noWorkers suppresses the worker pool so the package's own tests can
 	// inspect the queues deterministically instead of racing them. Unexported
 	// for the obvious reason: a Service with no workers never generates
@@ -511,8 +517,9 @@ func FromConfig(cfg *config.Config) Options {
 // continuously from the moment it is queued until its bytes are on disk:
 // CoverDepth/PageDepth hold it from enqueue until a worker takes it (both
 // happen under s.mu, so it is never in the gap), Active holds it for the length
-// of that worker's turn, and Inflight holds the key from the moment
-// singleflight claims it until after cache.publish has done its
+// of that worker's turn, and Inflight holds the key from the moment it is
+// claimed (by the worker in the hold that took it, or by singleflight for a
+// direct Generate) until after cache.publish has done its
 // write-temp-then-os.Rename. All four zero therefore means every thumbnail ever
 // queued is at its final path.
 //
@@ -598,6 +605,8 @@ type Service struct {
 	// hookDecode, when set by a test, runs at the top of every decode. It is
 	// how the concurrency bound of FR-THM-005 is measured without a sleep.
 	hookDecode func()
+	// hookTaken: see Options.hookTaken.
+	hookTaken func()
 }
 
 type counters struct {
@@ -685,6 +694,7 @@ func New(ctx context.Context, opts Options) (*Service, error) {
 		negative:     make(map[string]negEntry),
 		stopped:      make(chan struct{}),
 		hookDecode:   opts.hookDecode,
+		hookTaken:    opts.hookTaken,
 	}
 	s.cond = sync.NewCond(&s.mu)
 	s.usage.ttl = usageTTL

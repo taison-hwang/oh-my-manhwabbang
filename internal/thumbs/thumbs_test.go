@@ -1107,14 +1107,21 @@ func TestStats_activeAndInflight_separateWorkInProgressFromWorkNotYetStarted(t *
 // the only shape in which the race detector can see an unlocked read. It is a
 // -race test: without the detector it still asserts that the poller saw the
 // pool busy, so it cannot pass by polling a pool that had already finished.
+// The workers are parked in their first decode until the poller has seen them,
+// because on one P an unparked pool can finish before the poller first runs.
 func TestStats_readConcurrentlyWithAMovingPool_isOneLockedSnapshot(t *testing.T) {
 	t.Parallel()
 	const workers = 4
 	const jobs = 48
 
-	h := newHarness(t, func(o *Options) { o.Workers = workers })
+	release := make(chan struct{})
+	h := newHarness(t, func(o *Options) {
+		o.Workers = workers
+		o.hookDecode = func() { <-release }
+	})
 
 	stop := make(chan struct{})
+	sawBusy := make(chan struct{})
 	polled := make(chan int, 1)
 	go func() {
 		busy := 0
@@ -1127,6 +1134,9 @@ func TestStats_readConcurrentlyWithAMovingPool_isOneLockedSnapshot(t *testing.T)
 			}
 			st := h.svc.Stats()
 			if st.Active+st.Inflight+st.CoverDepth+st.PageDepth > 0 {
+				if busy == 0 {
+					close(sawBusy)
+				}
 				busy++
 			}
 		}
@@ -1139,19 +1149,62 @@ func TestStats_readConcurrentlyWithAMovingPool_isOneLockedSnapshot(t *testing.T)
 			t.Fatalf("Enqueue(%d): %v", i, err)
 		}
 	}
-	h.drain()
-	close(stop)
-
-	if busy := <-polled; busy == 0 {
+	select {
+	case <-sawBusy:
+	case <-time.After(30 * time.Second):
 		t.Fatal("the poller never saw the pool doing anything, so it raced nothing; " +
 			"the test needs the jobs to still be moving while Stats() is read")
 	}
+	close(release)
+	h.drain()
+	close(stop)
+	<-polled
+
 	// Generated against Queued, not against `jobs`: two tiny JPEGs of the same
 	// size written in the same mtime tick share a content version, hence a
 	// cache key, and Enqueue rightly takes the second as the same job.
 	if st := h.svc.Stats(); st.Queued == 0 || st.Generated != st.Queued || st.Failed != 0 {
 		t.Fatalf("queued=%d generated=%d failed=%d, want every accepted job generated",
 			st.Queued, st.Generated, st.Failed)
+	}
+}
+
+// A worker that has taken a job must hold its key against a second Enqueue
+// from the moment the job leaves the queue. Released between the take and the
+// claim, the key was in neither `queued` nor `inflight` and the same thumbnail
+// was accepted twice: counted twice in Queued, and decoded twice when the first
+// run had finished by the time the second was taken. Under load that gap was
+// wide enough to fail the Stats test above (queued=45 generated=44).
+func TestEnqueue_sameKeyWhileAWorkerHoldsIt_isOneJob(t *testing.T) {
+	t.Parallel()
+	var req Request
+	again := make(chan error, 1)
+	var h *harness
+	h = newHarness(t, func(o *Options) {
+		o.Workers = 1
+		var once sync.Once
+		o.hookTaken = func() { once.Do(func() { again <- h.svc.Enqueue(req) }) }
+	})
+	req = h.writeLoose("held.jpg", testutil.TinyJPEG(t, 50, 70))
+	req.Priority = PriorityCover
+
+	if err := h.svc.Enqueue(req); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	select {
+	case err := <-again:
+		if err != nil {
+			t.Fatalf("the second Enqueue: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("no worker took the job")
+	}
+	h.drain()
+
+	if st := h.svc.Stats(); st.Queued != 1 || st.Generated != 1 || st.Decodes != 1 {
+		t.Fatalf("queued=%d generated=%d decodes=%d, want 1, 1 and 1: the second Enqueue "+
+			"arrived while a worker held the key and is the same job",
+			st.Queued, st.Generated, st.Decodes)
 	}
 }
 

@@ -8,9 +8,11 @@ import (
 	"encoding/base32"
 	"fmt"
 	"math"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"shelf/internal/index"
@@ -60,12 +62,18 @@ func spreadPDF(t testing.TB, w, h int) []byte {
 	return buf.Bytes()
 }
 
-// newPDFRenderer is a live pdfium with one worker, closed with the test.
-func newPDFRenderer(t testing.TB) *pdfium.Renderer {
-	t.Helper()
-	r := pdfium.New(pdfium.Options{Workers: 1, CacheDir: t.TempDir(), Logger: quietLogger()})
-	t.Cleanup(func() { _ = r.Close() })
-	return r
+// sharedPDF is the package's one live pdfium, closed by TestMain. One per test
+// was one wazero runtime per test, about 300 MB each, and the PDF tests run in
+// parallel: 2.7 GB for the package, more under -race, enough for the gate's
+// `make test` to be OOM-killed beside the other packages.
+var sharedPDF = sync.OnceValue(func() *pdfium.Renderer {
+	return pdfium.New(pdfium.Options{Workers: 1, Logger: quietLogger()})
+})
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	_ = sharedPDF().Close()
+	os.Exit(code)
 }
 
 // pdfService is a source factory that renders PDFs through r, clamped to
@@ -101,7 +109,7 @@ func (h *harness) pdfService(r *pdfium.Renderer, maxWidth int, tune func(*Option
 func TestGenerate_pdfCover_rendersWideEnoughForTheHalfToFillTheWidth(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, nil)
-	r := newPDFRenderer(t)
+	r := sharedPDF()
 	pdfs, svc := h.pdfService(r, pdfium.MaxWidth, nil)
 	book, cv := h.indexFile("series/spread.pdf", source.KindPDF, spreadPDF(t, 400, 200), pdfs)
 
@@ -136,7 +144,7 @@ func TestGenerate_pdfCover_rendersWideEnoughForTheHalfToFillTheWidth(t *testing.
 func TestGenerate_pdfCover_notCutInWidth_isStillTheRequestedWidth(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, nil)
-	pdfs, svc := h.pdfService(newPDFRenderer(t), pdfium.MaxWidth, nil)
+	pdfs, svc := h.pdfService(sharedPDF(), pdfium.MaxWidth, nil)
 	portrait, pcv := h.indexFile("series/portrait.pdf", source.KindPDF, spreadPDF(t, 200, 300), pdfs)
 	landscape, lcv := h.indexFile("series/landscape.pdf", source.KindPDF, spreadPDF(t, 400, 200), pdfs)
 
@@ -180,7 +188,7 @@ func TestGenerate_pdfCover_notCutInWidth_isStillTheRequestedWidth(t *testing.T) 
 func TestGenerate_pdfCover_underARenderCeiling_isTheCutOfWhatTheCeilingAllows(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, nil)
-	r := newPDFRenderer(t)
+	r := sharedPDF()
 	clamped, narrow := h.pdfService(r, 300, nil)
 	_, budgeted := h.pdfService(r, pdfium.MaxWidth, func(o *Options) { o.MaxSourcePixels = 200_000 })
 	book, cv := h.indexFile("series/spread.pdf", source.KindPDF, spreadPDF(t, 400, 200), clamped)
@@ -229,7 +237,7 @@ func deref(p *int) any {
 func TestGenerate_pdfCover_nearlySquareLandscapePage_isJudgedOnItsRecordedSize(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, nil)
-	pdfs, svc := h.pdfService(newPDFRenderer(t), pdfium.MaxWidth, nil)
+	pdfs, svc := h.pdfService(sharedPDF(), pdfium.MaxWidth, nil)
 	page := spreadPDF(t, 4000, 3999)
 	cold, ccv := h.indexFile("series/cold.pdf", source.KindPDF, page, pdfs)
 	recorded, rcv := h.indexFile("series/recorded.pdf", source.KindPDF, page, pdfs)
@@ -284,7 +292,7 @@ func TestGenerate_pdfCover_nearlySquareLandscapePage_isJudgedOnItsRecordedSize(t
 func TestGenerate_pdfCover_recordedSizeOutranksPageSize(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, nil)
-	pdfs, svc := h.pdfService(newPDFRenderer(t), pdfium.MaxWidth, nil)
+	pdfs, svc := h.pdfService(sharedPDF(), pdfium.MaxWidth, nil)
 	wide, wcv := h.indexFile("series/wide.pdf", source.KindPDF, spreadPDF(t, 400, 200), pdfs)
 	tall, tcv := h.indexFile("series/tall.pdf", source.KindPDF, spreadPDF(t, 200, 400), pdfs)
 	for _, rec := range []struct {
@@ -336,7 +344,7 @@ func TestGenerate_pdfCover_recordedSizeOutranksPageSize(t *testing.T) {
 func TestGenerate_pdfPageThumbnail_isTheRequestedWidth(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, nil)
-	pdfs, svc := h.pdfService(newPDFRenderer(t), pdfium.MaxWidth, nil)
+	pdfs, svc := h.pdfService(sharedPDF(), pdfium.MaxWidth, nil)
 	portrait, pcv := h.indexFile("series/portrait.pdf", source.KindPDF, spreadPDF(t, 200, 300), pdfs)
 	landscape, lcv := h.indexFile("series/landscape.pdf", source.KindPDF, spreadPDF(t, 400, 200), pdfs)
 
@@ -380,7 +388,7 @@ func TestGenerate_pdfPageThumbnail_isTheRequestedWidth(t *testing.T) {
 func TestGenerate_pdfPageThumbnail_underARenderCeiling_isWhatTheCeilingAllows(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, nil)
-	r := newPDFRenderer(t)
+	r := sharedPDF()
 	capped, narrow := h.pdfService(r, 200, nil)
 	_, budgeted := h.pdfService(r, pdfium.MaxWidth, func(o *Options) { o.MaxSourcePixels = 4_000_000 })
 	portrait, pcv := h.indexFile("series/portrait.pdf", source.KindPDF, spreadPDF(t, 200, 300), capped)
@@ -430,7 +438,7 @@ func archThumbKey(book string, page, width int, cv string) string {
 func TestGenerate_pdfPageThumbnail_keyAndPathAreTheRequestedWidths(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, nil)
-	pdfs, svc := h.pdfService(newPDFRenderer(t), pdfium.MaxWidth, nil)
+	pdfs, svc := h.pdfService(sharedPDF(), pdfium.MaxWidth, nil)
 	book, cv := h.indexFile("series/portrait.pdf", source.KindPDF, spreadPDF(t, 200, 300), pdfs)
 
 	for _, c := range []struct {
@@ -482,7 +490,7 @@ func TestGenerate_pdfPageThumbnail_keyAndPathAreTheRequestedWidths(t *testing.T)
 func TestGenerate_pdfCover_regionPastTheAbsoluteRenderCeiling_isTheCutOfA4000pxRender(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t, nil)
-	r := newPDFRenderer(t)
+	r := sharedPDF()
 	atMax, svcMax := h.pdfService(r, pdfium.MaxWidth, nil)
 	_, svcAbove := h.pdfService(r, 2*pdfium.MaxWidth, nil)
 	_, svcZero := h.pdfService(r, 0, nil)

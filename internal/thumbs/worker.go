@@ -233,10 +233,23 @@ func (s *Service) worker() {
 			s.mu.Unlock()
 			continue
 		}
+		// Claimed in the same hold as the take: released in between, the key
+		// would be in neither `queued` nor `inflight`, and an Enqueue of it
+		// would be accepted again — counted twice, and decoded twice when the
+		// first run had already finished.
+		f, lead := s.claimLocked(j.key)
 		s.active++
 		s.mu.Unlock()
+		if s.hookTaken != nil {
+			s.hookTaken()
+		}
 
-		_, err := s.singleflight(s.ctx, j)
+		var err error
+		if lead {
+			_, err = s.lead(s.ctx, j, f)
+		} else {
+			_, err = await(s.ctx, f)
+		}
 		if err != nil && !errors.Is(err, context.Canceled) {
 			s.log.Warn("thumbnail generation failed",
 				"book_id", j.req.ID, "page", j.req.PageNo, "width", j.req.Width,
@@ -252,32 +265,52 @@ func (s *Service) worker() {
 
 // singleflight runs produce for a key at most once at a time. Every other
 // caller of the same key waits for that one result — the counter assertion of
-// impl-plan WP-07 acceptance 4 is exactly this function.
-//
-// It is also where FR-THM-005's bound is applied, because it is the ONE place
-// every generation path passes through: the worker pool, Service.Get's queue and
-// the direct Service.Generate all end here. Bounding the pool alone would leave
-// the eager cover pass free to run a decode per goroutine.
+// impl-plan WP-07 acceptance 4 is this function and the worker's claimLocked.
 func (s *Service) singleflight(ctx context.Context, j job) (Result, error) {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
 		return Result{}, ErrClosed
 	}
-	if f, ok := s.inflight[j.key]; ok {
-		s.mu.Unlock()
-		select {
-		case <-f.done:
-			return f.res, f.err
-		case <-ctx.Done():
-			return Result{}, ctx.Err()
-		}
-	}
-	f := &flight{done: make(chan struct{})}
-	s.inflight[j.key] = f
+	f, lead := s.claimLocked(j.key)
 	s.mu.Unlock()
+	if !lead {
+		return await(ctx, f)
+	}
+	return s.lead(ctx, j, f)
+}
 
-	// From here every exit must close f.done, or the coalesced callers above
+// claimLocked returns the flight for key, registering a new one if none is
+// running; lead reports that the caller registered it and so must run it.
+//
+// The caller holds s.mu.
+func (s *Service) claimLocked(key string) (f *flight, lead bool) {
+	if f, ok := s.inflight[key]; ok {
+		return f, false
+	}
+	f = &flight{done: make(chan struct{})}
+	s.inflight[key] = f
+	return f, true
+}
+
+// await waits for another caller's flight.
+func await(ctx context.Context, f *flight) (Result, error) {
+	select {
+	case <-f.done:
+		return f.res, f.err
+	case <-ctx.Done():
+		return Result{}, ctx.Err()
+	}
+}
+
+// lead runs the flight the caller claimed and settles it.
+//
+// It is also where FR-THM-005's bound is applied, because it is the ONE place
+// every generation path passes through: the worker pool (Service.Get's queue)
+// and the direct Service.Generate both end here. Bounding the pool alone would
+// leave the eager cover pass free to run a decode per goroutine.
+func (s *Service) lead(ctx context.Context, j job, f *flight) (Result, error) {
+	// From here every exit must close f.done, or the callers in await
 	// wait forever — which is why the permit failure flows into the same tail
 	// rather than returning early.
 	var res Result
