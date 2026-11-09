@@ -98,3 +98,4 @@ ts	작업	결정	이유	증거	결과
 2026-11-09T13:45:58+09:00	U-E	결정: (A) palette 4a·4b laptop 2장 기준 갱신 승인(결정적·내용 동일·미세 차이, 원인 미확인 명시, 재발 시 감시 제외 후속). (B) go test 기본 10분 제한 3회째(httpapi×2, source) → Makefile test에 -timeout 30m. R-F2 병합 뒤 rebase하고 herdr-check·e2e-synthetic·release 재실행	worker-2 [차단], 1·2차 원본 sha256 동일	4f7a279	worker-2 (A)(B) 후 R-F2 대기
 2026-11-09T13:52:44+09:00	T-U	보완 14acda8(밖 cwd 제외·세 형식 비용 고지) → 재검증 배정	worker-1 [완료]	14acda8	verifier-1 T-U 재검증
 2026-11-09T13:55:35+09:00	T-U	재검증 ISSUES 1: Codex 밖 cwd 응답 ID가 내부 중복 제거 집합을 오염(같은 response_id가 뒤에 안쪽으로 오면 누락). 비용 고지 PASS. 보완 2 배정	verifier-1 재현	/tmp/verify-tu/2026-11-09T13-55-09+0900--verify-tu2.md	worker-1 보완 2
+2026-11-09T14:09:06+09:00	운영 점검	사용자 요청 자율주행 점검(14:08): 정체 1건 해소 — T-U make lint가 잠금 대기 12분(lint는 가벼움) → 잠금 밖 실행 지시. R-F2 herdr-check 잠금 보유·web-gates 진행 정상. U-E는 R-F2 병합 대기(정상), worker-3·verifier-1 대기. 메인 체크아웃 잔여 검사 없음. 맥락: t1m 36%, t3g 13%, t5h 5%, t6v 15%, t20 10%	/proc/locks, pgrep, hc read	—	Commander 보고
