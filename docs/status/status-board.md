@@ -1,11 +1,10 @@
 # 상태판
 
-갱신: 2026-11-09T14:15:00+09:00 (Orchestrator t7c)
+갱신: 2026-11-09T14:33:48+09:00 (Orchestrator t7c)
 
 | 작업 ID | 묶음 | 담당(role·터미널) | 상태 | 의존 | 근거 |
 | --- | --- | --- | --- | --- | --- |
 | U-E | U-E | worker-2(새로 띄움) | 최종 게이트 재실행 | 없음 | work/u-e-finish 2c189a2(main d7bfc0b 위, 깨끗). 14:11 세션 사고로 final-gates4가 단계 시작 전 소실 → 새 worker-2가 herdr-check → e2e-synthetic → release 재실행 → [완료] → 독립 검증(orchestrator-drafts/verify-ue.txt) |
-| T-U | T-U | worker-1(새로 띄움) | 병합 | 없음 | 독립 재검증 PASS 6f13fe1(/tmp/verify-tu/2026-11-09T14-11-27+0900--verify-tu3.md). main 위 rebase → herdr-check PASS(잠금 아래) → main 병합 |
 
 ## 세션 사고와 교체 (2026-11-09)
 
@@ -16,7 +15,7 @@
 ## 새 Orchestrator가 이어 갈 다음 행동
 
 1. U-E [완료]가 오면 검사 PASS SHA를 확인하고 verifier-1(새로 띄움)에 독립 검증을 배정한다. 확인 항목: 가짜 uni-auth가 제품 바이너리에 링크되지 않음(go list -deps ./cmd/shelf), 제품 코드에 테스트용 우회 없음, 가짜 공급자의 aud 또는 nonce를 틀리게 하면 로그인 실패, oidc spec (a)~(h) 단정, 직접 뮤테이션 1개, make e2e-synthetic-oidc 1회, 예산 세 곳(Makefile·impl-plan·README) 33,816,576 일치와 정식 측정. PASS면 [병합](보고는 hc로만).
-2. T-U는 PASS 6f13fe1 — worker-1이 rebase·herdr-check·병합 중.
+2. T-U 병합 완료(main 51178af).
 3. U-E 병합 뒤 E-74 완료 조건 6(운영 공개) 준비: 사용자 실행 단계 U-R2b — 런북 docs/progress/2026-11-09T03-39-10+0900--e74-library-deploy-runbook.md와 scripts/deploy/library/. 사용자에게 적용 명령과 중단 시점을 요청한다(:9909 중지, user.db 백업, 9910 oidc 인스턴스, dns-route, tunnel-apply --restart는 auth·ohmyassets가 몇 초 끊김, verify-public, 첫 로그인 403 화면의 sub를 allowed_subs에). sudo·재시작·cloudflared는 사용자가 한다.
 4. '개발완료!!!'는 U-E 병합(E-74 조건 1~5)과 T-U 병합 뒤 Commander에 알릴 수 있다. 운영 공개(조건 6, 실제 로그인 1회)는 사용자 실행이 필요하다고 함께 밝힌다. 미완료를 완료로 쓰지 않는다.
 
