@@ -29,3 +29,4 @@
 - T-U 토큰 사용량 집계(scripts/usage, 읽기 전용) — main 51178af(2026-11-09 14:3x). 독립 검증 ISSUES 2회 보완 뒤 PASS 6f13fe1(/tmp/verify-tu/2026-11-09T14-11-27+0900--verify-tu3.md), herdr-check PASS 51178af. Claude는 공식 단가 추정 표시, Codex는 미산출(사용자 질문 3 답 대기).
 - U-E E-74 마감(가짜 공급자 oidc 합성 e2e·최종 gates·크기) — main 9377a14(2026-11-09 17:0x). 독립 검증 PASS 2251ebb(/tmp/verify-ue/2026-11-09T16-38-55+0900--verify-ue.md), herdr-check PASS 9377a14. 7차 synthetic PASS(11c laptop-1024 4a·4b 흔들림으로 감시 제외, 후속 있음), release 33,681,570 B(여유 135,006), 예산 E-78 33,816,576 B.
 - U-E-F 최종 main 확인 — bbf5412(2026-11-09 17:2x): e2e-synthetic·e2e-synthetic-oidc·release 모두 rc=0, 33,681,570 B. E-74 조건 1~5와 시작 계약 2 완료.
+- U-R3a 운영 주소 books.betterax.net 저장소 반영 — main 128a0f6(2026-11-09 18:5x). 스크립트·예시 설정·decisions E-74·arch, 새 런북 docs/progress/2026-11-09T18-11-49+0900--e74-books-deploy-runbook.md. 독립 검증 PASS e0d8af9(/tmp/verify-ur3a/2026-11-09T18-15-48+0900--verify-ur3a.md), herdr-check PASS 128a0f6.
