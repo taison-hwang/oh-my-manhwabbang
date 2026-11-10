@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # 워커의 보고 누락을 막는다. 워커 화면은 아무도 읽지 않으므로 보고 없이 턴이 끝나면 자율 진행이 조용히 멈춘다.
-#   worker-turn.sh start   UserPromptSubmit: 턴 시작 시각을 기록한다. 입력이 [배정]·[병합]·[검증]이면
-#                          받은 시각, 작업 ID, 등급(`등급: 경량`이면 경량, 없으면 일반)을 received.tsv에 남긴다.
-#                          herdr-flow가 흐름을 재고, herdr-report가 [배정]의 등급으로 관문을 고른다
+#   worker-turn.sh start   UserPromptSubmit: 턴 시작 시각을 기록한다. 입력이 [배정]·[병합]이면
+#                          받은 시각, 작업 ID, 등급(`등급: 경량`이면 경량, 없으면 일반), 독립 검증(`독립 검증:` 항목이
+#                          있으면 필요)을 received.tsv에 남긴다. [배정]은 원문도 assign/<역할>/<작업>.txt에 남긴다.
+#                          herdr-flow가 흐름을 재고, herdr-report가 등급·독립 검증으로 관문을 고르고,
+#                          herdr-verify가 원문을 검증 서브에이전트에 넘긴다(작성자의 설명 대신 Orchestrator가 쓴 기준)
 #   worker-turn.sh stop    Stop: 이 턴에 herdr-report를 보내지 않았으면 한 번 막는다.
 #                          그래도 보내지 않으면 Orchestrator에 [미보고]를 직접 보내고 끝낸다.
 case "${HERDR_ROLE:-}" in '' | commander | orchestrator) exit 0 ;; esac
@@ -17,17 +19,26 @@ reported_file="$dir/.$HERDR_ROLE.reported"
 case "${1:-}" in
   start)
     mkdir -p "$dir" && date +%s >"$start_file"
-    prompt="$(printf '%s' "$input" | jq -r '.prompt // ""' | head -c 2000)"
-    if [[ "$prompt" =~ \[(배정|병합|검증)\][[:space:]]+([^[:space:]]+) ]]; then
+    full="$(printf '%s' "$input" | jq -r '.prompt // ""' | head -c 20000)"
+    prompt="$(printf '%s' "$full" | head -c 2000)"
+    if [[ "$prompt" =~ \[(배정|병합)\][[:space:]]+([^[:space:]]+) ]]; then
       tag="${BASH_REMATCH[1]}"
       task="${BASH_REMATCH[2]}"
       task="${task%%[,.:;—)(]*}"
-      grade=일반
+      grade=일반 verify=""
       [[ "$prompt" =~ 등급:[[:space:]]*경량 ]] && grade=경량
+      if [[ "$tag" == 배정 && "$full" =~ 독립[[:space:]]*검증[[:space:]]*: ]]; then
+        verify=필요
+        [[ "$full" =~ 독립[[:space:]]*검증[[:space:]]*:[[:space:]]*(없음|안[[:space:]]*함|하지[[:space:]]*않음|-) ]] && verify=""
+      fi
       tsv="$dir/received.tsv"
-      [ -s "$tsv" ] || printf 'epoch\ttime\trole\tsession_id\ttag\ttask\tgrade\n' >"$tsv"
-      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$(date +%Y-%m-%dT%H:%M:%S%z)" "$HERDR_ROLE" \
-        "$(cat "$dir/.$HERDR_ROLE.session" 2>/dev/null)" "$tag" "$task" "$grade" >>"$tsv"
+      [ -s "$tsv" ] || printf 'epoch\ttime\trole\tsession_id\ttag\ttask\tgrade\tverify\n' >"$tsv"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$(date +%Y-%m-%dT%H:%M:%S%z)" "$HERDR_ROLE" \
+        "$(cat "$dir/.$HERDR_ROLE.session" 2>/dev/null)" "$tag" "$task" "$grade" "$verify" >>"$tsv"
+      if [[ "$tag" == 배정 ]]; then
+        mkdir -p "$dir/assign/$HERDR_ROLE"
+        printf '%s\n' "$full" >"$dir/assign/$HERDR_ROLE/$(printf '%s' "$task" | tr -c 'A-Za-z0-9._-' '_').txt"
+      fi
     fi
     ;;
   stop)

@@ -6,8 +6,9 @@
   herdr-flow --tsv              # 작업별 흐름만 탭 구분(초 단위)
 
 기록(~/.claude/herdr/handoff/<프로젝트>/):
-  received.tsv  워커가 [배정]·[병합]·[검증]을 받은 시각(worker-turn hook)
-  reports.tsv   보낸 보고(herdr-report). [판정]은 결과와 SHA
+  received.tsv  워커가 [배정]·[병합]을 받은 시각, 등급, 독립 검증 요구(worker-turn hook)
+  reports.tsv   보낸 보고(herdr-report). 예전 검증 세션의 [판정]은 결과와 SHA
+  verdicts.tsv  워커가 띄운 독립 검증 서브에이전트의 판정·도구·모델·걸린 시간(herdr-verify)
   checks.tsv    전체 검사의 결과·실행 시간·대기열에서 기다린 시간(herdr-check). 이어받음은 INHERIT, 경량 관문은 LIGHT
 
 작업별 구간:
@@ -15,6 +16,7 @@
   관문 대기  첫 [완료]부터 [병합]을 받을 때까지. 검사·독립 검증·병합 순서를 기다린 시간이다
   병합       [병합]을 받고 [병합완료]까지(예전 기록은 그 뒤 마지막 [완료]까지)
 검사는 [완료]·[판정]에 적힌 SHA로 작업에 붙인다. 작업 ID는 말머리 바로 뒤 첫 낱말이다.
+판정 칸은 그 작업의 판정을 차례로 잇는다(ISSUES>PASS). 독립 검증 시간은 작업 구간 안에 들어 있고 따로도 보인다.
 """
 import argparse
 import datetime as dt
@@ -23,9 +25,11 @@ import subprocess
 import sys
 
 SCHEMAS = {
-    "received": ("epoch", "time", "role", "session_id", "tag", "task", "grade"),
+    "received": ("epoch", "time", "role", "session_id", "tag", "task", "grade", "verify"),
     "reports": ("epoch", "time", "role", "session_id", "tag", "task", "sha", "result"),
     "checks": ("epoch", "time", "role", "session_id", "sha", "result", "seconds", "queue_s"),
+    "verdicts": ("epoch", "time", "role", "task", "base", "sha", "patch", "result", "record", "tool", "model", "effort",
+                 "seconds"),
 }
 
 
@@ -90,8 +94,8 @@ def main():
         since = int((t if t.tzinfo else t.astimezone()).timestamp())
     project = a.project or project_name()
     handoff = os.path.join(os.path.expanduser("~"), ".claude", "herdr", "handoff", project)
-    received, reports, checks = (read(handoff, n, since) for n in ("received", "reports", "checks"))
-    if not (received or reports or checks):
+    received, reports, checks, verdicts = (read(handoff, n, since) for n in ("received", "reports", "checks", "verdicts"))
+    if not (received or reports or checks or verdicts):
         sys.exit(f"기록이 없다: {handoff}/{{received,reports,checks}}.tsv\n하네스를 sync한 뒤 새로 띄운 세션부터 쌓인다.")
 
     tasks, order, sha_task = {}, [], {}
@@ -99,7 +103,7 @@ def main():
     def task(name):
         if name not in tasks:
             tasks[name] = {"assigned": None, "first_done": None, "merge_order": None, "last_done": None,
-                           "verdicts": [], "checks": 0, "check_s": 0, "merged": None}
+                           "verdicts": [], "checks": 0, "check_s": 0, "merged": None, "verify_s": 0}
             order.append(name)
         return tasks[name]
 
@@ -130,6 +134,18 @@ def main():
             t["first_done"] = r["epoch"]
         if t["merge_order"] is not None and r["epoch"] >= t["merge_order"]:
             t["last_done"] = r["epoch"]
+
+    for v in verdicts:
+        if not v["task"]:
+            continue
+        t = task(v["task"])
+        t["verdicts"].append(v["result"])
+        try:
+            t["verify_s"] += int(v["seconds"] or 0)
+        except ValueError:
+            pass
+        if v["sha"]:
+            sha_task.setdefault(v["sha"], v["task"])
 
     def owner(sha):
         for known, name in sha_task.items():
@@ -170,20 +186,25 @@ def main():
                      span(t["merge_order"], t["merged"] or t["last_done"])))
 
     if a.tsv:
-        print("task\twork_s\tgate_wait_s\tmerge_s\tchecks\tcheck_s\tverdicts")
+        print("task\twork_s\tgate_wait_s\tmerge_s\tchecks\tcheck_s\tverdicts\tverify_s")
         for name, t, work, gate, merge in rows:
             print("\t".join([name] + ["" if v is None else str(v) for v in (work, gate, merge)]
-                            + [str(t["checks"]), str(t["check_s"]), ">".join(t["verdicts"])]))
+                            + [str(t["checks"]), str(t["check_s"]), ">".join(t["verdicts"]), str(t["verify_s"])]))
         return
 
     print(f"프로젝트 {project} · 작업 {len(rows)}개 · 보고 {len(reports)}건 · 받은 지시 {len(received)}건 · 검사 {len(checks)}회")
-    head = ["작업", "배정", "첫 완료", "병합 지시", "작업", "관문 대기", "병합", "검사", "검사 시간", "판정"]
+    head = ["작업", "배정", "첫 완료", "병합 지시", "작업", "관문 대기", "병합", "검사", "검사 시간", "판정", "검증 시간"]
     table = [[name, clock(t["assigned"]), clock(t["first_done"]), clock(t["merge_order"]), dur(work), dur(gate), dur(merge),
-              str(t["checks"]), dur(t["check_s"]), ">".join(t["verdicts"]) or "-"] for name, t, work, gate, merge in rows]
+              str(t["checks"]), dur(t["check_s"]), ">".join(t["verdicts"]) or "-", dur(t["verify_s"]) if t["verify_s"] else "-"]
+             for name, t, work, gate, merge in rows]
     show(head, table, left=1)
     gates = [g for _, _, _, g, _ in rows if g is not None]
     if gates:
         print(f"관문 대기 합계 {dur(sum(gates))} · 평균 {dur(sum(gates) / len(gates))} · 최대 {dur(max(gates))} ({len(gates)}개 작업)")
+    if verdicts:
+        secs = [int(v["seconds"] or 0) for v in verdicts if (v["seconds"] or "0").isdigit()]
+        n_issue = sum(1 for v in verdicts if v["result"] != "PASS")
+        print(f"독립 검증 {len(verdicts)}회 · PASS 아님 {n_issue}회 · 합계 {dur(sum(secs))} · 평균 {dur(sum(secs) / max(len(secs), 1))}")
     print()
     head = ["역할", "검사", "PASS", "FAIL", "이어받음", "경량", "합계", "평균", "최대", "대기열"]
     table = [[role, str(s["n"]), str(s["PASS"]), str(s["FAIL"]), str(s["INHERIT"]), str(s["LIGHT"]), dur(s["total"]),

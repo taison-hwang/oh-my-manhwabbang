@@ -18,6 +18,9 @@
 # 영향·경량 검사만 거친 SHA의 [병합완료]는 바로 보내고, 기본 브랜치 HEAD의 전체 검사(전체 회귀)를 뒤에서 돌린다.
 # 병합 뒤 전체 검사는 프로젝트에 하나씩 차례로 돌고, 차례가 왔을 때 기본 브랜치 HEAD를 검사하므로 연달은 병합은 한 번에 덮는다.
 # 실패하면 Orchestrator에 "[진행] <작업> 병합 뒤 전체 검사 FAIL <SHA>"를 보낸다. 기록은 역할 merged에 남는다.
+# 독립 검증([배정]에 `독립 검증:` 항목이 있는 일반 작업): [완료]는 그 패치의 판정 PASS(herdr-verify)가 있어야 가고,
+# "독립 검증 PASS <SHA> <기록>"을 붙인다. 판정이 없으면 --bg처럼 검사와 검증 서브에이전트를 함께 뒤에서 돌리고 둘 다 PASS면
+# [완료]를 보낸다. ISSUES·BLOCKED면 [완료]를 보내지 않고 이 세션에 [판정]을, Orchestrator에 [진행]을 보낸다.
 # 메인 체크아웃에서 보내는 워커의 [완료]는 커밋된 HEAD만 본다. 다른 세션의 변경이 섞여 있으므로 그 자리에서 검사하지 않고,
 # PASS 기록이 없으면 --bg처럼 깨끗한 검사용 worktree에서 검사한다.
 set -uo pipefail
@@ -27,7 +30,7 @@ case "${1:-}" in
   --bg) mode=bg; shift ;;
   --bg-run) mode=run; bg_sha="${2:-}"; shift 2 ;;
 esac
-[[ $# -eq 1 && -n "$1" ]] || { echo '사용법: herdr-report [--bg] "[완료|병합완료|판정|진행|답변|차단|CLEAR 요청] <내용>"' >&2; exit 2; }
+[[ $# -eq 1 && -n "$1" ]] || { echo '사용법: herdr-report [--bg] "[완료|병합완료|진행|답변|차단|CLEAR 요청] <내용>"' >&2; exit 2; }
 : "${HERDR_ROLE:?HERDR_ROLE이 없다. herdr-session으로 띄운 세션에서 쓴다}"
 : "${HERDR_PROJECT:?HERDR_PROJECT가 없다. herdr-session으로 띄운 세션에서 쓴다}"
 
@@ -85,10 +88,7 @@ send() { # 메시지. 보고 대상에게 보내고 보고 기록을 남긴다
     sha=""; result=""
     [[ "$message" =~ 검사\ PASS\ ([0-9a-f]+) ]] && sha="${BASH_REMATCH[1]}"
     [[ "$tag" == 병합완료 && -z "$sha" && "$message" =~ ^\[병합완료\]\ [^\ ]+\ ([0-9a-f]{7,40}) ]] && sha="${BASH_REMATCH[1]}"
-    # [판정] <묶음> PASS|ISSUES|BLOCKED <head SHA> <기록 경로>
-    if [[ "$tag" == 판정 && "$message" =~ ^\[판정\]\ [^\ ]+\ (PASS|ISSUES|BLOCKED)(\ ([0-9a-f]{7,40}))? ]]; then
-      result="${BASH_REMATCH[1]}"; sha="${BASH_REMATCH[3]}"
-    fi
+    [[ "$message" =~ 독립\ 검증\ (PASS) ]] && result="${BASH_REMATCH[1]}"
     [[ -s "$dir/reports.tsv" ]] || printf 'epoch\ttime\trole\tsession_id\ttag\ttask\tsha\tresult\n' >"$dir/reports.tsv"
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$(date +%Y-%m-%dT%H:%M:%S%z)" "$HERDR_ROLE" \
       "$(cat "$dir/.$HERDR_ROLE.session" 2>/dev/null)" "$tag" "$task" "$sha" "$result" | tr -d '\r' >>"$dir/reports.tsv"
@@ -111,6 +111,16 @@ after_merge() { # 병합한 SHA. 기본 브랜치의 전체 검사를 뒤에서 
   command -v setsid >/dev/null && detach=(setsid nohup)
   HERDR_BG_AFTER_MERGE=1 "${detach[@]}" "$BIN/herdr-report" --bg-run "$1" "$message" \
     >"$dir/.$HERDR_ROLE.merged-${1:0:12}.out" 2>&1 </dev/null &
+}
+
+verify_of() { # 작업 ID → 이 역할이 받은 마지막 [배정]이 독립 검증을 요구하면 "필요"
+  awk -F'\t' -v r="$HERDR_ROLE" -v t="$1" '$3 == r && $5 == "배정" && $6 == t { v = $8 } END { print v }' "$dir/received.tsv" 2>/dev/null
+}
+
+verify_label() { # herdr-verify --status 결과 → 보고에 붙일 표시
+  local rest="${1#* }"
+  local sha="${rest%% *}"
+  printf '독립 검증 PASS %s %s' "${sha:0:12}" "${rest#* }"
 }
 
 grade_of() { # 작업 ID → 이 역할이 받은 마지막 [배정]의 등급(경량|일반)
@@ -183,6 +193,13 @@ if [[ $mode == run ]]; then
     exit 0
   fi
   export HERDR_CHECK_LOG="$dir/.$HERDR_ROLE.check-$short.log"
+  vpid=""
+  if [[ -n "${HERDR_BG_VERIFY:-}" ]]; then
+    # 독립 검증 서브에이전트는 검사와 서로의 결과를 쓰지 않으므로 함께 돌린다. 검사가 실패하면 취소한다
+    vout="$dir/.$HERDR_ROLE.verify-$short.out"
+    "$BIN/herdr-verify" --sha "$bg_sha" "$task" >"$vout" 2>&1 </dev/null &
+    vpid=$!
+  fi
   mkdir -p "$(dirname "$wt")"
   exec 9>"$wt.lock"
   command -v flock >/dev/null && flock 9 # 같은 역할의 뒤 검사는 차례로 돈다
@@ -192,10 +209,34 @@ if [[ $mode == run ]]; then
     if [[ -n "${HERDR_BG_BASE:-}" ]]; then (cd "$wt" && "$check" --affected "$HERDR_BG_BASE"); else (cd "$wt" && "$check"); fi; rc=$?
   fi
   case $rc in
-    0) state="$(cd "$wt" && "$check" --status)"
-       send "$message · $(state_label "$state")" ;;
-    3) send "$message · 검사 미설정" ;;
-    *) tag="${message%%\]*}]"
+    0 | 3)
+      if [[ $rc -eq 0 ]]; then label="$(state_label "$(cd "$wt" && "$check" --status)")"; else label="검사 미설정"; fi
+      if [[ -n "$vpid" ]]; then
+        wait "$vpid"; vrc=$?
+        vstate="$("$BIN/herdr-verify" --status --sha "$bg_sha" "$task" 2>/dev/null)"
+        case "$vstate" in
+          PASS\ *) label="$label · $(verify_label "$vstate")" ;;
+          ISSUES\ * | BLOCKED\ *)
+            vres="${vstate%% *}" vrec="${vstate##* }"
+            if [[ $vres == ISSUES ]]; then
+              note="기록의 차단 지적을 고쳐 커밋하고 herdr-report --bg로 다시 보낸다(지적 항목과 고친 부분만 다시 본다). 지적이 틀렸다고 보면 근거 명령과 출력을 herdr-verify --focus로 넘겨 다시 판정받는다."
+            else
+              note="검증을 실행하지 못했다. 기록의 이유를 풀 수 있으면 풀고 다시 보내고, 아니면 [차단]으로 올린다."
+            fi
+            [[ -n "${HC_TERMINAL_ID:-}" ]] && hc send "$HC_TERMINAL_ID" "[판정] $task $vres $short $vrec — ${message%%\]*}]를 보내지 않았다. $note" >/dev/null
+            send "[진행] $task 커밋 $short 독립 검증 $vres, 작성 세션이 고치는 중"
+            exit 0 ;;
+          *)
+            why="$(tail -n 3 "$vout" 2>/dev/null | tr '\n' ' ')"
+            [[ $vrc -eq 5 ]] && why="검증 횟수 초과. 남은 지적과 반박 근거를 적어 [차단]으로 올린다"
+            [[ -n "${HC_TERMINAL_ID:-}" ]] && hc send "$HC_TERMINAL_ID" "[판정] $task 없음 $short — ${message%%\]*}]를 보내지 않았다. 독립 검증이 판정을 남기지 못했다(끝 코드 $vrc): $why 출력: $vout" >/dev/null
+            send "[진행] $task 커밋 $short 독립 검증 실패(판정 없음), 작성 세션이 확인 중"
+            exit 0 ;;
+        esac
+      fi
+      send "$message · $label" ;;
+    *) [[ -n "$vpid" ]] && { kill -TERM "$vpid" 2>/dev/null; wait "$vpid" 2>/dev/null; }
+       tag="${message%%\]*}]"
        note="[검사 FAIL] $task 커밋 $short — $tag를 보내지 않았다. 로그: $HERDR_CHECK_LOG"
        note="$note. 고친 뒤 커밋해 herdr-report --bg로 다시 보낸다. 이 커밋 위에 쌓은 작업이 있으면 worker.md의 '쌓은 작업 옮기기'를 따른다."
        [[ -n "${HC_TERMINAL_ID:-}" ]] && hc send "$HC_TERMINAL_ID" "$note" >/dev/null
@@ -204,14 +245,15 @@ if [[ $mode == run ]]; then
   exit 0
 fi
 
-start_bg() { # SHA [영향 검사 기준]. 그 SHA를 뒤에서 검사하고 결과대로 보낸다. 기준이 없으면 전체 검사
-  local sha="$1" task ahead detach
+start_bg() { # SHA [영향 검사 기준] [verify]. 그 SHA를 뒤에서 검사(와 독립 검증)하고 결과대로 보낸다. 기준이 없으면 전체 검사
+  local sha="$1" task ahead detach what=검사
   task="$(task_of "$message")"
+  [[ -n "${3:-}" ]] && what="검사·독립 검증"
   ahead="$("$BIN/herdr-queue" ahead 2>/dev/null || echo 0)"
-  send "[진행] $task 커밋 ${sha:0:12} 검사 중(뒤에서) 예상 $(predict) · 대기열 ${ahead}건" || exit 1
+  send "[진행] $task 커밋 ${sha:0:12} ${what} 중(뒤에서) 예상 $(predict) · 대기열 ${ahead}건" || exit 1
   detach=(nohup); command -v setsid >/dev/null && detach=(setsid nohup) # 턴이 끝나도 검사가 살아 있게 한다
-  HERDR_BG_BASE="${2:-}" "${detach[@]}" "$BIN/herdr-report" --bg-run "$sha" "$message" >"$dir/.$HERDR_ROLE.bg-${sha:0:12}.out" 2>&1 </dev/null &
-  echo "검사를 뒤에서 돌린다(${sha:0:12}). PASS면 ${message%%\]*}]가 자동으로 가고, FAIL이면 이 세션에 알림이 온다."
+  HERDR_BG_BASE="${2:-}" HERDR_BG_VERIFY="${3:-}" "${detach[@]}" "$BIN/herdr-report" --bg-run "$sha" "$message" >"$dir/.$HERDR_ROLE.bg-${sha:0:12}.out" 2>&1 </dev/null &
+  echo "${what}를 뒤에서 돌린다(${sha:0:12}). 모두 PASS면 ${message%%\]*}]가 자동으로 가고, 아니면 이 세션에 알림이 온다."
 }
 
 gated=0
@@ -265,6 +307,20 @@ if [[ $gated -eq 1 ]]; then
       echo "경량 기준을 넘어 일반 관문(전체 검사)으로 보낸다: $over" >&2
       message="$message · 경량 기준 초과($over)"
     fi
+  fi
+  if [[ "$message" == "[완료]"* && "$grade" != 경량 && "$(verify_of "$(task_of "$message")")" == 필요 ]]; then
+    # 독립 검증: 이 패치의 판정 PASS가 있어야 보낸다. 없으면 검사와 함께 뒤에서 검증 서브에이전트를 돌린다
+    vstate="$("$BIN/herdr-verify" --status --sha "$target_sha" "$(task_of "$message")" 2>/dev/null)"
+    case "$vstate" in
+      PASS\ *) message="$message · $(verify_label "$vstate")" ;;
+      ISSUES\ * | BLOCKED\ *)
+        echo "이 패치는 독립 검증 ${vstate%% *}였다(기록 ${vstate##* }). 고쳐 커밋한 뒤 다시 보낸다. 지적이 틀렸다고 보면 herdr-verify --focus로 근거를 넘기고, 실행할 수 없으면 [차단]으로 올린다." >&2
+        exit 1 ;;
+      *)
+        start_bg "$target_sha" "$base" verify
+        [[ $linked -eq 1 ]] && echo "그동안 같은 묶음의 다음 작업을 이 커밋 위에서 이어 해도 된다. 이 커밋은 고치거나 rebase하지 않는다."
+        exit 0 ;;
+    esac
   fi
   case "$state" in
     UNSET) message="$message · 검사 미설정" ;;

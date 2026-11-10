@@ -14,8 +14,8 @@ description: herdr 자율주행 운영 규칙(Codex·Claude 공통). Commander·
 | role | 맡는 일 | 하지 않는 일 | 읽을 파일 |
 | --- | --- | --- | --- |
 | `commander` | 사용자와 대화, 요청 전달, 결과·결정 요청 전달, Orchestrator 띄우기·정리 | 작업 분해, 배정, 개발, 조사 | [references/commander.md](references/commander.md) |
-| `orchestrator` | 계획, 의존성 분석, 배정, 결과 근거 확인, 독립 검증 배정, 병합 지시, 작업 계획·상태판·결정 기록·세션 장부 관리, 워커 정리 | 코드·방향 문서 수정, 검사 실행 | [references/orchestrator.md](references/orchestrator.md) |
-| 그 밖의 값(워커) | 단위 작업의 구현·검증·리뷰 반영·커밋·병합 | 범위 밖 변경, 다른 세션 산출물 중복 구현 | [references/worker.md](references/worker.md) |
+| `orchestrator` | 계획, 의존성 분석, 배정(독립 검증 항목 포함), 결과 근거 확인, 병합 지시, 작업 계획·상태판·결정 기록·세션 장부 관리, 워커 정리 | 코드·방향 문서 수정, 검사 실행 | [references/orchestrator.md](references/orchestrator.md) |
+| 그 밖의 값(워커) | 단위 작업의 구현·검증·독립 검증 맡기기·리뷰 반영·커밋·병합 | 범위 밖 변경, 다른 세션 산출물 중복 구현 | [references/worker.md](references/worker.md) |
 
 흐름: 사용자 → Commander → Orchestrator → 워커 → Orchestrator → Commander → 사용자.
 
@@ -37,16 +37,19 @@ description: herdr 자율주행 운영 규칙(Codex·Claude 공통). Commander·
 
 ## 서브에이전트
 
-작업은 본 세션에서 직접 처리한다. 서브에이전트는 아래 두 경우에만 쓴다.
+작업은 본 세션에서 직접 처리한다. 서브에이전트는 아래 세 경우에만 쓴다.
 
 | 쓴다 | 이유 |
 | --- | --- |
 | 의존성 없는 검색: 결론만 필요한 대량 탐색, 로그 분석 | 탐색 내용이 본 세션 맥락에 쌓이지 않는다 |
 | 구현에 대한 독립 리뷰: `[배정]`이 요구하거나, 계약·스키마·보안·삭제 경로·되돌리기 어려운 동작을 바꿨을 때 | 작성자의 맥락에 묶이지 않은 판단이 필요하다 |
+| 독립 검증: `[배정]`에 `독립 검증:` 항목이 있을 때. `herdr-report`가 `[완료]` 관문에서 띄우거나 `herdr-verify`로 직접 띄운다 | 쓴 세션이 자기 변경의 병합을 정하지 않는다. 검증만 하는 세션을 따로 두면 대기열과 중계가 생긴다 |
+
+- 독립 검증 서브에이전트는 `.agents/harness.env`의 `HERDR_VERIFIER_*`(비면 워커 설정) 도구·모델·effort로 뜨는 헤드리스 세션(`codex exec`·`claude -p`)이다. 도구 안의 서브에이전트 기능(Claude의 Agent 등)으로 대신하지 않는다. 그 기능은 설정한 도구·모델을 쓰지 못하고 작성자의 맥락을 넘기기 쉽다.
 
 - 구현, 테스트 작성, 리팩터링, 문서 작성은 서브에이전트에 맡기지 않는다. 프로젝트 지침이 더 강한 리뷰를 정하면 그것을 따른다.
 - 위치를 이미 아는 파일 읽기처럼 도구 호출 몇 번으로 끝나는 검색은 직접 한다.
-- 검색은 가벼운 모델과 낮은 effort로, 리뷰는 상위 모델과 high effort로 맡긴다.
+- 검색은 가벼운 모델과 낮은 effort로, 리뷰는 상위 모델과 high effort로 맡긴다. 독립 검증의 모델은 설정이 정한다.
 - 서브에이전트의 결과는 본 세션이 파일·라인·명령 출력으로 직접 확인한 뒤 사용한다.
 
 ## 차단 기준
@@ -57,7 +60,7 @@ description: herdr 자율주행 운영 규칙(Codex·Claude 공통). Commander·
 
 세션은 반드시 실행기로 띄운다. 실행기가 `role`·`project` 라벨, 모델, 환경 변수를 맞춘다. 실행기로 띄운 세션은 띄운 세션이 끝나도 남는다. 그래서 Orchestrator를 교체하려고 꺼도 워커는 계속 돈다. 세션을 끝내려면 그 세션을 `hc kill`로 직접 끈다. 사용법은 `.agents/bin/herdr-session`을 인자 없이 실행하면 나온다.
 
-도구(codex|claude)는 적지 않는다. 실행기가 `.agents/harness.env`의 `HERDR_<역할>_TOOL`(역할: COMMANDER, ORCHESTRATOR, WORKER, VERIFIER)과 그 모델·effort를 쓴다. harness.env에 모델·effort가 있으면 사용자가 정한 값이므로 `--model`과 effort 인자도 적지 않는다(실행기가 거부한다). `verifier-<n>` 역할은 VERIFIER 설정을 쓰고, 비어 있으면 WORKER 설정을 쓴다. 자기 도구와 같은 도구를 고르지 않는다. 도구를 적는 경우는 셋뿐이다: 설정이 비어 실행기가 거부할 때, `HERDR_VERIFIER_TOOL`이 비어 검증자를 작성자와 다른 도구로 띄울 때, 도구 오류로 바꿀 때.
+도구(codex|claude)는 적지 않는다. 실행기가 `.agents/harness.env`의 `HERDR_<역할>_TOOL`(역할: COMMANDER, ORCHESTRATOR, WORKER)과 그 모델·effort를 쓴다. harness.env에 모델·effort가 있으면 사용자가 정한 값이므로 `--model`과 effort 인자도 적지 않는다(실행기가 거부한다). 자기 도구와 같은 도구를 고르지 않는다. 도구를 적는 경우는 둘뿐이다: 설정이 비어 실행기가 거부할 때, 도구 오류로 바꿀 때. 검증 세션(`verifier-*`)은 띄우지 않는다(실행기가 거부한다).
 
 `--here`로 띄운 Commander의 herdr 패널이 있으면, 실행기가 Orchestrator·워커를 띄울 때 그 옆에 보기 패널을 자동으로 나눈다(`HERDR_VIEW_PANES`). 보기 패널을 직접 만들거나 닫지 않는다.
 
@@ -78,11 +81,10 @@ hc ls --label "project=$HERDR_PROJECT" --label role=worker-1 | jq -r '.terminals
 
 | 말머리 | 보내는 쪽 → 받는 쪽 | 내용 |
 | --- | --- | --- |
-| `[배정]` | Orchestrator → 워커 | 작업 ID, 등급(`등급: 경량`, 적지 않으면 일반), 목표, 범위·담당 파일, 의존성, 수용 기준(행동과 확인 방법), 검증 명령, worktree 경로 |
+| `[배정]` | Orchestrator → 워커 | 작업 ID, 등급(`등급: 경량`, 적지 않으면 일반), 목표, 범위·담당 파일, 의존성, 수용 기준(행동과 확인 방법), 검증 명령, worktree 경로. 독립 검증이 필요하면 `독립 검증: <확인 항목, 위험이 큰 것부터>` |
 | `[병합]` | Orchestrator → 워커 | 대상 작업 ID와 병합 순서. 독립 검증을 받았으면 판정 SHA |
-| `[검증]` | Orchestrator → 검증자 | 묶음 이름, 분기점 SHA와 head SHA, 완료 조건과 수용 기준, 확인 방법. 작성자의 설명과 worktree 경로는 넣지 않는다 |
-| `[판정]` | 검증자 → Orchestrator | `PASS`·`ISSUES`·`BLOCKED`, head SHA, 기록 경로 |
-| `[완료]` | 워커 → Orchestrator, Orchestrator → Commander | 작업 ID, 변경 파일, 커밋, 검증(실행 확인·추론·미확인 구분, 실제 사용 경로의 확인), 위험. `herdr-report`가 `검사 PASS <SHA>`(경량은 `가벼운 검사 PASS <SHA>(경량)`)를 붙인다 |
+| `[판정]` | 하네스 → 그 워커 자신 | 독립 검증 서브에이전트의 `PASS`·`ISSUES`·`BLOCKED`, SHA, 기록 경로. `[완료]`가 가지 않았을 때와 `herdr-verify --bg`가 끝났을 때 온다 |
+| `[완료]` | 워커 → Orchestrator, Orchestrator → Commander | 작업 ID, 변경 파일, 커밋, 검증(실행 확인·추론·미확인 구분, 실제 사용 경로의 확인), 위험. `herdr-report`가 `검사 PASS <SHA>`(경량은 `가벼운 검사 PASS <SHA>(경량)`)와, 독립 검증 작업이면 `독립 검증 PASS <SHA> <기록>`을 붙인다 |
 | `[병합완료]` | 워커 → Orchestrator | 작업 ID, 기본 브랜치에 들어간 SHA. `herdr-report`가 그 SHA가 들어갔는지와 검사 PASS 기록을 확인해 붙인다 |
 | `[진행]` | 워커 → Orchestrator | 기다릴 대상이 있어 턴을 끝내는 이유, 다시 움직일 조건 |
 | `[답변]` | 워커 → Orchestrator | Orchestrator가 물은 것에 대한 답. 작업 상태를 바꾸지 않는다 |

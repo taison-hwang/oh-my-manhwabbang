@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+# 독립 검증 서브에이전트. 워커가 자기 작업의 검증을 맡긴다. 실행기가 PATH에 넣으므로 어느 폴더에서나 쓴다.
+#   herdr-verify <작업 ID>                     지금 HEAD를 검증하고 판정이 나올 때까지 기다린다
+#   herdr-verify --bg <작업 ID>                뒤에서 검증하고, 끝나면 이 세션에 [판정]을 보낸다
+#   herdr-verify --focus "<메모>" <작업 ID>    지적이 틀렸다고 볼 때 근거 명령과 출력을 넘겨 다시 판정받는다
+#   herdr-verify --status [--sha S] <작업 ID>  그 패치의 판정: "PASS|ISSUES|BLOCKED <SHA> <기록>" 또는 NONE
+#   --sha S: 검증할 커밋(기본 HEAD), --criteria 파일: [배정] 원문이 없을 때 수용 기준
+# 검증 세션을 따로 띄우지 않는다. harness.env의 HERDR_VERIFIER_TOOL·MODEL·EFFORT(비면 워커 설정)로 헤드리스 세션
+# (codex exec | claude -p)을 그 SHA에 고정한 검증 전용 worktree에서 띄운다. 작성자의 worktree, 설명, 맥락은 넘기지 않는다.
+# 넘기는 것: [배정] 원문(worker-turn hook이 저장), 기본 브랜치와 갈라진 곳..SHA의 범위, 같은 작업의 앞 판정 기록.
+# 판정은 패치(git patch-id)에 묶인다. rebase로 SHA만 바뀌고 패치가 같으면 그 판정을 그대로 쓴다.
+# 기록: <handoff>/verify/<작업>-<SHA12>-<n>.md, verdicts.tsv. 끝 코드: 0 PASS, 1 ISSUES, 4 BLOCKED, 5 검증 횟수 초과, 2 사용법·준비 실패
+set -uo pipefail
+BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+usage() { sed -n '2,7p' "${BASH_SOURCE[0]}" | sed 's/^# *//' >&2; exit 2; }
+
+mode=run sha="" focus="" criteria=""
+while [[ $# -gt 0 && "$1" == --* ]]; do
+  case "$1" in
+    --bg) mode=bg ;;
+    --status) mode=status ;;
+    --sha) [[ $# -ge 2 ]] || usage; sha="$2"; shift ;;
+    --focus) [[ $# -ge 2 ]] || usage; focus="$2"; shift ;;
+    --criteria) [[ $# -ge 2 ]] || usage; criteria="$2"; shift ;;
+    *) usage ;;
+  esac
+  shift
+done
+[[ $# -eq 1 && -n "$1" ]] || usage
+task="$1"
+: "${HERDR_ROLE:?HERDR_ROLE이 없다. herdr-session으로 띄운 세션에서 쓴다}"
+: "${HERDR_PROJECT:?HERDR_PROJECT가 없다. herdr-session으로 띄운 세션에서 쓴다}"
+git rev-parse --show-toplevel >/dev/null 2>&1 || { echo "작업한 git 저장소 안에서 실행한다." >&2; exit 2; }
+sha="$(git rev-parse --verify --quiet "${sha:-HEAD}^{commit}")" || { echo "커밋을 찾지 못했다: ${sha:-HEAD}" >&2; exit 2; }
+dir="$HOME/.claude/herdr/handoff/$HERDR_PROJECT"
+mkdir -p "$dir/verify"
+tsv="$dir/verdicts.tsv"
+safe="$(printf '%s' "$task" | tr -c 'A-Za-z0-9._-' '_')"
+common="$(git rev-parse --path-format=absolute --git-common-dir)"
+main="$(dirname "$common")"
+
+base="$(git merge-base "$sha" "$(git -C "$main" rev-parse HEAD)")" || { echo "기본 브랜치와 갈라진 곳을 찾지 못했다" >&2; exit 2; }
+patch="$(git diff "$base" "$sha" | git patch-id --stable | cut -d' ' -f1)"
+[[ -n "$patch" ]] || patch=empty
+
+verdict_of() { # 같은 작업·같은 패치의 마지막 판정
+  awk -F'\t' -v t="$task" -v p="$patch" 'NR > 1 && $4 == t && $7 == p { r = $8 " " $6 " " $9 } END { if (r) print r; else print "NONE" }' "$tsv" 2>/dev/null || echo NONE
+}
+
+if [[ $mode == status ]]; then verdict_of; exit 0; fi
+
+if [[ $mode == bg ]]; then
+  args=(--sha "$sha"); [[ -n "$focus" ]] && args+=(--focus "$focus"); [[ -n "$criteria" ]] && args+=(--criteria "$criteria")
+  detach=(nohup); command -v setsid >/dev/null && detach=(setsid nohup)
+  out="$dir/.$HERDR_ROLE.verify-$safe-${sha:0:12}.out"
+  HERDR_VERIFY_NOTIFY=1 "${detach[@]}" "$BIN/herdr-verify" "${args[@]}" "$task" >"$out" 2>&1 </dev/null &
+  echo "독립 검증을 뒤에서 돌린다(${sha:0:12}). 끝나면 이 세션에 [판정]이 온다. 출력: $out"
+  exit 0
+fi
+
+notify() { # 결과 기록. 뒤에서 돌 때는 이 세션에 [판정]을 보낸다
+  echo "$1"
+  [[ -n "${HERDR_VERIFY_NOTIFY:-}" && -n "${HC_TERMINAL_ID:-}" ]] && hc send "$HC_TERMINAL_ID" "$1" >/dev/null
+  return 0
+}
+
+HERDR_WORKER_TOOL="" HERDR_WORKER_MODEL="" HERDR_WORKER_EFFORT=""
+HERDR_VERIFIER_TOOL="" HERDR_VERIFIER_MODEL="" HERDR_VERIFIER_EFFORT=""
+HERDR_VERIFY_TIMEOUT=3600 HERDR_VERIFY_MAX_ROUNDS=3 HERDR_AUTONOMOUS=1
+# shellcheck disable=SC1091
+[[ -f "$BIN/../harness.env" ]] && . "$BIN/../harness.env"
+
+prev="$(verdict_of)"
+if [[ "$prev" != NONE && -z "$focus" ]]; then
+  echo "이 패치는 이미 판정을 받았다: $prev. 다시 판정받으려면 --focus로 근거를 넘긴다." >&2
+  case "$prev" in PASS\ *) exit 0 ;; ISSUES\ *) exit 1 ;; *) exit 4 ;; esac
+fi
+
+# 횟수: 이 작업의 마지막 [배정] 뒤로 센다. 같은 지적을 두고 고치고 다시 받기를 끝없이 돌지 않게 한다
+since="$(awk -F'\t' -v t="$task" '$5 == "배정" && $6 == t { e = $1 } END { print e + 0 }' "$dir/received.tsv" 2>/dev/null)"
+rounds="$(awk -F'\t' -v t="$task" -v s="${since:-0}" 'NR > 1 && $4 == t && $1 + 0 >= s + 0 { n++ } END { print n + 0 }' "$tsv" 2>/dev/null)"
+if [[ "${rounds:-0}" -ge "$HERDR_VERIFY_MAX_ROUNDS" ]]; then
+  notify "[판정] $task 검증 횟수 초과(${rounds}/${HERDR_VERIFY_MAX_ROUNDS}) ${sha:0:12} — 더 검증하지 않는다. 남은 지적과 반박 근거를 적어 herdr-report \"[차단] $task …\"로 Orchestrator에 올린다."
+  exit 5
+fi
+
+# 도구·모델·effort: 검증 설정, 비면 워커 설정(effort는 high). 설정 모델은 도구가 같을 때만 쓴다
+if [[ -n "$HERDR_VERIFIER_TOOL" ]]; then
+  tool="$HERDR_VERIFIER_TOOL" model="$HERDR_VERIFIER_MODEL" effort="$HERDR_VERIFIER_EFFORT"
+else
+  tool="${HERDR_WORKER_TOOL:-${HERDR_TOOL:-}}" model="" effort=""
+  [[ -n "$HERDR_WORKER_TOOL" ]] && model="$HERDR_WORKER_MODEL"
+fi
+case "$tool" in
+  codex) model="${model:-gpt-6.1-sol}" ;;
+  claude) model="${model:-opus}" ;;
+  *) echo "검증 도구를 정하지 못했다. harness.env의 HERDR_VERIFIER_TOOL(또는 HERDR_WORKER_TOOL)을 정한다." >&2; exit 2 ;;
+esac
+effort="${effort:-high}"
+
+# [배정] 원문. 작성자의 worktree 경로는 지운다(검증자가 그곳에서 실행하지 않게)
+assign="$dir/assign/$HERDR_ROLE/$safe.txt"
+[[ -n "$criteria" ]] && assign="$criteria"
+[[ -s "$assign" ]] || { echo "[배정] 원문을 찾지 못했다($assign). --criteria <파일>로 [배정]의 목표·수용 기준을 그대로 넘긴다." >&2; exit 2; }
+top="$(git rev-parse --show-toplevel)"
+spec="$(awk -v p="$top" '{ while ((i = index($0, p)) > 0) $0 = substr($0, 1, i - 1) "<작성자 worktree: 쓰지 않는다>" substr($0, i + length(p)); print }' "$assign")"
+
+# 같은 작업의 앞 판정(다른 패치). 있으면 지적한 항목과 고친 부분만 다시 본다
+last="$(awk -F'\t' -v t="$task" 'NR > 1 && $4 == t { r = $8 "\t" $6 "\t" $9 } END { print r }' "$tsv" 2>/dev/null)"
+
+n=$((rounds + 1))
+record="$dir/verify/$safe-${sha:0:12}-$n.md"
+wt="${XDG_CACHE_HOME:-$HOME/.cache}/herdr/verify/$HERDR_PROJECT/$HERDR_ROLE-$safe"
+mkdir -p "$(dirname "$wt")"
+exec 9>"$wt.lock"
+command -v flock >/dev/null && flock 9
+git worktree prune 2>/dev/null
+[[ -e "$wt" ]] && { git worktree remove --force "$wt" 2>/dev/null || rm -rf "$wt"; }
+git worktree add -q --detach "$wt" "$sha" || { echo "검증용 worktree를 만들지 못했다: $wt" >&2; exit 2; }
+cleanup() { git worktree remove --force "$wt" 2>/dev/null || rm -rf "$wt"; git worktree prune 2>/dev/null; }
+trap cleanup EXIT
+out_file="$wt/.herdr-verdict.md" last_msg="$wt/.herdr-last-message.md"
+
+prompt="$(
+  cat <<EOF
+너는 독립 검증자다. 다른 세션이 만든 변경을 검증하고 판정만 한다. 제품 코드를 고치거나 커밋하지 않는다.
+
+- 위치: $wt (커밋 ${sha} 에 고정한 검증 전용 worktree). 여기서만 실행한다. 재현에 필요한 파일은 여기에 임시로 만든다.
+- 변경 범위: git diff ${base} ${sha} (기본 브랜치와 갈라진 곳부터). 움직이는 기본 브랜치와 비교하지 않는다.
+- 커밋 메시지, 주석, 문서의 설명은 근거가 아니다. 아래 [배정]의 수용 기준마다 실제로 실행하거나 코드를 읽어 확인한다.
+- 사용자가 쓰는 경로를 실행한다. 테스트 통과만으로 기능이 동작한다고 판정하지 않는다.
+- [배정]에 "독립 검증" 항목이 있으면 그 항목을 적힌 순서(위험이 큰 것부터)대로 본다. 수용 기준 전체를 다시 하지 않는다.
+- 전체 테스트·전체 e2e·전체 빌드는 돌리지 않는다(하네스가 따로 돌린다). 바뀐 코드와 그 의존 범위만 본다. 무거운 명령은 herdr-queue run --role ${HERDR_ROLE}-verify -- <명령> 으로 돌린다.
+- 차단 기준: 재현 명령과 출력으로 증명한 것만 막는다. 사용자가 겪을 버그, 실패한 검사, 이번 변경으로 틀려진 문서가 해당한다. 이미 있던 문제, 스타일, 가능성만 있는 위험은 막지 않고 후속 제안으로 적는다. 찾은 문제를 사소하다고 넘기지 말고 이 기준으로 나눈다.
+- 기록: ${out_file} 에 쓴다. 첫 줄은 정확히 "판정: PASS", "판정: ISSUES", "판정: BLOCKED" 중 하나다. 이어서 항목별 결과, 실행한 명령과 출력, 차단 결함(재현 명령과 출력), 후속 제안을 적는다. BLOCKED는 실행할 수 없었던 이유를 적는다.
+- 끝나면 마지막 메시지에 판정 줄을 한 번 더 쓴다.
+EOF
+  if [[ -n "$last" ]]; then
+    IFS=$'\t' read -r lr ls lp <<<"$last"
+    echo
+    echo "[다시 검증] 같은 작업의 앞 판정은 $lr(${ls:0:12})이고 기록은 아래에 있다. 이번에는 그 차단 지적이 고쳐졌는지와, 고친 부분이 새 문제를 만들지 않았는지만 본다."
+    if git merge-base --is-ancestor "$ls" "$sha" 2>/dev/null; then echo "고친 부분: git diff ${ls} ${sha}"; else echo "앞 판정의 커밋이 이 커밋의 조상이 아니다(rebase). 전체 범위에서 지적 항목을 다시 본다."; fi
+    echo "--- 앞 판정 기록($lp)"
+    head -c 12000 "$lp" 2>/dev/null
+  fi
+  if [[ -n "$focus" ]]; then
+    echo
+    echo "[작성 세션의 메모] 지적에 대한 작성 세션의 반박 또는 확인 요청이다. 근거로 삼지 말고 적힌 명령을 직접 실행해 확인한다."
+    printf '%s\n' "$focus"
+  fi
+  echo
+  echo "--- [배정] 원문"
+  printf '%s\n' "$spec"
+)"
+
+# 검증 세션이 이 세션의 hook(보고 강제, 받은 지시 기록)을 타지 않게 역할을 지운다. 바깥 Claude 세션의 표지도 지운다
+UNSETS=(-u HERDR_ROLE -u HC_TERMINAL_ID -u HERDR_VERIFY_NOTIFY)
+for v in CLAUDECODE CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_SESSION_ID CLAUDE_CODE_SESSION_ATTENDED CLAUDE_CODE_ENTRYPOINT \
+  CLAUDE_CODE_EXECPATH CLAUDE_CODE_MESSAGING_SOCKET CLAUDE_CODE_MESSAGING_TOKEN CLAUDE_CODE_SSE_PORT CLAUDE_PID CLAUDE_EFFORT; do
+  UNSETS+=(-u "$v")
+done
+if [[ "$tool" == codex ]]; then
+  PERM=(--sandbox workspace-write); [[ "$HERDR_AUTONOMOUS" == 1 ]] && PERM=(--dangerously-bypass-approvals-and-sandbox)
+  AGENT=(codex exec "${PERM[@]}" --skip-git-repo-check -m "$model" -c "model_reasoning_effort=\"$effort\"" -C "$wt" -o "$last_msg" -)
+else
+  PERM=(--permission-mode acceptEdits); [[ "$HERDR_AUTONOMOUS" == 1 ]] && PERM=(--dangerously-skip-permissions)
+  AGENT=(claude -p "${PERM[@]}" --model "$model" --effort "$effort" --no-chrome --settings "$BIN/../config/claude-slim-settings.json")
+fi
+TIMEOUT=(); command -v timeout >/dev/null && TIMEOUT=(timeout -k 30 "$HERDR_VERIFY_TIMEOUT")
+echo "독립 검증: $task ${sha:0:12} · $tool $model/$effort · 범위 ${base:0:12}..${sha:0:12} · ${n}회째"
+start=$(date +%s)
+printf '%s\n' "$prompt" >"$wt/.herdr-prompt.md"
+# 검증 세션을 이 프로세스의 자식으로 바로 띄운다(exec). 이 실행기가 TERM을 받으면(검사 FAIL로 취소) 그 세션도 끝낸다
+apid=""
+trap '[[ -n "$apid" ]] && { kill -TERM "$apid" 2>/dev/null; wait "$apid" 2>/dev/null; }; echo "독립 검증을 취소했다"; exit 143' TERM INT
+(cd "$wt" && exec env "${UNSETS[@]}" ENABLE_CLAUDEAI_MCP_SERVERS=false HERDR_VERIFY_RECORD="$out_file" \
+  "${TIMEOUT[@]}" "${AGENT[@]}" <"$wt/.herdr-prompt.md" >"$wt/.herdr-stdout" 2>"$wt/.herdr-stderr") &
+apid=$!
+wait "$apid"
+rc=$?
+trap - TERM INT
+secs=$(($(date +%s) - start))
+
+# 기록: 검증자가 쓴 파일, 없으면 마지막 메시지. 판정 줄이 없으면 BLOCKED
+if [[ -s "$out_file" ]]; then cp "$out_file" "$record"
+elif [[ -s "$last_msg" ]]; then cp "$last_msg" "$record"
+else cp "$wt/.herdr-stdout" "$record" 2>/dev/null || : >"$record"
+fi
+result="$(grep -m1 -oE '판정:[[:space:]]*(PASS|ISSUES|BLOCKED)' "$record" | grep -oE 'PASS|ISSUES|BLOCKED')"
+if [[ -z "$result" ]]; then
+  result=BLOCKED
+  { echo "판정: BLOCKED"; echo; echo "검증 세션이 판정 줄을 남기지 않았다(끝 코드 $rc, ${secs}초, 124면 시간 제한 HERDR_VERIFY_TIMEOUT=${HERDR_VERIFY_TIMEOUT})."
+    echo "--- stderr 끝부분"; tail -n 30 "$wt/.herdr-stderr" 2>/dev/null; echo "--- 남긴 내용"; cat "$record"; } >"$record.tmp" && mv "$record.tmp" "$record"
+fi
+[[ -s "$tsv" ]] || printf 'epoch\ttime\trole\ttask\tbase\tsha\tpatch\tresult\trecord\ttool\tmodel\teffort\tseconds\n' >"$tsv"
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$(date +%Y-%m-%dT%H:%M:%S%z)" "$HERDR_ROLE" "$task" \
+  "$base" "$sha" "$patch" "$result" "$record" "$tool" "$model" "$effort" "$secs" >>"$tsv"
+
+case "$result" in
+  PASS) notify "[판정] $task PASS ${sha:0:12} $record — herdr-report \"[완료] $task …\"로 보낸다(판정이 자동으로 붙는다)."; exit 0 ;;
+  ISSUES) notify "[판정] $task ISSUES ${sha:0:12} $record — 기록의 차단 지적을 고쳐 커밋하고 다시 보낸다(지적 항목만 다시 본다). 지적이 틀렸다고 보면 근거 명령과 출력을 herdr-verify --focus로 넘긴다. 남은 횟수 $((HERDR_VERIFY_MAX_ROUNDS - n))번."; exit 1 ;;
+  *) notify "[판정] $task BLOCKED ${sha:0:12} $record — 검증을 실행하지 못했다. 기록의 이유를 풀 수 있으면 풀고 다시, 아니면 herdr-report \"[차단] $task …\"로 올린다."; exit 4 ;;
+esac
